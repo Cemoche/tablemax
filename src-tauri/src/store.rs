@@ -163,12 +163,25 @@ pub fn same_identity(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
 /// connection identity is unchanged; changing it requires a new password (Auth
 /// "password required", nothing is modified), so a secret never follows an edit to
 /// another host or account.
+///
+/// SQLite has no password: the mode is forced to `None`, any password is ignored and
+/// the keyring is never required (a stale secret is removed best-effort).
 pub fn save_connection(
     store: &ConnectionStore,
     secrets: &dyn SecretStore,
     mut cfg: ConnectionConfig,
     password: Option<String>,
 ) -> AppResult<ConnectionConfig> {
+    if cfg.kind == DriverKind::Sqlite {
+        cfg.password_mode = PasswordMode::None;
+        if cfg.id.is_empty() {
+            cfg.id = uuid::Uuid::new_v4().to_string();
+        } else {
+            let _ = secrets.delete(&SecretKey::new(cfg.id.clone(), SecretKind::DbPassword));
+        }
+        store.upsert(&cfg)?;
+        return Ok(cfg);
+    }
     if cfg.id.is_empty() {
         cfg.id = uuid::Uuid::new_v4().to_string();
     } else if cfg.password_mode == PasswordMode::Keyring && password.is_none() {
@@ -196,6 +209,8 @@ pub fn delete_connection(
     secrets: &dyn SecretStore,
     id: &str,
 ) -> AppResult<()> {
+    // SQLite connections never own a secret: clean up best-effort, never block on the keyring.
+    let sqlite = matches!(store.get(id), Ok(c) if c.kind == DriverKind::Sqlite);
     // Attempt every kind even if one fails; keep the row so the user can retry.
     let mut first_err: Option<AppError> = None;
     for kind in SecretKind::ALL {
@@ -203,7 +218,9 @@ pub fn delete_connection(
             first_err.get_or_insert(e);
         }
     }
-    if let Some(e) = first_err {
+    if let Some(e) = first_err
+        && !sqlite
+    {
         return Err(e);
     }
     store.delete(id)?;
@@ -426,6 +443,74 @@ mod tests {
             }
             self.inner.delete(k)
         }
+    }
+
+    /// A keyring that is unavailable: every call fails.
+    struct BrokenSecrets;
+
+    impl SecretStore for BrokenSecrets {
+        fn available(&self) -> bool {
+            false
+        }
+        fn set(&self, _: &SecretKey, _: &str) -> AppResult<()> {
+            Err(AppError::new(ErrorKind::Secret, "no keyring"))
+        }
+        fn get(&self, _: &SecretKey) -> AppResult<Option<String>> {
+            Err(AppError::new(ErrorKind::Secret, "no keyring"))
+        }
+        fn delete(&self, _: &SecretKey) -> AppResult<()> {
+            Err(AppError::new(ErrorKind::Secret, "no keyring"))
+        }
+    }
+
+    fn sqlite_cfg(mode: PasswordMode) -> ConnectionConfig {
+        let mut c = cfg("lite", mode);
+        c.kind = DriverKind::Sqlite;
+        c.host = String::new();
+        c.port = 0;
+        c.user = String::new();
+        c.database = None;
+        c.sqlite_path = Some("/tmp/x.db".into());
+        c
+    }
+
+    #[test]
+    fn sqlite_save_never_needs_the_keyring() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        // Even a keyring-mode config with a typed password: nothing is stored.
+        let saved = save_connection(
+            &store,
+            &BrokenSecrets,
+            sqlite_cfg(PasswordMode::Keyring),
+            Some("ignored".into()),
+        )
+        .unwrap();
+        assert_eq!(saved.password_mode, PasswordMode::None);
+        assert_eq!(store.get(&saved.id).unwrap(), saved);
+        // Re-saving an existing SQLite connection (also with a changed path) works too.
+        let mut again = saved.clone();
+        again.sqlite_path = Some("/tmp/y.db".into());
+        again.password_mode = PasswordMode::Keyring;
+        let again = save_connection(&store, &BrokenSecrets, again, None).unwrap();
+        assert_eq!(again.password_mode, PasswordMode::None);
+        assert_eq!(
+            store.get(&saved.id).unwrap().sqlite_path.as_deref(),
+            Some("/tmp/y.db")
+        );
+    }
+
+    #[test]
+    fn sqlite_save_drops_a_stale_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let sec = MemorySecretStore::new();
+        let mut c = sqlite_cfg(PasswordMode::None);
+        c.id = "lite-id".into();
+        let key = SecretKey::new("lite-id", SecretKind::DbPassword);
+        sec.set(&key, "stale").unwrap();
+        save_connection(&store, &sec, c, Some("typed".into())).unwrap();
+        assert_eq!(sec.get(&key).unwrap(), None);
     }
 
     #[test]

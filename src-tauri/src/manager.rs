@@ -21,7 +21,9 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::time::Instant;
 
-use crate::driver::{self, Canceller, ConnectParams, Dialect, Session, StatementOutcome};
+use crate::driver::{
+    self, Canceller, ConnectParams, Dialect, DriverKind, Session, StatementOutcome,
+};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
 use crate::store::{self, ConnectionConfig, ConnectionStore, PasswordMode, same_identity};
@@ -277,9 +279,10 @@ impl SessionManager {
         blocking(move || store::delete_connection(&st, sec.as_ref(), &id)).await
     }
 
-    /// Password for connecting with `cfg`: `None` mode → none; `Ask` → the argument or
-    /// an Auth error (before any network I/O); `Keyring` → the argument if given, else
-    /// the stored secret (only for saved configs, i.e. non-empty id).
+    /// Password for connecting with `cfg`: SQLite → always none (the keyring is never
+    /// touched); `None` mode → none; `Ask` → the argument or an Auth error (before any
+    /// network I/O); `Keyring` → the argument if given, else the stored secret (only for
+    /// saved configs, i.e. non-empty id).
     ///
     /// `cfg` must be the stored config for `cfg.id` (or have an empty id): callers
     /// holding a frontend-supplied config check `same_identity` first.
@@ -288,6 +291,9 @@ impl SessionManager {
         cfg: &ConnectionConfig,
         password: Option<String>,
     ) -> AppResult<Option<String>> {
+        if cfg.kind == DriverKind::Sqlite {
+            return Ok(None);
+        }
         match cfg.password_mode {
             PasswordMode::None => Ok(None),
             PasswordMode::Ask => password
@@ -317,6 +323,13 @@ impl SessionManager {
         password: Option<String>,
     ) -> AppResult<String> {
         let mut cfg = cfg.clone();
+        if cfg.kind == DriverKind::Sqlite {
+            // No password, no keyring, no stored identity to check.
+            let session = driver::connect(&connect_params(&cfg, None)).await?;
+            let version = session.server_version();
+            let _ = session.close().await;
+            return Ok(version);
+        }
         if cfg.password_mode == PasswordMode::Keyring && password.is_none() && !cfg.id.is_empty() {
             let store = self.store.clone();
             let id = cfg.id.clone();
@@ -346,6 +359,7 @@ impl SessionManager {
         let config = blocking(move || store.get(&id)).await?;
         let held_password = match config.password_mode {
             PasswordMode::None => None,
+            _ if config.kind == DriverKind::Sqlite => None,
             _ => password.clone().map(HeldPassword),
         };
         let resolved = self.resolve_password(&config, password).await?;
@@ -390,6 +404,9 @@ impl SessionManager {
                 first_err.get_or_insert(e);
             }
         }
+        // A hung browse query (page, count) would otherwise block the close (MySQL's close
+        // waits for the connection lock). Best-effort and bounded.
+        let _ = tokio::time::timeout(CANCEL_TIMEOUT, ws.browse.canceller().cancel()).await;
         if let Err(e) = ws.browse.close().await {
             first_err.get_or_insert(e);
         }
@@ -547,9 +564,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::driver::{
-        Canceller, DbObject, DriverKind, ObjectRef, PageRequest, ResultSet, RowCount,
-    };
+    use crate::driver::{Canceller, DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
     use crate::secrets::{MemorySecretStore, SecretKey, SecretKind};
     use crate::store::{EnvTag, PasswordMode};
 
@@ -1060,6 +1075,28 @@ mod tests {
         (sid, cancels)
     }
 
+    #[tokio::test]
+    async fn close_workspace_cancels_the_browse_query_first() {
+        let fx = fixture();
+        let cancels = Arc::new(AtomicUsize::new(0));
+        let browse: Arc<dyn Session> = Arc::new(StubbornSession {
+            delay: Duration::ZERO,
+            cancel_delay: Duration::ZERO,
+            cancels: cancels.clone(),
+        });
+        fx.mgr.state().workspaces.insert(
+            "w-stub".into(),
+            Workspace {
+                config: cfg(DriverKind::Postgres, PasswordMode::None),
+                held_password: None,
+                browse,
+                sql_sessions: Vec::new(),
+            },
+        );
+        fx.mgr.close_workspace("w-stub").await.unwrap();
+        assert_eq!(cancels.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn cancel_resends_and_stops_after_ok_statement() {
         let fx = fixture();
@@ -1190,7 +1227,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_uses_keyring_only_for_unchanged_identity() {
-        let fx = fixture();
         let secrets = Arc::new(CountingSecrets {
             inner: MemorySecretStore::new(),
             gets: AtomicUsize::new(0),
@@ -1198,28 +1234,92 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
         let mgr = SessionManager::new(Arc::new(store), secrets.clone());
-        let mut c = sqlite_cfg(&fx);
-        c.password_mode = PasswordMode::Keyring;
+        // Nothing listens on port 1: reaching the driver yields a Connection error, which
+        // is enough to observe whether the keyring was read first.
+        let mut c = cfg(DriverKind::Postgres, PasswordMode::Keyring);
+        c.host = "127.0.0.1".into();
+        c.port = 1;
         let saved = mgr.save_connection(c, Some("pw".into())).await.unwrap();
 
         // Unchanged identity (only cosmetic fields differ): the keyring is read.
         let mut renamed = saved.clone();
         renamed.name = "renamed".into();
         renamed.color = "#000".into();
-        mgr.test_connection(&renamed, None).await.unwrap();
+        let err = mgr.test_connection(&renamed, None).await.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Connection);
         assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
 
         // Changed identity: Auth error, keyring untouched.
         let mut moved = saved.clone();
-        moved.sqlite_path = Some(dir.path().join("other.db").to_string_lossy().into());
+        moved.port = 2;
         let err = mgr.test_connection(&moved, None).await.unwrap_err();
         assert_eq!(err.kind, ErrorKind::Auth);
         assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
 
         // An explicit password is always accepted (and the keyring is not read).
-        mgr.test_connection(&saved, Some("typed".into()))
+        let err = mgr
+            .test_connection(&saved, Some("typed".into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Connection);
+        assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
+    }
+
+    /// A keyring that is unavailable: every call fails.
+    struct BrokenSecrets;
+
+    impl SecretStore for BrokenSecrets {
+        fn available(&self) -> bool {
+            false
+        }
+        fn set(&self, _: &SecretKey, _: &str) -> AppResult<()> {
+            Err(AppError::new(ErrorKind::Secret, "no keyring"))
+        }
+        fn get(&self, _: &SecretKey) -> AppResult<Option<String>> {
+            Err(AppError::new(ErrorKind::Secret, "no keyring"))
+        }
+        fn delete(&self, _: &SecretKey) -> AppResult<()> {
+            Err(AppError::new(ErrorKind::Secret, "no keyring"))
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlite_works_without_a_keyring() {
+        let fx = fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
+        let mgr = SessionManager::new(Arc::new(store), Arc::new(BrokenSecrets));
+        // Keyring mode (the form's old default) must not reach the keyring for SQLite.
+        let mut c = sqlite_cfg(&fx);
+        c.password_mode = PasswordMode::Keyring;
+        assert!(!mgr.test_connection(&c, None).await.unwrap().is_empty());
+        let saved = mgr.save_connection(c, None).await.unwrap();
+        assert!(!mgr.test_connection(&saved, None).await.unwrap().is_empty());
+        let ws = mgr.open_workspace(&saved.id, None).await.unwrap();
+        let sid = mgr.open_sql_session(&ws.workspace_id).await.unwrap();
+        let c = Collector::new();
+        mgr.execute_batch(&sid, sql(&["select count(*) from items"]), c.sink())
             .await
             .unwrap();
-        assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
+        assert_eq!(c.all(), ["started0", "finished0", "batch:false"]);
+        mgr.close_workspace(&ws.workspace_id).await.unwrap();
+        mgr.delete_connection(&saved.id).await.unwrap();
+        assert!(mgr.list_connections().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sqlite_password_resolution_never_touches_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
+        let mgr = SessionManager::new(Arc::new(store), Arc::new(BrokenSecrets));
+        for mode in [PasswordMode::Keyring, PasswordMode::Ask, PasswordMode::None] {
+            let mut c = cfg(DriverKind::Sqlite, mode);
+            c.id = "saved".into();
+            assert_eq!(mgr.resolve_password(&c, None).await.unwrap(), None);
+            assert_eq!(
+                mgr.resolve_password(&c, Some("x".into())).await.unwrap(),
+                None
+            );
+        }
     }
 }
