@@ -1,0 +1,73 @@
+//! Shared helpers for the database integration tests (PostgreSQL, MySQL/MariaDB).
+#![allow(dead_code)]
+
+use tablemax_lib::driver::{ConnectParams, DriverKind};
+
+fn urls_from_env(var: &str) -> Vec<String> {
+    let raw = std::env::var(var).unwrap_or_else(|_| {
+        panic!("{var} is not set: run `pnpm test:rust` (scripts/test-dbs.sh up)")
+    });
+    let urls: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    assert!(
+        !urls.is_empty(),
+        "{var} is empty: run `pnpm test:rust` (scripts/test-dbs.sh up)"
+    );
+    urls
+}
+
+pub fn pg_urls() -> Vec<String> {
+    urls_from_env("TABLEMAX_TEST_PG_URLS")
+}
+
+pub fn mysql_urls() -> Vec<String> {
+    urls_from_env("TABLEMAX_TEST_MYSQL_URLS")
+}
+
+/// Parses `scheme://user:pass@host:port/db` into connect params.
+pub fn params_from_url(url: &str, kind: DriverKind) -> ConnectParams {
+    let u = url::Url::parse(url).unwrap_or_else(|e| panic!("bad test url {url}: {e}"));
+    let decode = percent_decode;
+    let db = u.path().trim_start_matches('/');
+    ConnectParams {
+        kind,
+        host: u.host_str().expect("url host").to_string(),
+        port: u.port().expect("url port"),
+        user: decode(u.username()),
+        password: u.password().map(decode),
+        database: if db.is_empty() {
+            None
+        } else {
+            Some(decode(db))
+        },
+        sqlite_path: None,
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A unique schema/database name for one test: `t_<uuid simple>`.
+pub fn unique_schema() -> String {
+    format!("t_{}", uuid::Uuid::new_v4().simple())
+}

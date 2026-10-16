@@ -1,3 +1,4 @@
+pub mod postgres;
 pub mod sql;
 pub mod sqlite;
 
@@ -158,7 +159,8 @@ pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {
             Some(path) => sqlite::connect_sqlite(path).await,
             None => Err(AppError::new(ErrorKind::Invalid, "sqlite_path is required")),
         },
-        DriverKind::Postgres | DriverKind::MySql | DriverKind::MariaDb => {
+        DriverKind::Postgres => postgres::connect_postgres(params).await,
+        DriverKind::MySql | DriverKind::MariaDb => {
             Err(AppError::new(ErrorKind::Invalid, "driver not available"))
         }
     }
