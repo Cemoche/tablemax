@@ -68,13 +68,21 @@ export function QueryTab({ workspace, tab }: Props) {
     saveTimer.current = setTimeout(flush, SAVE_DEBOUNCE_MS);
   };
 
+  /** A lost SQL session is unusable: close it and forget it so the next Run reconnects. */
+  const dropLostSession = (sid: string) => {
+    void ipc.sqlSessionClose(sid)?.catch(() => {});
+    if (currentSessionId(wsId, tabId) === sid) {
+      useWorkspaces.getState().updateTab(wsId, tabId, { sqlSessionId: null });
+    }
+  };
+
   const execute = async (stmts: Statement[]) => {
     const runs = useQueryRuns.getState();
     if (stmts.length === 0 || runs.runs[tabId]?.running) return;
     flush();
     runs.start(tabId, stmts.length);
+    let sessionId = currentSessionId(wsId, tabId);
     try {
-      let sessionId = currentSessionId(wsId, tabId);
       if (!sessionId) {
         const opened = await ipc.sqlSessionOpen(wsId);
         if (!tabExists(wsId, tabId)) {
@@ -86,13 +94,21 @@ export function QueryTab({ workspace, tab }: Props) {
         sessionId = opened;
         useWorkspaces.getState().updateTab(wsId, tabId, { sqlSessionId: sessionId });
       }
+      const sid = sessionId;
       await ipc.sqlExecute(
-        sessionId,
+        sid,
         stmts.map((s) => s.text),
-        (e) => useQueryRuns.getState().applyEvent(tabId, e),
+        (e) => {
+          useQueryRuns.getState().applyEvent(tabId, e);
+          if (e.event === "statementFailed" && e.data.error.kind === "connectionLost") {
+            dropLostSession(sid);
+          }
+        },
       );
     } catch (e) {
-      useQueryRuns.getState().preflightFailed(tabId, toAppError(e));
+      const err = toAppError(e);
+      useQueryRuns.getState().preflightFailed(tabId, err);
+      if (err.kind === "connectionLost" && sessionId) dropLostSession(sessionId);
     }
   };
 

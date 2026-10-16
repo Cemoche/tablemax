@@ -83,9 +83,14 @@ export interface ColumnMeta {
   typeName: string;
 }
 
+/** Rows a SQL-tab statement returns at most (MAX_RESULT_ROWS in value.rs). */
+export const MAX_RESULT_ROWS = 10_000;
+
 export interface ResultSet {
   columns: ColumnMeta[];
   rows: CellValue[][];
+  /** The statement produced more than MAX_RESULT_ROWS rows; only the first ones are here. */
+  truncated: boolean;
 }
 
 export interface StatementOutcome {

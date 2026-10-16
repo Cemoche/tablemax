@@ -38,7 +38,7 @@ export function ResultsPanel({ run }: { run: QueryRun | undefined }) {
       {active && result && (
         <>
           <div className="border-b border-border px-3 py-1 text-sm text-muted">
-            {strings.query.resultHeader(result.rows.length, active.outcome.elapsedMs)}
+            {strings.query.resultHeader(result.rows.length, active.outcome.elapsedMs, result.truncated)}
           </div>
           <div className="min-h-0 flex-1">
             <DataGrid data={result} sortable={false} />
@@ -63,6 +63,9 @@ export function ResultsPanel({ run }: { run: QueryRun | undefined }) {
                 ? strings.query.failedNoIndex(run.error.message)
                 : strings.query.failed(run.error.index + 1, run.error.message)}
             </p>
+          )}
+          {run.error?.kind === "connectionLost" && (
+            <p className="text-muted">{strings.query.connectionLostHint}</p>
           )}
         </div>
       )}

@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "vitest";
 import { useQueryRuns } from "./queryRuns";
 
-const rs = { columns: [{ name: "a", typeName: "int" }], rows: [] };
+const rs = { columns: [{ name: "a", typeName: "int" }], rows: [], truncated: false };
 const run = () => useQueryRuns.getState().runs.t1;
 const ev = (e: Parameters<ReturnType<typeof useQueryRuns.getState>["applyEvent"]>[1]) =>
   useQueryRuns.getState().applyEvent("t1", e);
@@ -31,7 +31,7 @@ test("events accumulate results, then error with index, then finish", () => {
   expect(run()).toMatchObject({
     running: false,
     cancelled: false,
-    error: { index: 2, message: "boom" },
+    error: { index: 2, kind: "query", message: "boom" },
   });
   expect(run().results.map((r) => [r.index, r.outcome.rowsAffected])).toEqual([
     [0, null],
@@ -50,7 +50,7 @@ test("preflight failure stops running with an index-less error", () => {
   useQueryRuns.getState().preflightFailed("t1", { kind: "invalid", message: "a query is already running" });
   expect(run()).toMatchObject({
     running: false,
-    error: { index: null, message: "a query is already running" },
+    error: { index: null, kind: "invalid", message: "a query is already running" },
   });
 });
 

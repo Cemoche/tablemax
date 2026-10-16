@@ -53,7 +53,11 @@ export function WorkspaceSwitcher({ connectionsActive, onShowConnections, onSele
               <button
                 type="button"
                 aria-label={strings.workspace.closeWorkspace(w.name)}
-                onClick={() => void closeWorkspace(w.id)}
+                onClick={() => {
+                  // The workspace is already gone from the UI; a failed backend close
+                  // (e.g. a lost connection) has nothing left to report to.
+                  closeWorkspace(w.id).catch(() => {});
+                }}
                 className="mr-1 rounded-sm px-1.5 hover:bg-surface-2"
               >
                 ×

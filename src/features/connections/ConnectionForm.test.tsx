@@ -96,3 +96,45 @@ test("host field shows the preview-build hint", () => {
   render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
   expect(screen.getByText("Only local connections in this preview build")).toBeInTheDocument();
 });
+
+test("sqlite never uses a password and switching back restores keyring mode", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.connectionSave).mockImplementation(async (c) => ({ ...c, id: "new" }));
+  vi.mocked(ipc.connectionTest).mockResolvedValue("3.46");
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+  await user.type(screen.getByLabelText("Name"), "lite");
+  await user.type(screen.getByLabelText("Password"), "typed-before-switch");
+  fireEvent.change(screen.getByLabelText("Driver"), { target: { value: "sqlite" } });
+  fireEvent.change(screen.getByLabelText("Database file"), { target: { value: "/tmp/a.db" } });
+
+  await user.click(screen.getByRole("button", { name: "Test" }));
+  await waitFor(() => expect(ipc.connectionTest).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(ipc.connectionTest).mock.calls[0][0].passwordMode).toBe("none");
+  expect(vi.mocked(ipc.connectionTest).mock.calls[0][1]).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(ipc.connectionSave).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(ipc.connectionSave).mock.calls[0][0].passwordMode).toBe("none");
+  expect(vi.mocked(ipc.connectionSave).mock.calls[0][1]).toBeNull();
+
+  fireEvent.change(screen.getByLabelText("Driver"), { target: { value: "postgres" } });
+  expect((screen.getByLabelText("Password storage") as HTMLSelectElement).value).toBe("keyring");
+});
+
+test("a stored sqlite connection in keyring mode is saved without a password", async () => {
+  const user = userEvent.setup();
+  const lite: ConnectionConfig = {
+    ...saved,
+    kind: "sqlite",
+    host: "",
+    port: 0,
+    sqlitePath: "/tmp/a.db",
+    passwordMode: "keyring",
+  };
+  vi.mocked(ipc.connectionSave).mockImplementation(async (c) => c);
+  render(<ConnectionForm connection={lite} onConnect={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(ipc.connectionSave).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(ipc.connectionSave).mock.calls[0][0].passwordMode).toBe("none");
+  expect(vi.mocked(ipc.connectionSave).mock.calls[0][1]).toBeNull();
+});

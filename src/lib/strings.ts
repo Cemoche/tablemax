@@ -78,13 +78,16 @@ export const strings = {
     cancelled: "Cancelled",
     resultsLabel: "Results",
     resultTab: (n: number) => `Result ${n}`,
-    resultHeader: (rows: number, ms: number) =>
-      `${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"} · ${ms} ms`,
+    resultHeader: (rows: number, ms: number, truncated = false) =>
+      `${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"}${
+        truncated ? ` (truncated to first ${rows.toLocaleString("en-US")})` : ""
+      } · ${ms} ms`,
     rowsAffected: (stmt: number, rows: number, ms: number) =>
       `Statement ${stmt}: ${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"} affected (${ms} ms)`,
     done: (stmt: number, ms: number) => `Statement ${stmt}: done (${ms} ms)`,
     failed: (stmt: number, message: string) => `Statement ${stmt}: ${message}`,
     failedNoIndex: (message: string) => message,
+    connectionLostHint: "Connection lost — run again to reconnect",
     empty: "Write a query and press Ctrl+Enter to run it",
   },
   sidebar: {

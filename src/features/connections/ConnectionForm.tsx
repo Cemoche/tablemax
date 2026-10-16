@@ -44,11 +44,15 @@ const blank = (): ConnectionConfig => ({
 
 type Notice = { tone: "ok" | "error"; text: string } | null;
 
+/** SQLite has no password: never keyring/ask (the backend forces "none" too). */
+const normalize = (c: ConnectionConfig): ConnectionConfig =>
+  c.kind === "sqlite" && c.passwordMode !== "none" ? { ...c, passwordMode: "none" } : c;
+
 const field = "w-full rounded-sm border border-border bg-bg px-2 py-1";
 const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2 disabled:opacity-50";
 
 export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Props) {
-  const [cfg, setCfg] = useState<ConnectionConfig>(connection ?? blank());
+  const [cfg, setCfg] = useState<ConnectionConfig>(normalize(connection ?? blank()));
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState<"test" | "save" | "connect" | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
@@ -56,14 +60,14 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Pr
   const remove = useConnections((s) => s.remove);
 
   useEffect(() => {
-    setCfg(connection ?? blank());
+    setCfg(normalize(connection ?? blank()));
     setPassword("");
     setNotice(null);
   }, [connection]);
 
   const patch = (p: Partial<ConnectionConfig>) => setCfg((c) => ({ ...c, ...p }));
   const isSqlite = cfg.kind === "sqlite";
-  const typed = cfg.passwordMode === "keyring" && password !== "" ? password : null;
+  const typed = !isSqlite && cfg.passwordMode === "keyring" && password !== "" ? password : null;
   const isExisting = cfg.id !== "";
 
   const fail = (e: unknown) => {
@@ -89,7 +93,7 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Pr
 
   const doSave = async () => {
     const saved = await save(cfg, typed);
-    setCfg(saved);
+    setCfg(normalize(saved));
     setPassword("");
     onSaved?.(saved);
     return saved;
@@ -119,7 +123,20 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Pr
       onDeleted?.(cfg.id);
     });
 
-  const setKind = (kind: DriverKind) => patch({ kind, port: DEFAULT_PORT[kind] || cfg.port });
+  const setKind = (kind: DriverKind) => {
+    if (kind === "sqlite") setPassword("");
+    patch({
+      kind,
+      port: DEFAULT_PORT[kind] || cfg.port,
+      // "none" only exists for SQLite in this form: leaving SQLite restores the default.
+      passwordMode:
+        kind === "sqlite"
+          ? "none"
+          : cfg.kind === "sqlite" && cfg.passwordMode === "none"
+            ? "keyring"
+            : cfg.passwordMode,
+    });
+  };
 
   return (
     <form

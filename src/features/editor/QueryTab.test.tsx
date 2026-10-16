@@ -30,9 +30,10 @@ vi.mock("./SqlEditor", () => ({
   ),
 }));
 
-const rs = (n: number) => ({
+const rs = (n: number, truncated = false) => ({
   columns: [{ name: "a", typeName: "int" }],
   rows: Array.from({ length: n }, (_, i) => [{ t: "int" as const, v: i }]),
+  truncated,
 });
 
 let emit: (e: ExecEvent) => void;
@@ -185,4 +186,65 @@ test("closing the tab while the session is opening closes the session and never 
   expect(ipc.sqlSessionClose).toHaveBeenCalledWith("s9");
   expect(ipc.sqlExecute).not.toHaveBeenCalled();
   expect(useQueryRuns.getState().runs.t1).toBeUndefined();
+});
+
+test("a capped result says it was truncated", async () => {
+  await setup("select * from big");
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  act(() => {
+    emit({
+      event: "statementFinished",
+      data: { index: 0, outcome: { result: rs(10_000, true), rowsAffected: null, elapsedMs: 9 } },
+    });
+    emit({ event: "batchFinished", data: { cancelled: false } });
+  });
+  expect(screen.getByText("10,000 rows (truncated to first 10,000) · 9 ms")).toBeInTheDocument();
+});
+
+test("a lost connection drops the session and the next Run reconnects", async () => {
+  vi.mocked(ipc.sqlSessionClose).mockResolvedValue(undefined);
+  await setup("select 1");
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
+  act(() => {
+    emit({
+      event: "statementFailed",
+      data: { index: 0, error: { kind: "connectionLost", message: "connection lost" } },
+    });
+    emit({ event: "batchFinished", data: { cancelled: false } });
+  });
+  expect(ipc.sqlSessionClose).toHaveBeenCalledWith("s1");
+  expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: null });
+  expect(useQueryRuns.getState().runs.t1.error).toMatchObject({ kind: "connectionLost" });
+  expect(screen.getByText("Connection lost — run again to reconnect")).toBeInTheDocument();
+
+  vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s2");
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
+  expect(ipc.sqlSessionOpen).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[1][0]).toBe("s2");
+  expect(screen.queryByText("Connection lost — run again to reconnect")).toBeNull();
+});
+
+test("an execute rejected with connectionLost also drops the session", async () => {
+  vi.mocked(ipc.sqlSessionClose).mockResolvedValue(undefined);
+  await setup("select 1");
+  vi.mocked(ipc.sqlExecute).mockRejectedValueOnce({ kind: "connectionLost", message: "gone" });
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  expect(await screen.findByText("Connection lost — run again to reconnect")).toBeInTheDocument();
+  expect(ipc.sqlSessionClose).toHaveBeenCalledWith("s1");
+  expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: null });
+});
+
+test("other errors keep the session", async () => {
+  await setup("select boom");
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  act(() => {
+    emit({ event: "statementFailed", data: { index: 0, error: { kind: "query", message: "x" } } });
+    emit({ event: "batchFinished", data: { cancelled: false } });
+  });
+  expect(ipc.sqlSessionClose).not.toHaveBeenCalled();
+  expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: "s1" });
 });

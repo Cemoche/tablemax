@@ -74,3 +74,16 @@ test("statementAt picks the statement under the cursor, else the previous one", 
   expect(statementAt([], 0)).toBeNull();
   expect(statementAt(splitStatements("\n\nselect 1", "postgres"), 0)).toBeNull();
 });
+
+test("MySQL executable comments are code, other block comments are not", () => {
+  expect(texts("/*!40014 SET FOREIGN_KEY_CHECKS=0 */;", "mySql")).toEqual([
+    "/*!40014 SET FOREIGN_KEY_CHECKS=0 */",
+  ]);
+  expect(texts("/*M!100101 SET x=1 */; select 1", "mySql")).toEqual([
+    "/*M!100101 SET x=1 */",
+    "select 1",
+  ]);
+  // Plain comments, and `/*!` outside MySQL, stay comment-only.
+  expect(texts("/* note */; select 1", "mySql")).toEqual(["select 1"]);
+  expect(texts("/*! not special */; select 1", "postgres")).toEqual(["select 1"]);
+});

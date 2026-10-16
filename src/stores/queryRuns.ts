@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AppError, ExecEvent, StatementOutcome } from "../lib/types";
+import type { AppError, ErrorKind, ExecEvent, StatementOutcome } from "../lib/types";
 
 export interface StatementResult {
   /** Index within the batch that was sent (0-based). */
@@ -13,7 +13,7 @@ export interface QueryRun {
   total: number;
   results: StatementResult[];
   /** `index` is null for errors not tied to a statement (e.g. a rejected batch). */
-  error: { index: number | null; message: string } | null;
+  error: { index: number | null; kind: ErrorKind; message: string } | null;
   cancelled: boolean;
 }
 
@@ -58,14 +58,19 @@ export const useQueryRuns = create<QueryRunsState>((set) => {
               results: [...r.results, { index: e.data.index, outcome: e.data.outcome }],
             };
           case "statementFailed":
-            return { ...r, error: { index: e.data.index, message: e.data.error.message } };
+            return {
+              ...r,
+              error: { index: e.data.index, kind: e.data.error.kind, message: e.data.error.message },
+            };
           case "batchFinished":
             return { ...r, running: false, cancelled: e.data.cancelled };
         }
       }),
     preflightFailed: (tabId, error) =>
       patch(tabId, (r) =>
-        r.running ? { ...r, running: false, error: { index: null, message: error.message } } : r,
+        r.running
+          ? { ...r, running: false, error: { index: null, kind: error.kind, message: error.message } }
+          : r,
       ),
     drop: (tabId) =>
       set((s) => {

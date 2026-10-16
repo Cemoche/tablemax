@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import type { CellValue } from "../../lib/types";
 import { cellContent } from "./cellContent";
 
 test("NULL and empty string are displayed differently", () => {
@@ -37,4 +38,18 @@ test("multi-line text is shown on one line but copied intact", () => {
   const c = cellContent({ t: "text", v: "a\nb" });
   expect(c.display).toBe("a b");
   expect(c.copyText).toBe("a\nb");
+});
+
+test("an i64 beyond 2^53 parsed from the Rust wire JSON keeps its exact digits", () => {
+  // Exact output of serde_json for int_value(i64::MAX) (value.rs tests).
+  const max: CellValue = JSON.parse('{"t":"bigInt","v":"9223372036854775807"}');
+  expect(cellContent(max)).toMatchObject({
+    kind: "number",
+    display: "9223372036854775807",
+    copyText: "9223372036854775807",
+  });
+  const min: CellValue = JSON.parse('{"t":"bigInt","v":"-9223372036854775808"}');
+  expect(cellContent(min).display).toBe("-9223372036854775808");
+  // What the old Int encoding would have produced: a rounded JS number.
+  expect(String(JSON.parse("9223372036854775807"))).not.toBe("9223372036854775807");
 });

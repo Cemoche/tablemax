@@ -12,6 +12,7 @@ const obj = { schema: "public", name: "users" };
 const page = (n: number) => ({
   columns: [{ name: "id", typeName: "int" }],
   rows: Array.from({ length: n }, (_, i) => [{ t: "int" as const, v: i }]),
+  truncated: false,
 });
 
 beforeEach(() => {

@@ -3,6 +3,7 @@ import type {
   CellValue,
   ConnectionConfig,
   ExecEvent,
+  ResultSet,
   RowCount,
   WorkspaceInfo,
 } from "./types";
@@ -53,4 +54,11 @@ test("WorkspaceInfo, RowCount and ConnectionConfig fixtures", () => {
     group: null,
   };
   expect(Object.keys(c)).toContain("envTag");
+});
+
+test("ResultSet carries the truncated flag", () => {
+  const r: ResultSet = JSON.parse(
+    '{"columns":[{"name":"g","typeName":"int8"}],"rows":[[{"t":"int","v":1}]],"truncated":true}',
+  );
+  expect(r.truncated).toBe(true);
 });

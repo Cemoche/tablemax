@@ -58,6 +58,10 @@ export function splitStatements(sql: string, dialect: Dialect): Statement[] {
     } else if (c === "#" && mysql) {
       i = skipLine(i + 1);
     } else if (c === "/" && next === "*") {
+      // MySQL runs the body of `/*! ... */` and `/*M! ... */`: they are code.
+      if (mysql && (sql[i + 2] === "!" || (sql[i + 2] === "M" && sql[i + 3] === "!"))) {
+        hasCode = true;
+      }
       let depth = 1;
       i += 2;
       while (i < n && depth > 0) {

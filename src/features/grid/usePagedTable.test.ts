@@ -11,6 +11,7 @@ const obj = { schema: "public", name: "users" };
 const rs = (n: number): ResultSet => ({
   columns: [{ name: "id", typeName: "int" }],
   rows: Array.from({ length: n }, (_, i) => [{ t: "int", v: i }]),
+  truncated: false,
 });
 
 beforeEach(() => {
