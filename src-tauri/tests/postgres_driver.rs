@@ -302,3 +302,31 @@ async fn pg_terminated_backend_reports_connection_lost() {
         assert_eq!(again.err().unwrap().kind, ErrorKind::ConnectionLost);
     }
 }
+
+#[tokio::test]
+async fn pg_execute_rejects_multiple_statements() {
+    for url in pg_urls() {
+        let (s, g) = open(&url).await;
+        let n = &g.name;
+        let e = s.execute("select 1; select 2").await.err().unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+        let e = s
+            .execute(&format!(
+                "create table \"{n}\".x(a int); insert into \"{n}\".x values (1)"
+            ))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+        assert!(s.list_objects(Some(n)).await.unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn pg_rejects_non_local_host() {
+    let mut params = params_from_url(&pg_urls()[0], DriverKind::Postgres);
+    params.host = "10.0.0.5".into();
+    let e = connect_postgres(&params).await.err().unwrap();
+    assert_eq!(e.kind, ErrorKind::Connection);
+    assert!(e.message.contains("TLS is not supported yet"));
+}

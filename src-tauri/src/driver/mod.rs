@@ -152,6 +152,25 @@ pub trait Session: Send + Sync {
     async fn close(&self) -> AppResult<()>;
 }
 
+/// Plan 1 has no TLS: refuse any host that is not local so nothing travels in cleartext.
+/// Allowed: `localhost`, loopback IPs (127.0.0.0/8, ::1) and unix socket dirs (`/...`).
+pub fn ensure_local_host(host: &str) -> AppResult<()> {
+    let ok = host.starts_with('/')
+        || host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    if ok {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            ErrorKind::Connection,
+            "TLS is not supported yet: only local connections are allowed in this build",
+        ))
+    }
+}
+
 pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {
     // Driver tasks replace these arms.
     match params.kind {
@@ -169,6 +188,26 @@ pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ensure_local_host_allows_only_local() {
+        for h in [
+            "localhost",
+            "127.0.0.1",
+            "127.1.2.3",
+            "::1",
+            "/var/run/postgresql",
+        ] {
+            assert!(ensure_local_host(h).is_ok(), "{h}");
+        }
+        for h in ["db.example.com", "10.0.0.5", "0.0.0.0"] {
+            assert_eq!(
+                ensure_local_host(h).unwrap_err().kind,
+                ErrorKind::Connection,
+                "{h}"
+            );
+        }
+    }
 
     #[test]
     fn connect_params_debug_redacts_password() {

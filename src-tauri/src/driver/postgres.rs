@@ -81,6 +81,7 @@ fn map_err(e: tokio_postgres::Error) -> AppError {
 }
 
 pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
+    super::ensure_local_host(&p.host)?;
     let mut cfg = Config::new();
     cfg.host(&p.host).port(p.port).user(&p.user);
     if let Some(pw) = &p.password {
@@ -145,6 +146,15 @@ impl PgSession {
                     .collect(),
             ),
             Err(e) => {
+                if e.as_db_error()
+                    .is_some_and(|d| d.message().contains("multiple commands"))
+                {
+                    // Detected at parse time: nothing has been executed.
+                    return Err(AppError::new(
+                        ErrorKind::Invalid,
+                        "execute accepts exactly one statement",
+                    ));
+                }
                 let err = map_err(e);
                 if matches!(err.kind, ErrorKind::Cancelled | ErrorKind::ConnectionLost) {
                     return Err(err);
