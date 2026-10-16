@@ -14,7 +14,7 @@
 //! (no `Debug` output, not serializable) until the workspace is closed.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -24,7 +24,7 @@ use tokio::time::Instant;
 use crate::driver::{self, Canceller, ConnectParams, Dialect, Session, StatementOutcome};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
-use crate::store::{self, ConnectionConfig, ConnectionStore, PasswordMode};
+use crate::store::{self, ConnectionConfig, ConnectionStore, PasswordMode, same_identity};
 
 /// How often a pending cancel is re-sent while the statement is still running.
 pub const CANCEL_RESEND_INTERVAL: Duration = Duration::from_millis(100);
@@ -82,18 +82,27 @@ struct Workspace {
     sql_sessions: Vec<String>,
 }
 
+/// Control flags of one batch. A fresh one is installed for every batch, so no flag
+/// can carry over from a previous batch.
+#[derive(Default)]
+struct BatchCtl {
+    /// Cancel was requested: run no further statements.
+    cancel_requested: AtomicBool,
+    /// A statement is in flight (or about to start) on the driver.
+    in_statement: AtomicBool,
+    /// A cancel loop is re-sending cancels for this batch (dedupes the loop only).
+    cancelling: AtomicBool,
+}
+
 struct SqlSession {
     workspace_id: String,
     session: Arc<dyn Session>,
     canceller: Arc<dyn Canceller>,
-    /// A batch is running on this session.
-    running: AtomicBool,
-    /// Cancel was requested for the running batch: run no further statements.
-    cancel_requested: AtomicBool,
-    /// A statement is in flight (or about to start) on the driver.
-    in_statement: AtomicBool,
-    /// A cancel loop is re-sending cancels; a new batch waits for it to finish.
-    cancelling: AtomicBool,
+    /// The running batch, if any. Short lock, never held across `.await`.
+    current: Mutex<Option<Arc<BatchCtl>>>,
+    /// Cancel loops still alive on this session (they may outlive their batch while a
+    /// re-sent cancel is in flight); a new batch waits for them before its first statement.
+    resend_loops: AtomicUsize,
 }
 
 impl SqlSession {
@@ -102,20 +111,36 @@ impl SqlSession {
             workspace_id: workspace_id.to_string(),
             canceller: session.canceller(),
             session,
-            running: AtomicBool::new(false),
-            cancel_requested: AtomicBool::new(false),
-            in_statement: AtomicBool::new(false),
-            cancelling: AtomicBool::new(false),
+            current: Mutex::new(None),
+            resend_loops: AtomicUsize::new(0),
+        }
+    }
+
+    fn current(&self) -> MutexGuard<'_, Option<Arc<BatchCtl>>> {
+        self.current.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Uninstalls the batch's ctl when the batch ends (also on panic or drop).
+struct EndBatch<'a>(&'a SqlSession, Arc<BatchCtl>);
+
+impl Drop for EndBatch<'_> {
+    fn drop(&mut self) {
+        self.1.in_statement.store(false, SeqCst);
+        let mut cur = self.0.current();
+        if cur.as_ref().is_some_and(|c| Arc::ptr_eq(c, &self.1)) {
+            *cur = None;
         }
     }
 }
 
-/// Clears the flag when dropped (also on panic or when the future is dropped).
-struct ClearOnDrop<'a>(&'a AtomicBool);
+/// Decrements the session's live cancel-loop count and frees the batch's loop slot.
+struct EndResendLoop<'a>(&'a SqlSession, &'a BatchCtl);
 
-impl Drop for ClearOnDrop<'_> {
+impl Drop for EndResendLoop<'_> {
     fn drop(&mut self) {
-        self.0.store(false, SeqCst);
+        self.1.cancelling.store(false, SeqCst);
+        self.0.resend_loops.fetch_sub(1, SeqCst);
     }
 }
 
@@ -163,24 +188,28 @@ fn connect_params(cfg: &ConnectionConfig, password: Option<String>) -> ConnectPa
 }
 
 /// Requests cancellation of the batch running on `entry` (no-op when idle).
-/// Sets `cancel_requested` so no further statement starts, then sends the driver
-/// cancel and re-sends it every [`CANCEL_RESEND_INTERVAL`] until the in-flight
-/// statement returns, for at most [`CANCEL_TIMEOUT`]. On timeout the request stays
-/// recorded (the batch stops after the statement); the last canceller error, if
-/// any, is returned.
+/// Records `cancel_requested` on the batch first (so no further statement starts,
+/// even if another cancel loop is already active), then sends the driver cancel and
+/// re-sends it every [`CANCEL_RESEND_INTERVAL`] until the in-flight statement
+/// returns, for at most [`CANCEL_TIMEOUT`]. Only the re-send loop is deduplicated.
+/// On timeout the request stays recorded (the batch stops after the statement); the
+/// last canceller error, if any, is returned.
 async fn request_cancel(entry: &SqlSession) -> AppResult<()> {
-    if entry.cancelling.swap(true, SeqCst) {
-        // Another cancel loop is already working on this batch.
+    let Some(ctl) = entry.current().clone() else {
+        return Ok(());
+    };
+    ctl.cancel_requested.store(true, SeqCst);
+    if ctl.cancelling.swap(true, SeqCst) {
+        // Another loop is already re-sending for this batch.
         return Ok(());
     }
-    let _clear = ClearOnDrop(&entry.cancelling);
-    if !entry.running.load(SeqCst) {
-        return Ok(());
-    }
-    entry.cancel_requested.store(true, SeqCst);
+    // Count the loop before reading `in_statement`: a batch starting after this point
+    // waits for the loop, so a late re-send cannot hit its first statement.
+    entry.resend_loops.fetch_add(1, SeqCst);
+    let _end = EndResendLoop(entry, &ctl);
     let deadline = Instant::now() + CANCEL_TIMEOUT;
     let mut last_err = None;
-    while entry.in_statement.load(SeqCst) {
+    while ctl.in_statement.load(SeqCst) {
         let now = Instant::now();
         if now >= deadline {
             return last_err.map_or(Ok(()), Err);
@@ -194,7 +223,7 @@ async fn request_cancel(entry: &SqlSession) -> AppResult<()> {
             )),
         };
         let next = (now + CANCEL_RESEND_INTERVAL).min(deadline);
-        while entry.in_statement.load(SeqCst) && Instant::now() < next {
+        while ctl.in_statement.load(SeqCst) && Instant::now() < next {
             tokio::time::sleep(POLL).await;
         }
     }
@@ -203,9 +232,7 @@ async fn request_cancel(entry: &SqlSession) -> AppResult<()> {
 
 /// Stops whatever runs on the session, then closes its connection.
 async fn shutdown_sql(entry: &SqlSession) -> AppResult<()> {
-    if entry.running.load(SeqCst) {
-        let _ = request_cancel(entry).await;
-    }
+    let _ = request_cancel(entry).await;
     entry.session.close().await
 }
 
@@ -253,6 +280,9 @@ impl SessionManager {
     /// Password for connecting with `cfg`: `None` mode → none; `Ask` → the argument or
     /// an Auth error (before any network I/O); `Keyring` → the argument if given, else
     /// the stored secret (only for saved configs, i.e. non-empty id).
+    ///
+    /// `cfg` must be the stored config for `cfg.id` (or have an empty id): callers
+    /// holding a frontend-supplied config check `same_identity` first.
     async fn resolve_password(
         &self,
         cfg: &ConnectionConfig,
@@ -275,11 +305,30 @@ impl SessionManager {
     }
 
     /// Connects with `cfg` (saved or not), returns the server version, disconnects.
+    ///
+    /// `cfg` comes from the frontend and may differ from what is stored under
+    /// `cfg.id`: the keyring secret is only reused when the connection identity
+    /// (kind, host, port, user, database, sqlite_path) matches the stored config, so
+    /// an edited config can never send the stored password elsewhere. Otherwise an
+    /// explicit password is required (Auth "password required", before any I/O).
     pub async fn test_connection(
         &self,
         cfg: &ConnectionConfig,
         password: Option<String>,
     ) -> AppResult<String> {
+        let mut cfg = cfg.clone();
+        if cfg.password_mode == PasswordMode::Keyring && password.is_none() && !cfg.id.is_empty() {
+            let store = self.store.clone();
+            let id = cfg.id.clone();
+            match blocking(move || store.get(&id)).await {
+                Ok(stored) if same_identity(&stored, &cfg) => {}
+                Ok(_) => return Err(AppError::new(ErrorKind::Auth, "password required")),
+                // Not saved: there is no stored identity to bind a secret to.
+                Err(e) if e.kind == ErrorKind::NotFound => cfg.id.clear(),
+                Err(e) => return Err(e),
+            }
+        }
+        let cfg = &cfg;
         let password = self.resolve_password(cfg, password).await?;
         let session = driver::connect(&connect_params(cfg, password)).await?;
         let version = session.server_version();
@@ -427,22 +476,23 @@ impl SessionManager {
         sink: impl Fn(ExecEvent) + Send + Sync,
     ) -> AppResult<()> {
         let entry = self.sql_entry(session_id)?;
-        if entry
-            .running
-            .compare_exchange(false, true, SeqCst, SeqCst)
-            .is_err()
+        let ctl = Arc::new(BatchCtl::default());
         {
-            return Err(AppError::new(
-                ErrorKind::Invalid,
-                "a query is already running",
-            ));
+            let mut cur = entry.current();
+            if cur.is_some() {
+                return Err(AppError::new(
+                    ErrorKind::Invalid,
+                    "a query is already running",
+                ));
+            }
+            *cur = Some(ctl.clone());
         }
-        let _running = ClearOnDrop(&entry.running);
-        let _in_statement = ClearOnDrop(&entry.in_statement);
-        entry.cancel_requested.store(false, SeqCst);
-        // A cancel loop left over from the previous batch must not hit this one.
+        let _end = EndBatch(&entry, ctl.clone());
+        // A cancel loop left over from a previous batch may still have a re-sent cancel
+        // in flight; let it land before our first statement. A cancel requested for
+        // this batch meanwhile is recorded on `ctl` and honoured below.
         let deadline = Instant::now() + CANCEL_TIMEOUT;
-        while entry.cancelling.load(SeqCst) && Instant::now() < deadline {
+        while entry.resend_loops.load(SeqCst) > 0 && Instant::now() < deadline {
             tokio::time::sleep(POLL).await;
         }
 
@@ -450,25 +500,26 @@ impl SessionManager {
         for (index, sql) in statements.iter().enumerate() {
             // Mark the statement in flight before checking the flag: `request_cancel`
             // sets the flag before reading `in_statement`, so one side always sees the other.
-            entry.in_statement.store(true, SeqCst);
-            if entry.cancel_requested.load(SeqCst) {
+            ctl.in_statement.store(true, SeqCst);
+            if ctl.cancel_requested.load(SeqCst) {
+                ctl.in_statement.store(false, SeqCst);
                 cancelled = true;
                 break;
             }
             sink(ExecEvent::StatementStarted { index });
             let result = entry.session.execute(sql).await;
-            entry.in_statement.store(false, SeqCst);
+            ctl.in_statement.store(false, SeqCst);
             match result {
                 Ok(outcome) => {
                     sink(ExecEvent::StatementFinished { index, outcome });
-                    if entry.cancel_requested.load(SeqCst) {
+                    if ctl.cancel_requested.load(SeqCst) {
                         cancelled = true;
                         break;
                     }
                 }
                 Err(error) => {
                     cancelled =
-                        error.kind == ErrorKind::Cancelled || entry.cancel_requested.load(SeqCst);
+                        error.kind == ErrorKind::Cancelled || ctl.cancel_requested.load(SeqCst);
                     sink(ExecEvent::StatementFailed { index, error });
                     break;
                 }
@@ -933,15 +984,18 @@ mod tests {
     /// A session whose statements ignore cancellation and take `delay` to complete.
     struct StubbornSession {
         delay: Duration,
+        cancel_delay: Duration,
         cancels: Arc<AtomicUsize>,
     }
 
-    struct CountingCanceller(Arc<AtomicUsize>);
+    /// Counts cancels; each takes `.1` to complete (a slow KILL over a new connection).
+    struct CountingCanceller(Arc<AtomicUsize>, Duration);
 
     #[async_trait]
     impl Canceller for CountingCanceller {
         async fn cancel(&self) -> AppResult<()> {
             self.0.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.1).await;
             Ok(())
         }
     }
@@ -975,7 +1029,7 @@ mod tests {
             })
         }
         fn canceller(&self) -> Arc<dyn Canceller> {
-            Arc::new(CountingCanceller(self.cancels.clone()))
+            Arc::new(CountingCanceller(self.cancels.clone(), self.cancel_delay))
         }
         async fn close(&self) -> AppResult<()> {
             Ok(())
@@ -983,10 +1037,19 @@ mod tests {
     }
 
     async fn stubborn_session(fx: &Fx, delay: Duration) -> (String, Arc<AtomicUsize>) {
+        stubborn_session_with(fx, delay, Duration::ZERO).await
+    }
+
+    async fn stubborn_session_with(
+        fx: &Fx,
+        delay: Duration,
+        cancel_delay: Duration,
+    ) -> (String, Arc<AtomicUsize>) {
         let ws = sqlite_ws(fx).await;
         let cancels = Arc::new(AtomicUsize::new(0));
         let session: Arc<dyn Session> = Arc::new(StubbornSession {
             delay,
+            cancel_delay,
             cancels: cancels.clone(),
         });
         let sid = fx
@@ -1040,5 +1103,123 @@ mod tests {
         );
         batch.await.unwrap().unwrap();
         assert_eq!(c.all(), ["started0", "finished0", "batch:true"]);
+    }
+
+    /// A cancel loop from batch 1 outlives it (its re-sent cancel is slow). A cancel
+    /// issued while batch 2 waits for that loop must still stop batch 2 before its
+    /// first statement.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_during_wait_for_previous_cancel_loop_is_not_lost() {
+        let fx = fixture();
+        let (sid, _cancels) =
+            stubborn_session_with(&fx, Duration::from_millis(200), Duration::from_secs(1)).await;
+        let mut c1 = Collector::new();
+        let sink = c1.sink();
+        let (mgr, s) = (fx.mgr.clone(), sid.clone());
+        let batch1 = tokio::spawn(async move { mgr.execute_batch(&s, sql(&["a"]), sink).await });
+        c1.wait_for("started0").await;
+        let (mgr, s) = (fx.mgr.clone(), sid.clone());
+        let cancel1 = tokio::spawn(async move { mgr.cancel(&s).await });
+        c1.wait_for("batch:true").await;
+        batch1.await.unwrap().unwrap();
+        assert!(
+            !cancel1.is_finished(),
+            "the first cancel loop must outlive batch 1"
+        );
+
+        let c2 = Collector::new();
+        let sink = c2.sink();
+        let (mgr, s) = (fx.mgr.clone(), sid.clone());
+        let batch2 = tokio::spawn(async move { mgr.execute_batch(&s, sql(&["b"]), sink).await });
+        // Virtual time: batch 2 is now waiting for the in-flight cancel (1 s) to land.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!cancel1.is_finished() && c2.all().is_empty());
+        fx.mgr.cancel(&sid).await.unwrap();
+        batch2.await.unwrap().unwrap();
+        cancel1.await.unwrap().unwrap();
+        assert_eq!(c2.all(), ["batch:true"]);
+        // Nothing carries over: the next batch runs normally.
+        let c3 = Collector::new();
+        fx.mgr
+            .execute_batch(&sid, sql(&["c"]), c3.sink())
+            .await
+            .unwrap();
+        assert_eq!(c3.all(), ["started0", "finished0", "batch:false"]);
+    }
+
+    #[tokio::test]
+    async fn test_connection_with_changed_host_requires_password() {
+        let fx = fixture();
+        let mut c = cfg(DriverKind::Postgres, PasswordMode::Keyring);
+        c.host = "127.0.0.1".into();
+        c.port = 1;
+        let saved = fx
+            .mgr
+            .save_connection(c, Some("stored-pw".into()))
+            .await
+            .unwrap();
+        let mut changed = saved.clone();
+        changed.host = "127.0.0.2".into();
+        // Reaching the driver would give a Connection error (nothing listens on port 1).
+        let err = fx.mgr.test_connection(&changed, None).await.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Auth);
+        assert_eq!(err.message, "password required");
+    }
+
+    /// Secret store that counts reads.
+    struct CountingSecrets {
+        inner: MemorySecretStore,
+        gets: AtomicUsize,
+    }
+
+    impl SecretStore for CountingSecrets {
+        fn available(&self) -> bool {
+            true
+        }
+        fn set(&self, k: &SecretKey, v: &str) -> AppResult<()> {
+            self.inner.set(k, v)
+        }
+        fn get(&self, k: &SecretKey) -> AppResult<Option<String>> {
+            self.gets.fetch_add(1, Ordering::SeqCst);
+            self.inner.get(k)
+        }
+        fn delete(&self, k: &SecretKey) -> AppResult<()> {
+            self.inner.delete(k)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_connection_uses_keyring_only_for_unchanged_identity() {
+        let fx = fixture();
+        let secrets = Arc::new(CountingSecrets {
+            inner: MemorySecretStore::new(),
+            gets: AtomicUsize::new(0),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
+        let mgr = SessionManager::new(Arc::new(store), secrets.clone());
+        let mut c = sqlite_cfg(&fx);
+        c.password_mode = PasswordMode::Keyring;
+        let saved = mgr.save_connection(c, Some("pw".into())).await.unwrap();
+
+        // Unchanged identity (only cosmetic fields differ): the keyring is read.
+        let mut renamed = saved.clone();
+        renamed.name = "renamed".into();
+        renamed.color = "#000".into();
+        mgr.test_connection(&renamed, None).await.unwrap();
+        assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
+
+        // Changed identity: Auth error, keyring untouched.
+        let mut moved = saved.clone();
+        moved.sqlite_path = Some(dir.path().join("other.db").to_string_lossy().into());
+        let err = mgr.test_connection(&moved, None).await.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Auth);
+        assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
+
+        // An explicit password is always accepted (and the keyring is not read).
+        mgr.test_connection(&saved, Some("typed".into()))
+            .await
+            .unwrap();
+        assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
     }
 }

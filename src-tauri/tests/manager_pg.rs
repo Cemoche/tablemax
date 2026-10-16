@@ -95,3 +95,36 @@ async fn cancel_marks_batch_cancelled_pg() {
 
     mgr.close_workspace(&ws.workspace_id).await.unwrap();
 }
+
+#[tokio::test]
+async fn test_connection_reuses_keyring_only_for_unchanged_identity_pg() {
+    let url = &common::pg_urls()[0];
+    let p = common::params_from_url(url, DriverKind::Postgres);
+    let dir = tempfile::tempdir().unwrap();
+    let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
+    let mgr = SessionManager::new(Arc::new(store), Arc::new(MemorySecretStore::new()));
+    let cfg = ConnectionConfig {
+        id: String::new(),
+        name: "pg".into(),
+        color: "#888".into(),
+        env_tag: EnvTag::Local,
+        kind: DriverKind::Postgres,
+        host: p.host.clone(),
+        port: p.port,
+        user: p.user.clone(),
+        database: p.database.clone(),
+        sqlite_path: None,
+        password_mode: PasswordMode::Keyring,
+        group: None,
+    };
+    let saved = mgr.save_connection(cfg, p.password.clone()).await.unwrap();
+    // Same identity: the stored password authenticates against the real server.
+    let version = mgr.test_connection(&saved, None).await.unwrap();
+    assert!(!version.is_empty());
+    // Another user on the same server: the stored password must not be sent.
+    let mut other = saved.clone();
+    other.user = "someone_else".into();
+    let err = mgr.test_connection(&other, None).await.unwrap_err();
+    assert_eq!(err.kind, tablemax_lib::error::ErrorKind::Auth);
+    assert_eq!(err.message, "password required");
+}

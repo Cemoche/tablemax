@@ -147,6 +147,22 @@ impl ConnectionStore {
     }
 }
 
+/// True when both configs designate the same server account: a stored keyring
+/// secret may only be used for a config whose identity matches the stored one.
+pub fn same_identity(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
+    a.kind == b.kind
+        && a.host == b.host
+        && a.port == b.port
+        && a.user == b.user
+        && a.database == b.database
+        && a.sqlite_path == b.sqlite_path
+}
+
+/// Saves `cfg` (assigning an id when empty) and its password per `password_mode`.
+/// Keyring mode without a new password keeps the stored secret, but only when the
+/// connection identity is unchanged; changing it requires a new password (Auth
+/// "password required", nothing is modified), so a secret never follows an edit to
+/// another host or account.
 pub fn save_connection(
     store: &ConnectionStore,
     secrets: &dyn SecretStore,
@@ -155,6 +171,15 @@ pub fn save_connection(
 ) -> AppResult<ConnectionConfig> {
     if cfg.id.is_empty() {
         cfg.id = uuid::Uuid::new_v4().to_string();
+    } else if cfg.password_mode == PasswordMode::Keyring && password.is_none() {
+        match store.get(&cfg.id) {
+            Ok(stored) if !same_identity(&stored, &cfg) => {
+                return Err(AppError::new(ErrorKind::Auth, "password required"));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind == ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
     }
     let key = SecretKey::new(cfg.id.clone(), SecretKind::DbPassword);
     match (cfg.password_mode, password) {
@@ -272,6 +297,50 @@ mod tests {
         let key = SecretKey::new(saved.id.clone(), SecretKind::DbPassword);
         assert_eq!(sec.get(&key).unwrap().as_deref(), Some("pw"));
         assert_eq!(store.get(&saved.id).unwrap().name, "renamed");
+    }
+
+    #[test]
+    fn save_connection_with_changed_identity_requires_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let sec = MemorySecretStore::new();
+        let saved = save_connection(
+            &store,
+            &sec,
+            cfg("x", PasswordMode::Keyring),
+            Some("pw".into()),
+        )
+        .unwrap();
+        let key = SecretKey::new(saved.id.clone(), SecretKind::DbPassword);
+        type Edit = fn(&mut ConnectionConfig);
+        let edits: [Edit; 6] = [
+            |c| c.host = "127.0.0.2".into(),
+            |c| c.port = 5433,
+            |c| c.user = "other".into(),
+            |c| c.database = Some("other".into()),
+            |c| c.kind = DriverKind::MySql,
+            |c| c.sqlite_path = Some("/tmp/x.db".into()),
+        ];
+        for edit in edits {
+            let mut changed = saved.clone();
+            changed.name = "renamed".into();
+            edit(&mut changed);
+            let err = save_connection(&store, &sec, changed, None).unwrap_err();
+            assert_eq!(err.kind, ErrorKind::Auth);
+            assert_eq!(err.message, "password required");
+            assert_eq!(
+                store.get(&saved.id).unwrap(),
+                saved,
+                "row must be unchanged"
+            );
+            assert_eq!(sec.get(&key).unwrap().as_deref(), Some("pw"));
+        }
+        // With a new password the edit goes through and the secret is replaced.
+        let mut changed = saved.clone();
+        changed.host = "127.0.0.2".into();
+        save_connection(&store, &sec, changed.clone(), Some("pw2".into())).unwrap();
+        assert_eq!(store.get(&saved.id).unwrap(), changed);
+        assert_eq!(sec.get(&key).unwrap().as_deref(), Some("pw2"));
     }
 
     #[test]
