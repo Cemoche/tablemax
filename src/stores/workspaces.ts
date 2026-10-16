@@ -4,6 +4,7 @@ import { strings } from "../lib/strings";
 import type { ConnectionConfig, Dialect, EnvTag, ObjectRef } from "../lib/types";
 import { useConnections } from "./connections";
 import { useGridViews } from "./gridViews";
+import { useQueryRuns } from "./queryRuns";
 
 export type Tab =
   | { id: string; kind: "table"; object: ObjectRef; title: string }
@@ -33,6 +34,12 @@ interface WorkspacesState {
   openQueryTab: (wsId: string) => void;
   closeTab: (wsId: string, tabId: string) => void;
   activateTab: (wsId: string, tabId: string) => void;
+  /** Patches a query tab (no-op for table tabs). */
+  updateTab: (
+    wsId: string,
+    tabId: string,
+    patch: Partial<{ sql: string; sqlSessionId: string | null; title: string }>,
+  ) => void;
 }
 
 /** Per-workspace query counter: never reused, even after tabs close. */
@@ -111,6 +118,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       queryCounters.delete(id);
       for (const t of get().workspaces.find((w) => w.id === id)?.tabs ?? []) {
         useGridViews.getState().dropView(t.id);
+        useQueryRuns.getState().drop(t.id);
       }
       set((s) => {
         const idx = s.workspaces.findIndex((w) => w.id === id);
@@ -158,6 +166,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
         void ipc.sqlSessionClose(tab.sqlSessionId)?.catch(() => {});
       }
       useGridViews.getState().dropView(tabId);
+      useQueryRuns.getState().drop(tabId);
       update(wsId, (w) => {
         const idx = w.tabs.findIndex((t) => t.id === tabId);
         const tabs = w.tabs.filter((t) => t.id !== tabId);
@@ -168,5 +177,11 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     },
 
     activateTab: (wsId, tabId) => update(wsId, (w) => ({ ...w, activeTabId: tabId })),
+
+    updateTab: (wsId, tabId, patch) =>
+      update(wsId, (w) => ({
+        ...w,
+        tabs: w.tabs.map((t) => (t.id === tabId && t.kind === "query" ? { ...t, ...patch } : t)),
+      })),
   };
 });

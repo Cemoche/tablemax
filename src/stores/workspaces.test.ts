@@ -2,6 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../lib/ipc";
 import type { ConnectionConfig } from "../lib/types";
 import { useConnections } from "./connections";
+import { useQueryRuns } from "./queryRuns";
 import { useWorkspaces } from "./workspaces";
 
 vi.mock("../lib/ipc");
@@ -144,4 +145,27 @@ test("closeWorkspace calls backend, drops state and moves active", async () => {
   expect(ipc.workspaceClose).toHaveBeenCalledWith("w1");
   expect(useWorkspaces.getState().workspaces).toHaveLength(0);
   expect(useWorkspaces.getState().activeWorkspaceId).toBeNull();
+});
+
+test("updateTab patches query tabs only", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openQueryTab(id);
+  s.openTableTab(id, { schema: "public", name: "t" });
+  const [q, t] = ws().tabs;
+  s.updateTab(id, q.id, { sql: "select 1", sqlSessionId: "s1", title: "Mine" });
+  expect(ws().tabs[0]).toMatchObject({ sql: "select 1", sqlSessionId: "s1", title: "Mine" });
+  s.updateTab(id, q.id, { sqlSessionId: null });
+  expect(ws().tabs[0]).toMatchObject({ sql: "select 1", sqlSessionId: null });
+  s.updateTab(id, t.id, { sql: "x", title: "Nope" });
+  expect(ws().tabs[1]).toEqual(t);
+});
+
+test("closing a query tab drops its run state", async () => {
+  const id = await open();
+  useWorkspaces.getState().openQueryTab(id);
+  const tab = ws().tabs[0];
+  useQueryRuns.getState().start(tab.id, 1);
+  useWorkspaces.getState().closeTab(id, tab.id);
+  expect(useQueryRuns.getState().runs[tab.id]).toBeUndefined();
 });

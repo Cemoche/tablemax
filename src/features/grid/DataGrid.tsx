@@ -21,10 +21,12 @@ export interface DataGridProps {
   data: ResultSet;
   sort?: [string, SortDir] | null;
   onSort?: (column: string) => void;
+  /** Header clicks request a (server-side) sort. Disable for ad-hoc query results. */
+  sortable?: boolean;
 }
 
 /** Thin, read-only adapter over Glide Data Grid (canvas; not testable in jsdom). */
-export function DataGrid({ data, sort = null, onSort }: DataGridProps) {
+export function DataGrid({ data, sort = null, onSort, sortable = true }: DataGridProps) {
   const { theme, muted: mutedOverride } = useGridTheme();
   const colKey = data.columns.map((c) => c.name).join("\u0000");
   const [widths, setWidths] = useState<{ key: string; w: Record<string, number> }>({
@@ -86,7 +88,7 @@ export function DataGrid({ data, sort = null, onSort }: DataGridProps) {
       smoothScrollY
       onHeaderClicked={(col) => {
         const name = data.columns[col]?.name;
-        if (name && onSort) onSort(name);
+        if (sortable && name && onSort) onSort(name);
       }}
       onColumnResize={(col, newSize) =>
         setWidths({ key: colKey, w: { ...colWidths, [String(col.id)]: newSize } })
