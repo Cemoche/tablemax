@@ -6,7 +6,7 @@ use tablemax_lib::driver::{
     DbObject, ObjectKind, ObjectRef, PageRequest, RowCount, Session, SortDir,
 };
 use tablemax_lib::error::ErrorKind;
-use tablemax_lib::value::CellValue;
+use tablemax_lib::value::{CellValue, MAX_RESULT_ROWS};
 
 async fn open() -> (tempfile::TempDir, Arc<dyn Session>) {
     let dir = tempfile::tempdir().unwrap();
@@ -72,6 +72,7 @@ async fn fetch_page_sorts_and_paginates() {
     let want: Vec<_> = (6..=15).rev().map(CellValue::Int).collect();
     assert_eq!(ids, want);
     assert_eq!(rs.columns[0].type_name, "INTEGER");
+    assert!(!rs.truncated);
     assert_eq!(
         s.count_rows(&obj("n"), 500_000).await.unwrap(),
         RowCount::Exact(25)
@@ -183,4 +184,65 @@ async fn missing_file_is_not_found() {
         .err()
         .unwrap();
     assert_eq!(err.kind, ErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn integers_beyond_js_safe_range_are_bigint() {
+    let (_d, s) = open().await;
+    let rs = s
+        .execute(
+            "SELECT 9007199254740991, 9007199254740992, 9223372036854775807, -9223372036854775808",
+        )
+        .await
+        .unwrap()
+        .result
+        .unwrap();
+    assert_eq!(
+        rs.rows[0],
+        vec![
+            CellValue::Int(9_007_199_254_740_991),
+            CellValue::BigInt("9007199254740992".into()),
+            CellValue::BigInt("9223372036854775807".into()),
+            CellValue::BigInt("-9223372036854775808".into()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn sql_results_are_capped() {
+    let (_d, s) = open().await;
+    let q = |n: u32| {
+        format!(
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < {n}) \
+             SELECT x FROM c"
+        )
+    };
+    let big = s.execute(&q(10_005)).await.unwrap().result.unwrap();
+    assert_eq!(big.rows.len(), MAX_RESULT_ROWS);
+    assert!(big.truncated);
+    assert_eq!(big.rows[MAX_RESULT_ROWS - 1][0], CellValue::Int(10_000));
+    let exact = s.execute(&q(10_000)).await.unwrap().result.unwrap();
+    assert_eq!(exact.rows.len(), MAX_RESULT_ROWS);
+    assert!(!exact.truncated);
+    let page_src = s.execute("SELECT 1").await.unwrap().result.unwrap();
+    assert!(!page_src.truncated);
+}
+
+#[tokio::test]
+async fn capped_infinite_query_returns_and_stays_cancellable() {
+    // An unbounded generator stops at the cap instead of running forever.
+    let (_d, s) = open().await;
+    let rs = tokio::time::timeout(
+        Duration::from_secs(5),
+        s.execute(
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT x FROM c",
+        ),
+    )
+    .await
+    .expect("capped query must return")
+    .unwrap()
+    .result
+    .unwrap();
+    assert_eq!(rs.rows.len(), MAX_RESULT_ROWS);
+    assert!(rs.truncated);
 }

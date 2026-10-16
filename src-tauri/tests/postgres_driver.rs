@@ -10,7 +10,7 @@ use tablemax_lib::driver::{
     Session, SortDir,
 };
 use tablemax_lib::error::ErrorKind;
-use tablemax_lib::value::CellValue;
+use tablemax_lib::value::{CellValue, MAX_RESULT_ROWS, TEXT_PREVIEW_CHARS};
 
 /// Creates a unique schema and drops it on drop, even when an assertion fails.
 struct TestSchema {
@@ -68,7 +68,8 @@ async fn pg_maps_types_exactly() {
             .unwrap();
         let row = only(out.result.as_ref().unwrap());
         assert_eq!(row[0], CellValue::Int(1));
-        assert_eq!(row[1], CellValue::Int(i64::MAX));
+        // Beyond 2^53 an int travels as exact digits (JS numbers would round it).
+        assert_eq!(row[1], CellValue::BigInt("9223372036854775807".into()));
         assert_eq!(
             row[2],
             CellValue::Decimal("12345678901234567890.1234567890".into())
@@ -208,6 +209,7 @@ async fn pg_fetch_page_sort_desc_and_count() {
         let ids: Vec<_> = rs.rows.iter().map(|r| r[0].clone()).collect();
         let want: Vec<_> = (21..=25).rev().map(CellValue::Int).collect();
         assert_eq!(ids, want);
+        assert!(!rs.truncated);
         assert_eq!(
             s.count_rows(&obj, 500_000).await.unwrap(),
             RowCount::Exact(25)
@@ -347,5 +349,53 @@ async fn pg_multi_statement_never_merges_with_localized_messages() {
                 Ok(o) => panic!("localized={localized}: statements merged: {o:?}"),
             }
         }
+    }
+}
+
+#[tokio::test]
+async fn pg_huge_json_cell_is_truncated() {
+    for url in pg_urls() {
+        let (s, _g) = open(&url).await;
+        let out = s
+            .execute("select jsonb_build_object('k', repeat('x', 20000)), '[1]'::json")
+            .await
+            .unwrap();
+        let row = only(out.result.as_ref().unwrap());
+        match &row[0] {
+            CellValue::LongText { preview, len } => {
+                assert_eq!(preview.chars().count(), TEXT_PREVIEW_CHARS);
+                assert!(*len > 20_000, "{len}");
+            }
+            other => panic!("expected LongText, got {other:?}"),
+        }
+        assert_eq!(row[1], CellValue::Json("[1]".into()));
+    }
+}
+
+#[tokio::test]
+async fn pg_sql_results_are_capped() {
+    for url in pg_urls() {
+        let (s, _g) = open(&url).await;
+        let big = s
+            .execute("select g from generate_series(1, 10005) g")
+            .await
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(big.rows.len(), MAX_RESULT_ROWS);
+        assert!(big.truncated);
+        assert_eq!(big.rows[MAX_RESULT_ROWS - 1][0], CellValue::Int(10_000));
+        let exact = s
+            .execute("select g from generate_series(1, 10000) g")
+            .await
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(exact.rows.len(), MAX_RESULT_ROWS);
+        assert!(!exact.truncated);
+        // The session stays in sync after a capped result.
+        let one = s.execute("select 7").await.unwrap().result.unwrap();
+        assert_eq!(only(&one)[0], CellValue::Int(7));
+        assert!(!one.truncated);
     }
 }

@@ -18,7 +18,7 @@ use super::{
     RowCount, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::value::{CellValue, bytes_value, float_value, text_value};
+use crate::value::{CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, text_value};
 
 struct SqliteSession {
     conn: Arc<Mutex<Option<Connection>>>,
@@ -104,7 +104,7 @@ impl SqliteSession {
 fn cell(v: ValueRef<'_>) -> CellValue {
     match v {
         ValueRef::Null => CellValue::Null,
-        ValueRef::Integer(i) => CellValue::Int(i),
+        ValueRef::Integer(i) => int_value(i),
         ValueRef::Real(f) => float_value(f),
         ValueRef::Text(t) => text_value(String::from_utf8_lossy(t).into_owned()),
         ValueRef::Blob(b) => bytes_value(b),
@@ -122,15 +122,25 @@ fn read_rows(stmt: &mut rusqlite::Statement<'_>) -> AppResult<ResultSet> {
         .collect();
     let n = columns.len();
     let mut rows = Vec::new();
+    let mut truncated = false;
     let mut q = stmt.query([]).map_err(map_err)?;
     while let Some(row) = q.next().map_err(map_err)? {
+        if rows.len() == MAX_RESULT_ROWS {
+            // One row past the cap: stop stepping, the statement is reset on drop.
+            truncated = true;
+            break;
+        }
         let mut out = Vec::with_capacity(n);
         for i in 0..n {
             out.push(cell(row.get_ref(i).map_err(map_err)?));
         }
         rows.push(out);
     }
-    Ok(ResultSet { columns, rows })
+    Ok(ResultSet {
+        columns,
+        rows,
+        truncated,
+    })
 }
 
 #[async_trait]

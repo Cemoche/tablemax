@@ -100,6 +100,10 @@ pub struct ColumnMeta {
 pub struct ResultSet {
     pub columns: Vec<ColumnMeta>,
     pub rows: Vec<Vec<CellValue>>,
+    /// True when the statement produced more than `MAX_RESULT_ROWS` rows and only the
+    /// first `MAX_RESULT_ROWS` were kept.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

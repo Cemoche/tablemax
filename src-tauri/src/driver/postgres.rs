@@ -5,8 +5,9 @@
 //! session is flagged lost so later calls fail fast with `ConnectionLost`.
 //!
 //! Result decoding: the statement is `prepare`d only to learn the column types (OIDs),
-//! then run through `simple_query` (text protocol). Every value therefore arrives in
-//! PostgreSQL's own canonical text form (exact `numeric`, jsonb with its canonical
+//! then run through `simple_query_raw` (text protocol, streamed so at most
+//! `MAX_RESULT_ROWS` rows are kept; the rest is drained and the set marked
+//! `truncated`). Every value therefore arrives in PostgreSQL's own canonical text form (exact `numeric`, jsonb with its canonical
 //! spacing, uuid/inet/enum/array/interval as the server prints them) and is re-typed
 //! from the column OID by `cell_from_text`. This avoids per-type binary decoders and
 //! any precision loss. `simple_query` also reports the command's row count, which
@@ -19,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::types::Type;
 use tokio_postgres::{CancelToken, Client, Config, NoTls, SimpleQueryMessage};
@@ -29,7 +31,9 @@ use super::{
     ResultSet, RowCount, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::value::{CellValue, bytes_value, float_value, text_value};
+use crate::value::{
+    CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, json_value, text_value,
+};
 
 struct PgSession {
     client: Client,
@@ -165,12 +169,18 @@ impl PgSession {
                 None // fall back to the text protocol alone
             }
         };
-        let msgs = self.client.simple_query(sql).await.map_err(map_err)?;
+        // Streamed so memory stays bounded by MAX_RESULT_ROWS: rows past the cap are
+        // read and discarded (the protocol must be drained to keep the session in sync);
+        // a cancel still interrupts the server and surfaces as an error here.
+        let stream = self.client.simple_query_raw(sql).await.map_err(map_err)?;
+        let mut stream = std::pin::pin!(stream);
         let mut rows: Vec<Vec<CellValue>> = Vec::new();
         let mut names: Vec<String> = Vec::new();
         let mut affected = 0u64;
-        for m in msgs {
-            match m {
+        let mut truncated = false;
+        while let Some(m) = stream.next().await {
+            match m.map_err(map_err)? {
+                SimpleQueryMessage::Row(_) if rows.len() == MAX_RESULT_ROWS => truncated = true,
                 SimpleQueryMessage::Row(r) => {
                     if names.is_empty() {
                         names = r.columns().iter().map(|c| c.name().to_string()).collect();
@@ -213,7 +223,14 @@ impl PgSession {
                 })
                 .collect(),
         };
-        Ok((Some(ResultSet { columns, rows }), affected))
+        Ok((
+            Some(ResultSet {
+                columns,
+                rows,
+                truncated,
+            }),
+            affected,
+        ))
     }
 }
 
@@ -241,7 +258,7 @@ fn cell_from_text(ty: Option<&Type>, s: &str) -> CellValue {
         },
         Type::INT2 | Type::INT4 | Type::INT8 => s
             .parse::<i64>()
-            .map(CellValue::Int)
+            .map(int_value)
             .unwrap_or_else(|_| text_value(s.to_string())),
         Type::FLOAT4 | Type::FLOAT8 => s
             .parse::<f64>()
@@ -252,7 +269,7 @@ fn cell_from_text(ty: Option<&Type>, s: &str) -> CellValue {
             Some(b) => bytes_value(&b),
             None => bytes_value(s.as_bytes()),
         },
-        Type::JSON | Type::JSONB => CellValue::Json(s.to_string()),
+        Type::JSON | Type::JSONB => json_value(s.to_string()),
         Type::DATE
         | Type::TIME
         | Type::TIMETZ
@@ -400,6 +417,10 @@ mod tests {
             CellValue::Bool(false)
         );
         assert_eq!(cell_from_text(Some(&Type::INT8), "-5"), CellValue::Int(-5));
+        assert_eq!(
+            cell_from_text(Some(&Type::INT8), "-9223372036854775808"),
+            CellValue::BigInt("-9223372036854775808".into())
+        );
         assert_eq!(
             cell_from_text(Some(&Type::NUMERIC), "1.2300"),
             CellValue::Decimal("1.2300".into())

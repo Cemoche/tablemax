@@ -26,6 +26,7 @@ async-trait = "0.1.92"
 rusqlite = { version = "0.40", features = ["bundled", "column_decltype"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-postgres = "0.7"
+futures-util = { version = "0.3", default-features = false }
 mysql_async = { version = "0.37", default-features = false, features = ["minimal-rust"] }
 keyring = "4.2"
 uuid = { version = "1", features = ["v4"] }
@@ -41,5 +42,4 @@ tokio = { version = "1", features = ["time", "test-util"] }
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
 strip = true

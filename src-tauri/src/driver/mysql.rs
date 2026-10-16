@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use mysql_async::consts::{ColumnFlags, ColumnType};
-use mysql_async::prelude::Queryable;
+use mysql_async::prelude::{FromRow, Queryable};
 use mysql_async::{Column, Conn, Error as MyError, Opts, OptsBuilder, Row, Value};
 
 use super::sql::{build_page_query, qualified};
@@ -40,7 +40,9 @@ use super::{
     ResultSet, RowCount, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::value::{CellValue, bytes_value, float_value, text_value};
+use crate::value::{
+    CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, json_value, text_value,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const BINARY_CHARSET: u16 = 63;
@@ -121,8 +123,9 @@ fn map_err(e: &MyError, live: bool) -> AppError {
                 1045 => ErrorKind::Auth,
                 1317 => ErrorKind::Cancelled,
                 1049 => ErrorKind::NotFound,
-                // 1053 server shutdown, 1927 MariaDB "Connection was killed".
-                2002 | 2003 | 2013 | 2006 | 1053 | 1927 => ErrorKind::ConnectionLost,
+                // 1053 server shutdown, 1927 MariaDB "Connection was killed",
+                // 4031 MySQL 8 "disconnected by the server because of inactivity".
+                2002 | 2003 | 2013 | 2006 | 1053 | 1927 | 4031 => ErrorKind::ConnectionLost,
                 _ => ErrorKind::Query,
             };
             AppError::new(kind, se.message.clone())
@@ -149,6 +152,29 @@ fn map_err(e: &MyError, live: bool) -> AppError {
     }
 }
 
+/// Fallible row conversion: `mysql_async`'s typed helpers (`exec::<T>`, `query_first::<T>`,
+/// `collect::<T>`) call `from_row`, which panics on an unexpected value. The message never
+/// includes the row (it may carry data).
+fn from_rows<T: FromRow>(rows: Vec<Row>) -> AppResult<Vec<T>> {
+    rows.into_iter()
+        .map(|r| {
+            T::from_row_opt(r).map_err(|_| {
+                AppError::new(ErrorKind::Query, "unexpected value type in a metadata row")
+            })
+        })
+        .collect()
+}
+
+/// First column of the first row as text (`None` for no row or NULL), without panicking.
+async fn query_first_string(conn: &mut Conn, sql: &str) -> Result<Option<String>, AppError> {
+    let row: Option<Row> = conn
+        .query_first::<Row, _>(sql)
+        .await
+        .map_err(|e| map_err(&e, true))?;
+    let rows: Vec<(Option<String>,)> = from_rows(row.into_iter().collect())?;
+    Ok(rows.into_iter().next().and_then(|r| r.0))
+}
+
 fn build_opts(p: &ConnectParams) -> Opts {
     OptsBuilder::default()
         .ip_or_hostname(p.host.clone())
@@ -173,20 +199,20 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
     super::ensure_local_host(&p.host)?;
     let opts = build_opts(p);
     let mut conn = open_conn(&opts).await?;
-    let version: Option<String> = match conn.query_first("SELECT VERSION()").await {
+    let version = match query_first_string(&mut conn, "SELECT VERSION()").await {
         Ok(v) => v,
         Err(e) => {
             let _ = conn.disconnect().await;
-            return Err(map_err(&e, true));
+            return Err(e);
         }
     };
     let conn_id = conn.id();
     let version = version.unwrap_or_default();
-    let mode: Option<String> = match conn.query_first("SELECT @@SESSION.sql_mode").await {
+    let mode = match query_first_string(&mut conn, "SELECT @@SESSION.sql_mode").await {
         Ok(v) => v,
         Err(e) => {
             let _ = conn.disconnect().await;
-            return Err(map_err(&e, true));
+            return Err(e);
         }
     };
     // The canceller must keep working if the selected database is dropped.
@@ -376,10 +402,10 @@ fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
         Value::NULL => return CellValue::Null,
         Value::Bytes(b) => b,
         // The text protocol only yields Bytes/NULL; stay total for anything else.
-        Value::Int(i) => return CellValue::Int(*i),
+        Value::Int(i) => return int_value(*i),
         Value::UInt(u) => {
             return i64::try_from(*u)
-                .map(CellValue::Int)
+                .map(int_value)
                 .unwrap_or_else(|_| CellValue::BigInt(u.to_string()));
         }
         Value::Float(f) => return float_value(f64::from(*f)),
@@ -389,13 +415,13 @@ fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
     use ColumnType::*;
     let as_str = || std::str::from_utf8(bytes).ok();
     if force_json && let Some(s) = as_str() {
-        return CellValue::Json(s.to_string());
+        return json_value(s.to_string());
     }
     match col.column_type() {
         MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_INT24 | MYSQL_TYPE_LONG
         | MYSQL_TYPE_LONGLONG => match as_str() {
             Some(s) => match s.parse::<i64>() {
-                Ok(i) => CellValue::Int(i),
+                Ok(i) => int_value(i),
                 // BIGINT UNSIGNED above i64::MAX: keep the exact digits.
                 Err(_) if s.parse::<u64>().is_ok() => CellValue::BigInt(s.to_string()),
                 Err(_) => text_value(s.to_string()),
@@ -414,7 +440,7 @@ fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
             None => bytes_value(bytes),
         },
         MYSQL_TYPE_JSON => match as_str() {
-            Some(s) => CellValue::Json(s.to_string()),
+            Some(s) => json_value(s.to_string()),
             None => bytes_value(bytes),
         },
         MYSQL_TYPE_BIT | MYSQL_TYPE_GEOMETRY => bytes_value(bytes),
@@ -517,14 +543,10 @@ impl MySession {
         self.canceller.running.store(false, Ordering::SeqCst);
         let was_cancelled = self.canceller.cancelled_seq.load(Ordering::SeqCst) == my_seq;
         if out.is_ok() && may_change_sql_mode(sql) {
-            match conn
-                .query_first::<String, _>("SELECT @@SESSION.sql_mode")
-                .await
-            {
+            match query_first_string(conn, "SELECT @@SESSION.sql_mode").await {
                 Ok(Some(m)) => inner.modes = Modes::from_sql_mode(&m),
                 Ok(None) => {}
-                Err(e) => {
-                    let err = map_err(&e, true);
+                Err(err) => {
                     self.note_loss(&err);
                     if err.kind == ErrorKind::ConnectionLost {
                         return Err(err);
@@ -561,8 +583,19 @@ impl MySession {
             qr.drop_result().await.map_err(|e| map_err(&e, true))?;
             return Ok((None, affected));
         }
-        let rows: Vec<Row> = qr.collect().await.map_err(|e| map_err(&e, true))?;
-        // Drain any trailing result sets (e.g. the OK packet after CALL).
+        // Keep at most MAX_RESULT_ROWS rows in memory; one more row marks the result as
+        // truncated and the rest is read and discarded by `drop_result` (a cancel still
+        // lands while it drains).
+        let mut rows: Vec<Row> = Vec::new();
+        let mut truncated = false;
+        while let Some(row) = qr.next().await.map_err(|e| map_err(&e, true))? {
+            if rows.len() == MAX_RESULT_ROWS {
+                truncated = true;
+                break;
+            }
+            rows.push(row);
+        }
+        // Drain the rest, plus any trailing result sets (e.g. the OK packet after CALL).
         qr.drop_result().await.map_err(|e| map_err(&e, true))?;
         // MariaDB has no JSON column type (JSON = LONGTEXT + CHECK json_valid) and
         // mysql_async does not negotiate extended metadata: recover it from the catalog.
@@ -585,7 +618,7 @@ impl MySession {
                 let key = (c.schema_str().to_string(), c.org_table_str().to_string());
                 if !json_cache.contains_key(&key) {
                     // Best-effort: a failed lookup must not turn a good SELECT into an error.
-                    let lookup: Result<Vec<(String,)>, MyError> = conn
+                    let lookup: Result<Vec<Row>, MyError> = conn
                         .exec(
                             "SELECT CAST(CHECK_CLAUSE AS CHAR) FROM information_schema.CHECK_CONSTRAINTS \
                              WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ?",
@@ -593,10 +626,15 @@ impl MySession {
                         )
                         .await;
                     match lookup {
-                        Ok(clauses) => {
+                        Ok(rows) => {
                             let mut set = HashSet::new();
-                            for (clause,) in &clauses {
-                                json_columns_in(clause, &mut set);
+                            // A clause that is NULL or not text simply holds no JSON column.
+                            for (clause,) in
+                                from_rows::<(Option<String>,)>(rows).unwrap_or_default()
+                            {
+                                if let Some(clause) = clause {
+                                    json_columns_in(&clause, &mut set);
+                                }
                             }
                             json_cache.insert(key.clone(), set);
                         }
@@ -642,6 +680,7 @@ impl MySession {
             Some(ResultSet {
                 columns,
                 rows: out_rows,
+                truncated,
             }),
             0,
         ))
@@ -660,11 +699,12 @@ impl MySession {
         let Some(conn) = guard.conn.as_mut() else {
             return Err(Self::gone());
         };
-        conn.exec::<T, _, _>(sql, params).await.map_err(|e| {
+        let rows = conn.exec::<Row, _, _>(sql, params).await.map_err(|e| {
             let err = map_err(&e, true);
             self.note_loss(&err);
             err
-        })
+        })?;
+        from_rows(rows)
     }
 }
 
@@ -917,5 +957,12 @@ mod tests {
         let e = MyError::Driver(mysql_async::DriverError::ConnectionClosed);
         assert_eq!(map_err(&e, true).kind, ErrorKind::ConnectionLost);
         assert_eq!(map_err(&e, false).kind, ErrorKind::Connection);
+        // MySQL 8 inactivity disconnect (wait_timeout) is a lost connection.
+        let e = MyError::Server(mysql_async::ServerError {
+            code: 4031,
+            message: "disconnected by the server because of inactivity".into(),
+            state: "HY000".into(),
+        });
+        assert_eq!(map_err(&e, true).kind, ErrorKind::ConnectionLost);
     }
 }

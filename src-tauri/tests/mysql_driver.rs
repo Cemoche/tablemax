@@ -10,7 +10,7 @@ use tablemax_lib::driver::{
     Session, SortDir,
 };
 use tablemax_lib::error::ErrorKind;
-use tablemax_lib::value::CellValue;
+use tablemax_lib::value::{CellValue, MAX_RESULT_ROWS, TEXT_PREVIEW_CHARS};
 
 /// URL order from `scripts/test-dbs.sh env`: MySQL 8 first, MariaDB 11 second.
 fn kind_for(index: usize) -> DriverKind {
@@ -119,7 +119,8 @@ async fn mysql_maps_types_exactly() {
         let rs = out.result.unwrap();
         let row = only(&rs);
         assert_eq!(row[0], CellValue::BigInt("18446744073709551615".into()));
-        assert_eq!(row[1], CellValue::Int(-9223372036854775807));
+        // Beyond 2^53 an int travels as exact digits (JS numbers would round it).
+        assert_eq!(row[1], CellValue::BigInt("-9223372036854775807".into()));
         assert_eq!(
             row[2],
             CellValue::Decimal("12345678901234567890.1234567890".into())
@@ -546,5 +547,71 @@ async fn mysql_failed_cancel_does_not_report_cancelled() {
         let out = out.expect("statement must keep its real result");
         assert_eq!(only(out.result.as_ref().unwrap())[0], CellValue::Int(0));
         // Idle cancel is a no-op success even with broken credentials.
+    }
+}
+
+/// `n` rows numbered 1..=n, without recursion limits (MySQL caps CTE depth at 1000).
+fn numbers(n: u32) -> String {
+    let d = "(select 0 n union all select 1 union all select 2 union all select 3 \
+             union all select 4 union all select 5 union all select 6 union all select 7 \
+             union all select 8 union all select 9)";
+    format!(
+        "select a.n + 10*b.n + 100*c.n + 1000*d.n + 10000*e.n + 1 as g \
+         from {d} a, {d} b, {d} c, {d} d, {d} e \
+         where a.n + 10*b.n + 100*c.n + 1000*d.n + 10000*e.n < {n} order by g"
+    )
+}
+
+#[tokio::test]
+async fn mysql_huge_json_cell_is_truncated() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!("create table `{n}`.j (j json)"))
+            .await
+            .unwrap();
+        s.execute(&format!(
+            "insert into `{n}`.j values (json_object('k', repeat('x', 20000))), ('[1]')"
+        ))
+        .await
+        .unwrap();
+        let rs = s
+            .execute(&format!("select j from `{n}`.j"))
+            .await
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(rs.rows.len(), 2);
+        let mut seen_long = false;
+        for row in &rs.rows {
+            match &row[0] {
+                CellValue::LongText { preview, len } => {
+                    assert_eq!(preview.chars().count(), TEXT_PREVIEW_CHARS, "{kind:?}");
+                    assert!(*len > 20_000, "{kind:?} {len}");
+                    seen_long = true;
+                }
+                CellValue::Json(s) => assert_eq!(s, "[1]", "{kind:?}"),
+                other => panic!("{kind:?}: unexpected {other:?}"),
+            }
+        }
+        assert!(seen_long, "{kind:?}");
+    }
+}
+
+#[tokio::test]
+async fn mysql_sql_results_are_capped() {
+    for (url, kind) in targets() {
+        let (s, _g) = open(&url, kind).await;
+        let big = s.execute(&numbers(10_005)).await.unwrap().result.unwrap();
+        assert_eq!(big.rows.len(), MAX_RESULT_ROWS, "{kind:?}");
+        assert!(big.truncated, "{kind:?}");
+        assert_eq!(big.rows[MAX_RESULT_ROWS - 1][0], CellValue::Int(10_000));
+        let exact = s.execute(&numbers(10_000)).await.unwrap().result.unwrap();
+        assert_eq!(exact.rows.len(), MAX_RESULT_ROWS, "{kind:?}");
+        assert!(!exact.truncated, "{kind:?}");
+        // The connection stays in sync after a capped result.
+        let one = s.execute("select 7").await.unwrap().result.unwrap();
+        assert_eq!(only(&one)[0], CellValue::Int(7));
+        assert!(!one.truncated);
     }
 }
