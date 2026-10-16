@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { strings } from "../../lib/strings";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { TableDataTab } from "../grid/TableDataTab";
 import { ObjectSidebar } from "./ObjectSidebar";
 import { TabBar } from "./TabBar";
 
@@ -11,15 +12,12 @@ const ENV_BORDER = {
   prod: "border-t-env-prod",
 } as const;
 
-/** Tasks 10 and 11 replace the placeholders for "table" and "query". */
-export function TabContent({ tab }: { workspace: Workspace; tab: Tab }) {
-  return (
-    <div className="p-5 text-muted">
-      {tab.kind === "table"
-        ? strings.workspace.tablePlaceholder(tab.object.name)
-        : strings.workspace.queryPlaceholder}
-    </div>
-  );
+/** Task 11 replaces the "query" placeholder. */
+export function TabContent({ workspace, tab }: { workspace: Workspace; tab: Tab }) {
+  if (tab.kind === "table") {
+    return <TableDataTab workspaceId={workspace.id} tabId={tab.id} object={tab.object} />;
+  }
+  return <div className="p-5 text-muted">{strings.workspace.queryPlaceholder}</div>;
 }
 
 export function WorkspaceView({ workspace }: { workspace: Workspace }) {

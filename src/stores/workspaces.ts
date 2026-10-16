@@ -3,6 +3,7 @@ import * as ipc from "../lib/ipc";
 import { strings } from "../lib/strings";
 import type { ConnectionConfig, Dialect, EnvTag, ObjectRef } from "../lib/types";
 import { useConnections } from "./connections";
+import { useGridViews } from "./gridViews";
 
 export type Tab =
   | { id: string; kind: "table"; object: ObjectRef; title: string }
@@ -108,6 +109,9 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     closeWorkspace: async (id) => {
       // Backend workspaceClose also closes the workspace's SQL sessions.
       queryCounters.delete(id);
+      for (const t of get().workspaces.find((w) => w.id === id)?.tabs ?? []) {
+        useGridViews.getState().dropView(t.id);
+      }
       set((s) => {
         const idx = s.workspaces.findIndex((w) => w.id === id);
         const workspaces = s.workspaces.filter((w) => w.id !== id);
@@ -153,6 +157,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       if (tab.kind === "query" && tab.sqlSessionId) {
         void ipc.sqlSessionClose(tab.sqlSessionId)?.catch(() => {});
       }
+      useGridViews.getState().dropView(tabId);
       update(wsId, (w) => {
         const idx = w.tabs.findIndex((t) => t.id === tabId);
         const tabs = w.tabs.filter((t) => t.id !== tabId);
