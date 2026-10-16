@@ -1,4 +1,5 @@
 pub mod sql;
+pub mod sqlite;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -153,7 +154,11 @@ pub trait Session: Send + Sync {
 pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {
     // Driver tasks replace these arms.
     match params.kind {
-        DriverKind::Postgres | DriverKind::MySql | DriverKind::MariaDb | DriverKind::Sqlite => {
+        DriverKind::Sqlite => match &params.sqlite_path {
+            Some(path) => sqlite::connect_sqlite(path).await,
+            None => Err(AppError::new(ErrorKind::Invalid, "sqlite_path is required")),
+        },
+        DriverKind::Postgres | DriverKind::MySql | DriverKind::MariaDb => {
             Err(AppError::new(ErrorKind::Invalid, "driver not available"))
         }
     }
