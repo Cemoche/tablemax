@@ -22,6 +22,13 @@ function currentSessionId(wsId: string, tabId: string): string | null {
   return t?.kind === "query" ? t.sqlSessionId : null;
 }
 
+function tabExists(wsId: string, tabId: string): boolean {
+  return !!useWorkspaces
+    .getState()
+    .workspaces.find((w) => w.id === wsId)
+    ?.tabs.some((t) => t.id === tabId);
+}
+
 interface Props {
   workspace: Workspace;
   tab: Extract<Tab, { kind: "query" }>;
@@ -69,7 +76,14 @@ export function QueryTab({ workspace, tab }: Props) {
     try {
       let sessionId = currentSessionId(wsId, tabId);
       if (!sessionId) {
-        sessionId = await ipc.sqlSessionOpen(wsId);
+        const opened = await ipc.sqlSessionOpen(wsId);
+        if (!tabExists(wsId, tabId)) {
+          // Tab closed while the session was opening: nothing owns it any more.
+          void ipc.sqlSessionClose(opened)?.catch(() => {});
+          useQueryRuns.getState().drop(tabId);
+          return;
+        }
+        sessionId = opened;
         useWorkspaces.getState().updateTab(wsId, tabId, { sqlSessionId: sessionId });
       }
       await ipc.sqlExecute(

@@ -170,3 +170,19 @@ test("run state survives unmount/remount and events keep landing while unmounted
   expect(useQueryRuns.getState().runs.t1.running).toBe(false);
   resolveExec();
 });
+
+test("closing the tab while the session is opening closes the session and never executes", async () => {
+  let resolveOpen: (id: string) => void = () => {};
+  vi.mocked(ipc.sqlSessionOpen).mockImplementation(
+    () => new Promise<string>((r) => (resolveOpen = r)),
+  );
+  vi.mocked(ipc.sqlSessionClose).mockResolvedValue(undefined);
+  await setup("select 1");
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlSessionOpen).toHaveBeenCalled());
+  act(() => useWorkspaces.getState().closeTab("w1", "t1"));
+  await act(async () => resolveOpen("s9"));
+  expect(ipc.sqlSessionClose).toHaveBeenCalledWith("s9");
+  expect(ipc.sqlExecute).not.toHaveBeenCalled();
+  expect(useQueryRuns.getState().runs.t1).toBeUndefined();
+});
