@@ -466,3 +466,85 @@ async fn mysql_execute_rejects_multiple_statements() {
         );
     }
 }
+
+#[tokio::test]
+async fn mysql_lexer_follows_session_sql_mode() {
+    for (url, kind) in targets() {
+        let (s, _g) = open(&url, kind).await;
+        let text = |o: tablemax_lib::driver::StatementOutcome| match &only(&o.result.unwrap())[0] {
+            CellValue::Text(t) => t.clone(),
+            other => panic!("{other:?}"),
+        };
+        // Default: the escaped quote keeps the literal open, so this is ONE statement.
+        let o = s.execute(r"select 'a\'; select 2'").await.unwrap();
+        assert_eq!(text(o), "a'; select 2");
+
+        s.execute("SET sql_mode=CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')")
+            .await
+            .unwrap();
+        // Backslash is now literal: one statement, and the bypass attempt is rejected.
+        let o = s.execute(r"select 'a\'").await.unwrap();
+        assert_eq!(text(o), r"a\");
+        for sql in [r"select 'a\'; select 2; select '", r"select 'a\'; select 2"] {
+            let e = s.execute(sql).await.err().unwrap();
+            assert_eq!(e.kind, ErrorKind::Invalid, "{sql}");
+        }
+        s.execute("SET sql_mode=REPLACE(@@sql_mode, 'NO_BACKSLASH_ESCAPES', '')")
+            .await
+            .unwrap();
+        let o = s.execute(r"select 'a\'; select 2'").await.unwrap();
+        assert_eq!(text(o), "a'; select 2");
+
+        s.execute("SET sql_mode=CONCAT(@@sql_mode, ',ANSI_QUOTES')")
+            .await
+            .unwrap();
+        // "..." is an identifier with no backslash escapes.
+        assert!(s.execute(r#"select 1 as "a\""#).await.is_ok());
+        let e = s
+            .execute(r#"select 1 as "a\"; drop table t; -- ""#)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+    }
+}
+
+#[tokio::test]
+async fn mysql_failed_cancel_does_not_report_cancelled() {
+    for (url, kind) in targets() {
+        let root = connect_mysql(&params_from_url(&url, kind)).await.unwrap();
+        let user = format!("c_{}", &unique_schema()[2..14]);
+        root.execute(&format!("CREATE USER '{user}'@'%' IDENTIFIED BY 'pw1'"))
+            .await
+            .unwrap();
+        root.execute(&format!("GRANT ALL ON *.* TO '{user}'@'%'"))
+            .await
+            .unwrap();
+        let mut params = params_from_url(&url, kind);
+        params.user = user.clone();
+        params.password = Some("pw1".into());
+        let result = async {
+            let s = connect_mysql(&params).await.unwrap();
+            // The canceller reuses the stored password: break it so the KILL cannot be sent.
+            root.execute(&format!("ALTER USER '{user}'@'%' IDENTIFIED BY 'pw2'"))
+                .await
+                .unwrap();
+            let canceller = s.canceller();
+            let s2 = s.clone();
+            let task = tokio::spawn(async move { s2.execute("select sleep(1)").await });
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let cancel = canceller.cancel().await;
+            let out = task.await.unwrap();
+            (cancel, out)
+        }
+        .await;
+        let _ = root
+            .execute(&format!("DROP USER IF EXISTS '{user}'@'%'"))
+            .await;
+        let (cancel, out) = result;
+        assert_eq!(cancel.err().unwrap().kind, ErrorKind::Auth);
+        let out = out.expect("statement must keep its real result");
+        assert_eq!(only(out.result.as_ref().unwrap())[0], CellValue::Int(0));
+        // Idle cancel is a no-op success even with broken credentials.
+    }
+}

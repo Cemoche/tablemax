@@ -21,12 +21,12 @@
 //! that sees through string literals, quoted identifiers and comments, and rejects any
 //! input with more than one statement as `Invalid` BEFORE anything reaches the server.
 //! Executable comments (`/*! ... */`, `/*M! ... */`) are scanned as code since the server
-//! runs their content. The session also strips NO_BACKSLASH_ESCAPES at connect so the
-//! lexer's backslash handling matches the server's.
+//! runs their content. The lexer follows the session's `sql_mode` (NO_BACKSLASH_ESCAPES,
+//! ANSI_QUOTES): it is read at connect and re-read after any statement that may change it.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -46,8 +46,28 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const BINARY_CHARSET: u16 = 63;
 const HIDDEN_SCHEMAS: [&str; 4] = ["mysql", "information_schema", "performance_schema", "sys"];
 
+/// SQL-mode flags that change how the server tokenizes string literals.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Modes {
+    /// Backslash escapes inside '...' and "..." (off under NO_BACKSLASH_ESCAPES).
+    backslash_escapes: bool,
+    /// "..." is an identifier (never has backslash escapes).
+    ansi_quotes: bool,
+}
+
+impl Modes {
+    fn from_sql_mode(mode: &str) -> Self {
+        let has = |f: &str| mode.split(',').any(|m| m.trim().eq_ignore_ascii_case(f));
+        Modes {
+            backslash_escapes: !has("NO_BACKSLASH_ESCAPES"),
+            ansi_quotes: has("ANSI_QUOTES"),
+        }
+    }
+}
+
 struct Inner {
     conn: Option<Conn>,
+    modes: Modes,
     /// MariaDB only: (database, table) -> columns constrained by `json_valid(...)`.
     json_cache: HashMap<(String, String), HashSet<String>>,
 }
@@ -65,22 +85,29 @@ struct MyCanceller {
     conn_id: u32,
     /// A statement is in flight on the session.
     running: AtomicBool,
-    /// `cancel()` hit while a statement was in flight; consumed when it returns.
-    cancelled: AtomicBool,
+    /// Sequence number of the current/last statement (bumped by `run`).
+    seq: AtomicU64,
+    /// Sequence of the statement a successful `KILL QUERY` was delivered for.
+    cancelled_seq: AtomicU64,
 }
 
 #[async_trait]
 impl Canceller for MyCanceller {
     async fn cancel(&self) -> AppResult<()> {
-        if self.running.load(Ordering::SeqCst) {
-            self.cancelled.store(true, Ordering::SeqCst);
+        if !self.running.load(Ordering::SeqCst) {
+            return Ok(());
         }
+        let target = self.seq.load(Ordering::SeqCst);
         let mut conn = open_conn(&self.opts).await?;
         let res = conn
             .query_drop(format!("KILL QUERY {}", self.conn_id))
             .await
             .map_err(|e| map_err(&e, false));
         let _ = conn.disconnect().await;
+        // Recorded only once the KILL was delivered, tagged with the statement it targeted.
+        if res.is_ok() {
+            self.cancelled_seq.store(target, Ordering::SeqCst);
+        }
         res
     }
 }
@@ -131,10 +158,6 @@ fn build_opts(p: &ConnectParams) -> Opts {
         .db_name(p.database.clone())
         // Never silently swap the TCP endpoint for a unix socket reported by the server.
         .prefer_socket(false)
-        // Keeps the SQL lexer's backslash handling aligned with the server.
-        .init(vec![
-            "SET SESSION sql_mode = REPLACE(@@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES', '')",
-        ])
         .into()
 }
 
@@ -159,26 +182,38 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
     };
     let conn_id = conn.id();
     let version = version.unwrap_or_default();
+    let mode: Option<String> = match conn.query_first("SELECT @@SESSION.sql_mode").await {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = conn.disconnect().await;
+            return Err(map_err(&e, true));
+        }
+    };
+    // The canceller must keep working if the selected database is dropped.
+    let cancel_opts: Opts = OptsBuilder::from_opts(opts).db_name(None::<String>).into();
     Ok(Arc::new(MySession {
         mariadb: version.contains("MariaDB"),
         inner: tokio::sync::Mutex::new(Inner {
             conn: Some(conn),
             json_cache: HashMap::new(),
+            modes: Modes::from_sql_mode(&mode.unwrap_or_default()),
         }),
         lost: AtomicBool::new(false),
         canceller: Arc::new(MyCanceller {
-            opts,
+            opts: cancel_opts,
             conn_id,
             running: AtomicBool::new(false),
-            cancelled: AtomicBool::new(false),
+            seq: AtomicU64::new(0),
+            cancelled_seq: AtomicU64::new(0),
         }),
         version,
     }))
 }
 
 /// True when `sql` holds more than one statement (a `;` followed by anything other than
-/// whitespace or comments). Sees through '...', "...", `...`, `-- `, `#` and `/* */`.
-fn has_multiple_statements(sql: &str) -> bool {
+/// whitespace or comments). Sees through '...', "...", `...`, `-- `, `#` and `/* */`,
+/// honouring the session's NO_BACKSLASH_ESCAPES / ANSI_QUOTES modes.
+fn has_multiple_statements(sql: &str, modes: Modes) -> bool {
     let b = sql.as_bytes();
     let n = b.len();
     let mut i = 0;
@@ -234,7 +269,9 @@ fn has_multiple_statements(sql: &str) -> bool {
             b'\'' | b'"' | b'`' => {
                 i += 1;
                 while i < n {
-                    if b[i] == b'\\' && c != b'`' {
+                    let escapes =
+                        modes.backslash_escapes && c != b'`' && !(c == b'"' && modes.ansi_quotes);
+                    if b[i] == b'\\' && escapes {
                         i += 2;
                     } else if b[i] == c {
                         if b.get(i + 1) == Some(&c) {
@@ -407,6 +444,20 @@ fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
     }
 }
 
+/// Statements after which `@@SESSION.sql_mode` must be re-read.
+fn may_change_sql_mode(sql: &str) -> bool {
+    if sql.to_ascii_lowercase().contains("sql_mode") {
+        return true;
+    }
+    let w = sql
+        .trim_start()
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(w.as_str(), "set" | "execute" | "call")
+}
+
 fn is_ddl(sql: &str) -> bool {
     let w = sql
         .trim_start()
@@ -442,28 +493,45 @@ impl MySession {
 
     /// Runs one statement under the connection lock. Returns (result set, rows affected).
     async fn run(&self, sql: &str) -> AppResult<(Option<ResultSet>, u64)> {
-        if has_multiple_statements(sql) {
-            return Err(AppError::new(
-                ErrorKind::Invalid,
-                "execute accepts exactly one statement",
-            ));
-        }
         if self.lost.load(Ordering::SeqCst) {
             return Err(Self::gone());
         }
         let mut guard = self.inner.lock().await;
         let inner = &mut *guard;
+        // Checked under the lock: `modes` reflects every earlier statement.
+        if has_multiple_statements(sql, inner.modes) {
+            return Err(AppError::new(
+                ErrorKind::Invalid,
+                "execute accepts exactly one statement",
+            ));
+        }
         let Some(conn) = inner.conn.as_mut() else {
             return Err(Self::gone());
         };
         if is_ddl(sql) {
             inner.json_cache.clear();
         }
-        self.canceller.cancelled.store(false, Ordering::SeqCst);
+        let my_seq = self.canceller.seq.fetch_add(1, Ordering::SeqCst) + 1;
         self.canceller.running.store(true, Ordering::SeqCst);
         let out = Self::run_on(conn, &mut inner.json_cache, self.mariadb, sql).await;
         self.canceller.running.store(false, Ordering::SeqCst);
-        let was_cancelled = self.canceller.cancelled.swap(false, Ordering::SeqCst);
+        let was_cancelled = self.canceller.cancelled_seq.load(Ordering::SeqCst) == my_seq;
+        if out.is_ok() && may_change_sql_mode(sql) {
+            match conn
+                .query_first::<String, _>("SELECT @@SESSION.sql_mode")
+                .await
+            {
+                Ok(Some(m)) => inner.modes = Modes::from_sql_mode(&m),
+                Ok(None) => {}
+                Err(e) => {
+                    let err = map_err(&e, true);
+                    self.note_loss(&err);
+                    if err.kind == ErrorKind::ConnectionLost {
+                        return Err(err);
+                    }
+                }
+            }
+        }
         match out {
             Err(e) => {
                 self.note_loss(&e);
@@ -516,21 +584,34 @@ impl MySession {
                 }
                 let key = (c.schema_str().to_string(), c.org_table_str().to_string());
                 if !json_cache.contains_key(&key) {
-                    let clauses: Vec<(String,)> = conn
+                    // Best-effort: a failed lookup must not turn a good SELECT into an error.
+                    let lookup: Result<Vec<(String,)>, MyError> = conn
                         .exec(
                             "SELECT CAST(CHECK_CLAUSE AS CHAR) FROM information_schema.CHECK_CONSTRAINTS \
                              WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ?",
                             (key.0.clone(), key.1.clone()),
                         )
-                        .await
-                        .map_err(|e| map_err(&e, true))?;
-                    let mut set = HashSet::new();
-                    for (clause,) in &clauses {
-                        json_columns_in(clause, &mut set);
+                        .await;
+                    match lookup {
+                        Ok(clauses) => {
+                            let mut set = HashSet::new();
+                            for (clause,) in &clauses {
+                                json_columns_in(clause, &mut set);
+                            }
+                            json_cache.insert(key.clone(), set);
+                        }
+                        Err(e) => {
+                            let err = map_err(&e, true);
+                            if matches!(err.kind, ErrorKind::ConnectionLost | ErrorKind::Cancelled)
+                            {
+                                return Err(err);
+                            }
+                        }
                     }
-                    json_cache.insert(key.clone(), set);
                 }
-                is_json[i] = json_cache[&key].contains(c.org_name_str().as_ref());
+                is_json[i] = json_cache
+                    .get(&key)
+                    .is_some_and(|set| set.contains(c.org_name_str().as_ref()));
             }
         }
         let out_rows = rows
@@ -719,6 +800,75 @@ impl Session for MySession {
 mod tests {
     use super::*;
 
+    const DEFAULT: Modes = Modes {
+        backslash_escapes: true,
+        ansi_quotes: false,
+    };
+    const NBE: Modes = Modes {
+        backslash_escapes: false,
+        ansi_quotes: false,
+    };
+    const ANSI: Modes = Modes {
+        backslash_escapes: true,
+        ansi_quotes: true,
+    };
+
+    #[test]
+    fn lexer_honours_no_backslash_escapes() {
+        // Backslash is a plain char: the quote ends the string, so `;` is real.
+        assert!(has_multiple_statements(
+            r"select 'a\'; delete from t; select '",
+            NBE
+        ));
+        assert!(has_multiple_statements(r"select 'a\'; select 2", NBE));
+        assert!(!has_multiple_statements(r"select 'a\'", NBE));
+        assert!(!has_multiple_statements(r"select 'a\' ;", NBE));
+        // Default mode: the escaped quote keeps the string open.
+        assert!(!has_multiple_statements(r"select 'a\'; select 2'", DEFAULT));
+        assert!(!has_multiple_statements(
+            r"select 'a\'; select 2; select '",
+            DEFAULT
+        ));
+        assert!(!has_multiple_statements(r"select 'a\'; select 2", DEFAULT));
+        assert!(has_multiple_statements(
+            r"select 'a\'; select 2; select '",
+            NBE
+        ));
+    }
+
+    #[test]
+    fn lexer_honours_ansi_quotes() {
+        // "..." is an identifier: no backslash escapes, closes at the next quote.
+        assert!(has_multiple_statements(
+            r#"select "a\"; drop table t; -- ""#,
+            ANSI
+        ));
+        assert!(!has_multiple_statements(
+            r#"select "a\"; drop table t; -- ""#,
+            DEFAULT
+        ));
+        // Doubled quotes still escape under ANSI_QUOTES.
+        assert!(!has_multiple_statements(r#"select "a"";b""#, ANSI));
+        // '...' strings keep backslash escapes under ANSI_QUOTES.
+        assert!(!has_multiple_statements(r"select 'a\'; b'", ANSI));
+    }
+
+    #[test]
+    fn sql_mode_parsing() {
+        let m = Modes::from_sql_mode("STRICT_TRANS_TABLES,NO_BACKSLASH_ESCAPES,ANSI_QUOTES");
+        assert_eq!(
+            m,
+            Modes {
+                backslash_escapes: false,
+                ansi_quotes: true
+            }
+        );
+        assert_eq!(Modes::from_sql_mode(""), DEFAULT);
+        assert!(may_change_sql_mode("SET SESSION SQL_MODE = ''"));
+        assert!(may_change_sql_mode("set @@sql_mode=1"));
+        assert!(!may_change_sql_mode("select 1"));
+    }
+
     #[test]
     fn multi_statement_lexer() {
         for single in [
@@ -732,7 +882,7 @@ mod tests {
             "select 'esc\\'; still string'",
             "select 1 -- ; select 2",
         ] {
-            assert!(!has_multiple_statements(single), "{single}");
+            assert!(!has_multiple_statements(single, DEFAULT), "{single}");
         }
         for multi in [
             "select 1; select 2",
@@ -746,7 +896,7 @@ mod tests {
             "select 1 --;x\n",
             "select 1 -- c\n; select 2",
         ] {
-            assert!(has_multiple_statements(multi), "{multi}");
+            assert!(has_multiple_statements(multi, DEFAULT), "{multi}");
         }
     }
 
