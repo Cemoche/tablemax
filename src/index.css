@@ -1,1 +1,48 @@
 @import "tailwindcss";
+@import "./styles/tokens.css";
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-env-local: var(--env-local);
+  --color-env-dev: var(--env-dev);
+  --color-env-staging: var(--env-staging);
+  --color-env-prod: var(--env-prod);
+  --color-swatch-1: var(--swatch-1);
+  --color-swatch-2: var(--swatch-2);
+  --color-swatch-3: var(--swatch-3);
+  --color-swatch-4: var(--swatch-4);
+  --color-swatch-5: var(--swatch-5);
+  --color-swatch-6: var(--swatch-6);
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-mono);
+  --text-xs: var(--text-xs);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-md);
+  --text-lg: var(--text-lg);
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.4;
+}
