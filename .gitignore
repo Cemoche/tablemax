@@ -5,3 +5,7 @@ target/
 *.log
 .superpowers/
 .worktrees/
+src-tauri/target/
+src-tauri/gen/schemas/
+*.tsbuildinfo
+.env
