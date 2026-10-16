@@ -57,6 +57,9 @@ export function usePagedTable(
         setError(toAppError(e));
         setLoading(false);
       });
+    return () => {
+      seq.current++;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, object.schema, object.name, page, sortCol, sortDir, pageSize, tick]);
 
@@ -71,6 +74,9 @@ export function usePagedTable(
       .catch(() => {
         if (mine === countSeq.current) setRowCount(null);
       });
+    return () => {
+      countSeq.current++;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, object.schema, object.name, tick]);
 

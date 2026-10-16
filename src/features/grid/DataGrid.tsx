@@ -3,7 +3,6 @@ import {
   GridCellKind,
   type GridColumn,
   type Item,
-  type Theme,
   DataEditor,
 } from "@glideapps/glide-data-grid";
 import "@glideapps/glide-data-grid/dist/index.css";
@@ -11,43 +10,12 @@ import { useCallback, useMemo, useState } from "react";
 import { strings } from "../../lib/strings";
 import type { ResultSet, SortDir } from "../../lib/types";
 import { cellContent } from "./cellContent";
+import { useGridTheme } from "./gridTheme";
+
+const ROW_HEIGHT = 24;
+const HEADER_HEIGHT = 28;
 
 const DEFAULT_COL_WIDTH = 160;
-
-function cssVar(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-/** Builds Glide's canvas theme from the design tokens (no hardcoded colors). */
-export function buildGridTheme(): Partial<Theme> {
-  const font = cssVar("--font-ui");
-  const size = cssVar("--text-md") || "13px";
-  return {
-    bgCell: cssVar("--surface"),
-    bgCellMedium: cssVar("--surface"),
-    bgHeader: cssVar("--surface-2"),
-    bgHeaderHasFocus: cssVar("--surface-2"),
-    bgHeaderHovered: cssVar("--surface-2"),
-    bgBubble: cssVar("--surface-2"),
-    textDark: cssVar("--text"),
-    textMedium: cssVar("--text-muted"),
-    textLight: cssVar("--text-muted"),
-    textHeader: cssVar("--text"),
-    textHeaderSelected: cssVar("--accent-contrast"),
-    textBubble: cssVar("--text"),
-    borderColor: cssVar("--border"),
-    horizontalBorderColor: cssVar("--border"),
-    drilldownBorder: cssVar("--border"),
-    accentColor: cssVar("--accent"),
-    accentFg: cssVar("--accent-contrast"),
-    accentLight: cssVar("--surface-2"),
-    linkColor: cssVar("--accent"),
-    fontFamily: font,
-    baseFontStyle: `${size}`,
-    headerFontStyle: `600 ${size}`,
-    editorFontSize: size,
-  };
-}
 
 export interface DataGridProps {
   data: ResultSet;
@@ -57,8 +25,7 @@ export interface DataGridProps {
 
 /** Thin, read-only adapter over Glide Data Grid (canvas; not testable in jsdom). */
 export function DataGrid({ data, sort = null, onSort }: DataGridProps) {
-  const theme = useMemo(buildGridTheme, []);
-  const mutedOverride = useMemo<Partial<Theme>>(() => ({ textDark: cssVar("--text-muted") }), []);
+  const { theme, muted: mutedOverride } = useGridTheme();
   const colKey = data.columns.map((c) => c.name).join("\u0000");
   const [widths, setWidths] = useState<{ key: string; w: Record<string, number> }>({
     key: colKey,
@@ -112,6 +79,8 @@ export function DataGrid({ data, sort = null, onSort }: DataGridProps) {
       getCellContent={getCellContent}
       getCellsForSelection={true}
       theme={theme}
+      rowHeight={ROW_HEIGHT}
+      headerHeight={HEADER_HEIGHT}
       rowMarkers="number"
       smoothScrollX
       smoothScrollY

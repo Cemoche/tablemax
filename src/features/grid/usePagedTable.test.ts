@@ -92,3 +92,20 @@ test("estimate count renders with ≈", () => {
   expect(formatRowCount({ t: "exact", v: 1234567 })).toBe("1,234,567");
   expect(formatRowCount(null)).toBe("…");
 });
+
+test("unmounting before the response resolves updates no state", async () => {
+  let resolvePage!: (r: ResultSet) => void;
+  vi.mocked(ipc.tablePage).mockImplementation(() => new Promise((r) => (resolvePage = r)));
+  let resolveCount!: (c: { t: "exact"; v: number }) => void;
+  vi.mocked(ipc.tableCount).mockImplementation(() => new Promise((r) => (resolveCount = r)));
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const { result, unmount } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  unmount();
+  await act(async () => {
+    resolvePage(rs(3));
+    resolveCount({ t: "exact", v: 3 });
+  });
+  expect(result.current.result).toBeNull();
+  expect(result.current.rowCount).toBeNull();
+  expect(spy).not.toHaveBeenCalled();
+});
