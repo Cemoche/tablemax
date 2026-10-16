@@ -330,3 +330,22 @@ async fn pg_rejects_non_local_host() {
     assert_eq!(e.kind, ErrorKind::Connection);
     assert!(e.message.contains("TLS is not supported yet"));
 }
+
+#[tokio::test]
+async fn pg_multi_statement_never_merges_with_localized_messages() {
+    for url in pg_urls() {
+        let (s, _g) = open(&url).await;
+        // Skip the SET gracefully when the locale is missing in the container.
+        let localized = s.execute("SET lc_messages = 'fr_FR.UTF-8'").await.is_ok();
+        for sql in ["select 1; select 2", "select 1, 2; select 3"] {
+            let res = s.execute(sql).await;
+            match res {
+                Err(e) => assert!(
+                    matches!(e.kind, ErrorKind::Invalid | ErrorKind::Query),
+                    "localized={localized}: {e:?}"
+                ),
+                Ok(o) => panic!("localized={localized}: statements merged: {o:?}"),
+            }
+        }
+    }
+}

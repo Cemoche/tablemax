@@ -146,14 +146,17 @@ impl PgSession {
                     .collect(),
             ),
             Err(e) => {
-                if e.as_db_error()
-                    .is_some_and(|d| d.message().contains("multiple commands"))
+                if let Some(db) = e.as_db_error()
+                    && *db.code() == SqlState::SYNTAX_ERROR
                 {
-                    // Detected at parse time: nothing has been executed.
-                    return Err(AppError::new(
-                        ErrorKind::Invalid,
-                        "execute accepts exactly one statement",
-                    ));
+                    // 42601 never falls back: simple_query could only succeed here for
+                    // multi-command input. Keyed on SQLSTATE, so localized servers work;
+                    // nothing has been executed.
+                    return Err(if db.message().contains("multiple commands") {
+                        AppError::new(ErrorKind::Invalid, "execute accepts exactly one statement")
+                    } else {
+                        map_err(e)
+                    });
                 }
                 let err = map_err(e);
                 if matches!(err.kind, ErrorKind::Cancelled | ErrorKind::ConnectionLost) {
