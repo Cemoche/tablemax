@@ -35,7 +35,7 @@ impl DriverKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectParams {
     pub kind: DriverKind,
@@ -45,6 +45,21 @@ pub struct ConnectParams {
     pub password: Option<String>,
     pub database: Option<String>,
     pub sqlite_path: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for ConnectParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let password = self.password.as_ref().map(|_| "<redacted>");
+        f.debug_struct("ConnectParams")
+            .field("kind", &self.kind)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("password", &password)
+            .field("database", &self.database)
+            .field("sqlite_path", &self.sqlite_path)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -141,5 +156,26 @@ pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {
         DriverKind::Postgres | DriverKind::MySql | DriverKind::MariaDb | DriverKind::Sqlite => {
             Err(AppError::new(ErrorKind::Invalid, "driver not available"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connect_params_debug_redacts_password() {
+        let params = ConnectParams {
+            kind: DriverKind::Postgres,
+            host: "h".into(),
+            port: 5432,
+            user: "u".into(),
+            password: Some("s3cret-value".into()),
+            database: None,
+            sqlite_path: None,
+        };
+        let out = format!("{:?}", params);
+        assert!(!out.contains("s3cret-value"));
+        assert!(out.contains("<redacted>"));
     }
 }
