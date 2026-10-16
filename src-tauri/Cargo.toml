@@ -27,11 +27,12 @@ rusqlite = { version = "0.40", features = ["bundled", "column_decltype"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-postgres = "0.7"
 mysql_async = { version = "0.37", default-features = false, features = ["minimal-rust"] }
+keyring = "4.2"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"
 url = "2"
-uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["time"] }
 
 

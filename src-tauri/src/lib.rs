@@ -1,5 +1,7 @@
 pub mod driver;
 pub mod error;
+pub mod secrets;
+pub mod store;
 pub mod value;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
