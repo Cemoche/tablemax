@@ -171,10 +171,17 @@ pub fn delete_connection(
     secrets: &dyn SecretStore,
     id: &str,
 ) -> AppResult<()> {
-    store.delete(id)?;
+    // Attempt every kind even if one fails; keep the row so the user can retry.
+    let mut first_err: Option<AppError> = None;
     for kind in SecretKind::ALL {
-        secrets.delete(&SecretKey::new(id, kind))?;
+        if let Err(e) = secrets.delete(&SecretKey::new(id, kind)) {
+            first_err.get_or_insert(e);
+        }
     }
+    if let Some(e) = first_err {
+        return Err(e);
+    }
+    store.delete(id)?;
     Ok(())
 }
 
@@ -325,5 +332,59 @@ mod tests {
         assert_eq!(v["passwordMode"], "keyring");
         assert_eq!(v["kind"], "postgres");
         assert!(v.get("password").is_none());
+    }
+
+    struct FailingDelete {
+        inner: MemorySecretStore,
+        fail: SecretKind,
+        attempted: Mutex<Vec<SecretKind>>,
+    }
+
+    impl SecretStore for FailingDelete {
+        fn available(&self) -> bool {
+            true
+        }
+        fn set(&self, k: &SecretKey, v: &str) -> AppResult<()> {
+            self.inner.set(k, v)
+        }
+        fn get(&self, k: &SecretKey) -> AppResult<Option<String>> {
+            self.inner.get(k)
+        }
+        fn delete(&self, k: &SecretKey) -> AppResult<()> {
+            self.attempted.lock().unwrap().push(k.kind);
+            if k.kind == self.fail {
+                return Err(AppError::new(ErrorKind::Secret, "boom"));
+            }
+            self.inner.delete(k)
+        }
+    }
+
+    #[test]
+    fn delete_connection_keeps_row_when_secret_delete_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let sec = FailingDelete {
+            inner: MemorySecretStore::new(),
+            fail: SecretKind::DbPassword,
+            attempted: Mutex::new(vec![]),
+        };
+        let mut saved = cfg("x", PasswordMode::Ask);
+        saved.id = "fixed-id".into();
+        store.upsert(&saved).unwrap();
+        for k in SecretKind::ALL {
+            sec.inner
+                .set(&SecretKey::new(saved.id.clone(), k), "v")
+                .unwrap();
+        }
+        let err = delete_connection(&store, &sec, &saved.id).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Secret);
+        assert!(store.get(&saved.id).is_ok());
+        assert_eq!(*sec.attempted.lock().unwrap(), SecretKind::ALL.to_vec());
+        assert_eq!(
+            sec.inner
+                .get(&SecretKey::new(saved.id.clone(), SecretKind::SshPassword))
+                .unwrap(),
+            None
+        );
     }
 }
