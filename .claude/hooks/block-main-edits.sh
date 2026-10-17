@@ -5,12 +5,12 @@
 # HEAD, gitignored file, bad input) is allowed. It never writes anything.
 set -u
 
+input="$(cat)" # always drain stdin, so Claude Code never gets a broken pipe
 if ! command -v jq >/dev/null 2>&1; then
   echo "TableMax hook: jq is not installed, so edits on main are not checked (sudo apt install jq)." >&2
   exit 0
 fi
 
-input="$(cat)"
 target="$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // .cwd // empty' 2>/dev/null)" || exit 0
 cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)" || cwd=""
 [[ -n $target ]] || exit 0
