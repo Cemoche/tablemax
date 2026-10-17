@@ -7,7 +7,7 @@ Plan: `docs/superpowers/plans/2026-10-17-tablemax-team-setup.md`. Branch `feat/t
 | Piece | Where | Checked by |
 |---|---|---|
 | Shared Claude Code settings: permissions, hooks, superpowers enabled, `worktree.baseRef: fresh` | `.claude/settings.json` | `jq`, review |
-| Hook refusing edits on `main`/`master` (gitignored files allowed) | `.claude/hooks/block-main-edits.sh` | `bash scripts/test-claude-hooks.sh` |
+| Hook refusing file edits and `git commit`/`cherry-pick`/`revert`/`am` on a `main`/`master` checkout of this repo (gitignored files and other repos allowed) | `.claude/hooks/block-main-edits.sh` | `bash scripts/test-claude-hooks.sh` |
 | Hook giving each session its branch and issue (issue title marked as untrusted data) | `.claude/hooks/session-context.sh` | same |
 | Skills `/pick-issue`, `/work-issue`, `/ship`, `/issue-comment`, `/plan-to-issues` | `.claude/skills/*/SKILL.md` | `gh` flags checked against `gh <cmd> --help` (gh 2.94) |
 | Plan → issues script | `scripts/plan-to-issues.mjs` | `scripts/plan-to-issues.test.mjs` (in `pnpm test`) |
@@ -16,8 +16,9 @@ Plan: `docs/superpowers/plans/2026-10-17-tablemax-team-setup.md`. Branch `feat/t
 | GitHub bootstrap | `scripts/github-bootstrap.sh` | `bash scripts/test-github-bootstrap.sh` (fake `gh`), `--dry-run` against the real repo |
 | Default labels in the issue forms (`type:task` + `status:ready`, `type:bug` + `status:triage`) | `.github/ISSUE_TEMPLATE/*.yml` | YAML parse |
 
-Permissions: the allow list holds only exact or read-only command forms; `git push`,
-`gh pr merge`, `gh issue close`, `gh pr close` and `git worktree remove` ask first; force
+Permissions: the allow list holds only exact or read-only command forms (plus
+`gh issue comment` / `gh pr comment`); `git push`, `gh issue create|edit|close`,
+`gh pr create|edit|merge|close` and `git worktree remove` ask first; force
 pushes, pushes to `main`, `gh pr merge --admin`, issue deletion/transfer, `gh auth token`,
 git transport/output options and reading `.env` are denied.
 
@@ -59,8 +60,8 @@ source of truth (the skills set them); the Stage field is not synced automatical
 1. Merge order and PRs: this branch sits on `feat/team-setup`; push and open the PRs (no merge
    by agents).
 2. `bash scripts/github-bootstrap.sh --dry-run`, then `bash scripts/github-bootstrap.sh`
-   (re-running it creates nothing new). Do this **before** teammates use the skills: they set
-   `status:*` labels, and `gh issue edit --add-label` fails on a label that does not exist.
+   (re-running it creates nothing new). Until it runs, the skills skip their `status:*` label
+   steps and `/pick-issue` lists every unassigned open issue.
 3. Optional board: `gh auth refresh -s project`, then `bash scripts/github-bootstrap.sh --project`.
 4. Watch the first CI run on the pushed branch (`gh run watch`) and fix what a fresh runner
    reveals (system packages, Docker build of the test sshd, Rust 1.96 toolchain).
@@ -77,5 +78,7 @@ source of truth (the skills set them); the Stage field is not synced automatical
   Actions minutes; if minutes run short, drop one trigger or run the backend job on
   `pull_request` only.
 - Collaborators: `jerembdn` is invited; the second teammate's GitHub login is not known yet.
-- `/pick-issue` resolves a simultaneous claim by the earliest `assigned` event; the race path
-  was reviewed, not exercised against GitHub (no writes allowed while setting up).
+- `/pick-issue` settles a simultaneous claim by the current assignees' latest `assigned`
+  events (earliest wins; the jq rule was tested on sample events, the GitHub path was reviewed,
+  not exercised: no writes allowed while setting up). The loser has not labelled or commented
+  yet, so backing off is a single unassign.

@@ -16,7 +16,7 @@ Design: [`docs/superpowers/specs/2026-10-16-tablemax-design.md`](docs/superpower
   sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
     libssl-dev libayatana-appindicator3-dev librsvg2-dev jq openssl openssh-client sqlite3
   ```
-- Node 22, pnpm 10 (`npm install -g pnpm@10`), Rust ≥ 1.96 (via [rustup](https://rustup.rs),
+- Node 22 (22.22 or newer), pnpm 10 (`npm install -g pnpm@10`), Rust ≥ 1.96 (via [rustup](https://rustup.rs),
   puis `rustup update stable`), Docker avec `docker compose` v2,
   [`gh`](https://github.com/cli/cli#installation), Claude Code (`claude`).
 - Contrôle : `node --version; pnpm --version; rustc --version; docker compose version; jq --version; gh --version`.
@@ -68,13 +68,15 @@ side » dans le [README](README.md#two-worktrees-side-by-side).
 
 - Pousser ou committer sur `main` (tout passe par une PR).
 - Prendre une issue déjà assignée, ou pousser sur la branche d'un autre.
-- `git push --force` sur la branche de quelqu'un d'autre ; merger une PR (c'est le
-  propriétaire qui merge).
+- `git push --force`, sur quelque branche que ce soit (refusé par les réglages) : une branche
+  déjà poussée se met à jour avec `git merge origin/main`, pas par rebase ; merger une PR
+  (c'est le propriétaire qui merge).
 - Committer un secret (jeton, mot de passe réel, clé privée).
 
 Le dépôt est privé sur un compte gratuit : GitHub n'offre pas de protection de branche. Les
-garde-fous sont côté Claude Code (hook qui refuse l'édition sur `main`, permissions qui
-demandent avant `git push` et refusent `--force` et les pushs sur `main`) et la CI, qui
+garde-fous sont côté Claude Code (hook qui refuse l'édition et les commits sur `main`,
+permissions qui demandent avant `git push` et les écritures GitHub, et refusent `--force` et
+les pushs sur `main`) et la CI, qui
 signale mais ne bloque pas. Sans Claude, ces règles tiennent par convention.
 
 ### Ajouter une issue
@@ -88,8 +90,8 @@ par `### Task N`, les issues existantes sont ignorées).
 
 - Les labels (`type:*`, `status:*`, `area:*`, `size:*`, `plan:*`…), jalons, epics et le board
   GitHub sont créés par `scripts/github-bootstrap.sh`, lancé une fois par le propriétaire
-  (voir `docs/notes/team-setup.md`). Avant cela, les étapes de label des skills échouent :
-  prenez une issue par la seule assignation (`gh issue edit <n> --add-assignee @me`).
+  (voir `docs/notes/team-setup.md`). Avant cela, les skills le détectent, sautent les étapes de
+  label et prennent l'issue par la seule assignation.
 - La CI (`.github/workflows/ci.yml`) n'a pas encore tourné sur GitHub : ses premiers
   résultats peuvent demander des corrections de la CI elle-même.
 
@@ -104,7 +106,7 @@ par `### Task N`, les issues existantes sont ignorées).
   sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
     libssl-dev libayatana-appindicator3-dev librsvg2-dev jq openssl openssh-client sqlite3
   ```
-- Node 22, pnpm 10 (`npm install -g pnpm@10`), Rust ≥ 1.96 (via [rustup](https://rustup.rs),
+- Node 22 (22.22 or newer), pnpm 10 (`npm install -g pnpm@10`), Rust ≥ 1.96 (via [rustup](https://rustup.rs),
   then `rustup update stable`), Docker with `docker compose` v2,
   [`gh`](https://github.com/cli/cli#installation), Claude Code (`claude`).
 - Check: `node --version; pnpm --version; rustc --version; docker compose version; jq --version; gh --version`.
@@ -156,12 +158,13 @@ in the [README](README.md#two-worktrees-side-by-side).
 
 - Push or commit to `main` (everything goes through a PR).
 - Take an issue that already has an assignee, or push to someone else's branch.
-- `git push --force` someone else's branch; merge a PR (the owner merges).
+- `git push --force` any branch (denied by the settings): update a pushed branch with
+  `git merge origin/main`, not a rebase; merge a PR (the owner merges).
 - Commit a secret (token, real password, private key).
 
 The repository is private on a free plan: GitHub offers no branch protection. The guards
-live in Claude Code (a hook refusing edits on `main`, permissions that ask before `git push`
-and deny `--force` and pushes to `main`) and in CI, which reports but does not block.
+live in Claude Code (a hook refusing edits and commits on `main`, permissions that ask before
+`git push` and GitHub writes and deny `--force` and pushes to `main`) and in CI, which reports but does not block.
 Without Claude, these rules hold by convention.
 
 ### Adding an issue
@@ -175,7 +178,7 @@ plan: `/plan-to-issues docs/superpowers/plans/<plan>.md --dry-run`, then without
 
 - GitHub labels (`type:*`, `status:*`, `area:*`, `size:*`, `plan:*`…), milestones, epics and
   the board are created by `scripts/github-bootstrap.sh`, run once by the owner (see
-  `docs/notes/team-setup.md`). Until then the label steps of the skills fail: claim an issue by
-  assignment only (`gh issue edit <n> --add-assignee @me`).
+  `docs/notes/team-setup.md`). Until then the skills detect it, skip the label steps and claim
+  by assignment only.
 - CI (`.github/workflows/ci.yml`) has not run on GitHub yet: its first results may need fixes
   to the CI itself.
