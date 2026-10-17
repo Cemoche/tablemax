@@ -118,9 +118,9 @@ out; lines it resolved in part keep only what is still open.
 - SQLite column without type affinity holding an integer key: compared with bound text,
   it reports a false stale row. A PG `BEFORE` trigger returning NULL is reported as a stale
   row too.
-- A cancel that lands during the COMMIT window, and PostgreSQL's asynchronous cancel in
-  general, may hit the next statement on the same connection; the failed-ROLLBACK paths are
-  untested (the reconnect after them is).
+- PostgreSQL's asynchronous cancel may hit the next statement on the same connection; the
+  failed-ROLLBACK paths are untested (the reconnect after them is). (A cancel that lands on
+  the COMMIT itself is now reported as an unknown outcome.)
 - `suggests_schema_change` matches English error messages: a localized PostgreSQL server
   does not invalidate the cached metadata after a schema change (the user can refresh).
 - The 16 MiB cap of `cell_value` is not tested on MySQL / MariaDB (inserting 17 MiB
@@ -135,8 +135,6 @@ out; lines it resolved in part keep only what is still open.
 - The first commit after a MySQL server killed an idle browse connection fails with
   `ConnectionLost` (the client only learns it then) and is shown as an unknown outcome,
   though nothing was sent; the reload rebuilds the connection.
-- `changes_cancel` re-sends the cancel until the commit returns: on PostgreSQL it can
-  cancel a page fetch issued meanwhile on the same browse connection.
 
 ## Deferred (Task 4)
 
@@ -185,7 +183,6 @@ out; lines it resolved in part keep only what is still open.
   active tab is mounted; same as the row details panel). Keep it per tab in a store if
   users miss it.
 - Focus is not restored to the grid after Alt+1; the `contentEditable` guard of the
-  shortcuts is untested in jsdom; `altShortcut` duplicates `modShortcut` (dedupe at
-  integration).
+  shortcuts is untested in jsdom.
 - Known behaviour: a high `exact_count_threshold` setting makes filtered counts scan up to
   that many rows; they hold the browse connection until done and have no user-facing cancel.
