@@ -273,8 +273,9 @@ async fn unverifiable_known_hosts_blocks_without_trusting() {
     let dir = tempfile::tempdir().unwrap();
     let path = app_known_hosts(&dir);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let garbage = "[127.0.0.1]:2222 ssh-ed25519 !!!notbase64!!!\n";
-    std::fs::write(&path, garbage).unwrap();
+    let (host, port) = ssh_addr();
+    let garbage = format!("[{host}]:{port} ssh-ed25519 !!!notbase64!!!\n");
+    std::fs::write(&path, &garbage).unwrap();
 
     for accept in [None, Some(real)] {
         let e = open_tunnel(&target(password()), "pg16", 5432, &policy(&dir, accept))
