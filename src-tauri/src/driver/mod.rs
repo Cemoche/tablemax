@@ -192,6 +192,12 @@ pub trait Session: Send + Sync {
     async fn execute(&self, sql: &str) -> AppResult<StatementOutcome>;
     fn canceller(&self) -> Arc<dyn Canceller>;
     async fn close(&self) -> AppResult<()>;
+    /// True once the session knows its connection is gone (closed, dropped after a failed
+    /// ROLLBACK, or a lost link already seen): every call would fail with
+    /// `ConnectionLost`. Never blocks. A link that died unnoticed still reports false.
+    fn is_lost(&self) -> bool {
+        false
+    }
 }
 
 pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {

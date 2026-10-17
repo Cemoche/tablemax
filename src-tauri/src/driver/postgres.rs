@@ -28,7 +28,8 @@
 //! output function; `num_nulls` keeps NULL apart from an all-NULL composite).
 //! A statement without parameters takes the simple-query path above instead.
 //!
-//! Row changes (`apply`) run `BEGIN`, each statement through `execute_raw` (its row count),
+//! Row changes (`apply`) run `BEGIN` (with `SET LOCAL lock_timeout`, see
+//! `dml::apply_lock_timeout_secs`), each statement through `execute_raw` (its row count),
 //! then `COMMIT` (or `ROLLBACK`). The `Client` pipelines concurrent calls on one
 //! connection, so a page fetch issued meanwhile would run inside the transaction: every
 //! call takes `gate` shared, `apply` takes it exclusive for the whole transaction.
@@ -899,10 +900,16 @@ impl Session for PgSession {
         dml::check_apply_args(stmts, expect_one)?;
         let _gate = self.gate.write().await;
         self.check()?;
-        self.client
-            .batch_execute("BEGIN")
-            .await
-            .map_err(|e| self.map_live_err(e))?;
+        // The bound ends with the transaction (SET LOCAL).
+        let begin = format!(
+            "BEGIN; SET LOCAL lock_timeout = '{}s'",
+            dml::apply_lock_timeout_secs()
+        );
+        if let Err(e) = self.client.batch_execute(&begin).await {
+            let err = self.map_live_err(e);
+            self.rollback().await;
+            return Err(err);
+        }
         let mut affected = Vec::with_capacity(stmts.len());
         for (i, stmt) in stmts.iter().enumerate() {
             let result = self.apply_one(stmt).await;
@@ -1011,6 +1018,10 @@ impl Session for PgSession {
             result,
             elapsed_ms: start.elapsed().as_millis() as u64,
         })
+    }
+
+    fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::SeqCst) || self.client.is_closed()
     }
 
     fn canceller(&self) -> Arc<dyn Canceller> {

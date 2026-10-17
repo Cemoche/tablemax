@@ -22,7 +22,7 @@ use tablemax_lib::driver::sql::quote_ident;
 use tablemax_lib::driver::sqlite::connect_sqlite;
 use tablemax_lib::driver::tls::SslConfig;
 use tablemax_lib::driver::{
-    ConnectParams, Dialect, DriverKind, ObjectRef, PageRequest, ResultSet, Session,
+    ConnectParams, Dialect, DriverKind, ObjectRef, PageRequest, ResultSet, RowCount, Session,
 };
 use tablemax_lib::error::ErrorKind;
 use tablemax_lib::manager::SessionManager;
@@ -1190,6 +1190,120 @@ async fn pg_domains_with_typmod_never_truncate() {
 
 fn int_key_text(k: &str) -> RowKey {
     RowKey(vec![("k".into(), CellValue::Text(k.into()))])
+}
+
+/// Server id of the workspace's browse connection (PG backend pid / MySQL connection id).
+async fn browse_backend_id(fx: &Fx) -> String {
+    let browse = fx.mgr.browse(&fx.ws).await.unwrap();
+    let stmt = Statement {
+        sql: fx
+            .pick("SELECT pg_backend_pid()", "SELECT CONNECTION_ID()", "")
+            .into(),
+        params: vec![],
+    };
+    match browse.query(&stmt).await.unwrap().rows[0][0].clone() {
+        CellValue::Int(n) => n.to_string(),
+        CellValue::BigInt(s) | CellValue::Decimal(s) => s,
+        other => panic!("backend id {other:?}"),
+    }
+}
+
+/// Terminates the browse connection's server side; returns its old id.
+async fn kill_browse(fx: &Fx) -> String {
+    let id = browse_backend_id(fx).await;
+    let kill = match fx.d() {
+        Dialect::Postgres => format!("SELECT pg_terminate_backend({id})"),
+        _ => format!("KILL {id}"),
+    };
+    fx.run(&kill).await;
+    id
+}
+
+#[tokio::test]
+async fn lost_browse_connection_is_rebuilt() {
+    for fx in all_fixtures().await {
+        let t = fx.q("lost");
+        fx.run(&format!("CREATE TABLE {t} (id int PRIMARY KEY, v int)"))
+            .await;
+        fx.run(&format!("INSERT INTO {t} VALUES (1, 1)")).await;
+        let k = fx.kind;
+        assert_eq!(fx.page("lost").await.rows.len(), 1, "{k:?}");
+
+        // Dropped by the session itself (what a failed ROLLBACK does): rebuilt.
+        fx.mgr.browse(&fx.ws).await.unwrap().close().await.unwrap();
+        assert_eq!(fx.page("lost").await.rows.len(), 1, "{k:?}");
+
+        if fx.d() == Dialect::Sqlite {
+            continue;
+        }
+        // Killed by the server: the next page, count, metadata read and write all work
+        // without reopening the workspace.
+        let id = kill_browse(&fx).await;
+        assert_eq!(fx.page("lost").await.rows.len(), 1, "{k:?}");
+        assert_ne!(browse_backend_id(&fx).await, id, "{k:?}");
+
+        kill_browse(&fx).await;
+        let n = fx.mgr.table_count(&fx.ws, &fx.obj("lost"), &[]).await;
+        assert_eq!(n.unwrap(), RowCount::Exact(1), "{k:?}");
+
+        kill_browse(&fx).await;
+        fx.mgr.invalidate_table_info(&fx.ws, &fx.obj("lost"));
+        let info = fx.mgr.table_info(&fx.ws, &fx.obj("lost")).await;
+        assert!(info.is_ok(), "{k:?}: {info:?}");
+        fx.apply_ok("lost", vec![update(int_key(1), &[("v", text("2"))])])
+            .await;
+        assert_eq!(cell(&fx.page("lost").await, 0, "v"), CellValue::Int(2), "{k:?}");
+    }
+}
+
+#[tokio::test]
+async fn commit_waiting_on_a_row_lock_is_cancellable() {
+    for fx in all_fixtures().await {
+        if fx.d() == Dialect::Sqlite {
+            continue;
+        }
+        let t = fx.q("lk");
+        fx.run(&format!("CREATE TABLE {t} (id int PRIMARY KEY, v int)"))
+            .await;
+        fx.run(&format!("INSERT INTO {t} VALUES (1, 1), (2, 2)")).await;
+        let k = fx.kind;
+        // Someone else holds row 1.
+        fx.run(fx.pick("BEGIN", "START TRANSACTION", "")).await;
+        fx.run(&format!("UPDATE {t} SET v = 10 WHERE id = 1")).await;
+        // Nothing to cancel: a no-op.
+        fx.mgr.changes_cancel(&fx.ws).await.unwrap();
+
+        let (mgr, ws, obj) = (fx.mgr.clone(), fx.ws.clone(), fx.obj("lk"));
+        let changes = vec![
+            update(int_key(2), &[("v", text("20"))]),
+            update(int_key(1), &[("v", text("11"))]),
+        ];
+        let running = tokio::spawn(async move { mgr.changes_apply(&ws, &obj, &changes).await });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(!running.is_finished(), "{k:?}: the commit must wait for the lock");
+        let started = std::time::Instant::now();
+        tokio::time::timeout(WAIT, fx.mgr.changes_cancel(&fx.ws))
+            .await
+            .expect("cancel must return")
+            .unwrap();
+        let res = tokio::time::timeout(WAIT, running)
+            .await
+            .expect("cancelled commit must end")
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5), "{k:?}");
+        assert_eq!(res.unwrap_err().kind, ErrorKind::Cancelled, "{k:?}");
+        fx.run("ROLLBACK").await;
+        // Everything rolled back (row 2 too), and the browse connection still works.
+        let rs = fx.page("lk").await;
+        assert_eq!(cell(&rs, 0, "v"), CellValue::Int(1), "{k:?}");
+        assert_eq!(cell(&rs, 1, "v"), CellValue::Int(2), "{k:?}");
+        fx.apply_ok("lk", vec![update(int_key(1), &[("v", text("3"))])])
+            .await;
+        // A cancel after the commit ended does not leak into the next one.
+        fx.mgr.changes_cancel(&fx.ws).await.unwrap();
+        fx.apply_ok("lk", vec![update(int_key(2), &[("v", text("4"))])])
+            .await;
+    }
 }
 
 /// `CREATE TABLE <name> (k <ty> PRIMARY KEY, v varchar(10))` with one row per literal

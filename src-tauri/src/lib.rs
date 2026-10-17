@@ -62,6 +62,7 @@ pub fn run() {
             commands::table_ddl,
             commands::changes_preview,
             commands::changes_apply,
+            commands::changes_cancel,
             commands::cell_value,
             commands::sql_session_open,
             commands::sql_session_close,

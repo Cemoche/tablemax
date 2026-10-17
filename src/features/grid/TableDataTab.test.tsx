@@ -145,7 +145,7 @@ test("a failed change shows its message and every change stays pending", async (
     applied: false,
     affected: [1, 0],
     failedIndex: 1,
-    error: { kind: "query", message: "the row changed or was deleted since it was loaded" },
+    error: { kind: "query", message: "the row was deleted or its key changed since it was loaded" },
   });
   pending().setCell("t1", obj, key(0), "note", { t: "null" }, lines(1).rows[0], names);
   pending().toggleDelete("t1", obj, key(2));
@@ -153,7 +153,7 @@ test("a failed change shows its message and every change stays pending", async (
   await userEvent.click(await screen.findByRole("button", { name: strings.grid.commit("Ctrl+S") }));
   expect(
     await screen.findByText(
-      strings.grid.changeFailed(2, "the row changed or was deleted since it was loaded"),
+      strings.grid.changeFailed(2, "the row was deleted or its key changed since it was loaded"),
     ),
   ).toBeInTheDocument();
   expect(pending().count("t1")).toBe(2);

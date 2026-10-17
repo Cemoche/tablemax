@@ -181,7 +181,9 @@ pub async fn schemas_list(
     state: State<'_, SessionManager>,
     workspace_id: String,
 ) -> AppResult<Vec<String>> {
-    state.browse(&workspace_id).await?.list_schemas().await
+    state
+        .on_browse(&workspace_id, |b| async move { b.list_schemas().await })
+        .await
 }
 
 #[tauri::command]
@@ -190,10 +192,9 @@ pub async fn objects_list(
     workspace_id: String,
     schema: Option<String>,
 ) -> AppResult<Vec<DbObject>> {
+    let schema = schema.as_deref();
     state
-        .browse(&workspace_id)
-        .await?
-        .list_objects(schema.as_deref())
+        .on_browse(&workspace_id, |b| async move { b.list_objects(schema).await })
         .await
 }
 
@@ -241,7 +242,10 @@ pub async fn table_ddl(
     workspace_id: String,
     object: ObjectRef,
 ) -> AppResult<String> {
-    state.browse(&workspace_id).await?.table_ddl(&object).await
+    let object = &object;
+    state
+        .on_browse(&workspace_id, |b| async move { b.table_ddl(object).await })
+        .await
 }
 
 /// One SQL text per change, values as escaped literals: for display, never executed.
@@ -267,6 +271,15 @@ pub async fn changes_apply(
     changes: Vec<RowChange>,
 ) -> AppResult<ApplyOutcome> {
     state.changes_apply(&workspace_id, &object, &changes).await
+}
+
+/// Cancels the workspace's commit in flight (no-op when none): rolled back, `Cancelled`.
+#[tauri::command]
+pub async fn changes_cancel(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+) -> AppResult<()> {
+    state.changes_cancel(&workspace_id).await
 }
 
 /// The whole value of a cell (text/JSON never cut), found by its row key.

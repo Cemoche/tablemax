@@ -145,14 +145,14 @@ test("a failed change is marked with its message and nothing is removed", async 
     applied: false,
     affected: [1, 0],
     failedIndex: 1,
-    error: { kind: "query", message: "the row changed or was deleted since it was loaded" },
+    error: { kind: "query", message: "the row was deleted or its key changed since it was loaded" },
   });
   s().setCell(T, obj, key(1), "note", { t: "text", v: "new" }, row(1, "old"), columns);
   s().toggleDelete(T, obj, key(2));
   await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
   expect(s().count(T)).toBe(2);
   expect(s().tabs[T].errors).toEqual({
-    [`delete:${rowKeyId(key(2))}`]: "the row changed or was deleted since it was loaded",
+    [`delete:${rowKeyId(key(2))}`]: "the row was deleted or its key changed since it was loaded",
   });
   expect(s().applied[T]).toBeUndefined();
   // Touching the failed change clears its error.

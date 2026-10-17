@@ -613,6 +613,15 @@ impl Session for SqliteSession {
         .await
     }
 
+    fn is_lost(&self) -> bool {
+        // Busy = a call is running on a connection that is still there.
+        match self.conn.try_lock() {
+            Ok(guard) => guard.is_none(),
+            Err(std::sync::TryLockError::WouldBlock) => false,
+            Err(std::sync::TryLockError::Poisoned(_)) => true,
+        }
+    }
+
     fn canceller(&self) -> Arc<dyn Canceller> {
         Arc::new(SqliteCanceller(self.interrupt.clone()))
     }
