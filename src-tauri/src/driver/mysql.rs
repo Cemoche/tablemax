@@ -1891,7 +1891,9 @@ mod tests {
         for cs in ["gbk", "GBK", "big5", "cp932", "gb18030", "sjis"] {
             assert!(unsafe_client_charset(Some(cs)).is_some(), "{cs}");
         }
-        for cs in ["utf8mb4", "utf8mb3", "latin1", "ascii", "binary", "ujis", "euckr"] {
+        for cs in [
+            "utf8mb4", "utf8mb3", "latin1", "ascii", "binary", "ujis", "euckr",
+        ] {
             assert_eq!(unsafe_client_charset(Some(cs)), None, "{cs}");
         }
         assert_eq!(unsafe_client_charset(None), None);
@@ -1913,7 +1915,11 @@ mod tests {
                 "client character set gbk is not supported: use SET NAMES utf8mb4"
             );
         }
-        for sql in ["SET NAMES utf8mb4", "set character set utf8mb4", "SET NAMES latin1;"] {
+        for sql in [
+            "SET NAMES utf8mb4",
+            "set character set utf8mb4",
+            "SET NAMES latin1;",
+        ] {
             assert!(refused(sql).is_none(), "{sql}");
         }
         // The ASCII SET still goes through the single-statement check.

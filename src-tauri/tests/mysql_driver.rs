@@ -740,8 +740,12 @@ async fn mysql_refuses_dollar_quoted_bodies() {
         let n = &g.name;
         for sql in [
             format!("create function `{n}`.f() returns int language javascript as $$ return 1; $$"),
-            format!("create function `{n}`.f() returns int language javascript as $js$ return 1 $js$"),
-            format!("create function `{n}`.f() returns int language javascript as $$ ' $$; drop database `{n}`; -- '"),
+            format!(
+                "create function `{n}`.f() returns int language javascript as $js$ return 1 $js$"
+            ),
+            format!(
+                "create function `{n}`.f() returns int language javascript as $$ ' $$; drop database `{n}`; -- '"
+            ),
         ] {
             let e = s.execute(&sql).await.err().unwrap();
             assert_eq!(e.kind, ErrorKind::Invalid, "{sql}");
@@ -770,7 +774,11 @@ async fn mysql_modes_are_reread_after_an_error() {
         assert_eq!(e.kind, ErrorKind::Query);
         let e = s.execute("select 1").await.err().unwrap();
         assert_eq!(e.kind, ErrorKind::Invalid);
-        assert!(e.message.contains("client character set gbk"), "{}", e.message);
+        assert!(
+            e.message.contains("client character set gbk"),
+            "{}",
+            e.message
+        );
         s.execute("SET NAMES utf8mb4").await.unwrap();
         assert!(s.execute("select 1").await.is_ok());
     }
