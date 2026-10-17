@@ -12,6 +12,8 @@ pub enum ErrorKind {
     Secret,
     Io,
     Invalid,
+    HostKeyUnknown,
+    HostKeyChanged,
 }
 
 #[derive(Debug, thiserror::Error, Serialize)]
