@@ -17,7 +17,14 @@ const ENV_BORDER = {
 
 export function TabContent({ workspace, tab }: { workspace: Workspace; tab: Tab }) {
   if (tab.kind === "table") {
-    return <TableDataTab workspaceId={workspace.id} tabId={tab.id} object={tab.object} />;
+    return (
+      <TableDataTab
+        workspaceId={workspace.id}
+        tabId={tab.id}
+        object={tab.object}
+        dialect={workspace.dialect}
+      />
+    );
   }
   return <QueryTab workspace={workspace} tab={tab} />;
 }

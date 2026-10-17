@@ -1,12 +1,14 @@
 import { create } from "zustand";
-import type { SortDir } from "../lib/types";
+import type { Filter, SortDir } from "../lib/types";
 
 export interface GridView {
   page: number;
   sort: [string, SortDir] | null;
+  /** Joined by AND; changing them goes back to page 0 (usePagedTable.setFilters). */
+  filters: Filter[];
 }
 
-const DEFAULT_VIEW: GridView = { page: 0, sort: null };
+const DEFAULT_VIEW: GridView = { page: 0, sort: null, filters: [] };
 
 interface GridViewsState {
   views: Record<string, GridView>;
@@ -15,7 +17,7 @@ interface GridViewsState {
   dropView: (tabId: string) => void;
 }
 
-/** Per-tab page/sort, kept outside the component so it survives tab switches. */
+/** Per-tab page/sort/filters, kept outside the component so it survives tab switches. */
 export const useGridViews = create<GridViewsState>((set, get) => ({
   views: {},
   getView: (tabId) => get().views[tabId] ?? DEFAULT_VIEW,

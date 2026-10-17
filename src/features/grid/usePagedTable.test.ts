@@ -130,3 +130,60 @@ test("pending changes block paging and sorting", async () => {
   act(() => result.current.nextPage());
   expect(result.current.page).toBe(1);
 });
+
+test("changed filters restart at page 0 and go to tablePage and tableCount", async () => {
+  const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  await waitFor(() => expect(result.current.pageCount).toBe(3));
+  act(() => result.current.nextPage());
+  expect(result.current.page).toBe(1);
+  const filters = [{ column: "id", op: "gt" as const, values: ["10"] }];
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 12 });
+  let applied = false;
+  act(() => {
+    applied = result.current.setFilters(filters);
+  });
+  expect(applied).toBe(true);
+  expect(result.current.page).toBe(0);
+  expect(result.current.filters).toEqual(filters);
+  // The count of the previous filters is not shown while the new one loads.
+  expect(result.current.rowCount).toBeNull();
+  await waitFor(() => expect(result.current.rowCount).toEqual({ t: "exact", v: 12 }));
+  expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", {
+    object: obj,
+    limit: 300,
+    offset: 0,
+    sort: null,
+    filters,
+  });
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters);
+  expect(useGridViews.getState().getView("t1").filters).toEqual(filters);
+});
+
+test("pending changes block a filter change", async () => {
+  const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  await waitFor(() => expect(result.current.pageCount).toBe(3));
+  act(() => usePendingChanges.getState().addInsert("t1"));
+  let applied = true;
+  act(() => {
+    applied = result.current.setFilters([{ column: "id", op: "eq", values: ["1"] }]);
+  });
+  expect(applied).toBe(false);
+  expect(result.current.filters).toEqual([]);
+  expect(usePendingChanges.getState().blocked.t1).toBe(true);
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
+  expect(ipc.tableCount).toHaveBeenCalledTimes(1);
+});
+
+test("a capped filtered count shows 500,000+ and pages on while pages are full", async () => {
+  expect(formatRowCount({ t: "estimate", v: 500000 }, true)).toBe("500,000+");
+  expect(formatRowCount({ t: "exact", v: 12 }, true)).toBe("12");
+  expect(formatRowCount({ t: "estimate", v: 500000 })).toBe("≈ 500,000");
+  vi.mocked(ipc.tablePage).mockResolvedValue(rs(300));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "estimate", v: 600 });
+  const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  await waitFor(() => expect(result.current.rowCount).not.toBeNull());
+  act(() => result.current.nextPage());
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  // Past the estimate, a full page still offers the next one.
+  expect(result.current.hasNext).toBe(true);
+});

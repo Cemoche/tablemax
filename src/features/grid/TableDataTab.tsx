@@ -1,7 +1,8 @@
 import { modShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
-import type { ObjectRef } from "../../lib/types";
+import type { Dialect, ObjectRef } from "../../lib/types";
 import { DataGrid } from "./DataGrid";
+import { FilterBar } from "./FilterBar";
 import { GridContextMenu } from "./GridContextMenu";
 import { PendingChangesPanel } from "./PendingChangesPanel";
 import { RowDetailPanel } from "./RowDetailPanel";
@@ -13,20 +14,23 @@ interface Props {
   workspaceId: string;
   tabId: string;
   object: ObjectRef;
+  dialect: Dialect;
 }
 
 const btn =
   "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
 
-export function TableDataTab({ workspaceId, tabId, object }: Props) {
+export function TableDataTab({ workspaceId, tabId, object, dialect }: Props) {
   const t = usePagedTable(workspaceId, object, tabId);
   const e = useTableEditing({ workspaceId, tabId, object, result: t.result, reload: t.reload });
   const detail = useRowDetail();
   const rows = t.result?.rows.length ?? 0;
   const from = t.page * DEFAULT_PAGE_SIZE + 1;
+  const columns = (e.info?.columns ?? t.result?.columns ?? []).map((c) => c.name);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <FilterBar dialect={dialect} columns={columns} filters={t.filters} onApply={t.setFilters} />
       {t.error && (
         <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger">
           <div className="min-w-0 flex-1">
@@ -141,7 +145,7 @@ export function TableDataTab({ workspaceId, tabId, object }: Props) {
         <span data-testid="footer-range">
           {rows === 0
             ? strings.grid.footerEmpty
-            : strings.grid.footerRange(from, from + rows - 1, formatRowCount(t.rowCount))}
+            : strings.grid.footerRange(from, from + rows - 1, formatRowCount(t.rowCount, t.filters.length > 0))}
         </span>
         <span className="ml-auto text-muted">
           {t.loading

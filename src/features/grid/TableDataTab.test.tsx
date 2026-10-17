@@ -57,7 +57,7 @@ beforeEach(() => {
 test("footer shows range with ≈ for estimates and pages forward", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(page(300));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "estimate", v: 1234567 });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() =>
     expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of ≈ 1,234,567"),
   );
@@ -72,7 +72,7 @@ test("error shows message with Retry; connectionLost hints", async () => {
   vi.mocked(ipc.tablePage).mockRejectedValueOnce({ kind: "connectionLost", message: "server gone" });
   vi.mocked(ipc.tablePage).mockResolvedValue(page(1));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   expect(await screen.findByText("server gone")).toBeInTheDocument();
   expect(screen.getByText(/reopen the connection/)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -84,7 +84,7 @@ test("a read-only table shows why and offers no + Row", async () => {
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo({ rowKey: null, primaryKey: [] }));
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   expect(await screen.findByText(strings.grid.readOnlyNoKey)).toBeInTheDocument();
   expect(ipc.tableInfo).toHaveBeenCalledWith("w1", obj, false);
   expect(screen.queryByRole("button", { name: strings.grid.addRow })).toBeNull();
@@ -101,7 +101,7 @@ test("editing through the grid, then commit applies the changes and reloads", as
     failedIndex: null,
     error: null,
   });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   const commit = await screen.findByRole("button", { name: strings.grid.commit("Ctrl+S") });
   expect(commit).toBeDisabled();
   expect(screen.getByRole("button", { name: strings.grid.discard })).toBeDisabled();
@@ -134,7 +134,7 @@ test("a failed change shows its message and every change stays pending", async (
   });
   pending().setCell("t1", key(0), "note", { t: "null" }, lines(1).rows[0], names);
   pending().toggleDelete("t1", key(2));
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await userEvent.click(await screen.findByRole("button", { name: strings.grid.commit("Ctrl+S") }));
   expect(
     await screen.findByText(
@@ -150,12 +150,12 @@ test("paging and sorting are blocked while changes are pending", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(300));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
   pending().toggleDelete("t1", key(0));
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
   expect(screen.getByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
   act(() => grid!.onSort!("note"));
-  expect(useGridViews.getState().getView("t1")).toEqual({ page: 0, sort: null });
+  expect(useGridViews.getState().getView("t1")).toEqual({ page: 0, sort: null, filters: [] });
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
   await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
   expect(screen.queryByText(strings.grid.commitOrDiscardFirst)).toBeNull();
@@ -166,7 +166,7 @@ test("paging and sorting are blocked while changes are pending", async () => {
 test("context menu: Set NULL on a cell and Delete row", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(0, 3).editable).toBe(true));
   act(() => grid!.editing!.onContextMenu(0, 3, 5, 5));
   await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.setNull }));
@@ -185,7 +185,7 @@ test("Duplicate row loads truncated values in full first", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(data);
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
   vi.mocked(ipc.cellValue).mockResolvedValue({ t: "text", v: "full text" });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(0, 3).editable).toBe(true));
   act(() => grid!.editing!.onContextMenu(0, 3, 5, 5));
   await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.duplicateRow }));
@@ -209,7 +209,7 @@ test("the editor loads the full value of a truncated cell", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(data);
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
   vi.mocked(ipc.cellValue).mockResolvedValue({ t: "text", v: "the whole text" });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(0, 3).truncated).toBe(true));
   await expect(grid!.editing!.loadFull(0, 3)).resolves.toBe("the whole text");
   expect(ipc.cellValue).toHaveBeenCalledWith("w1", obj, key(0), "note");
@@ -219,7 +219,7 @@ test("Reload is blocked while changes are pending", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   pending().toggleDelete("t1", key(0));
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–2 of 2"));
   await userEvent.click(screen.getByRole("button", { name: "Reload" }));
   expect(screen.getByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
@@ -229,7 +229,7 @@ test("Reload is blocked while changes are pending", async () => {
 test("Duplicate row copies the pending edits of the row", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(0, 3).editable).toBe(true));
   act(() => grid!.editing!.onEdit(0, 3, "as edited"));
   act(() => grid!.editing!.onContextMenu(0, 3, 5, 5));
@@ -248,7 +248,7 @@ test("Duplicate row copies the pending edits of the row", async () => {
 test("the grid reports when its cell editor is open", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing).toBeDefined());
   act(() => grid!.editing!.onEditorOpen(true));
   expect(pending().editorOpen.t1).toBe(true);
@@ -260,7 +260,7 @@ test("the pending changes panel opens with the first change", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   vi.mocked(ipc.changesPreview).mockResolvedValue(["DELETE …"]);
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(0, 3).editable).toBe(true));
   expect(screen.queryByRole("button", { name: strings.grid.changes.title(1) })).toBeNull();
   act(() => grid!.editing!.onContextMenu(1, null, 5, 5));
@@ -276,7 +276,7 @@ test("the pending changes panel opens with the first change", async () => {
 test("Row details shows the selected row, follows it and edits it through the store", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   const toggle = screen.getByRole("button", { name: strings.grid.rowDetails });
   await userEvent.click(toggle);
@@ -313,7 +313,7 @@ test("a commit and a reload with shifted rows keep the details on the same recor
     .mockResolvedValue(linesWith([7, 8, 0, 1, 2], (l) => (l === 1 ? "note 1 saved" : `note ${l}`)));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
   vi.mocked(ipc.changesApply).mockResolvedValue({ applied: true, affected: [1], failedIndex: null, error: null });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
   act(() => grid!.editing!.onSelect(1));
@@ -340,7 +340,7 @@ test("a record missing from the new page leaves the details empty", async () => 
     .mockResolvedValueOnce(linesWith([0, 1, 2]))
     .mockResolvedValue(linesWith([300, 301]));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
   act(() => grid!.editing!.onSelect(1));
@@ -353,7 +353,7 @@ test("a record missing from the new page leaves the details empty", async () => 
 test("+ Row moves the grid selection with the selected record", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
   act(() => grid!.editing!.onSelect(1));
@@ -361,4 +361,36 @@ test("+ Row moves the grid selection with the selected record", async () => {
   await userEvent.click(screen.getByRole("button", { name: strings.grid.addRow }));
   expect(grid!.editing!.selectedRow).toBe(2);
   expect((screen.getByLabelText("note") as HTMLTextAreaElement).value).toBe("note 1");
+});
+
+test("the quick filter reloads page 0 filtered and a capped count shows 500,000+", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("of 3"));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "estimate", v: 500000 });
+  await userEvent.type(
+    screen.getByRole("textbox", { name: strings.filters.quickLabel }),
+    "note contains x{Enter}",
+  );
+  const filters = [{ column: "note", op: "contains", values: ["x"] }];
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ offset: 0, filters })),
+  );
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–3 of 500,000+"));
+  expect(screen.getByRole("button", { name: strings.filters.button(1) })).toBeInTheDocument();
+});
+
+test("a filter change with pending changes is blocked like a page change", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await userEvent.click(await screen.findByRole("button", { name: strings.grid.addRow }));
+  const quick = screen.getByRole("textbox", { name: strings.filters.quickLabel });
+  await userEvent.type(quick, "id = 1{Enter}");
+  expect(await screen.findByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
+  expect(quick).toHaveValue("id = 1");
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
+  expect(useGridViews.getState().getView("t1").filters).toEqual([]);
 });

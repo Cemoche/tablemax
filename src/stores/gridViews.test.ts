@@ -9,13 +9,13 @@ beforeEach(() => useGridViews.setState({ views: {} }));
 
 test("views default, patch and drop", () => {
   const v = useGridViews.getState();
-  expect(v.getView("t1")).toEqual({ page: 0, sort: null });
+  expect(v.getView("t1")).toEqual({ page: 0, sort: null, filters: [] });
   v.setView("t1", { page: 3 });
   v.setView("t1", { sort: ["id", "desc"] });
-  expect(useGridViews.getState().getView("t1")).toEqual({ page: 3, sort: ["id", "desc"] });
+  expect(useGridViews.getState().getView("t1")).toEqual({ page: 3, sort: ["id", "desc"], filters: [] });
   expect(useGridViews.getState().getView("t2").page).toBe(0);
   useGridViews.getState().dropView("t1");
-  expect(useGridViews.getState().getView("t1")).toEqual({ page: 0, sort: null });
+  expect(useGridViews.getState().getView("t1")).toEqual({ page: 0, sort: null, filters: [] });
 });
 
 test("closing a table tab drops its view", () => {

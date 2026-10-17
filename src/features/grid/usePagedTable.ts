@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
-import type { AppError, ObjectRef, ResultSet, RowCount } from "../../lib/types";
+import type { AppError, Filter, ObjectRef, ResultSet, RowCount } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
 import { guardPending } from "../../stores/pendingChanges";
 
@@ -10,9 +10,11 @@ export const DEFAULT_PAGE_SIZE = 300;
 
 const nf = new Intl.NumberFormat("en-US");
 
-export function formatRowCount(c: RowCount | null): string {
+/** With filters an estimate is the capped count (at least that many rows): "500,000+". */
+export function formatRowCount(c: RowCount | null, filtered = false): string {
   if (!c) return strings.grid.countUnknown;
-  return (c.t === "estimate" ? strings.grid.estimatePrefix : "") + nf.format(c.v);
+  if (c.t === "exact") return nf.format(c.v);
+  return filtered ? strings.grid.countAtLeast(c.v) : strings.grid.estimatePrefix + nf.format(c.v);
 }
 
 export function usePagedTable(
@@ -22,7 +24,7 @@ export function usePagedTable(
   pageSize = DEFAULT_PAGE_SIZE,
 ) {
   const view = useGridViews((s) => s.views[tabId]) ?? useGridViews.getState().getView(tabId);
-  const { page, sort } = view;
+  const { page, sort, filters } = view;
   const [result, setResult] = useState<ResultSet | null>(null);
   const [rowCount, setRowCount] = useState<RowCount | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +36,8 @@ export function usePagedTable(
 
   const sortCol = sort?.[0] ?? null;
   const sortDir = sort?.[1] ?? null;
+  // Effects depend on the filters' content, not on the array's identity.
+  const filterKey = JSON.stringify(filters);
 
   useEffect(() => {
     const mine = ++seq.current;
@@ -45,7 +49,7 @@ export function usePagedTable(
         limit: pageSize,
         offset: page * pageSize,
         sort: sortCol && sortDir ? [sortCol, sortDir] : null,
-        filters: [],
+        filters,
       })
       .then((r) => {
         if (mine !== seq.current) return;
@@ -63,13 +67,19 @@ export function usePagedTable(
       seq.current++;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, object.schema, object.name, page, sortCol, sortDir, pageSize, tick]);
+  }, [workspaceId, object.schema, object.name, page, sortCol, sortDir, filterKey, pageSize, tick]);
 
-  // Count is independent of paging/sorting: once per mount and on reload.
+  // Count is independent of paging/sorting: once per mount, on reload and per filters.
+  const countedFilters = useRef(filterKey);
   useEffect(() => {
     const mine = ++countSeq.current;
+    // A reload keeps the count on screen until the new one arrives; other filters do not.
+    if (countedFilters.current !== filterKey) {
+      countedFilters.current = filterKey;
+      setRowCount(null);
+    }
     ipc
-      .tableCount(workspaceId, object, [])
+      .tableCount(workspaceId, object, filters)
       .then((c) => {
         if (mine === countSeq.current) setRowCount(c);
       })
@@ -80,12 +90,16 @@ export function usePagedTable(
       countSeq.current++;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, object.schema, object.name, tick]);
+  }, [workspaceId, object.schema, object.name, filterKey, tick]);
 
+  const fullPage = (result?.rows.length ?? 0) === pageSize;
   const pageCount = rowCount ? Math.max(1, Math.ceil(rowCount.v / pageSize)) : page + 1;
-  const hasNext = rowCount ? page + 1 < pageCount : (result?.rows.length ?? 0) === pageSize;
+  // An estimate (or a capped filtered count) may be short: a full page offers the next one.
+  const hasNext = !rowCount
+    ? fullPage
+    : page + 1 < pageCount || (rowCount.t === "estimate" && fullPage);
 
-  // Page and sort changes are refused while changes are pending (they would apply to
+  // Page, sort and filter changes are refused while changes are pending (they would apply to
   // rows the user no longer sees); guardPending flags the tab with the reason.
   const setView = useGridViews.getState().setView;
   const setSort = useCallback(
@@ -97,6 +111,15 @@ export function usePagedTable(
       else if (cur[1] === "asc") next = [col, "desc"];
       else next = null;
       setView(tabId, { sort: next, page: 0 });
+    },
+    [tabId, setView],
+  );
+  /** False (nothing changes) while changes are pending. */
+  const setFilters = useCallback(
+    (next: Filter[]) => {
+      if (!guardPending(tabId)) return false;
+      setView(tabId, { filters: next, page: 0 });
+      return true;
     },
     [tabId, setView],
   );
@@ -122,6 +145,8 @@ export function usePagedTable(
     rowCount,
     sort,
     setSort,
+    filters,
+    setFilters,
     nextPage,
     prevPage,
     reload,
