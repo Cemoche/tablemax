@@ -43,6 +43,71 @@ agent rules in [CLAUDE.md](CLAUDE.md).
 Passwords, SSH passwords and key passphrases live only in the system keyring (or are
 asked at each connect), never in `app.db`.
 
+## Table tabs
+
+Opening a table shows its rows in a grid (300 rows a page, row count in the footer).
+**Data | Structure** at the top of the tab switches between the rows and the table's
+structure (`Alt+1` / `Alt+2`, `⌥1` / `⌥2` on macOS).
+
+- **Editing**: double-click a cell, press Enter or start typing. Right-click a cell or row
+  for **Set NULL**, **Set empty string**, **Set DEFAULT**, **Revert cell**, **Duplicate
+  row**, **Delete row** / **Restore row**; **+ Row** adds a row. Edits are not written
+  right away: changed cells, new rows and rows to delete are highlighted as **pending
+  changes**. Only tables with a primary key (or a unique index on `NOT NULL` columns) can
+  be edited; views, tables without such a key, generated and binary columns are read-only,
+  with the reason shown above the grid. SQL results are always read-only.
+- **Pending changes** panel (below the grid): one line per change with its SQL (`UPDATE` /
+  `INSERT` / `DELETE`, values shown as literals) and an **Undo** button.
+- **Commit** (`Ctrl+S`, `⌘S` on macOS) writes all pending changes in one transaction,
+  values sent as bound parameters. Each `UPDATE` / `DELETE` must touch exactly one row:
+  if the row changed or was deleted since it was loaded, everything is rolled back,
+  nothing is written and the changes stay pending. **Discard** drops them; closing a tab
+  or workspace that has some asks first. Paging, sorting, filtering, reloading and
+  following a foreign key wait until the pending changes are committed or discarded.
+- **Row details** (`Ctrl+I`, `⌘I`): the selected row as a form, with indented JSON and
+  long text loaded in full; edits there are pending changes too.
+- **Filters**: the quick bar above the grid takes conditions joined by `and`
+  (no `or`), for example `status = delivered and total > 100`:
+  - `col = value` (also `!=`, `<>`, `<`, `>`, `<=`, `>=`), `col is null`, `col is not null`;
+  - `col in (a, b, c)`, `col not in (…)`, `col between 1 and 10`, `col not between …`;
+  - `col like 'A%'`, `col not like …`, `col ilike …`, `col contains text`,
+    `col not contains …`;
+  - `any contains text` (also `any = …`, `any not contains …`, `any like …`) searches
+    every column;
+  - quote values with `'…'` or `"…"` (the quote doubled escapes it: `'O''Brien'`), and
+    columns with `"…"` or `` `…` ``; a keyword used as a value must be quoted (`'and'`).
+
+  **Filters** opens the builder: one row per condition (column or **Any column**,
+  operator, value), the same operators plus **Raw SQL**, a condition typed as is (only
+  there is your text inserted in the query). The quick bar and the builder show the same
+  filters; conditions the bar cannot write are marked **advanced**. With filters, the
+  count is exact up to 500,000 rows, then shown as `500,000+`.
+- **Foreign keys**: a cell that references a row has a `↗` marker. `Ctrl+click`
+  (`⌘+click`) it, or right-click → **Open referenced row** (or the `→ table` button in
+  the row details), to show the referenced table filtered on that row in the same tab. The
+  trail above the grid (`orders › customers (id = 42)`) goes back to any earlier table
+  exactly as it was (filters, sort, page); `Alt+←` goes back one step.
+- **Copy**: `Ctrl+C` copies the selected cells as TSV; right-click → **Copy as TSV /
+  CSV / JSON / SQL INSERT** copies the selection with its column names (shown values,
+  pending edits included; new rows not committed yet are left out).
+- **Structure** (read-only): **Columns** (type, nullable, default, auto-increment or
+  generated, comment; primary and foreign key columns marked), **Indexes** (columns,
+  unique / primary, definition), **Foreign keys** (columns → referenced table and columns,
+  `ON UPDATE` / `ON DELETE`; the table name opens it in a new tab) and **DDL** (highlighted,
+  **Copy** button). **Refresh** reloads it from the database.
+
+| Shortcut | Action |
+|---|---|
+| `Alt+1` / `Alt+2` | Data / Structure |
+| `Ctrl+S` | Commit the pending changes |
+| `Ctrl+I` | Show or hide the row details |
+| `Ctrl+click` | Follow a foreign key |
+| `Alt+←` | Back along the foreign key trail |
+| `Ctrl+C` | Copy the selected cells (TSV) |
+| `Ctrl+T` / `Ctrl+W` | New query tab / close the tab |
+
+On macOS, `Ctrl` is `⌘` and `Alt` is `⌥` (`Ctrl+T` / `Ctrl+W` stay `Ctrl`).
+
 ## Test databases
 
 Host tools needed by `pnpm test:rust`: `docker compose` (v2), `openssl` and `ssh-keygen`

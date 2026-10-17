@@ -47,3 +47,12 @@ of the plan.
   PostgreSQL `json` column (no `=` operator; the load error shows, the breadcrumb goes back).
 - After a jump no row is selected: an open row details panel waits for a click on the
   (usually single) referenced row.
+
+## Deferred (Task 8)
+
+- The grid menu offers **Set empty string** on non-text columns (integers, numerics,
+  dates…): the commit then fails on the cast (`''` is not a number) and rolls back. Offer it
+  only for text-like columns.
+- The Data / Structure choice of a table tab is not kept when switching tabs (only the
+  active tab is mounted; same as the row details panel). Keep it per tab in a store if
+  users miss it.

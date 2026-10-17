@@ -18,3 +18,8 @@ export function isModKey(
 export function modShortcut(key: string, mac: boolean = isMacPlatform()): string {
   return mac ? `⌘${key}` : `Ctrl+${key}`;
 }
+
+/** How an Alt+<key> shortcut reads in labels: "⌥1" on macOS, "Alt+1" elsewhere. */
+export function altShortcut(key: string, mac: boolean = isMacPlatform()): string {
+  return mac ? `⌥${key}` : `Alt+${key}`;
+}

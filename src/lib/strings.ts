@@ -320,6 +320,13 @@ export const strings = {
     rowDetailsShortcut: (shortcut: string) => `Show or hide the row details (${shortcut})`,
     rowDetailsClose: "Close the row details",
     rowDetailsEmpty: "Select a row to see its details.",
+    view: {
+      label: "Table view",
+      data: "Data",
+      structure: "Structure",
+      dataShortcut: (shortcut: string) => `Show the rows (${shortcut})`,
+      structureShortcut: (shortcut: string) => `Show the structure (${shortcut})`,
+    },
     countAtLeast: (n: number) => `${n.toLocaleString("en-US")}+`,
   },
   filters: {

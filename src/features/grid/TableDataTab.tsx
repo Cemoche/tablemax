@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { modShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, ObjectRef } from "../../lib/types";
+import { StructureTab } from "../structure/StructureTab";
 import { Breadcrumb } from "./Breadcrumb";
 import { DataGrid, type GridEditing } from "./DataGrid";
 import { FilterBar } from "./FilterBar";
@@ -12,6 +14,7 @@ import { useFkLinks } from "./useFkLinks";
 import { useRowDetail } from "./useRowDetail";
 import { useSelectionCopy } from "./useSelectionCopy";
 import { useTableEditing } from "./useTableEditing";
+import { ViewToggle, useTableView } from "./ViewToggle";
 
 interface Props {
   workspaceId: string;
@@ -26,9 +29,24 @@ const btn =
 export function TableDataTab(props: Props) {
   // Kept across foreign key navigation (the panel shows the referenced row once selected).
   const detail = useRowDetail();
-  // Another table (foreign key navigation) starts afresh: page, grid, selection, menus.
+  const { view, setView } = useTableView();
+  // The structure loads when first asked for; then both views stay mounted (hidden) so
+  // switching keeps the page, the pending changes and the structure's section.
+  const [structureSeen, setStructureSeen] = useState(false);
+  if (view === "structure" && !structureSeen) setStructureSeen(true);
   return (
-    <TableDataView key={JSON.stringify([props.object.schema, props.object.name])} {...props} detail={detail} />
+    <div className="flex h-full min-h-0 flex-col">
+      <ViewToggle view={view} onChange={setView} />
+      <div hidden={view !== "data"} className="min-h-0 flex-1">
+        {/* Another table (foreign key navigation) starts afresh: page, grid, selection, menus. */}
+        <TableDataView key={JSON.stringify([props.object.schema, props.object.name])} {...props} detail={detail} />
+      </div>
+      {structureSeen && (
+        <div hidden={view !== "structure"} className="min-h-0 flex-1">
+          <StructureTab workspaceId={props.workspaceId} object={props.object} dialect={props.dialect} />
+        </div>
+      )}
+    </div>
   );
 }
 

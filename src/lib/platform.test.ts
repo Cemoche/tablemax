@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { isMacPlatform, isModKey } from "./platform";
+import { altShortcut, isMacPlatform, isModKey } from "./platform";
 
 test("Mod is Cmd on macOS and Ctrl elsewhere", () => {
   expect(isMacPlatform("MacIntel", "")).toBe(true);
@@ -11,4 +11,9 @@ test("Mod is Cmd on macOS and Ctrl elsewhere", () => {
   expect(isModKey(e(false, true), false)).toBe(false);
   expect(isModKey(e(false, true), true)).toBe(true);
   expect(isModKey(e(true, false), true)).toBe(false);
+});
+
+test("Alt shortcuts read ⌥ on macOS", () => {
+  expect(altShortcut("1", true)).toBe("⌥1");
+  expect(altShortcut("1", false)).toBe("Alt+1");
 });

@@ -20,6 +20,19 @@ vi.mock("./DataGrid", () => ({
   },
 }));
 
+let structureMounts = 0;
+vi.mock("../structure/StructureTab", async () => {
+  const { useEffect } = await import("react");
+  return {
+    StructureTab: (p: { object: { name: string } }) => {
+      useEffect(() => {
+        structureMounts++;
+      }, []);
+      return <div data-testid="structure">{p.object.name}</div>;
+    },
+  };
+});
+
 const obj = { schema: "public", name: "order_lines" };
 const page = (n: number) => ({
   columns: [{ name: "id", typeName: "int" }],
@@ -49,6 +62,7 @@ const pending = () => usePendingChanges.getState();
 beforeEach(() => {
   vi.resetAllMocks();
   grid = null;
+  structureMounts = 0;
   useGridViews.setState({ views: {}, trails: {} });
   usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo());
@@ -643,4 +657,80 @@ test("a copy notice can be dismissed and clears itself after a while", async () 
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("the Data | Structure toggle switches views and keeps both mounted", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  const v = strings.grid.view;
+  expect(await screen.findByRole("tab", { name: v.data })).toHaveAttribute("aria-selected", "true");
+  // The structure is only loaded once asked for.
+  expect(screen.queryByTestId("structure")).toBeNull();
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onEdit(1, 3, "changed"));
+
+  await user.click(screen.getByRole("tab", { name: v.structure }));
+  expect(screen.getByRole("tab", { name: v.structure })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByTestId("structure")).toBeVisible();
+  expect(screen.getByTestId("structure")).toHaveTextContent("order_lines");
+  expect(screen.getByTestId("grid")).not.toBeVisible();
+
+  await user.click(screen.getByRole("tab", { name: v.data }));
+  expect(screen.getByTestId("grid")).toBeVisible();
+  expect(screen.getByTestId("structure")).not.toBeVisible();
+  // Neither view started over: same page, the pending edit kept, the structure mounted once.
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(strings.grid.pendingCount(1))).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: v.structure }));
+  expect(structureMounts).toBe(1);
+});
+
+test("Alt+2 shows the structure and Alt+1 the data, not while typing or with a modal", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  const v = strings.grid.view;
+  const selected = (name: string) => screen.getByRole("tab", { name }).getAttribute("aria-selected");
+  await screen.findByTestId("grid");
+
+  await user.keyboard("{Alt>}2{/Alt}");
+  expect(selected(v.structure)).toBe("true");
+  expect(screen.getByTestId("structure")).toBeVisible();
+  await user.keyboard("{Alt>}1{/Alt}");
+  expect(selected(v.data)).toBe("true");
+  expect(screen.getByTestId("grid")).toBeVisible();
+
+  // Other modifiers: not this shortcut.
+  await user.keyboard("{Control>}{Alt>}2{/Alt}{/Control}");
+  expect(selected(v.data)).toBe("true");
+  // Typing in a field (Option+2 types a character on macOS).
+  await user.click(screen.getByRole("textbox", { name: strings.filters.quickLabel }));
+  await user.keyboard("{Alt>}2{/Alt}");
+  expect(selected(v.data)).toBe("true");
+  (document.activeElement as HTMLElement).blur();
+  // A modal is open.
+  const modal = document.createElement("div");
+  modal.setAttribute("aria-modal", "true");
+  document.body.appendChild(modal);
+  await user.keyboard("{Alt>}2{/Alt}");
+  expect(selected(v.data)).toBe("true");
+  modal.remove();
+  await user.keyboard("{Alt>}2{/Alt}");
+  expect(selected(v.structure)).toBe("true");
+});
+
+test("the structure follows the table shown after a foreign key jump", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
+  const { rerender } = render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await user.click(await screen.findByRole("tab", { name: strings.grid.view.structure }));
+  rerender(
+    <TableDataTab workspaceId="w1" tabId="t1" object={{ schema: "public", name: "orders" }} dialect="postgres" />,
+  );
+  expect(screen.getByTestId("structure")).toHaveTextContent("orders");
+  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
 });
