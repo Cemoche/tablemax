@@ -1,4 +1,4 @@
-import { bytesLiteral, qualifiedName, quoteIdent, quoteString } from "./sqlQuote";
+import { bytesLiteral, qualifiedObject, quoteIdent, quoteString } from "./sqlIdent";
 import type { CellValue, Dialect, ObjectRef } from "./types";
 
 // Copy formats for a grid selection. TSV/CSV/JSON are display copies: a truncated value
@@ -164,7 +164,7 @@ export function toInsert(
   rows: CellValue[][],
 ): string {
   if (columns.length === 0) return "";
-  const head = `INSERT INTO ${qualifiedName(dialect, object)} (${columns
+  const head = `INSERT INTO ${qualifiedObject(dialect, object)} (${columns
     .map((c) => quoteIdent(dialect, c))
     .join(", ")}) VALUES (`;
   return rows

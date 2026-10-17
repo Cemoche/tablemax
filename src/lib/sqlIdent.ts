@@ -1,4 +1,7 @@
-import type { Dialect } from "./types";
+import type { Dialect, ObjectRef } from "./types";
+
+// Quoting for generated SQL. Mirrors src-tauri/src/driver/sql.rs (quote_ident, qualified)
+// and the literal escaping of src-tauri/src/driver/dml.rs (render_preview). Keep them in sync.
 
 /** Always-quoted identifier for the dialect (closing quote character doubled). */
 export function quoteIdent(dialect: Dialect, name: string): string {
@@ -10,6 +13,34 @@ export function quoteIdent(dialect: Dialect, name: string): string {
 export function qualifiedName(dialect: Dialect, schema: string | null, name: string): string {
   const omit = schema === null || (dialect === "sqlite" && schema === "main");
   return omit ? quoteIdent(dialect, name) : `${quoteIdent(dialect, schema)}.${quoteIdent(dialect, name)}`;
+}
+
+/**
+ * `schema.name` like the backend's `sql::qualified`: SQLite's `main` schema is KEPT
+ * (unlike `qualifiedName`), the name alone when the object has no schema.
+ */
+export function qualifiedObject(dialect: Dialect, obj: ObjectRef): string {
+  return obj.schema === null
+    ? quoteIdent(dialect, obj.name)
+    : `${quoteIdent(dialect, obj.schema)}.${quoteIdent(dialect, obj.name)}`;
+}
+
+/**
+ * A text literal. `'` is doubled everywhere. PostgreSQL: a string with a backslash is
+ * written `E'…'` with `\` doubled, so it reads the same whatever standard_conforming_strings
+ * is; other strings stay `'…'`. MySQL doubles `\` (correct in the default sql_mode; under
+ * NO_BACKSLASH_ESCAPES the doubled backslashes would be read literally). SQLite has no escapes.
+ */
+export function quoteString(d: Dialect, s: string): string {
+  const q = s.split("'").join("''");
+  if (d === "mySql") return `'${q.split("\\").join("\\\\")}'`;
+  if (d === "postgres" && s.includes("\\")) return `E'${q.split("\\").join("\\\\")}'`;
+  return `'${q}'`;
+}
+
+/** A binary literal from hex digits: `E'\\x…'` on PostgreSQL (mode-independent), `X'…'` elsewhere. */
+export function bytesLiteral(d: Dialect, hex: string): string {
+  return d === "postgres" ? `E'\\\\x${hex}'` : `X'${hex}'`;
 }
 
 const words = (s: string) => new Set(s.trim().split(/\s+/));

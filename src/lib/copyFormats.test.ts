@@ -161,6 +161,10 @@ describe("toInsert", () => {
     ]);
     expect(out).toBe(`INSERT INTO "t" ("a", "b", "c") VALUES ('it''s', 1, X'ab');`);
   });
+  test("SQLite keeps the main schema, like the backend", () => {
+    const out = toInsert("sqlite", { schema: "main", name: "t" }, ["a"], [[T("x")]]);
+    expect(out).toBe(`INSERT INTO "main"."t" ("a") VALUES ('x');`);
+  });
   test("PostgreSQL bytes use the \\x form", () => {
     expect(toInsert("postgres", { schema: null, name: "t" }, ["b"], [[{ t: "bytes", v: { len: 1, hexPreview: "ab" } }]])).toBe(
       `INSERT INTO "t" ("b") VALUES (E'\\\\xab');`,

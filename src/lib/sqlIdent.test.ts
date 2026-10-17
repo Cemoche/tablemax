@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { qualifiedName, quoteIdent, quoteIdentIfNeeded } from "./sqlIdent";
+import { bytesLiteral, qualifiedName, qualifiedObject, quoteIdent, quoteIdentIfNeeded, quoteString } from "./sqlIdent";
 
 test("quoteIdent doubles the dialect's quote character", () => {
   expect(quoteIdent("postgres", 'we"ird')).toBe('"we""ird"');
@@ -41,4 +41,29 @@ test("quoteIdentIfNeeded leaves plain names bare and quotes the rest", () => {
   expect(quoteIdentIfNeeded("postgres", "name")).toBe("name");
   expect(quoteIdentIfNeeded("mySql", "status")).toBe("status");
   expect(quoteIdentIfNeeded("postgres", "key")).toBe("key");
+});
+
+test("qualifiedObject keeps the schema, SQLite main included, like the backend", () => {
+  expect(qualifiedObject("postgres", { schema: "public", name: "t" })).toBe('"public"."t"');
+  expect(qualifiedObject("mySql", { schema: "db", name: "t" })).toBe("`db`.`t`");
+  expect(qualifiedObject("sqlite", { schema: "main", name: "t" })).toBe('"main"."t"');
+  expect(qualifiedObject("sqlite", { schema: null, name: "t" })).toBe('"t"');
+});
+
+test("quoteString doubles single quotes everywhere", () => {
+  expect(quoteString("postgres", "it's")).toBe("'it''s'");
+  expect(quoteString("sqlite", "it's")).toBe("'it''s'");
+});
+
+test("quoteString handles backslashes per dialect", () => {
+  expect(quoteString("mySql", "a\\b'c")).toBe("'a\\\\b''c'");
+  expect(quoteString("postgres", "a\\b'c")).toBe("E'a\\\\b''c'");
+  expect(quoteString("postgres", "plain")).toBe("'plain'");
+  expect(quoteString("sqlite", "a\\b")).toBe("'a\\b'");
+});
+
+test("bytesLiteral per dialect", () => {
+  expect(bytesLiteral("postgres", "00ff")).toBe("E'\\\\x00ff'");
+  expect(bytesLiteral("mySql", "00ff")).toBe("X'00ff'");
+  expect(bytesLiteral("sqlite", "00ff")).toBe("X'00ff'");
 });
