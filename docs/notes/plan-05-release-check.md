@@ -38,8 +38,10 @@ not visually. Checked by eye at 512 px and 32 px.
   `longDescription`. Contents: `/usr/bin/tablemax`, `TableMax.desktop`
   (`Categories=Development;`, `Icon=tablemax`), hicolor icons 32, 128 and `256x256@2`
   (Tauri's name for the 128@2x icon). No `linux.deb.depends` override was needed.
-- The binary requires glibc 2.39 (`objdump -T`): packages built on this host run on
-  Ubuntu 24.04+ / Debian 13+ only (recorded in the README).
+- glibc floor (no package bundles libc): the binary requires glibc 2.39 (`objdump -T`),
+  so the `.deb` runs on Ubuntu 24.04 (verified below). The AppImage bundles the build
+  host's WebKitGTK, GLib… which require glibc 2.43, so it only runs on distributions as
+  new as Ubuntu 26.04 (verified below; recorded in the README).
 
 ### `.deb` in a clean Ubuntu 24.04
 
@@ -55,6 +57,28 @@ docker run --rm -v "$PWD/src-tauri/target/release/bundle/deb":/pkg:ro ubuntu:24.
 - `tablemax --version`: the app has no CLI mode; with no display it panics with
   "Failed to initialize GTK" (expected, hence `|| true`).
 - The desktop file and the three icons are installed under `/usr/share`.
+
+### AppImage glibc floor (fix round 1)
+
+The existing AppImage, mounted read-only into a clean `ubuntu:24.04` container
+(glibc 2.39-0ubuntu8.9), copied and extracted there with `--appimage-extract`, then
+`objdump -T` on each of its 178 ELF files (binary, 176 bundled `.so`, AppRun) and `ldd`
+with `LD_LIBRARY_PATH=squashfs-root/usr/lib`:
+
+- No `libc.so` / `ld-linux` is bundled: the AppImage uses the host glibc.
+- Highest version needed: `GLIBC_2.43`, by `libwebkit2gtk-4.1.so.0`,
+  `libjavascriptcoregtk-4.1.so.0`, `libglib-2.0.so.0`, `libgnutls.so.30`,
+  `liblcms2.so.2` and `libjxl.so.0.11` (all from the 26.04 build host).
+- `ldd usr/bin/tablemax` in the container: ``libc.so.6: version `GLIBC_2.43' not found
+  (required by …/libglib-2.0.so.0)``, ``version `GLIBC_2.42' not found (required by
+  …/libwebkit2gtk-4.1.so.0)``, plus ``libm.so.6: version `GLIBC_2.43' not found`` for
+  four libraries. The AppImage does **not** run on Ubuntu 24.04.
+- The other "not found" lines (`libX11`, `libGL`, `libEGL`, `libfontconfig`,
+  `libwayland-client`…) are desktop libraries that linuxdeploy leaves out on purpose:
+  they are absent from the minimal container, present on any desktop.
+
+Verified floors for a 26.04 build: `.deb` glibc ≥ 2.39 (Ubuntu 24.04 checked); AppImage
+glibc ≥ 2.43 (works on the 26.04 build host, fails on 24.04).
 
 ## Release smoke test (AppImage)
 

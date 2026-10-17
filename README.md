@@ -12,15 +12,25 @@ A free, fast desktop database client. Tauri 2 + React + TypeScript + Rust.
   `libwebkit2gtk-4.1-0` and `libgtk-3-0` (satisfied by `libgtk-3-0t64` on Ubuntu 24.04),
   which apt pulls in. Run `tablemax` or use the "TableMax" desktop entry (category
   Development). Remove with `sudo apt remove table-max`.
-- **AppImage** (`appimage/TableMax_<version>_amd64.AppImage`), self-contained:
+- **AppImage** (`appimage/TableMax_<version>_amd64.AppImage`), bundles WebKitGTK, GTK
+  and their libraries from the build machine:
   `chmod +x TableMax_*.AppImage && ./TableMax_*.AppImage`. It needs FUSE 2
-  (`libfuse2t64` on Ubuntu 24.04); without it, run it with
-  `APPIMAGE_EXTRACT_AND_RUN=1`. It follows the desktop's light/dark preference; set
-  `APPIMAGE_GTK_THEME=Adwaita:dark` to force a dark GTK theme.
+  (`libfuse2t64` on Ubuntu); without it, run it with `APPIMAGE_EXTRACT_AND_RUN=1`. Its
+  GTK hook picks a light or dark Adwaita theme from the desktop's `color-scheme`
+  setting, and the app's "System" theme follows that. This was only simulated, not
+  checked on a real dark desktop; `APPIMAGE_GTK_THEME=Adwaita:dark` forces dark.
 
-Both packages contain a binary linked against the build machine's glibc: a build made on
-Ubuntu 26.04 needs glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+). Build on the oldest
-distribution you want to support.
+Both packages depend on the build machine's glibc (none bundles its own libc). For a
+build made on Ubuntu 26.04 (checked in a clean `ubuntu:24.04` container):
+
+- the `.deb` needs glibc 2.39 or newer: it installs and every library resolves on
+  Ubuntu 24.04 (its WebKitGTK/GTK come from the distribution);
+- the AppImage needs glibc 2.43 or newer, because its bundled WebKitGTK, GLib, GnuTLS…
+  were built on 26.04: on Ubuntu 24.04 (glibc 2.39) it fails with
+  ``version `GLIBC_2.43' not found``. It only runs on distributions as new as the build
+  host.
+
+Build on the oldest distribution you want to support.
 
 Runtime notes: saving passwords in the keyring needs a Secret Service provider
 (GNOME Keyring or KWallet, present on standard desktops); without one, choose "Ask each
