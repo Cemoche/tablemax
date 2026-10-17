@@ -96,14 +96,19 @@ export const sqlSessionClose = (sessionId: string) =>
  * on a pre-flight error such as an unknown session or a query already running);
  * UI state must be driven by the events.
  */
+/**
+ * Runs a batch. Without `confirmed`, a batch the connection's safe mode wants confirmed
+ * rejects with `confirmationRequired` before anything runs (no event is sent).
+ */
 export const sqlExecute = (
   sessionId: string,
   statements: string[],
   onEvent: (e: ExecEvent) => void,
+  confirmed = false,
 ) => {
   const channel = new Channel<ExecEvent>();
   channel.onmessage = onEvent;
-  return invoke<void>("sql_execute", { sessionId, statements, onEvent: channel });
+  return invoke<void>("sql_execute", { sessionId, statements, confirmed, onEvent: channel });
 };
 
 export const sqlCancel = (sessionId: string) => invoke<void>("sql_cancel", { sessionId });

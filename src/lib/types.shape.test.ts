@@ -10,6 +10,7 @@ import type {
   ResultSet,
   Settings,
   RowCount,
+  SafeMode,
   SshAuth,
   SslMode,
   WorkspaceInfo,
@@ -131,4 +132,25 @@ test("Settings", () => {
     "theme",
     "version",
   ]);
+});
+
+// store.rs SafeMode and ConnectionConfig.safeMode (safety.rs serde_names), error.rs
+// ConfirmationRequired.
+test("Safe mode", () => {
+  const modes: SafeMode[] = JSON.parse('["off","confirmAll","confirmWrites"]');
+  expect(modes).toHaveLength(3);
+  const c: ConnectionConfig = JSON.parse(`{
+    "id":"x","name":"n","color":"swatch-1","envTag":"prod","kind":"postgres",
+    "host":"h","port":5432,"user":"u","database":null,"sqlitePath":null,
+    "passwordMode":"ask","group":null,
+    "ssl":{"mode":"prefer","caFile":null,"certFile":null,"keyFile":null},"ssh":null,
+    "safeMode":"confirmAll"
+  }`);
+  expect(c.safeMode).toBe("confirmAll");
+  // Default (by environment), and configs saved before safe mode existed.
+  const legacy: ConnectionConfig = { ...c, safeMode: null };
+  expect(legacy.safeMode).toBeNull();
+  const kind: ErrorKind = "confirmationRequired";
+  const e = JSON.parse('{"kind":"confirmationRequired","message":"0,2"}');
+  expect(e.kind).toBe(kind);
 });

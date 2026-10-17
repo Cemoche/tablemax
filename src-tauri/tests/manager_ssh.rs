@@ -91,6 +91,7 @@ fn pg_over_ssh(ssh: SshSettings) -> (ConnectionConfig, Option<String>) {
         group: None,
         ssl: SslConfig::default(),
         ssh: Some(ssh),
+        safe_mode: None,
     };
     (cfg, p.password)
 }
@@ -141,8 +142,10 @@ async fn assert_sleep_is_cancelled(mgr: &Arc<SessionManager>, sid: &str, sleep_s
         }
     };
     let (m, s, q) = (mgr.clone(), sid.to_string(), sleep_sql.to_string());
-    let batch =
-        tokio::spawn(async move { m.execute_batch(&s, vec![q, "select 2".into()], sink).await });
+    let batch = tokio::spawn(async move {
+        m.execute_batch(&s, vec![q, "select 2".into()], false, sink)
+            .await
+    });
     tokio::time::timeout(WAIT, async {
         while let Some(s) = rx.recv().await {
             if s == "started0" {
@@ -182,7 +185,7 @@ async fn assert_select_one(mgr: &SessionManager, sid: &str) -> AppResult<()> {
             }
         }
     };
-    mgr.execute_batch(sid, vec!["select 1".into()], sink)
+    mgr.execute_batch(sid, vec!["select 1".into()], false, sink)
         .await?;
     assert!(
         events.lock().unwrap().is_empty(),
@@ -290,6 +293,7 @@ async fn mysql_and_mariadb_over_ssh_with_key_auth() {
             group: None,
             ssl: SslConfig::default(),
             ssh: Some(ssh),
+            safe_mode: None,
         };
         let saved = fx.mgr.save_connection(cfg, p.password, None).await.unwrap();
         // The app known_hosts is shared by both connections: confirm only once.

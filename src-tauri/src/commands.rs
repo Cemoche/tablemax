@@ -238,15 +238,20 @@ pub async fn sql_session_close(
 }
 
 /// Streams [`ExecEvent`]s on `on_event`; resolves once `BatchFinished` was sent.
+/// Rejects with `ConfirmationRequired` (no event, nothing run) when the connection's
+/// safe mode wants the batch confirmed and `confirmed` is false.
 #[tauri::command]
 pub async fn sql_execute(
     state: State<'_, SessionManager>,
     session_id: String,
     statements: Vec<String>,
+    confirmed: bool,
     on_event: Channel<ExecEvent>,
 ) -> AppResult<()> {
+    // `confirmed`: the user confirmed this batch in the safe mode dialog. Which
+    // statements need it is decided by the backend from the stored connection.
     state
-        .execute_batch(&session_id, statements, move |event| {
+        .execute_batch(&session_id, statements, confirmed, move |event| {
             // A closed webview just drops the event; the batch still runs to completion.
             let _ = on_event.send(event);
         })

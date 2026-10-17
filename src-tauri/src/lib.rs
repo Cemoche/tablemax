@@ -3,6 +3,7 @@ pub mod driver;
 pub mod error;
 pub mod import;
 pub mod manager;
+pub mod safety;
 pub mod secrets;
 pub mod settings;
 pub mod ssh;

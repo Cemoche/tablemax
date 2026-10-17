@@ -129,6 +129,7 @@ impl Parsed {
             group,
             ssl: SslConfig::default(),
             ssh: None,
+            safe_mode: None,
         };
         if kind == DriverKind::Sqlite {
             config.sqlite_path = Some(text(obj, "DatabasePath")).filter(|p| !p.is_empty());

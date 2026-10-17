@@ -33,6 +33,7 @@ use crate::driver::{
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::import::{self, IMPORT_TTL, ImportPreview, ImportResult, LastPick, PendingImports};
+use crate::safety::{self, SafeMode};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
 use crate::ssh::config::{SshConfigFile, user_config};
 use crate::ssh::known_hosts::KnownHosts;
@@ -952,16 +953,65 @@ impl SessionManager {
         shutdown_sql(&entry).await
     }
 
+    /// The workspace's effective safe mode, re-read from the store so a setting saved
+    /// while the workspace is open applies to its next batch. The workspace stays on
+    /// the database it was opened on: when the saved connection now has another
+    /// identity, the stricter of both settings applies; when it was deleted, the opened
+    /// config's. Fails closed: a store error yields `ConfirmAll`.
+    async fn workspace_safe_mode(&self, workspace_id: &str) -> AppResult<SafeMode> {
+        let opened = {
+            let st = self.state();
+            st.workspaces
+                .get(workspace_id)
+                .ok_or_else(|| workspace_not_found(workspace_id))?
+                .config
+                .clone()
+        };
+        let store = self.store.clone();
+        let id = opened.id.clone();
+        Ok(match blocking(move || store.get(&id)).await {
+            Ok(saved) if same_identity(&saved, &opened) => safety::effective_safe_mode(&saved),
+            Ok(saved) => safety::stricter(
+                safety::effective_safe_mode(&saved),
+                safety::effective_safe_mode(&opened),
+            ),
+            Err(e) if e.kind == ErrorKind::NotFound => safety::effective_safe_mode(&opened),
+            Err(_) => SafeMode::ConfirmAll,
+        })
+    }
+
     /// Runs `statements` in order, one driver call each. Stops at the first error
     /// (`StatementFailed`) or when cancel is requested; always ends with
     /// `BatchFinished`. Only one batch may run per session at a time.
+    ///
+    /// Safe mode: unless `confirmed`, a batch with statements to confirm under the
+    /// workspace's effective mode is refused with `ConfirmationRequired` (message: their
+    /// indices, `"1"` or `"0,2"`) before anything runs: no statement, no event, and the
+    /// session stays idle.
     pub async fn execute_batch(
         &self,
         session_id: &str,
         statements: Vec<String>,
+        confirmed: bool,
         sink: impl Fn(ExecEvent) + Send + Sync,
     ) -> AppResult<()> {
         let entry = self.sql_entry(session_id)?;
+        if !confirmed {
+            let mode = self.workspace_safe_mode(&entry.workspace_id).await?;
+            let dialect = entry.session.dialect();
+            let classes: Vec<_> = statements
+                .iter()
+                .map(|sql| safety::classify(dialect, sql))
+                .collect();
+            let pending = safety::needs_confirmation(mode, &classes);
+            if !pending.is_empty() {
+                let indices: Vec<String> = pending.iter().map(usize::to_string).collect();
+                return Err(AppError::new(
+                    ErrorKind::ConfirmationRequired,
+                    indices.join(","),
+                ));
+            }
+        }
         let ctl = Arc::new(BatchCtl::default());
         {
             let mut cur = entry.current();
@@ -1097,6 +1147,7 @@ mod tests {
             group: None,
             ssl: SslConfig::default(),
             ssh: None,
+            safe_mode: None,
         }
     }
 
@@ -1224,6 +1275,7 @@ mod tests {
             .execute_batch(
                 &sid,
                 sql(&["select 1", "select * from nope", "select 2"]),
+                false,
                 c.sink(),
             )
             .await
@@ -1249,13 +1301,13 @@ mod tests {
         assert_ne!(a, b);
         let ca = Collector::new();
         fx.mgr
-            .execute_batch(&a, sql(&["create temp table t(x)"]), ca.sink())
+            .execute_batch(&a, sql(&["create temp table t(x)"]), false, ca.sink())
             .await
             .unwrap();
         assert_eq!(ca.all(), ["started0", "finished0", "batch:false"]);
         let cb = Collector::new();
         fx.mgr
-            .execute_batch(&b, sql(&["select * from t"]), cb.sink())
+            .execute_batch(&b, sql(&["select * from t"]), false, cb.sink())
             .await
             .unwrap();
         assert_eq!(cb.all(), ["started0", "failed0:Query", "batch:false"]);
@@ -1270,7 +1322,7 @@ mod tests {
         let sink = c.sink();
         let (mgr, s) = (fx.mgr.clone(), sid.clone());
         let batch = tokio::spawn(async move {
-            mgr.execute_batch(&s, sql(&[INFINITE_CTE, "select 2"]), sink)
+            mgr.execute_batch(&s, sql(&[INFINITE_CTE, "select 2"]), false, sink)
                 .await
         });
         c.wait_for("started0").await;
@@ -1287,7 +1339,7 @@ mod tests {
         // The session stays usable after a cancel.
         let c2 = Collector::new();
         fx.mgr
-            .execute_batch(&sid, sql(&["select 1"]), c2.sink())
+            .execute_batch(&sid, sql(&["select 1"]), false, c2.sink())
             .await
             .unwrap();
         assert_eq!(c2.all(), ["started0", "finished0", "batch:false"]);
@@ -1301,12 +1353,14 @@ mod tests {
         let mut c = Collector::new();
         let sink = c.sink();
         let (mgr, s) = (fx.mgr.clone(), sid.clone());
-        let batch =
-            tokio::spawn(async move { mgr.execute_batch(&s, sql(&[INFINITE_CTE]), sink).await });
+        let batch = tokio::spawn(async move {
+            mgr.execute_batch(&s, sql(&[INFINITE_CTE]), false, sink)
+                .await
+        });
         c.wait_for("started0").await;
         let err = fx
             .mgr
-            .execute_batch(&sid, sql(&["select 1"]), |_| {})
+            .execute_batch(&sid, sql(&["select 1"]), false, |_| {})
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Invalid);
@@ -1330,7 +1384,7 @@ mod tests {
         fx.mgr.close_workspace(&ws.workspace_id).await.unwrap();
         let err = fx
             .mgr
-            .execute_batch(&sid, sql(&["select 1"]), |_| {})
+            .execute_batch(&sid, sql(&["select 1"]), false, |_| {})
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::NotFound);
@@ -1357,14 +1411,14 @@ mod tests {
         fx.mgr.close_sql_session(&a).await.unwrap();
         assert_eq!(
             fx.mgr
-                .execute_batch(&a, sql(&["select 1"]), |_| {})
+                .execute_batch(&a, sql(&["select 1"]), false, |_| {})
                 .await
                 .unwrap_err()
                 .kind,
             ErrorKind::NotFound
         );
         fx.mgr
-            .execute_batch(&b, sql(&["select 1"]), |_| {})
+            .execute_batch(&b, sql(&["select 1"]), false, |_| {})
             .await
             .unwrap();
         assert_eq!(
@@ -1383,7 +1437,7 @@ mod tests {
         // An idle cancel must not leak into the next batch.
         let c = Collector::new();
         fx.mgr
-            .execute_batch(&sid, sql(&["select 1"]), c.sink())
+            .execute_batch(&sid, sql(&["select 1"]), false, c.sink())
             .await
             .unwrap();
         assert_eq!(c.all(), ["started0", "finished0", "batch:false"]);
@@ -1611,7 +1665,7 @@ mod tests {
         let sink = c.sink();
         let (mgr, s) = (fx.mgr.clone(), sid.clone());
         let batch =
-            tokio::spawn(async move { mgr.execute_batch(&s, sql(&["a", "b"]), sink).await });
+            tokio::spawn(async move { mgr.execute_batch(&s, sql(&["a", "b"]), false, sink).await });
         c.wait_for("started0").await;
         fx.mgr.cancel(&sid).await.unwrap();
         batch.await.unwrap().unwrap();
@@ -1630,7 +1684,8 @@ mod tests {
         let mut c = Collector::new();
         let sink = c.sink();
         let (mgr, s) = (fx.mgr.clone(), sid.clone());
-        let batch = tokio::spawn(async move { mgr.execute_batch(&s, sql(&["a"]), sink).await });
+        let batch =
+            tokio::spawn(async move { mgr.execute_batch(&s, sql(&["a"]), false, sink).await });
         c.wait_for("started0").await;
         let start = tokio::time::Instant::now();
         fx.mgr.cancel(&sid).await.unwrap();
@@ -1659,7 +1714,8 @@ mod tests {
         let mut c1 = Collector::new();
         let sink = c1.sink();
         let (mgr, s) = (fx.mgr.clone(), sid.clone());
-        let batch1 = tokio::spawn(async move { mgr.execute_batch(&s, sql(&["a"]), sink).await });
+        let batch1 =
+            tokio::spawn(async move { mgr.execute_batch(&s, sql(&["a"]), false, sink).await });
         c1.wait_for("started0").await;
         let (mgr, s) = (fx.mgr.clone(), sid.clone());
         let cancel1 = tokio::spawn(async move { mgr.cancel(&s).await });
@@ -1673,7 +1729,8 @@ mod tests {
         let c2 = Collector::new();
         let sink = c2.sink();
         let (mgr, s) = (fx.mgr.clone(), sid.clone());
-        let batch2 = tokio::spawn(async move { mgr.execute_batch(&s, sql(&["b"]), sink).await });
+        let batch2 =
+            tokio::spawn(async move { mgr.execute_batch(&s, sql(&["b"]), false, sink).await });
         // Virtual time: batch 2 is now waiting for the in-flight cancel (1 s) to land.
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!cancel1.is_finished() && c2.all().is_empty());
@@ -1684,7 +1741,7 @@ mod tests {
         // Nothing carries over: the next batch runs normally.
         let c3 = Collector::new();
         fx.mgr
-            .execute_batch(&sid, sql(&["c"]), c3.sink())
+            .execute_batch(&sid, sql(&["c"]), false, c3.sink())
             .await
             .unwrap();
         assert_eq!(c3.all(), ["started0", "finished0", "batch:false"]);
@@ -1828,7 +1885,7 @@ mod tests {
             .unwrap();
         let sid = mgr.open_sql_session(&ws.workspace_id).await.unwrap();
         let c = Collector::new();
-        mgr.execute_batch(&sid, sql(&["select count(*) from items"]), c.sink())
+        mgr.execute_batch(&sid, sql(&["select count(*) from items"]), false, c.sink())
             .await
             .unwrap();
         assert_eq!(c.all(), ["started0", "finished0", "batch:false"]);

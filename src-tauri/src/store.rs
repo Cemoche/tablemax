@@ -34,6 +34,19 @@ pub enum SshAuth {
     Agent,
 }
 
+/// Safe mode of a connection (see `safety.rs`): which statements need a confirmation
+/// before anything of their batch is sent.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SafeMode {
+    /// Nothing is confirmed.
+    Off,
+    /// Every statement is confirmed.
+    ConfirmAll,
+    /// Every statement not recognised as a read is confirmed.
+    ConfirmWrites,
+}
+
 /// SSH tunnel settings of a connection. Contains no secret fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +107,10 @@ pub struct ConnectionConfig {
     /// Database reached through this SSH server (`host`/`port` as seen from it).
     #[serde(default)]
     pub ssh: Option<SshSettings>,
+    /// `None` ("Default (by environment)", and every config saved before safe mode
+    /// existed): `safety::effective_safe_mode` derives it from `env_tag`.
+    #[serde(default)]
+    pub safe_mode: Option<SafeMode>,
 }
 
 pub struct ConnectionStore {
@@ -365,6 +382,7 @@ mod tests {
             group: None,
             ssl: SslConfig::default(),
             ssh: None,
+            safe_mode: None,
         }
     }
 
