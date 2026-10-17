@@ -129,6 +129,11 @@ function combination(spec: string, mac: boolean): string {
   return [...["Ctrl", "Meta", "Alt", "Shift"].filter((m) => mods.has(m)), key].join("+");
 }
 
+/** Do two valid specs press the same physical keys on this platform (Mod = Cmd on macOS, Ctrl elsewhere)? */
+export function sameCombination(a: string, b: string, mac: boolean = isMac()): boolean {
+  return isValidShortcut(a) && isValidShortcut(b) && combination(a, mac) === combination(b, mac);
+}
+
 /**
  * The action that would fire along with `id` if `id` used `spec`: another action whose
  * effective combination is the same physical keys (Mod = Cmd on macOS, Ctrl elsewhere) in

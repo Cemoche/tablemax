@@ -2,15 +2,22 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
-import { KEYMAP_ACTIONS } from "../../lib/keymap";
+import { KEYMAP_ACTIONS, useAction } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { SettingsDialog } from "./SettingsDialog";
 
 vi.mock("../../lib/ipc");
 
+const platform = vi.hoisted(() => ({ mac: false }));
+vi.mock("../../lib/platform", async (orig) => ({
+  ...(await orig<typeof import("../../lib/platform")>()),
+  isMac: () => platform.mac,
+}));
+
 beforeEach(() => {
   vi.resetAllMocks();
+  platform.mac = false;
   delete document.documentElement.dataset.theme;
   useSettings.setState({ settings: DEFAULT_SETTINGS, confirmed: DEFAULT_SETTINGS, loaded: true, error: null });
   vi.mocked(ipc.settingsSet).mockImplementation(async (s) => s);
@@ -308,4 +315,59 @@ test("Tab without modifiers cancels recording; Ctrl+Tab style combinations are c
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Alt>}{Tab}{/Alt}");
   expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Alt+Tab" } });
+});
+
+test("recording the default combination in another spelling stores no override (Ctrl+Tab for tab.next)", async () => {
+  setup();
+  const label = strings.keymap["tab.next"];
+  await userEvent.click(changeButton(label));
+  await userEvent.keyboard("{Control>}{Tab}{/Control}");
+  expect(queryReset(label)).toBeNull();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+});
+
+test("an override spelled differently from the default is removed when its default is recorded", async () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "tab.next": "Mod+Tab" } }, confirmed: DEFAULT_SETTINGS });
+  setup();
+  expect(queryReset(strings.keymap["tab.next"])).toBeNull();
+});
+
+test("on macOS Meta records as Mod and Ctrl stays Ctrl", async () => {
+  platform.mac = true;
+  setup();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Meta>}{Shift>}k{/Shift}{/Meta}");
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K" } });
+  await userEvent.click(changeButton(strings.keymap["tab.close"]));
+  await userEvent.keyboard("{Control>}j{/Control}");
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({
+    ...DEFAULT_SETTINGS,
+    keymap: { "palette.all": "Mod+Shift+K", "tab.close": "Ctrl+J" },
+  });
+});
+
+function Probe({ onFire }: { onFire: () => void }) {
+  useAction("query.new", onFire, { allowInModal: true });
+  return null;
+}
+
+test("a global shortcut does not fire while recording, and fires again after cancel and after unmount", async () => {
+  const onFire = vi.fn();
+  const onClose = vi.fn();
+  const { rerender } = render(
+    <>
+      <Probe onFire={onFire} />
+      <SettingsDialog onClose={onClose} />
+    </>,
+  );
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Control>}t{/Control}"); // query.new's own combination, recorded for palette.all
+  expect(onFire).not.toHaveBeenCalled();
+  await userEvent.keyboard("{Escape}");
+  await userEvent.keyboard("{Control>}t{/Control}");
+  expect(onFire).toHaveBeenCalledTimes(1);
+  await userEvent.click(changeButton(paletteLabel));
+  rerender(<Probe onFire={onFire} />);
+  await userEvent.keyboard("{Control>}t{/Control}");
+  expect(onFire).toHaveBeenCalledTimes(2);
 });
