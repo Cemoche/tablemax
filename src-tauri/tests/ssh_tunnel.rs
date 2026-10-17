@@ -167,6 +167,9 @@ async fn unknown_host_key_requires_confirmation() {
         .expect("an unknown host must not connect");
     assert_eq!(e.kind, ErrorKind::HostKeyUnknown, "{}", e.message);
     assert!(e.message.starts_with("SHA256:"), "{}", e.message);
+    // The prompt names the server the key is checked and stored for.
+    let (host, port) = ssh_addr();
+    assert_eq!(e.host.as_deref(), Some(format!("{host}:{port}").as_str()));
     assert_eq!(read(&app_known_hosts(&dir)), None, "nothing is trusted yet");
 
     // A fingerprint that does not match the presented key trusts nothing.
@@ -181,7 +184,7 @@ async fn unknown_host_key_requires_confirmation() {
         .await
         .unwrap();
     let kh = read(&app_known_hosts(&dir)).expect("key written to the app known_hosts");
-    assert!(kh.contains("[127.0.0.1]:2222"), "{kh}");
+    assert!(kh.contains(&format!("[{host}]:{port}")), "{kh}");
     assert_pg_reachable(&tunnel).await;
     tunnel.close().await;
 
@@ -211,7 +214,57 @@ async fn tunnel_refuses_changed_host_key() {
         .expect("a changed host key must block the connection");
     assert_eq!(e.kind, ErrorKind::HostKeyChanged, "{}", e.message);
     assert_eq!(e.message, real);
+    assert_eq!(e.host.as_deref(), Some(format!("{host}:{port}").as_str()));
     assert_eq!(read(&app_known_hosts(&dir)).unwrap(), before);
+}
+
+/// `[host]:port <type> <base64>` of the test sshd's host key `name` (test-secrets.sh).
+fn sshd_host_key_line(name: &str) -> String {
+    let (host, port) = ssh_addr();
+    let public = std::fs::read_to_string(ssh_file(&format!("host/{name}.pub"))).unwrap();
+    let mut parts = public.split_whitespace();
+    let (kind, b64) = (parts.next().unwrap(), parts.next().unwrap());
+    format!("[{host}]:{port} {kind} {b64}\n")
+}
+
+#[tokio::test]
+async fn recorded_ecdsa_host_key_is_asked_for_and_known() {
+    // The sshd also has an Ed25519 key, which it presents by default.
+    let dir = tempfile::tempdir().unwrap();
+    let path = app_known_hosts(&dir);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let line = sshd_host_key_line("ssh_host_ecdsa_key");
+    assert!(line.contains("ecdsa-sha2-nistp256"), "{line}");
+    std::fs::write(&path, &line).unwrap();
+    let tunnel = open_tunnel(&target(password()), "pg16", 5432, &policy(&dir, None))
+        .await
+        .expect("the recorded ECDSA key must be negotiated and recognised");
+    assert_pg_reachable(&tunnel).await;
+    tunnel.close().await;
+    assert_eq!(read(&path).unwrap(), line, "nothing new trusted");
+}
+
+#[tokio::test]
+async fn recorded_key_of_another_algorithm_blocks() {
+    let real = server_fingerprint().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = app_known_hosts(&dir);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // An RSA key on record: the sshd has none, so it presents another type of key.
+    let (host, port) = ssh_addr();
+    let rsa = std::fs::read_to_string(ssh_file("id_rsa_pem.pub")).unwrap();
+    let rsa = rsa.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+    let recorded = format!("[{host}]:{port} {rsa}\n");
+    std::fs::write(&path, &recorded).unwrap();
+    for accept in [None, Some(real.clone())] {
+        let e = open_tunnel(&target(password()), "pg16", 5432, &policy(&dir, accept))
+            .await
+            .err()
+            .expect("a key of another type than the recorded one must block");
+        assert_eq!(e.kind, ErrorKind::HostKeyChanged, "{}", e.message);
+        assert_eq!(e.message, real);
+        assert_eq!(read(&path).unwrap(), recorded, "known_hosts untouched");
+    }
 }
 
 #[tokio::test]
@@ -265,6 +318,33 @@ async fn key_auth_reaches_mysql_and_mariadb() {
 #[tokio::test]
 async fn pem_rsa_key_auth() {
     let (_dir, tunnel) = open_trusted(key("id_rsa_pem", None), "pg16", 5432).await;
+    let tunnel = tunnel.unwrap();
+    assert_pg_reachable(&tunnel).await;
+    tunnel.close().await;
+}
+
+#[tokio::test]
+async fn ecdsa_key_auth() {
+    let (_dir, tunnel) = open_trusted(key("id_ecdsa", None), "pg16", 5432).await;
+    let tunnel = tunnel.unwrap();
+    assert_pg_reachable(&tunnel).await;
+    tunnel.close().await;
+}
+
+#[tokio::test]
+async fn encrypted_legacy_pem_key_auth() {
+    let pem = std::fs::read_to_string(ssh_file("id_rsa_pem_enc")).unwrap();
+    assert!(
+        pem.contains("Proc-Type: 4,ENCRYPTED") && pem.contains("DEK-Info: AES-128-CBC,"),
+        "test key must be a legacy encrypted PEM"
+    );
+    for passphrase in [None, Some("wrong")] {
+        let (_dir, res) = open_trusted(key("id_rsa_pem_enc", passphrase), "pg16", 5432).await;
+        let e = res.err().expect("must ask for the passphrase");
+        assert_eq!(e.kind, ErrorKind::Auth, "{passphrase:?}: {}", e.message);
+        assert_eq!(e.message, "ssh passphrase required", "{passphrase:?}");
+    }
+    let (_dir, tunnel) = open_trusted(key("id_rsa_pem_enc", Some("key-pass")), "pg16", 5432).await;
     let tunnel = tunnel.unwrap();
     assert_pg_reachable(&tunnel).await;
     tunnel.close().await;
@@ -346,6 +426,30 @@ async fn verify_full_through_tunnel_uses_real_host_name() {
     assert_eq!(e.kind, ErrorKind::Connection, "{}", e.message);
     assert!(e.message.contains("not valid for name"), "{}", e.message);
     tunnel.close().await;
+}
+
+#[tokio::test]
+async fn mysql_verify_full_through_tunnel_uses_real_host_name() {
+    for (url, kind, host) in mysql_targets() {
+        let (_dir, tunnel) = open_trusted(password(), host, 3306).await;
+        let tunnel = tunnel.unwrap();
+        // `mysql8` / `mariadb11` are in the certificate; TCP goes to the tunnel's end.
+        let mut p = mysql_via(&tunnel, &url, kind, host);
+        p.ssl = ssl(SslMode::VerifyFull, Some("ca.pem"));
+        let s = driver::connect(&p)
+            .await
+            .unwrap_or_else(|e| panic!("{host}: {}", e.message));
+        assert_select_one(&s).await;
+        s.close().await.unwrap();
+        // No IP:127.0.0.1 SAN: verifying the dial address instead must fail.
+        p.host = "127.0.0.1".into();
+        let e = driver::connect(&p)
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{host}: wrong name must fail"));
+        assert_eq!(e.kind, ErrorKind::Connection, "{host}: {}", e.message);
+        tunnel.close().await;
+    }
 }
 
 #[tokio::test]

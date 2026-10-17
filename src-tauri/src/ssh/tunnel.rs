@@ -7,6 +7,7 @@
 //! fingerprint; a changed or unverifiable key always blocks the connection.
 //!
 //! Secrets (password, passphrase) never appear in `Debug` output or error messages.
+use std::borrow::Cow;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,7 +22,7 @@ use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::{JoinHandle, JoinSet};
 
-use super::known_hosts::{HostKeyVerdict, KnownHosts};
+use super::known_hosts::{HostKeyVerdict, KnownHosts, preferred_host_key_algorithms};
 use crate::error::{AppError, AppResult, ErrorKind};
 
 /// TCP connect + SSH key exchange must finish within this delay.
@@ -89,8 +90,18 @@ struct TunnelHandler {
     refusal: Arc<Mutex<Option<AppError>>>,
 }
 
+/// `host:port` as the host-key prompt shows it (`[v6]:port` for an IPv6 address).
+fn host_label(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 impl TunnelHandler {
     fn decide(&self, server: &PublicKeyOrCertificate) -> Result<(), AppError> {
+        let label = || host_label(&self.host, self.port);
         // For a host certificate only the underlying key is pinned (no CA trust).
         let key = server.public_key();
         match self.known_hosts.verify(&self.host, self.port, &key) {
@@ -101,10 +112,10 @@ impl TunnelHandler {
                 self.known_hosts.trust(&self.host, self.port, &key)
             }
             HostKeyVerdict::Unknown { fingerprint } => {
-                Err(AppError::new(ErrorKind::HostKeyUnknown, fingerprint))
+                Err(AppError::new(ErrorKind::HostKeyUnknown, fingerprint).with_host(label()))
             }
             HostKeyVerdict::Changed { fingerprint } => {
-                Err(AppError::new(ErrorKind::HostKeyChanged, fingerprint))
+                Err(AppError::new(ErrorKind::HostKeyChanged, fingerprint).with_host(label()))
             }
             HostKeyVerdict::Unverifiable { reason } => Err(AppError::new(
                 ErrorKind::Connection,
@@ -357,7 +368,15 @@ pub async fn open_tunnel(
         accept_fingerprint: policy.accept_fingerprint.clone(),
         refusal: refusal.clone(),
     };
+    // Ask for the key type known_hosts records for this server, as OpenSSH does.
+    let recorded = policy
+        .known_hosts
+        .host_key_algorithms(&target.host, target.port);
     let config = Arc::new(client::Config {
+        preferred: russh::Preferred {
+            key: Cow::Owned(preferred_host_key_algorithms(&recorded)),
+            ..Default::default()
+        },
         inactivity_timeout: None,
         keepalive_interval: Some(Duration::from_secs(30)),
         keepalive_max: 3,
@@ -414,6 +433,13 @@ pub async fn open_tunnel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_labels() {
+        assert_eq!(host_label("db.example", 22), "db.example:22");
+        assert_eq!(host_label("127.0.0.1", 2222), "127.0.0.1:2222");
+        assert_eq!(host_label("::1", 22), "[::1]:22");
+    }
 
     #[test]
     fn debug_redacts_secrets() {
