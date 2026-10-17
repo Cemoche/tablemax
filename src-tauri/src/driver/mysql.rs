@@ -31,6 +31,11 @@
 //! them): either reading finding a second statement rejects the input. The lexer follows
 //! the session's `sql_mode` (NO_BACKSLASH_ESCAPES, ANSI_QUOTES): it is read at connect and
 //! re-read after any statement that may change it.
+//! Compound statements (`CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT … BEGIN … END`, MariaDB
+//! `BEGIN NOT ATOMIC … END`) are one statement: the `;` inside their body do not count.
+//! The body tracker is conservative (see `Compound`): when in doubt it refuses, and an
+//! executable comment disables it. The client-side `DELIMITER` command never reaches the
+//! driver: the frontend splitter (`splitStatements`) handles it.
 //!
 //! Parameters (`query`): a server-side prepared statement (`exec`) would return rows in the
 //! binary protocol, decoded differently (dates, floats, YEAR). Instead the values are bound
@@ -59,6 +64,7 @@ use mysql_async::{
     Value,
 };
 
+use super::catalog::{Catalog, CatalogColumn, DbRoutine, RoutineKind, group_rows};
 use super::dml::{self, ApplyOutcome};
 use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, object_not_found,
@@ -342,29 +348,38 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
     }))
 }
 
-/// True when `sql` holds more than one statement (a `;` followed by anything other than
-/// whitespace or comments). Sees through '...', "...", `...`, `-- `, `#` and `/* */`,
-/// honouring the session's NO_BACKSLASH_ESCAPES / ANSI_QUOTES modes.
-///
-/// Executable comments are read both ways: content as code (what the server runs), and
-/// as a plain comment ending at the first `*/` (what a server below a `/*!50000`
-/// version, or MySQL for MariaDB's `/*M!`, reads). Either reading finding a second
-/// statement is enough.
-fn has_multiple_statements(sql: &str, modes: Modes) -> bool {
-    scan_multiple_statements(sql, modes, false) || scan_multiple_statements(sql, modes, true)
+/// One significant token of the multi-statement lexer: whitespace and comments are not
+/// tokens; strings and quoted identifiers are `Lit`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tok<'a> {
+    Word(&'a str),
+    Punct(u8),
+    Lit,
 }
 
-/// One reading of [`has_multiple_statements`]; `exec_as_comment` reads executable
-/// comments as plain comments.
-fn scan_multiple_statements(sql: &str, modes: Modes, exec_as_comment: bool) -> bool {
+impl Tok<'_> {
+    fn is(&self, kw: &str) -> bool {
+        matches!(self, Tok::Word(w) if w.eq_ignore_ascii_case(kw))
+    }
+    fn is_any(&self, kws: &[&str]) -> bool {
+        kws.iter().any(|k| self.is(k))
+    }
+}
+
+/// Splits `sql` into tokens, seeing through '...', "...", `...`, `-- `, `#` and `/* */`
+/// (honouring NO_BACKSLASH_ESCAPES / ANSI_QUOTES). The content of executable comments
+/// (`/*! ... */`, `/*M! ... */`) is code, or a plain comment when `exec_as_comment`; the
+/// flag tells whether one was seen (in either reading).
+fn lex(sql: &str, modes: Modes, exec_as_comment: bool) -> (Vec<Tok<'_>>, bool) {
     let b = sql.as_bytes();
     let n = b.len();
+    let mut out = Vec::new();
     let mut i = 0;
-    let mut seen_semi = false;
     let mut in_exec_comment = false;
+    let mut saw_exec_comment = false;
+    let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80;
     while i < n {
         let c = b[i];
-        // Whitespace and comments never count as a statement.
         if c.is_ascii_whitespace() {
             i += 1;
             continue;
@@ -385,12 +400,17 @@ fn scan_multiple_statements(sql: &str, modes: Modes, exec_as_comment: bool) -> b
             continue;
         }
         if b[i..].starts_with(b"/*") {
-            if b[i..].starts_with(b"/*!") && !exec_as_comment {
+            let exec = if b[i..].starts_with(b"/*!") {
+                3
+            } else if b[i..].starts_with(b"/*M!") {
+                4
+            } else {
+                0
+            };
+            saw_exec_comment |= exec > 0;
+            if exec > 0 && !exec_as_comment {
                 in_exec_comment = true;
-                i += 3;
-            } else if b[i..].starts_with(b"/*M!") && !exec_as_comment {
-                in_exec_comment = true;
-                i += 4;
+                i += exec;
             } else {
                 i += 2;
                 while i < n && !b[i..].starts_with(b"*/") {
@@ -400,15 +420,7 @@ fn scan_multiple_statements(sql: &str, modes: Modes, exec_as_comment: bool) -> b
             }
             continue;
         }
-        // A real token: anything after a ';' makes this a multi-statement input.
-        if seen_semi {
-            return true;
-        }
         match c {
-            b';' => {
-                seen_semi = true;
-                i += 1;
-            }
             b'\'' | b'"' | b'`' => {
                 i += 1;
                 while i < n {
@@ -427,11 +439,736 @@ fn scan_multiple_statements(sql: &str, modes: Modes, exec_as_comment: bool) -> b
                     }
                 }
                 i += 1;
+                out.push(Tok::Lit);
             }
-            _ => i += 1,
+            _ if is_word(c) => {
+                let start = i;
+                while i < n && is_word(b[i]) {
+                    i += 1;
+                }
+                // Word bytes are ASCII or whole UTF-8 sequences (>= 0x80), so the slice is
+                // on char boundaries.
+                out.push(Tok::Word(&sql[start..i]));
+            }
+            _ => {
+                out.push(Tok::Punct(c));
+                i += 1;
+            }
         }
     }
-    false
+    (out, saw_exec_comment)
+}
+
+/// Open compound constructs of a stored-program body.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Frame {
+    Block,
+    If,
+    CaseStmt,
+    Loop,
+    While,
+    Repeat,
+}
+
+/// What ends the expression being skipped.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Until {
+    Then,
+    Do,
+    When,
+    EndRepeat,
+}
+
+/// Position inside a compound body.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Mode {
+    /// The next token starts a statement.
+    StmtStart,
+    /// Right after a block's BEGIN (MariaDB may add NOT ATOMIC).
+    AfterBegin,
+    ExpectAtomic,
+    /// A plain word at a statement start: a label if `:` follows, else a statement.
+    PendingWord,
+    /// After `label:`: BEGIN, LOOP, WHILE or REPEAT must follow.
+    Label,
+    /// Inside a non-compound statement: everything up to its `;` is ignored.
+    Ordinary,
+    /// Skipping a condition / operand up to THEN, DO, WHEN or END REPEAT; CASE … END
+    /// expressions inside are counted.
+    Expr {
+        until: Until,
+        case_depth: u32,
+    },
+    /// END at a statement start: the next token says what it closes.
+    EndPending,
+    /// END inside UNTIL …: must be END REPEAT.
+    EndRepeatPending,
+    /// After the END of a construct: an optional label, then `;` (or the end of input).
+    AfterClose {
+        label_allowed: bool,
+    },
+    DeclareStart,
+    DeclareKind,
+    DeclareFor,
+    Cond,
+    CondSqlstate {
+        value_seen: bool,
+    },
+    CondNot,
+    CondDone,
+}
+
+/// Routine header (after CREATE … PROCEDURE/FUNCTION), up to the first body token.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Hdr {
+    Name,
+    Params(u32),
+    Chars,
+    Returns,
+    TypeAfterName,
+    TypeParen(u32),
+    TypeName,
+    CharacterSet,
+    ExpectLit,
+    /// Keywords still expected: (first alternatives, then optionally one more keyword).
+    Expect(&'static [&'static str], Option<&'static [&'static str]>),
+}
+
+/// Trigger header: `… FOR EACH ROW [{FOLLOWS|PRECEDES} name]`, then the body.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TrigHdr {
+    Scan(u8),
+    AfterRow,
+    OrderName,
+    BodyNext,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Phase {
+    Start,
+    AfterCreate,
+    Routine(Hdr),
+    Trigger(TrigHdr),
+    /// Event header; true once DO was seen (the next token starts the body).
+    Event(bool),
+    BeginNot,
+    BeginAtomic,
+    Body,
+    Plain,
+}
+
+/// Objects that never take a `BEGIN … END` body: a `CREATE` naming one is plain.
+const PLAIN_CREATE: [&str; 13] = [
+    "TABLE",
+    "VIEW",
+    "INDEX",
+    "DATABASE",
+    "SCHEMA",
+    "USER",
+    "ROLE",
+    "SERVER",
+    "TABLESPACE",
+    "LOGFILE",
+    "SEQUENCE",
+    "PACKAGE",
+    "RESOURCE",
+];
+
+/// Type attributes allowed after `RETURNS <type> [(…)]`.
+const TYPE_MODS: [&str; 7] = [
+    "UNSIGNED", "SIGNED", "ZEROFILL", "BINARY", "ASCII", "UNICODE", "BYTE",
+];
+
+/// Words that are never the first word of a plain statement in a body.
+const CONTROL: [&str; 8] = [
+    "END", "ELSE", "ELSEIF", "WHEN", "UNTIL", "THEN", "DO", "DECLARE",
+];
+
+/// Follows the compound statement the tokens belong to (`CREATE PROCEDURE/FUNCTION/
+/// TRIGGER/EVENT` whose body is a compound statement, MariaDB `BEGIN NOT ATOMIC … END`),
+/// so that the `;` inside its body are not statement ends.
+///
+/// The server ends the CREATE at the end of the body statement; the tracker must never
+/// believe a body is still open when the server has ended it, or a following statement
+/// would run unseen. So it models where a statement STARTS: the body starts at the first
+/// token after the routine characteristics / `FOR EACH ROW [FOLLOWS|PRECEDES x]` / event
+/// `DO`; inside, a statement starts after `;`, BEGIN, `label:`, THEN, ELSE, DO (WHILE),
+/// LOOP, REPEAT and a handler's condition list. Only a BEGIN/IF/CASE/LOOP/WHILE/REPEAT in
+/// that position opens a construct (BEGIN and END are not reserved words: `select begin`
+/// is a column), only an END there closes one, and it must close the innermost
+/// construct (END IF, END CASE…). A body that does not start with a compound statement
+/// is a plain statement. Words after `.`, `@` or `@@` are identifiers. Anything else
+/// unexpected sets `refuse` (fail closed).
+struct Compound {
+    phase: Phase,
+    mode: Mode,
+    stack: Vec<Frame>,
+    after_ident_marker: bool,
+    absorbed: bool,
+    refuse: bool,
+}
+
+impl Compound {
+    fn new(enabled: bool) -> Self {
+        Compound {
+            phase: if enabled { Phase::Start } else { Phase::Plain },
+            mode: Mode::StmtStart,
+            stack: Vec::new(),
+            after_ident_marker: false,
+            absorbed: false,
+            refuse: false,
+        }
+    }
+
+    /// Feeds one token other than `;`.
+    fn feed(&mut self, tok: Tok<'_>) {
+        // A word right after `.` or `@` is an identifier (`t.case`, `@begin`, `@@x`).
+        let ident = self.after_ident_marker;
+        self.after_ident_marker = matches!(tok, Tok::Punct(b'.' | b'@'));
+        self.step(tok, ident);
+    }
+
+    fn step(&mut self, tok: Tok<'_>, ident: bool) {
+        match self.phase {
+            Phase::Start => {
+                self.phase = if tok.is("CREATE") {
+                    Phase::AfterCreate
+                } else if tok.is("BEGIN") {
+                    Phase::BeginNot
+                } else {
+                    Phase::Plain
+                };
+            }
+            Phase::BeginNot => {
+                self.phase = if tok.is("NOT") {
+                    Phase::BeginAtomic
+                } else {
+                    Phase::Plain
+                };
+            }
+            Phase::BeginAtomic => {
+                if tok.is("ATOMIC") {
+                    self.phase = Phase::Body;
+                    self.stack.push(Frame::Block);
+                    self.mode = Mode::StmtStart;
+                } else {
+                    self.phase = Phase::Plain;
+                }
+            }
+            Phase::AfterCreate => {
+                if tok.is_any(&["PROCEDURE", "FUNCTION"]) {
+                    self.phase = Phase::Routine(Hdr::Name);
+                } else if tok.is("TRIGGER") {
+                    self.phase = Phase::Trigger(TrigHdr::Scan(0));
+                } else if tok.is("EVENT") {
+                    self.phase = Phase::Event(false);
+                } else if tok.is_any(&PLAIN_CREATE) {
+                    self.phase = Phase::Plain;
+                }
+            }
+            Phase::Routine(h) => self.routine(h, tok),
+            Phase::Trigger(h) => self.trigger(h, tok),
+            Phase::Event(false) => {
+                if tok.is("DO") {
+                    self.phase = Phase::Event(true);
+                }
+            }
+            Phase::Event(true) => self.start_body(tok),
+            Phase::Body => self.body(tok, ident),
+            Phase::Plain => {}
+        }
+    }
+
+    fn start_body(&mut self, tok: Tok<'_>) {
+        self.phase = Phase::Body;
+        self.mode = Mode::StmtStart;
+        self.stmt_start(tok);
+    }
+
+    fn routine(&mut self, h: Hdr, tok: Tok<'_>) {
+        let set = |s: &mut Self, h: Hdr| s.phase = Phase::Routine(h);
+        match h {
+            Hdr::Name => {
+                if tok == Tok::Punct(b'(') {
+                    set(self, Hdr::Params(1));
+                }
+            }
+            Hdr::Params(d) => match tok {
+                Tok::Punct(b'(') => set(self, Hdr::Params(d + 1)),
+                Tok::Punct(b')') if d == 1 => set(self, Hdr::Chars),
+                Tok::Punct(b')') => set(self, Hdr::Params(d - 1)),
+                _ => {}
+            },
+            Hdr::Returns => match tok {
+                Tok::Word(_) => set(self, Hdr::TypeAfterName),
+                _ => self.phase = Phase::Plain,
+            },
+            Hdr::TypeAfterName => {
+                if tok == Tok::Punct(b'(') {
+                    set(self, Hdr::TypeParen(1));
+                } else if tok.is_any(&["CHARSET", "COLLATE"]) {
+                    set(self, Hdr::TypeName);
+                } else if tok.is("CHARACTER") {
+                    set(self, Hdr::CharacterSet);
+                } else if !tok.is_any(&TYPE_MODS) {
+                    self.chars(tok);
+                }
+            }
+            Hdr::TypeParen(d) => match tok {
+                Tok::Punct(b'(') => set(self, Hdr::TypeParen(d + 1)),
+                Tok::Punct(b')') if d == 1 => set(self, Hdr::TypeAfterName),
+                Tok::Punct(b')') => set(self, Hdr::TypeParen(d - 1)),
+                _ => {}
+            },
+            Hdr::TypeName => match tok {
+                Tok::Word(_) | Tok::Lit => set(self, Hdr::TypeAfterName),
+                _ => self.phase = Phase::Plain,
+            },
+            Hdr::CharacterSet => {
+                if tok.is("SET") {
+                    set(self, Hdr::TypeName);
+                } else {
+                    self.phase = Phase::Plain;
+                }
+            }
+            Hdr::ExpectLit => {
+                if tok == Tok::Lit {
+                    set(self, Hdr::Chars);
+                } else {
+                    self.phase = Phase::Plain;
+                }
+            }
+            Hdr::Expect(now, then) => {
+                if !tok.is_any(now) {
+                    self.phase = Phase::Plain;
+                } else if let Some(next) = then {
+                    set(self, Hdr::Expect(next, None));
+                } else {
+                    set(self, Hdr::Chars);
+                }
+            }
+            Hdr::Chars => self.chars(tok),
+        }
+    }
+
+    /// Routine characteristics; the first other token starts the body.
+    fn chars(&mut self, tok: Tok<'_>) {
+        let next = if tok.is("RETURNS") {
+            Hdr::Returns
+        } else if tok.is("COMMENT") {
+            Hdr::ExpectLit
+        } else if tok.is("LANGUAGE") || tok.is("CONTAINS") || tok.is("NO") {
+            Hdr::Expect(&["SQL"], None)
+        } else if tok.is("NOT") {
+            Hdr::Expect(&["DETERMINISTIC"], None)
+        } else if tok.is("DETERMINISTIC") {
+            Hdr::Chars
+        } else if tok.is_any(&["READS", "MODIFIES"]) {
+            Hdr::Expect(&["SQL"], Some(&["DATA"]))
+        } else if tok.is("SQL") {
+            Hdr::Expect(&["SECURITY"], Some(&["DEFINER", "INVOKER"]))
+        } else {
+            return self.start_body(tok);
+        };
+        self.phase = Phase::Routine(next);
+    }
+
+    fn trigger(&mut self, h: TrigHdr, tok: Tok<'_>) {
+        let set = |s: &mut Self, h: TrigHdr| s.phase = Phase::Trigger(h);
+        match h {
+            TrigHdr::Scan(seen) => {
+                let want = ["FOR", "EACH", "ROW"][seen as usize];
+                if tok.is(want) {
+                    set(
+                        self,
+                        if seen == 2 {
+                            TrigHdr::AfterRow
+                        } else {
+                            TrigHdr::Scan(seen + 1)
+                        },
+                    );
+                } else {
+                    set(self, TrigHdr::Scan(u8::from(tok.is("FOR"))));
+                }
+            }
+            TrigHdr::AfterRow => {
+                if tok.is_any(&["FOLLOWS", "PRECEDES"]) {
+                    set(self, TrigHdr::OrderName);
+                } else {
+                    self.start_body(tok);
+                }
+            }
+            TrigHdr::OrderName => match tok {
+                Tok::Word(_) | Tok::Lit => set(self, TrigHdr::BodyNext),
+                _ => self.phase = Phase::Plain,
+            },
+            TrigHdr::BodyNext => self.start_body(tok),
+        }
+    }
+
+    fn top(&self) -> Option<Frame> {
+        self.stack.last().copied()
+    }
+
+    /// A token at a statement start (the stack may be empty: the routine body itself).
+    fn stmt_start(&mut self, tok: Tok<'_>) {
+        let root = self.stack.is_empty();
+        if !matches!(tok, Tok::Word(_)) {
+            // `(select 1)` or a stray token: a plain body, or not understood inside one.
+            if root {
+                self.phase = Phase::Plain;
+            } else {
+                self.refuse = true;
+            }
+            return;
+        }
+        let top = self.top();
+        let (frame, mode) = if tok.is("BEGIN") {
+            (Some(Frame::Block), Mode::AfterBegin)
+        } else if tok.is("IF") {
+            (
+                Some(Frame::If),
+                Mode::Expr {
+                    until: Until::Then,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("CASE") {
+            (
+                Some(Frame::CaseStmt),
+                Mode::Expr {
+                    until: Until::When,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("LOOP") {
+            (Some(Frame::Loop), Mode::StmtStart)
+        } else if tok.is("WHILE") {
+            (
+                Some(Frame::While),
+                Mode::Expr {
+                    until: Until::Do,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("REPEAT") {
+            (Some(Frame::Repeat), Mode::StmtStart)
+        } else if root {
+            // The body is a plain statement (or `label:` before a compound one).
+            if tok.is_any(&CONTROL) {
+                self.phase = Phase::Plain;
+            } else {
+                self.mode = Mode::PendingWord;
+            }
+            return;
+        } else if tok.is("DECLARE") {
+            (None, Mode::DeclareStart)
+        } else if tok.is("END") {
+            (None, Mode::EndPending)
+        } else if tok.is("ELSEIF") && top == Some(Frame::If) {
+            (
+                None,
+                Mode::Expr {
+                    until: Until::Then,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("ELSE") && matches!(top, Some(Frame::If | Frame::CaseStmt)) {
+            (None, Mode::StmtStart)
+        } else if tok.is("WHEN") && top == Some(Frame::CaseStmt) {
+            (
+                None,
+                Mode::Expr {
+                    until: Until::Then,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("UNTIL") && top == Some(Frame::Repeat) {
+            (
+                None,
+                Mode::Expr {
+                    until: Until::EndRepeat,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is_any(&CONTROL) {
+            self.refuse = true;
+            return;
+        } else {
+            (None, Mode::PendingWord)
+        };
+        if let Some(f) = frame {
+            self.stack.push(f);
+        }
+        self.mode = mode;
+    }
+
+    fn body(&mut self, tok: Tok<'_>, ident: bool) {
+        match self.mode {
+            Mode::StmtStart => self.stmt_start(tok),
+            Mode::AfterBegin => {
+                if tok == Tok::Punct(b':') {
+                    // `begin: …`: a label named begin, not worth the ambiguity.
+                    self.refuse = true;
+                } else if tok.is("NOT") {
+                    self.mode = Mode::ExpectAtomic;
+                } else {
+                    self.mode = Mode::StmtStart;
+                    self.stmt_start(tok);
+                }
+            }
+            Mode::ExpectAtomic => {
+                if tok.is("ATOMIC") {
+                    self.mode = Mode::StmtStart;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::PendingWord => {
+                if tok == Tok::Punct(b':') {
+                    self.mode = Mode::Label;
+                } else if self.stack.is_empty() {
+                    self.phase = Phase::Plain;
+                } else {
+                    self.mode = Mode::Ordinary;
+                }
+            }
+            Mode::Label => {
+                if tok.is_any(&["BEGIN", "LOOP", "WHILE", "REPEAT"]) {
+                    self.stmt_start(tok);
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::Ordinary => {}
+            Mode::Expr { until, case_depth } => {
+                if ident {
+                    return;
+                }
+                let expr = |d| Mode::Expr {
+                    until,
+                    case_depth: d,
+                };
+                if tok.is("CASE") {
+                    self.mode = expr(case_depth + 1);
+                } else if tok.is("END") {
+                    if case_depth > 0 {
+                        self.mode = expr(case_depth - 1);
+                    } else if until == Until::EndRepeat {
+                        self.mode = Mode::EndRepeatPending;
+                    } else {
+                        self.refuse = true;
+                    }
+                } else if case_depth > 0 {
+                    // THEN / WHEN / ELSE of a CASE expression.
+                } else if tok.is("THEN") && until == Until::Then {
+                    self.mode = Mode::StmtStart;
+                } else if tok.is("WHEN") && until == Until::When {
+                    self.mode = expr_then();
+                } else if tok.is("DO") && until == Until::Do {
+                    self.mode = Mode::StmtStart;
+                } else if tok.is_any(&["THEN", "WHEN", "DO"]) {
+                    self.refuse = true;
+                }
+            }
+            Mode::EndRepeatPending => {
+                if tok.is("REPEAT") && self.top() == Some(Frame::Repeat) {
+                    self.close(true);
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::EndPending => {
+                let ok = match self.top() {
+                    Some(Frame::Block) => !tok.is_any(&["IF", "CASE", "LOOP", "WHILE", "REPEAT"]),
+                    Some(Frame::If) => tok.is("IF"),
+                    Some(Frame::CaseStmt) => tok.is("CASE"),
+                    Some(Frame::Loop) => tok.is("LOOP"),
+                    Some(Frame::While) => tok.is("WHILE"),
+                    Some(Frame::Repeat) | None => false,
+                };
+                if !ok {
+                    self.refuse = true;
+                    return;
+                }
+                if self.top() == Some(Frame::Block) {
+                    // `END label`: the label is this token.
+                    self.close(true);
+                    self.body(tok, ident);
+                } else {
+                    let label = matches!(self.top(), Some(Frame::Loop | Frame::While));
+                    self.close(label);
+                }
+            }
+            Mode::AfterClose { label_allowed } => {
+                if label_allowed && matches!(tok, Tok::Word(_)) {
+                    self.mode = Mode::AfterClose {
+                        label_allowed: false,
+                    };
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::DeclareStart => {
+                self.mode = if tok.is_any(&["CONTINUE", "EXIT", "UNDO"]) {
+                    Mode::DeclareKind
+                } else {
+                    Mode::Ordinary
+                };
+            }
+            Mode::DeclareKind => {
+                self.mode = if tok.is("HANDLER") {
+                    Mode::DeclareFor
+                } else {
+                    Mode::Ordinary
+                };
+            }
+            Mode::DeclareFor => {
+                if tok.is("FOR") {
+                    self.mode = Mode::Cond;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::Cond => {
+                if tok.is("SQLSTATE") {
+                    self.mode = Mode::CondSqlstate { value_seen: false };
+                } else if tok.is("NOT") {
+                    self.mode = Mode::CondNot;
+                } else if matches!(tok, Tok::Word(_)) {
+                    self.mode = Mode::CondDone;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::CondSqlstate { value_seen } => {
+                if !value_seen && tok.is("VALUE") {
+                    self.mode = Mode::CondSqlstate { value_seen: true };
+                } else if tok == Tok::Lit {
+                    self.mode = Mode::CondDone;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::CondNot => {
+                if tok.is("FOUND") {
+                    self.mode = Mode::CondDone;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::CondDone => {
+                if tok == Tok::Punct(b',') {
+                    self.mode = Mode::Cond;
+                } else {
+                    // The handler's statement.
+                    self.mode = Mode::StmtStart;
+                    self.stmt_start(tok);
+                }
+            }
+        }
+    }
+
+    /// Pops the innermost construct; an optional label and `;` follow.
+    fn close(&mut self, label_allowed: bool) {
+        self.stack.pop();
+        self.mode = Mode::AfterClose { label_allowed };
+    }
+
+    /// A `;`: true when it is inside the compound body (not a statement end).
+    fn semi(&mut self) -> bool {
+        if self.phase != Phase::Body {
+            return false;
+        }
+        self.after_ident_marker = false;
+        let inside = match self.mode {
+            Mode::StmtStart | Mode::AfterBegin => !self.stack.is_empty(),
+            Mode::PendingWord if self.stack.is_empty() => {
+                self.phase = Phase::Plain;
+                false
+            }
+            Mode::PendingWord | Mode::Ordinary => true,
+            Mode::EndPending if self.top() == Some(Frame::Block) => {
+                self.stack.pop();
+                !self.stack.is_empty()
+            }
+            Mode::AfterClose { .. } => !self.stack.is_empty(),
+            _ => {
+                self.refuse = true;
+                false
+            }
+        };
+        if inside {
+            self.mode = Mode::StmtStart;
+            self.absorbed = true;
+        } else if !self.refuse && self.phase == Phase::Body {
+            self.mode = Mode::AfterClose {
+                label_allowed: false,
+            };
+        }
+        inside
+    }
+
+    /// End of input: false when the input cannot be trusted to be one statement.
+    fn finish(&mut self) -> bool {
+        if self.refuse {
+            return false;
+        }
+        if self.phase == Phase::Body
+            && self.mode == Mode::EndPending
+            && self.top() == Some(Frame::Block)
+        {
+            self.stack.pop();
+        }
+        // A body still open after swallowing a `;`: refuse (fail closed).
+        !(self.absorbed && self.phase == Phase::Body && !self.stack.is_empty())
+    }
+}
+
+const fn expr_then() -> Mode {
+    Mode::Expr {
+        until: Until::Then,
+        case_depth: 0,
+    }
+}
+
+/// True when `sql` holds more than one statement (a `;` followed by anything other than
+/// whitespace or comments). Sees through '...', "...", `...`, `-- `, `#` and `/* */`,
+/// honouring the session's NO_BACKSLASH_ESCAPES / ANSI_QUOTES modes. The `;` inside the
+/// body of a compound statement (`CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT … BEGIN … END`,
+/// MariaDB `BEGIN NOT ATOMIC … END`) do not count, see [`Compound`].
+///
+/// Executable comments are read both ways: content as code (what the server runs), and
+/// as a plain comment ending at the first `*/` (what a server below a `/*!50000`
+/// version, or MySQL for MariaDB's `/*M!`, reads). Either reading finding a second
+/// statement is enough. Both readings disable the compound tracker when one is present.
+fn has_multiple_statements(sql: &str, modes: Modes) -> bool {
+    scan_multiple_statements(sql, modes, false) || scan_multiple_statements(sql, modes, true)
+}
+
+/// One reading of [`has_multiple_statements`]; `exec_as_comment` reads executable
+/// comments as plain comments.
+fn scan_multiple_statements(sql: &str, modes: Modes, exec_as_comment: bool) -> bool {
+    let (toks, exec_comment) = lex(sql, modes, exec_as_comment);
+    let mut compound = Compound::new(!exec_comment);
+    let mut seen_semi = false;
+    for tok in toks {
+        // A real token: anything after a top-level ';' makes this a multi-statement input.
+        if seen_semi {
+            return true;
+        }
+        if tok == Tok::Punct(b';') {
+            if !compound.semi() {
+                seen_semi = true;
+            }
+        } else {
+            compound.feed(tok);
+        }
+        if compound.refuse {
+            return true;
+        }
+    }
+    !compound.finish()
 }
 
 fn type_name(col: &Column) -> String {
@@ -1003,6 +1740,18 @@ impl MySession {
         })?;
         from_rows(rows)
     }
+
+    /// `schema`, else the connection's current database (Invalid when none is selected).
+    async fn schema_or_current(&self, schema: Option<&str>) -> AppResult<String> {
+        if let Some(s) = schema {
+            return Ok(s.to_string());
+        }
+        let cur: Vec<(Option<String>,)> = self.exec_rows("SELECT DATABASE()", ()).await?;
+        cur.into_iter()
+            .next()
+            .and_then(|r| r.0)
+            .ok_or_else(|| AppError::new(ErrorKind::Invalid, "no database selected"))
+    }
 }
 
 /// `EXTRA` holds the keyword (case-insensitive, whitespace-separated).
@@ -1463,6 +2212,69 @@ impl Session for MySession {
         }
         Ok(())
     }
+
+    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
+        let db = self.schema_or_current(schema).await?;
+        // One query; LEFT JOIN keeps column-less objects.
+        let rows: Vec<(String, String, Option<String>, Option<String>)> = self
+            .exec_rows(
+                "SELECT CAST(t.TABLE_NAME AS CHAR), CAST(t.TABLE_TYPE AS CHAR), \
+                 CAST(c.COLUMN_NAME AS CHAR), CAST(c.COLUMN_TYPE AS CHAR) \
+                 FROM information_schema.TABLES t \
+                 LEFT JOIN information_schema.COLUMNS c \
+                 ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME \
+                 AND BINARY c.TABLE_NAME = BINARY t.TABLE_NAME \
+                 AND BINARY c.TABLE_SCHEMA = BINARY t.TABLE_SCHEMA \
+                 WHERE t.TABLE_SCHEMA = ? AND BINARY t.TABLE_SCHEMA = BINARY ? \
+                 AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
+                 ORDER BY BINARY t.TABLE_NAME, c.ORDINAL_POSITION",
+                (db.clone(), db.clone()),
+            )
+            .await?;
+        Ok(group_rows(
+            Some(db),
+            rows.into_iter().map(|(table, ty, name, col_type)| {
+                let kind = if ty == "VIEW" {
+                    ObjectKind::View
+                } else {
+                    ObjectKind::Table
+                };
+                let col = name.map(|name| CatalogColumn {
+                    name,
+                    type_name: col_type.unwrap_or_default(),
+                });
+                (table, kind, col)
+            }),
+        ))
+    }
+
+    async fn list_routines(&self, schema: Option<&str>) -> AppResult<Vec<DbRoutine>> {
+        let db = self.schema_or_current(schema).await?;
+        let rows: Vec<(String, String)> = self
+            .exec_rows(
+                "SELECT CAST(ROUTINE_NAME AS CHAR), CAST(ROUTINE_TYPE AS CHAR) \
+                 FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? \
+                 ORDER BY ROUTINE_NAME",
+                (db.clone(),),
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(name, ty)| DbRoutine {
+                schema: Some(db.clone()),
+                name,
+                kind: if ty.eq_ignore_ascii_case("PROCEDURE") {
+                    RoutineKind::Procedure
+                } else {
+                    RoutineKind::Function
+                },
+            })
+            .collect())
+    }
+
+    async fn list_databases(&self) -> AppResult<Vec<String>> {
+        self.list_schemas().await
+    }
 }
 
 #[cfg(test)]
@@ -1591,6 +2403,144 @@ mod tests {
         ] {
             assert!(!has_multiple_statements(single, DEFAULT), "{single}");
         }
+    }
+
+    #[test]
+    fn compound_bodies_are_one_statement() {
+        for single in [
+            "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END",
+            "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END;",
+            "create definer=`root`@`%` procedure p(in n int)\nbegin\n declare i int default 0;\n \
+             declare continue handler for sqlexception begin set i = -1; end;\n \
+             lbl: while i < n do set i = i + 1; if i = 2 then iterate lbl; elseif i > 5 then leave lbl; \
+             else set @x = 1; end if; end while lbl;\n \
+             repeat set i = i - 1; until i <= 0 end repeat;\n \
+             case n when 1 then select case when i then 1 else 2 end; else begin select 3; end; end case;\n \
+             inner_block: begin select if(i, 1, 2), repeat('a', 2); end inner_block;\nend",
+            "CREATE FUNCTION f(x INT) RETURNS INT DETERMINISTIC BEGIN DECLARE y INT; SET y = x * 2; RETURN y; END",
+            "CREATE TRIGGER t BEFORE INSERT ON x FOR EACH ROW BEGIN SET NEW.a = 1; SET NEW.b = 2; END",
+            "CREATE TRIGGER t BEFORE INSERT ON x FOR EACH ROW FOLLOWS o BEGIN SET NEW.a = 1; END",
+            "CREATE EVENT e ON SCHEDULE EVERY 1 DAY DO BEGIN DELETE FROM t; INSERT INTO t VALUES (1); END",
+            "BEGIN NOT ATOMIC SELECT 1; SELECT 2; END",
+            "CREATE PROCEDURE p() lbl: BEGIN SELECT 'a;b'; /* ; */ SELECT 2; -- ;\n END lbl",
+            // Characteristics before the body, and compound bodies other than BEGIN.
+            "CREATE DEFINER=CURRENT_USER() FUNCTION f(a DECIMAL(10,2)) RETURNS VARCHAR(20) CHARACTER SET utf8mb4 \
+             COLLATE utf8mb4_bin COMMENT 'x; y' LANGUAGE SQL NOT DETERMINISTIC READS SQL DATA \
+             SQL SECURITY INVOKER BEGIN DECLARE s VARCHAR(20); SET s = 'a'; RETURN s; END",
+            "CREATE PROCEDURE p() MODIFIES SQL DATA lbl: LOOP SELECT 1; LEAVE lbl; END LOOP lbl",
+            "CREATE PROCEDURE p() IF @a THEN SELECT 1; ELSE SELECT 2; END IF",
+            "CREATE PROCEDURE p() BEGIN DECLARE EXIT HANDLER FOR SQLSTATE VALUE '23000', NOT FOUND, 1062 \
+             BEGIN SELECT 1; END; WHILE (SELECT CASE WHEN @a THEN 1 ELSE 0 END) DO SELECT 2; END WHILE; \
+             IF CASE @x WHEN 1 THEN 1 END = 1 THEN SELECT t.begin, t.end, @case FROM t; END IF; END",
+        ] {
+            assert!(!has_multiple_statements(single, DEFAULT), "{single}");
+        }
+    }
+
+    #[test]
+    fn compound_bodies_never_hide_a_second_statement() {
+        for multi in [
+            "CREATE PROCEDURE p() BEGIN SELECT 1; END; SELECT 2",
+            "create procedure p() begin select 1; end; drop table x; end",
+            // `begin` used as an identifier is not a block opener.
+            "create procedure p() begin select begin from t; end; drop table x; end",
+            "create procedure begin() select 1; drop table x; end",
+            "create procedure p() begin select case when a then begin else 0 end from t; end; drop table x; end",
+            "create procedure p() begin declare c condition for 1; \
+             declare exit handler for begin begin select 1; end; end; drop table x; end",
+            // Executable comments are not trusted inside a compound body.
+            "create procedure p() begin /*!99999 case */ end; drop table x;",
+            "create procedure p() begin /*!1 end */ ; drop table x; end",
+            // An unterminated body that swallowed a `;` is refused.
+            "create procedure p() begin select 1; drop table x",
+            // Not a compound statement at all.
+            "BEGIN; SELECT 1",
+            "CREATE PROCEDURE p() SELECT 1; SELECT 2",
+            "create table function (begin int); select 1",
+            "CREATE PROCEDURE p() BEGIN SELECT 1; END x y; SELECT 2",
+            // Review round 1: a BEGIN / CASE that is not at a statement start opens nothing
+            // (each of these ran `DROP TABLE x` on MySQL 8.4 and MariaDB 11.4).
+            "create procedure p() select begin from t; drop table x; end",
+            "create procedure p() update t set begin = 1; drop table x; end",
+            "create procedure p() set @begin = 1; drop table x; end",
+            "create trigger tr before insert on y for each row insert into l select begin from t2; drop table x; end",
+            "create event e on schedule every 1 day do select begin from t; drop table x; end",
+            "create procedure p() begin declare continue handler for sqlexception select begin from t; end; drop table x; end",
+            "create procedure p() begin set @case = 1; end; drop table x; end",
+            "create procedure p() begin select t.case from t; end; drop table x; end",
+            // More of the same family.
+            "create procedure p() begin select @@begin; end; drop table x; end",
+            "create function f() returns int return (select begin from t); drop table x; end",
+            "create procedure p() comment 'begin' select 1; drop table x; end",
+            "create procedure p() begin if t.end then select 1; end if; end; drop table x; end",
+            "create procedure p() begin if begin then select 1; end if; end; drop table x; end if; end",
+            // Structure errors fail closed.
+            "create procedure p() begin end if; select 1; end",
+            "create procedure p() begin select 1; else select 2; end",
+            "create procedure p() begin begin: loop leave begin; end loop; end",
+            "create procedure p() begin if a then select 1; end; end; drop table x",
+        ] {
+            assert!(has_multiple_statements(multi, DEFAULT), "{multi}");
+        }
+    }
+
+    /// Review round 2: single statements of every shape the tracker knows, each also
+    /// followed by `; drop table x` (which must be refused).
+    const ROUND2_SINGLES: [&str; 25] = [
+        "create function f() returns int return (select 1)",
+        "create function f() returns decimal(10,2) deterministic return 1",
+        "create function f() returns varchar(10) charset utf8mb4 collate utf8mb4_bin return 'a'",
+        "create procedure p() comment 'begin' select 1",
+        "create procedure p() comment 'x;y' language sql not deterministic contains sql sql security invoker select 1",
+        "create definer = root@localhost procedure p() select 1",
+        "create definer=current_user() procedure p() select 1",
+        "create definer=`a`@`%` trigger tr before insert on y for each row set new.a = 1",
+        "create procedure if not exists p() select 1",
+        "create trigger tr before insert on y for each row set new.a = 1",
+        "create trigger tr before insert on y for each row follows other set new.a = 1",
+        "create event e on schedule every 1 day do begin select 1; end",
+        "create event e on schedule every 1 day do select 1",
+        "create procedure p() begin end",
+        "create procedure p() l: begin select 1; end l",
+        "create procedure p() begin not atomic select 1; end",
+        "create procedure p() begin if x then select case when a then 1 else 2 end from t; end if; end",
+        "create procedure p() begin select case `end` when 1 then 2 end from t; end",
+        "create procedure p() begin select t.`end` from t; end",
+        "create procedure p() begin -- end;\n select 1; end",
+        "create procedure p() begin /* end; */ select 1; end",
+        "create procedure p() begin # end;\n select 1; end",
+        "create procedure p() begin select 'end;'; end",
+        "create procedure p() begin declare c cursor for select begin from t; end",
+        "create procedure p() begin declare exit handler for sqlexception begin select 1; end; end",
+    ];
+
+    #[test]
+    fn round2_singles_are_accepted() {
+        let extra =
+            "create procedure p() begin repeat set @i = @i + 1; until @i > 3 end repeat; end";
+        for single in ROUND2_SINGLES.iter().copied().chain([extra]) {
+            for tail in ["", ";", "; \n\t", " ;  -- done\n"] {
+                let sql = format!("{single}{tail}");
+                assert!(!has_multiple_statements(&sql, DEFAULT), "{sql:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn round2_second_statements_are_refused() {
+        let extra =
+            "create procedure p() begin repeat set @i = @i + 1; until @i > 3 end repeat; end";
+        for single in ROUND2_SINGLES.iter().copied().chain([extra]) {
+            for tail in ["; drop table x", ";\ndrop table x;", " ; drop table x; end"] {
+                let sql = format!("{single}{tail}");
+                assert!(has_multiple_statements(&sql, DEFAULT), "{sql:?}");
+            }
+        }
+        // A second CREATE without any separator.
+        assert!(has_multiple_statements(
+            "create procedure p() begin end create procedure q() begin end",
+            DEFAULT
+        ));
     }
 
     #[test]

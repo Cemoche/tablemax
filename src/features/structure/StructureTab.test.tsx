@@ -63,10 +63,13 @@ const workspace: Workspace = {
   color: "swatch-1",
   envTag: "local",
   dialect: "postgres",
+  status: "connected",
+  database: null,
   schemas: ["public"],
   currentSchema: "public",
   tabs: [],
   activeTabId: null,
+  mru: [],
 };
 const DDL = "CREATE TABLE orders (id integer PRIMARY KEY)";
 

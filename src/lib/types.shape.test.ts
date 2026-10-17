@@ -1,11 +1,14 @@
 import { expect, test } from "vitest";
 import type {
   ApplyOutcome,
+  Catalog,
   CellValue,
   ConnectionConfig,
+  DbRoutine,
   ErrorKind,
   ExecEvent,
   FilePurpose,
+  HistoryEntry,
   ImportPreview,
   ImportResult,
   EditValue,
@@ -14,6 +17,7 @@ import type {
   PageRequest,
   ResultSet,
   RowChange,
+  SavedQuery,
   Settings,
   RowCount,
   SafeMode,
@@ -49,9 +53,10 @@ test("ExecEvent fixtures", () => {
 
 test("WorkspaceInfo, RowCount and ConnectionConfig fixtures", () => {
   const info: WorkspaceInfo = JSON.parse(
-    '{"workspaceId":"w","connectionId":"c","dialect":"sqlite","serverVersion":"3"}',
+    '{"workspaceId":"w","connectionId":"c","dialect":"sqlite","serverVersion":"3","database":null}',
   );
   expect(info.dialect).toBe("sqlite");
+  expect(info.database).toBeNull();
   const n: RowCount = { t: "estimate", v: 5 };
   expect(n.t).toBe("estimate");
   const c: ConnectionConfig = {
@@ -220,4 +225,27 @@ test("Safe mode", () => {
   const kind: ErrorKind = "confirmationRequired";
   const e = JSON.parse('{"kind":"confirmationRequired","message":"0,2"}');
   expect(e.kind).toBe(kind);
+});
+
+// history.rs HistoryEntry / saved_queries.rs SavedQuery (tests/persistence.rs checks the
+// camelCase keys on the Rust side).
+test("HistoryEntry and SavedQuery", () => {
+  const h: HistoryEntry = JSON.parse(
+    '{"id":1,"connectionId":"c","sql":"select 1","executedAt":1760000000000,"elapsedMs":3,"rows":1,"error":null}',
+  );
+  expect(h.executedAt).toBe(1760000000000);
+  expect(h.error).toBeNull();
+  const q: SavedQuery = JSON.parse('{"name":"Été","modifiedAt":1760000000000,"size":5}');
+  expect(q.modifiedAt).toBe(1760000000000);
+});
+
+// driver/catalog.rs serde_shape_is_camel_case (literal JSON as serialised).
+test("Catalog and DbRoutine", () => {
+  const c: Catalog = JSON.parse(
+    '{"schema":null,"tables":[{"name":"t","kind":"view","columns":[{"name":"c","typeName":"int"}]}]}',
+  );
+  expect(c.tables[0].columns[0].typeName).toBe("int");
+  expect(c.tables[0].kind).toBe("view");
+  const r: DbRoutine = JSON.parse('{"schema":"s","name":"f","kind":"procedure"}');
+  expect(r.kind).toBe("procedure");
 });

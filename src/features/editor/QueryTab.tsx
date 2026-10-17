@@ -1,19 +1,47 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { EditorView } from "@codemirror/view";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { isConfirmationRequired, parseConfirmationIndices, toAppError } from "../../lib/errors";
+import { registerPendingFlush } from "../../lib/pendingFlush";
+import { useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
+import { useAutoLimit } from "../../stores/autoLimit";
+import { useCatalog } from "../../stores/catalog";
+import { useQueryPanels } from "../../stores/queryPanels";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
 import { useLiveEnv } from "../workspace/useLiveEnv";
 import { useQueryRuns } from "../../stores/queryRuns";
+import { useSavedQueries } from "../../stores/savedQueries";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { applyAutoLimit } from "./autoLimit";
+import { buildCompletionSource } from "./completion";
+import { ConfirmDialog, NameDialog } from "./Dialogs";
+import { HistoryPanel } from "./HistoryPanel";
 import { ResultsPanel } from "./ResultsPanel";
-import { type EditorSelection, type RunMode, SqlEditor } from "./SqlEditor";
-import { type Statement, splitStatements, statementAt } from "./splitStatements";
+import { SavedQueries } from "./SavedQueries";
+import { type EditorSelection, type RunMode, SqlEditor, insertAtCursor, replaceDocument } from "./SqlEditor";
+import { type Statement, delimiterAt, splitStatements, statementAt } from "./splitStatements";
 
 const SAVE_DEBOUNCE_MS = 300;
+/** Row cap added by "Auto LIMIT" (Plan 5 makes it a setting). */
+export const AUTO_LIMIT_ROWS = 1000;
 
 const btn =
   "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
+
+/** History refresh after a run: the backend records the batch just after it ends. */
+const HISTORY_SETTLE_MS = 500;
+
+type QueryTabT = Extract<Tab, { kind: "query" }>;
+
+/** The tab as it is in the store now (props may lag behind an action). */
+function currentTab(wsId: string, tabId: string): QueryTabT | null {
+  const t = useWorkspaces
+    .getState()
+    .workspaces.find((w) => w.id === wsId)
+    ?.tabs.find((x) => x.id === tabId);
+  return t?.kind === "query" ? t : null;
+}
 
 /** Read from the store (not props) so a just-opened session is seen immediately. */
 function currentSessionId(wsId: string, tabId: string): string | null {
@@ -48,6 +76,51 @@ export function QueryTab({ workspace, tab }: Props) {
   const [pending, setPending] = useState<{ stmts: Statement[]; flagged: number[] } | null>(null);
   const run = useQueryRuns((s) => s.runs[tabId]);
   const running = run?.running ?? false;
+  const autoLimit = useAutoLimit((s) => !!s.on[tabId]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const connectionId = workspace.connectionId;
+  const historyOpen = useQueryPanels((s) => !!s.history[tabId]);
+  const savedOpen = useQueryPanels((s) => s.savedOpen);
+  // Name dialog of a first save (error: the backend's refusal); replace confirmation.
+  const [saveDialog, setSaveDialog] = useState<{ error: string | null } | null>(null);
+  const [replaceName, setReplaceName] = useState<string | null>(null);
+  const linkedName = tab.savedName ?? null;
+  const modified = !!linkedName && typeof tab.savedSql === "string" && tab.savedSql !== text;
+
+  // The history panel reloads when a run ends (and once more when the backend's write
+  // of the batch has surely landed).
+  const [historyKey, setHistoryKey] = useState(0);
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    const ended = wasRunning.current && !running;
+    wasRunning.current = running;
+    if (!ended) return;
+    setHistoryKey((k) => k + 1);
+    const t = setTimeout(() => setHistoryKey((k) => k + 1), HISTORY_SETTLE_MS);
+    return () => clearTimeout(t);
+  }, [running]);
+
+  // Completion catalog of the current schema (loaded once per schema by the store); other
+  // schemas already in the store are offered as `schema.table`.
+  const { status, currentSchema: schema, database, schemas } = workspace;
+  useEffect(() => {
+    if (status === "connected") void useCatalog.getState().ensureCatalog(wsId, schema);
+  }, [wsId, schema, status, database]);
+  const wsCatalogs = useCatalog((s) => s.catalogs[wsId]);
+  const completionSource = useMemo(() => {
+    const key = schema ?? "";
+    const others = Object.entries(wsCatalogs ?? {})
+      .filter(([k]) => k !== key)
+      .map(([, e]) => e.catalog);
+    return buildCompletionSource(wsCatalogs?.[key]?.catalog ?? null, dialect, {
+      otherCatalogs: others,
+      schemas,
+      loadSchema: (s) =>
+        status === "connected" ? useCatalog.getState().ensureCatalog(wsId, s) : Promise.resolve(null),
+    });
+  }, [wsCatalogs, schema, schemas, dialect, status, wsId]);
+
   const env = useLiveEnv(workspace);
 
   const flush = useCallback(() => {
@@ -66,7 +139,17 @@ export function QueryTab({ workspace, tab }: Props) {
     [flush],
   );
 
+  // The window close pushes the debounced text into the store before saving the session.
+  useEffect(
+    () =>
+      registerPendingFlush(() => {
+        if (saveTimer.current) flush();
+      }),
+    [flush],
+  );
+
   const onChange = (v: string) => {
+    if (notice) setNotice(null);
     textRef.current = v;
     setText(v);
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -100,9 +183,10 @@ export function QueryTab({ workspace, tab }: Props) {
         useWorkspaces.getState().updateTab(wsId, tabId, { sqlSessionId: sessionId });
       }
       const sid = sessionId;
+      const limited = useAutoLimit.getState().on[tabId];
       await ipc.sqlExecute(
         sid,
-        stmts.map((s) => s.text),
+        stmts.map((s) => (limited ? applyAutoLimit(s.text, dialect, AUTO_LIMIT_ROWS) : s.text)),
         (e) => {
           useQueryRuns.getState().applyEvent(tabId, e);
           if (e.event === "statementFailed" && e.data.error.kind === "connectionLost") {
@@ -129,13 +213,76 @@ export function QueryTab({ workspace, tab }: Props) {
     if (mode === "all") return void execute(all);
     const { from, to, head } = selRef.current;
     if (from !== to) {
-      return void execute(splitStatements(textRef.current.slice(from, to), dialect));
+      // A selection inside a `DELIMITER //` region splits with that delimiter.
+      const delimiter = delimiterAt(textRef.current, from, dialect);
+      return void execute(splitStatements(textRef.current.slice(from, to), dialect, { delimiter }));
     }
     const one = statementAt(all, head);
     void execute(one ? [one] : []);
   };
   const runModeRef = useRef(runMode);
   runModeRef.current = runMode;
+
+  // ---- History: insert / replace in the editor (one undo step each). ----
+  const insertSql = (sql: string) => {
+    const view = viewRef.current;
+    if (view) return insertAtCursor(view, sql);
+    const { from, to } = selRef.current;
+    const cur = textRef.current;
+    onChange(cur.slice(0, from) + sql + cur.slice(to));
+  };
+  const replaceSql = (sql: string) => {
+    const view = viewRef.current;
+    if (view) return replaceDocument(view, sql);
+    onChange(sql);
+  };
+
+  // ---- Saved queries: Mod+S saves (asks for a name the first time). ----
+  const saveAs = async (name: string, confirmed = false) => {
+    if (!confirmed) {
+      let list = useSavedQueries.getState().lists[connectionId];
+      if (!list) {
+        try {
+          await useSavedQueries.getState().load(connectionId);
+          list = useSavedQueries.getState().lists[connectionId];
+        } catch {
+          // Unknown: the write below reports real problems.
+        }
+      }
+      // Case-insensitive: on some file systems `Report` and `report` are one file.
+      if (list?.some((q) => q.name.toLowerCase() === name.toLowerCase())) {
+        setReplaceName(name);
+        return;
+      }
+    }
+    try {
+      flush();
+      await useSavedQueries.getState().saveTab(wsId, tabId, name, textRef.current);
+      setReplaceName(null);
+      setSaveDialog(null);
+    } catch (e) {
+      setReplaceName(null);
+      setSaveDialog({ error: toAppError(e).message });
+    }
+  };
+
+  const save = async () => {
+    flush();
+    const name = currentTab(wsId, tabId)?.savedName;
+    if (!name) {
+      setSaveDialog({ error: null });
+      return;
+    }
+    try {
+      await useSavedQueries.getState().saveTab(wsId, tabId, name, textRef.current);
+    } catch (e) {
+      setNotice(strings.savedQueries.saveFailed(toAppError(e).message));
+    }
+  };
+
+  // Mounted only for the active SQL tab: in a table tab Mod+S stays the grid's commit.
+  useShortcut("Mod+S", () => void save());
+  useShortcut("Mod+Shift+H", () => useQueryPanels.getState().toggleHistory(tabId));
 
   const cancel = () => {
     const sid = currentSessionId(wsId, tabId);
@@ -145,6 +292,14 @@ export function QueryTab({ workspace, tab }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1">
+        <button
+          type="button"
+          className={btn}
+          aria-pressed={savedOpen}
+          onClick={() => useQueryPanels.getState().toggleSaved()}
+        >
+          {strings.savedQueries.toggle}
+        </button>
         <button type="button" className={btn} onClick={() => runMode("current")} disabled={running}>
           {strings.query.run}
         </button>
@@ -156,21 +311,114 @@ export function QueryTab({ workspace, tab }: Props) {
             {strings.query.cancel}
           </button>
         )}
+        {notice && (
+          <span role="status" className="truncate text-sm text-warning">
+            {notice}
+          </span>
+        )}
+        <span className="ml-auto flex min-w-0 items-center gap-1 text-sm">
+          {linkedName && (
+            <span className="truncate text-muted" title={strings.savedQueries.linked(linkedName)}>
+              {linkedName}
+            </span>
+          )}
+          {modified && (
+            <span
+              role="img"
+              aria-label={strings.savedQueries.modified}
+              title={strings.savedQueries.modified}
+              className="text-warning"
+            >
+              {strings.savedQueries.modifiedDot}
+            </span>
+          )}
+        </span>
+        <button
+          type="button"
+          className={btn}
+          title={strings.savedQueries.saveHint}
+          onClick={() => void save()}
+        >
+          {strings.savedQueries.save}
+        </button>
+        <button
+          type="button"
+          className={btn}
+          aria-pressed={historyOpen}
+          title={strings.history.toggleHint}
+          onClick={() => useQueryPanels.getState().toggleHistory(tabId)}
+        >
+          {strings.history.toggle}
+        </button>
+        <label
+          className="flex shrink-0 items-center gap-1 text-sm"
+          title={strings.query.autoLimitHint(AUTO_LIMIT_ROWS)}
+        >
+          <input
+            type="checkbox"
+            checked={autoLimit}
+            onChange={(e) => useAutoLimit.getState().setAutoLimit(tabId, e.target.checked)}
+          />
+          {strings.query.autoLimit(AUTO_LIMIT_ROWS)}
+        </label>
       </div>
-      <div className="min-h-0 flex-1 basis-1/2">
-        <SqlEditor
-          value={text}
-          onChange={onChange}
-          dialect={dialect}
-          onRun={(m) => runModeRef.current(m)}
-          onSelectionChange={(s) => {
-            selRef.current = s;
-          }}
+      <div className="flex min-h-0 flex-1">
+        {savedOpen && <SavedQueries workspace={workspace} />}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 basis-1/2">
+            <SqlEditor
+              onView={(v) => {
+                viewRef.current = v;
+              }}
+              tabId={tab.id}
+              value={text}
+              onChange={onChange}
+              dialect={dialect}
+              onRun={(m) => runModeRef.current(m)}
+              completionSource={completionSource}
+              onNotice={setNotice}
+              onSelectionChange={(s) => {
+                selRef.current = s;
+              }}
+            />
+          </div>
+          <div className="min-h-0 flex-1 basis-1/2 border-t border-border">
+            <ResultsPanel run={run} />
+          </div>
+        </div>
+        {historyOpen && (
+          <HistoryPanel
+            connectionId={connectionId}
+            connectionName={workspace.name}
+            refreshKey={historyKey}
+            onInsert={insertSql}
+            onReplace={replaceSql}
+            onClose={() => useQueryPanels.getState().setHistory(tabId, false)}
+          />
+        )}
+      </div>
+      {saveDialog && (
+        <NameDialog
+          title={strings.savedQueries.saveTitle}
+          label={strings.savedQueries.nameLabel}
+          initial=""
+          confirm={strings.savedQueries.saveConfirm}
+          cancel={strings.savedQueries.cancel}
+          error={saveDialog.error}
+          onSubmit={(name) => void saveAs(name)}
+          onCancel={() => setSaveDialog(null)}
         />
-      </div>
-      <div className="min-h-0 flex-1 basis-1/2 border-t border-border">
-        <ResultsPanel run={run} />
-      </div>
+      )}
+      {replaceName !== null && (
+        <ConfirmDialog
+          title={strings.savedQueries.replaceTitle}
+          body={strings.savedQueries.replaceBody(replaceName)}
+          confirm={strings.savedQueries.replaceConfirm}
+          cancel={strings.savedQueries.cancel}
+          onConfirm={() => void saveAs(replaceName, true)}
+          onCancel={() => setReplaceName(null)}
+        />
+      )}
       {pending && (
         <ConfirmRunDialog
           connectionName={workspace.name}

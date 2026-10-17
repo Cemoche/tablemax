@@ -1,10 +1,14 @@
+pub mod close_gate;
 pub mod commands;
 pub mod driver;
 pub mod error;
+pub mod history;
 pub mod import;
 pub mod manager;
 pub mod safety;
+pub mod saved_queries;
 pub mod secrets;
+pub mod session_state;
 pub mod settings;
 pub mod ssh;
 pub mod store;
@@ -12,7 +16,7 @@ pub mod value;
 
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::manager::SessionManager;
 use crate::secrets::KeyringSecretStore;
@@ -37,12 +41,40 @@ pub fn run() {
                     .map(|home| home.join(".ssh").join("known_hosts")),
                 app: dir.join("known_hosts"),
             };
-            app.manage(SessionManager::new(
-                Arc::new(store),
-                Arc::new(KeyringSecretStore),
-                known_hosts,
-            ));
+            app.manage(
+                SessionManager::new(Arc::new(store), Arc::new(KeyringSecretStore), known_hosts)
+                    .with_queries_dir(dir.join("queries")),
+            );
+            app.manage(close_gate::CloseGate::default());
             Ok(())
+        })
+        // Closing the main window waits for the frontend to flush its session (see
+        // `close_gate`); a 2 s fallback closes anyway.
+        .on_window_event(|window, event| {
+            use close_gate::{CLOSE_FALLBACK, CloseDecision, CloseGate, FLUSH_EVENT};
+            if window.label() != "main" {
+                return;
+            }
+            let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
+            let gate = window.state::<CloseGate>();
+            match gate.on_close_requested() {
+                CloseDecision::Allow => {}
+                CloseDecision::Defer { first } => {
+                    api.prevent_close();
+                    if first {
+                        let _ = window.emit(FLUSH_EVENT, ());
+                        let w = window.clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(CLOSE_FALLBACK).await;
+                            if w.state::<CloseGate>().confirm() {
+                                let _ = w.close();
+                            }
+                        });
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::connections_list,
@@ -74,6 +106,20 @@ pub fn run() {
             commands::settings_set,
             commands::window_set_title,
             commands::app_version,
+            commands::history_list,
+            commands::history_clear,
+            commands::session_save,
+            commands::session_load,
+            commands::saved_queries_list,
+            commands::saved_query_read,
+            commands::saved_query_write,
+            commands::saved_query_rename,
+            commands::saved_query_delete,
+            commands::catalog_get,
+            commands::routines_list,
+            commands::databases_list,
+            commands::workspace_switch_database,
+            commands::window_close_confirmed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

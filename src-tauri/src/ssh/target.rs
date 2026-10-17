@@ -8,7 +8,7 @@ use crate::ssh::config::SshConfigFile;
 use crate::ssh::tunnel::{SshAuthMaterial, SshTarget};
 use crate::store::{SshAuth, SshSettings};
 
-fn non_empty(s: Option<&str>) -> Option<&str> {
+pub(crate) fn non_empty(s: Option<&str>) -> Option<&str> {
     s.filter(|s| !s.trim().is_empty())
 }
 

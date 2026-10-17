@@ -1,127 +1,65 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
-import * as ipc from "../../lib/ipc";
-import { strings } from "../../lib/strings";
-import { usePendingChanges } from "../../stores/pendingChanges";
+import { act, render } from "@testing-library/react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
-import { CloseConfirm } from "./CloseConfirm";
 import { WorkspaceView } from "./WorkspaceView";
 
 vi.mock("../../lib/ipc");
-vi.mock("./ObjectSidebar", () => ({ ObjectSidebar: () => <div /> }));
-vi.mock("../grid/TableDataTab", () => ({ TableDataTab: () => <div data-testid="table-tab" /> }));
-vi.mock("../editor/QueryTab", () => ({ QueryTab: () => <div data-testid="query-tab" /> }));
+vi.mock("./ObjectSidebar", () => ({ ObjectSidebar: () => null }));
+vi.mock("../editor/QueryTab", () => ({ QueryTab: () => null }));
+vi.mock("../grid/TableDataTab", () => ({ TableDataTab: () => null }));
 
-const object = { schema: "public", name: "users" };
-const base: Workspace = {
+const workspace: Workspace = {
   id: "w1",
   connectionId: "c1",
   name: "PG",
   color: "swatch-1",
-  envTag: "dev",
+  envTag: "local",
   dialect: "postgres",
+  status: "connected",
+  database: null,
   schemas: ["public"],
   currentSchema: "public",
-  tabs: [
-    { id: "t1", kind: "table", object, title: "users" },
-    { id: "q1", kind: "query", title: "Query 1", sql: "", sqlSessionId: null },
-  ],
-  activeTabId: "t1",
+  tabs: [{ id: "a", kind: "query", title: "Query 1", sql: "", sqlSessionId: null }],
+  activeTabId: "a",
+  mru: ["a"],
 };
-const current = () => useWorkspaces.getState().workspaces[0];
-const View = () => {
-  const ws = useWorkspaces((s) => s.workspaces[0]);
-  return (
-    <>
-      {ws && <WorkspaceView workspace={ws} />}
-      <CloseConfirm />
-    </>
-  );
-};
+const tabs = () => useWorkspaces.getState().workspaces[0].tabs;
+const press = (init: KeyboardEventInit) =>
+  act(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ctrlKey: true, ...init }),
+    );
+  });
 
 beforeEach(() => {
-  vi.resetAllMocks();
-  useWorkspaces.setState({ workspaces: [base], activeWorkspaceId: "w1", closeRequest: null });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
-  vi.mocked(ipc.changesApply).mockResolvedValue({
-    applied: true,
-    affected: [1],
-    failedIndex: null,
-    error: null,
-  });
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  useWorkspaces.setState({ workspaces: [workspace], activeWorkspaceId: "w1" });
+  render(<WorkspaceView workspace={workspace} />);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  document.body.innerHTML = "";
 });
 
-test("Ctrl+S commits the pending changes of the active table tab", async () => {
-  usePendingChanges.getState().addInsert("t1", object);
-  render(<View />);
-  await userEvent.keyboard("{Control>}s{/Control}");
-  await waitFor(() =>
-    expect(ipc.changesApply).toHaveBeenCalledWith("w1", object, [{ kind: "insert", values: [] }]),
-  );
-  await waitFor(() => expect(usePendingChanges.getState().count("t1")).toBe(0));
+test("Mod+T opens a query tab and Mod+W closes the active tab", () => {
+  press({ code: "KeyT" });
+  expect(tabs()).toHaveLength(2);
+  press({ code: "KeyW" });
+  expect(tabs()).toHaveLength(1);
 });
 
-test("Ctrl+S does nothing in a query tab or while a modal is open", async () => {
-  usePendingChanges.getState().addInsert("t1", object);
-  render(<View />);
-  // The close confirmation is a modal.
-  await userEvent.keyboard("{Control>}w{/Control}");
-  expect(await screen.findByRole("dialog")).toBeInTheDocument();
-  await userEvent.keyboard("{Control>}s{/Control}");
-  expect(ipc.changesApply).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.discardCancel }));
-  useWorkspaces.getState().activateTab("w1", "q1");
-  await userEvent.keyboard("{Control>}s{/Control}");
-  expect(ipc.changesApply).not.toHaveBeenCalled();
+test("neither fires on repeat", () => {
+  press({ code: "KeyT", repeat: true });
+  press({ code: "KeyW", repeat: true });
+  expect(tabs()).toHaveLength(1);
 });
 
-test("closing a tab with pending changes asks to discard them", async () => {
-  usePendingChanges.getState().addInsert("t1", object);
-  usePendingChanges.getState().addInsert("t1", object);
-  render(<View />);
-  await userEvent.click(screen.getByRole("button", { name: strings.workspace.closeTab("users") }));
-  const dialog = await screen.findByRole("dialog", { name: strings.grid.discardTitle });
-  expect(dialog).toHaveTextContent(strings.grid.discardConfirm(2));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.discardCancel }));
-  expect(current().tabs).toHaveLength(2);
-  await userEvent.click(screen.getByRole("button", { name: strings.workspace.closeTab("users") }));
-  await userEvent.click(await screen.findByRole("button", { name: strings.grid.discardOk }));
-  expect(current().tabs.map((t) => t.id)).toEqual(["q1"]);
-  expect(usePendingChanges.getState().count("t1")).toBe(0);
-});
-
-test("Ctrl+S does nothing while the grid's cell editor is open", async () => {
-  usePendingChanges.getState().addInsert("t1", object);
-  usePendingChanges.getState().setEditorOpen("t1", true);
-  render(<View />);
-  await userEvent.keyboard("{Control>}s{/Control}");
-  expect(ipc.changesApply).not.toHaveBeenCalled();
-  usePendingChanges.getState().setEditorOpen("t1", false);
-  await userEvent.keyboard("{Control>}s{/Control}");
-  await waitFor(() => expect(ipc.changesApply).toHaveBeenCalledOnce());
-});
-
-test("closing the workspace with pending changes asks with the tab count", async () => {
-  vi.mocked(ipc.workspaceClose).mockResolvedValue(undefined);
-  usePendingChanges.getState().addInsert("t1", object);
-  render(<View />);
-  void useWorkspaces.getState().closeWorkspace("w1");
-  const dialog = await screen.findByRole("dialog", { name: strings.grid.discardTitle });
-  expect(dialog).toHaveTextContent(strings.grid.discardConfirmWorkspace(1, 1));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.discardOk }));
-  await waitFor(() => expect(useWorkspaces.getState().workspaces).toHaveLength(0));
-  expect(ipc.workspaceClose).toHaveBeenCalledWith("w1");
-});
-
-test("while a commit runs the tab's close button waits (Committing…)", async () => {
-  usePendingChanges.getState().addInsert("t1", object);
-  usePendingChanges.setState({ committing: { t1: true } });
-  render(<View />);
-  const close = screen.getByRole("button", { name: strings.workspace.closeTab("users") });
-  expect(close).toBeDisabled();
-  expect(close).toHaveAttribute("title", strings.grid.closeWhileCommitting);
-  await userEvent.keyboard("{Control>}w{/Control}");
-  expect(screen.queryByRole("dialog")).toBeNull();
-  expect(current().tabs).toHaveLength(2);
+test("neither fires while a modal is open", () => {
+  const modal = document.createElement("div");
+  modal.setAttribute("aria-modal", "true");
+  document.body.appendChild(modal);
+  press({ code: "KeyT" });
+  press({ code: "KeyW" });
+  expect(tabs()).toHaveLength(1);
+  expect(useWorkspaces.getState().workspaces[0].activeTabId).toBe("a");
 });

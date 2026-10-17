@@ -1,10 +1,12 @@
 import { strings } from "../../lib/strings";
 import { usePendingChanges } from "../../stores/pendingChanges";
-import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { type Workspace, isQueryModified, useWorkspaces } from "../../stores/workspaces";
+import { TabList } from "./TabList";
 
 export function TabBar({ workspace }: { workspace: Workspace }) {
   const activateTab = useWorkspaces((s) => s.activateTab);
   const closeTab = useWorkspaces((s) => s.closeTab);
+  const pinTab = useWorkspaces((s) => s.pinTab);
   const openQueryTab = useWorkspaces((s) => s.openQueryTab);
   const committing = usePendingChanges((s) => s.committing);
   const { id } = workspace;
@@ -40,9 +42,17 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                 role="tab"
                 aria-selected={active}
                 onClick={() => activateTab(id, t.id)}
-                className={`max-w-48 truncate py-1.5 pl-3 pr-1 ${active ? "font-semibold" : ""}`}
+                onDoubleClick={() => pinTab(id, t.id)}
+                className={`max-w-48 truncate py-1.5 pl-3 pr-1 ${active ? "font-semibold" : ""} ${
+                  t.kind === "table" && t.preview ? "italic" : ""
+                }`}
               >
                 {t.title}
+                {isQueryModified(t) && (
+                  <span aria-hidden="true" title={strings.savedQueries.modified} className="ml-1 text-warning">
+                    {strings.savedQueries.modifiedDot}
+                  </span>
+                )}
               </button>
               <button
                 type="button"
@@ -67,6 +77,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
       >
         +
       </button>
+      <TabList workspace={workspace} />
     </div>
   );
 }
