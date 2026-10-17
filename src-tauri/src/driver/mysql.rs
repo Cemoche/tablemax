@@ -83,6 +83,9 @@ use crate::value::{
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a statement that returned while its cancel was in flight waits for the
+/// `KILL QUERY` outcome (see [`MyCanceller::delivered`]).
+const KILL_SETTLE_TIMEOUT: Duration = Duration::from_secs(5);
 const BINARY_CHARSET: u16 = 63;
 const HIDDEN_SCHEMAS: [&str; 4] = ["mysql", "information_schema", "performance_schema", "sys"];
 /// Session variable holding the SQL of a parameterized statement, and the statement name.
@@ -138,6 +141,38 @@ struct MyCanceller {
     /// interrupted statement may return normally before `cancelled_seq` is stored, and
     /// `apply` must still roll back.
     requested_seq: AtomicU64,
+    /// Sequence whose last cancel attempt finished (KILL delivered or failed).
+    settled_seq: AtomicU64,
+    settled: tokio::sync::Notify,
+}
+
+impl MyCanceller {
+    fn settle(&self, seq: u64) {
+        self.settled_seq.store(seq, Ordering::SeqCst);
+        self.settled.notify_waiters();
+    }
+
+    /// Whether a `KILL QUERY` was delivered for statement `seq`. The server may send the
+    /// interrupted statement's result before the KILL's own reply reaches the canceller:
+    /// when a cancel was requested for `seq`, its outcome is awaited (bounded) first.
+    async fn delivered(&self, seq: u64) -> bool {
+        if self.requested_seq.load(Ordering::SeqCst) == seq {
+            let settled = async {
+                loop {
+                    let notified = self.settled.notified();
+                    tokio::pin!(notified);
+                    // Registered before the check, so a settle in between is not missed.
+                    notified.as_mut().enable();
+                    if self.settled_seq.load(Ordering::SeqCst) >= seq {
+                        break;
+                    }
+                    notified.await;
+                }
+            };
+            let _ = tokio::time::timeout(KILL_SETTLE_TIMEOUT, settled).await;
+        }
+        self.cancelled_seq.load(Ordering::SeqCst) == seq
+    }
 }
 
 #[async_trait]
@@ -148,16 +183,24 @@ impl Canceller for MyCanceller {
         }
         let target = self.seq.load(Ordering::SeqCst);
         self.requested_seq.store(target, Ordering::SeqCst);
-        let mut conn = open_conn(&self.opts).await?;
+        let mut conn = match open_conn(&self.opts).await {
+            Ok(c) => c,
+            Err(e) => {
+                self.settle(target);
+                return Err(e);
+            }
+        };
         let res = conn
             .query_drop(format!("KILL QUERY {}", self.conn_id))
             .await
             .map_err(|e| map_err(&e, false));
-        let _ = conn.disconnect().await;
-        // Recorded only once the KILL was delivered, tagged with the statement it targeted.
+        // Recorded only once the KILL was delivered, tagged with the statement it targeted,
+        // and settled before the disconnect: the statement may be waiting for it.
         if res.is_ok() {
             self.cancelled_seq.store(target, Ordering::SeqCst);
         }
+        self.settle(target);
+        let _ = conn.disconnect().await;
         res
     }
 }
@@ -343,6 +386,8 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
             seq: AtomicU64::new(0),
             cancelled_seq: AtomicU64::new(0),
             requested_seq: AtomicU64::new(0),
+            settled_seq: AtomicU64::new(0),
+            settled: tokio::sync::Notify::new(),
         }),
         version,
     }))
@@ -1410,7 +1455,7 @@ impl MySession {
             Self::run_prepared(conn, &mut inner.json_cache, self.mariadb, sql, params, full).await
         };
         self.canceller.running.store(false, Ordering::SeqCst);
-        let was_cancelled = self.canceller.cancelled_seq.load(Ordering::SeqCst) == my_seq;
+        let was_cancelled = self.canceller.delivered(my_seq).await;
         if out.is_ok() && may_change_sql_mode(sql) {
             match query_first_string(conn, "SELECT @@SESSION.sql_mode").await {
                 Ok(Some(m)) => inner.modes = Modes::from_sql_mode(&m),

@@ -397,6 +397,41 @@ async fn assert_sleep_is_cancelled(s: &Arc<dyn Session>) {
     assert!(s.execute("select 1").await.is_ok());
 }
 
+/// The server can send an interrupted `SLEEP()`'s row (MySQL answers it with a normal
+/// result, not error 1317) before the `KILL QUERY` reply reaches the canceller: the
+/// statement must still report `Cancelled`. Several sessions at once widen that window.
+#[tokio::test]
+async fn mysql_cancel_reported_even_when_the_result_beats_the_kill_reply() {
+    for (url, kind) in targets() {
+        let mut rounds = Vec::new();
+        for _ in 0..6 {
+            let url = url.clone();
+            rounds.push(tokio::spawn(async move {
+                let (s, _g) = open(&url, kind).await;
+                for round in 0..5 {
+                    let canceller = s.canceller();
+                    let s2 = s.clone();
+                    let task = tokio::spawn(async move { s2.execute("select sleep(30)").await });
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    canceller.cancel().await.unwrap();
+                    let res = tokio::time::timeout(Duration::from_secs(4), task)
+                        .await
+                        .expect("cancel timed out")
+                        .unwrap();
+                    match res {
+                        Err(e) => assert_eq!(e.kind, ErrorKind::Cancelled, "{url} round {round}"),
+                        Ok(out) => panic!("{url} round {round}: cancelled sleep returned {:?}", out.result),
+                    }
+                    assert!(s.execute("select 1").await.is_ok());
+                }
+            }));
+        }
+        for r in rounds {
+            r.await.unwrap();
+        }
+    }
+}
+
 #[tokio::test]
 async fn mysql_cancel_long_query() {
     for (url, kind) in targets() {
