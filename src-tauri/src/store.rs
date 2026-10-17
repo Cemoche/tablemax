@@ -5,6 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::driver::DriverKind;
+use crate::driver::tls::SslConfig;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
 
@@ -25,6 +26,52 @@ pub enum PasswordMode {
     None,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SshAuth {
+    Password,
+    Key,
+    Agent,
+}
+
+/// SSH tunnel settings of a connection. Contains no secret fields.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshSettings {
+    /// A `~/.ssh/config` alias or a host name.
+    pub host: String,
+    /// Overrides the config's `Port` (default 22).
+    pub port: Option<u16>,
+    /// Overrides the config's `User`.
+    pub user: Option<String>,
+    pub auth: SshAuth,
+    /// Private key for `Key` auth; else the config's `IdentityFile` or `~/.ssh/id_*`.
+    pub key_file: Option<String>,
+    /// Where the SSH password (`Password`) or key passphrase (`Key`) lives; always
+    /// `None` for `Agent`.
+    pub secret_mode: PasswordMode,
+}
+
+impl SshSettings {
+    /// The keyring entry of this auth method's secret (`None` for the agent).
+    pub fn secret_kind(&self) -> Option<SecretKind> {
+        match self.auth {
+            SshAuth::Password => Some(SecretKind::SshPassword),
+            SshAuth::Key => Some(SecretKind::SshPassphrase),
+            SshAuth::Agent => None,
+        }
+    }
+
+    /// Auth message for a missing secret of this auth method.
+    pub fn secret_required(&self) -> AppError {
+        let what = match self.auth {
+            SshAuth::Key => "ssh passphrase required",
+            SshAuth::Password | SshAuth::Agent => "ssh password required",
+        };
+        AppError::new(ErrorKind::Auth, what)
+    }
+}
+
 /// Persisted connection settings. Contains no secret fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +88,12 @@ pub struct ConnectionConfig {
     pub sqlite_path: Option<String>,
     pub password_mode: PasswordMode,
     pub group: Option<String>,
+    /// Absent from Plan 1 configs: `Prefer`.
+    #[serde(default)]
+    pub ssl: SslConfig,
+    /// Database reached through this SSH server (`host`/`port` as seen from it).
+    #[serde(default)]
+    pub ssh: Option<SshSettings>,
 }
 
 pub struct ConnectionStore {
@@ -147,8 +200,9 @@ impl ConnectionStore {
     }
 }
 
-/// True when both configs designate the same server account: a stored keyring
-/// secret may only be used for a config whose identity matches the stored one.
+/// True when both configs designate the same server account through the same SSH
+/// target: a stored keyring secret may only be used for a config whose identity
+/// matches the stored one.
 pub fn same_identity(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
     a.kind == b.kind
         && a.host == b.host
@@ -156,38 +210,72 @@ pub fn same_identity(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
         && a.user == b.user
         && a.database == b.database
         && a.sqlite_path == b.sqlite_path
+        && match (&a.ssh, &b.ssh) {
+            (None, None) => true,
+            (Some(x), Some(y)) => {
+                x.host == y.host
+                    && x.port == y.port
+                    && x.user == y.user
+                    && x.auth == y.auth
+                    && x.key_file == y.key_file
+            }
+            _ => false,
+        }
 }
 
-/// Saves `cfg` (assigning an id when empty) and its password per `password_mode`.
-/// Keyring mode without a new password keeps the stored secret, but only when the
-/// connection identity is unchanged; changing it requires a new password (Auth
-/// "password required", nothing is modified), so a secret never follows an edit to
-/// another host or account.
+/// Saves `cfg` (assigning an id when empty), its DB password per `password_mode` and
+/// its SSH secret per `ssh.secret_mode` (`SshPassword` for password auth,
+/// `SshPassphrase` for key auth; the other kind is removed, and both are removed
+/// without SSH or with the agent).
 ///
-/// SQLite has no password: the mode is forced to `None`, any password is ignored and
-/// the keyring is never required (a stale secret is removed best-effort).
+/// Keyring mode without a new secret keeps the stored one, but only when the
+/// connection identity (`same_identity`) is unchanged; changing it requires the secret
+/// again (Auth "password required", then "ssh password required" / "ssh passphrase
+/// required"; nothing is modified), so a secret never follows an edit to another host,
+/// account or SSH server.
+///
+/// SQLite has no password nor tunnel: the mode is forced to `None`, `ssh` is dropped,
+/// any secret is ignored and the keyring is never required (stale secrets are removed
+/// best-effort).
 pub fn save_connection(
     store: &ConnectionStore,
     secrets: &dyn SecretStore,
     mut cfg: ConnectionConfig,
     password: Option<String>,
+    ssh_secret: Option<String>,
 ) -> AppResult<ConnectionConfig> {
     if cfg.kind == DriverKind::Sqlite {
         cfg.password_mode = PasswordMode::None;
+        cfg.ssh = None;
         if cfg.id.is_empty() {
             cfg.id = uuid::Uuid::new_v4().to_string();
         } else {
-            let _ = secrets.delete(&SecretKey::new(cfg.id.clone(), SecretKind::DbPassword));
+            for kind in SecretKind::ALL {
+                let _ = secrets.delete(&SecretKey::new(cfg.id.clone(), kind));
+            }
         }
         store.upsert(&cfg)?;
         return Ok(cfg);
     }
+    if let Some(ssh) = cfg.ssh.as_mut()
+        && ssh.auth == SshAuth::Agent
+    {
+        ssh.secret_mode = PasswordMode::None;
+    }
+    let keeps_db = cfg.password_mode == PasswordMode::Keyring && password.is_none();
+    let keeps_ssh = cfg
+        .ssh
+        .as_ref()
+        .is_some_and(|s| s.secret_mode == PasswordMode::Keyring && ssh_secret.is_none());
     if cfg.id.is_empty() {
         cfg.id = uuid::Uuid::new_v4().to_string();
-    } else if cfg.password_mode == PasswordMode::Keyring && password.is_none() {
+    } else if keeps_db || keeps_ssh {
         match store.get(&cfg.id) {
             Ok(stored) if !same_identity(&stored, &cfg) => {
-                return Err(AppError::new(ErrorKind::Auth, "password required"));
+                return Err(match &cfg.ssh {
+                    Some(ssh) if !keeps_db => ssh.secret_required(),
+                    _ => AppError::new(ErrorKind::Auth, "password required"),
+                });
             }
             Ok(_) => {}
             Err(e) if e.kind == ErrorKind::NotFound => {}
@@ -199,6 +287,16 @@ pub fn save_connection(
         (PasswordMode::Keyring, Some(pw)) => secrets.set(&key, &pw)?,
         (PasswordMode::Keyring, None) => {}
         _ => secrets.delete(&key)?,
+    }
+    let own = cfg.ssh.as_ref().and_then(SshSettings::secret_kind);
+    for kind in [SecretKind::SshPassword, SecretKind::SshPassphrase] {
+        let key = SecretKey::new(cfg.id.clone(), kind);
+        let mode = cfg.ssh.as_ref().map(|s| s.secret_mode);
+        match (own == Some(kind), mode, &ssh_secret) {
+            (true, Some(PasswordMode::Keyring), Some(secret)) => secrets.set(&key, secret)?,
+            (true, Some(PasswordMode::Keyring), None) => {}
+            _ => secrets.delete(&key)?,
+        }
     }
     store.upsert(&cfg)?;
     Ok(cfg)
@@ -230,6 +328,7 @@ pub fn delete_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver::tls::SslMode;
     use crate::secrets::MemorySecretStore;
 
     fn cfg(name: &str, mode: PasswordMode) -> ConnectionConfig {
@@ -246,7 +345,26 @@ mod tests {
             sqlite_path: None,
             password_mode: mode,
             group: None,
+            ssl: SslConfig::default(),
+            ssh: None,
         }
+    }
+
+    fn ssh_settings(auth: SshAuth, mode: PasswordMode) -> SshSettings {
+        SshSettings {
+            host: "bastion.example.com".into(),
+            port: Some(22),
+            user: Some("deploy".into()),
+            auth,
+            key_file: (auth == SshAuth::Key).then(|| "/home/u/.ssh/id_ed25519".into()),
+            secret_mode: mode,
+        }
+    }
+
+    fn ssh_cfg(auth: SshAuth) -> ConnectionConfig {
+        let mut c = cfg("tunnelled", PasswordMode::Keyring);
+        c.ssh = Some(ssh_settings(auth, PasswordMode::Keyring));
+        c
     }
 
     fn open(dir: &tempfile::TempDir) -> ConnectionStore {
@@ -258,8 +376,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = open(&dir);
         let sec = MemorySecretStore::new();
-        let b = save_connection(&store, &sec, cfg("b", PasswordMode::Ask), None).unwrap();
-        let a = save_connection(&store, &sec, cfg("A", PasswordMode::Ask), None).unwrap();
+        let b = save_connection(&store, &sec, cfg("b", PasswordMode::Ask), None, None).unwrap();
+        let a = save_connection(&store, &sec, cfg("A", PasswordMode::Ask), None, None).unwrap();
         assert!(!a.id.is_empty() && a.id != b.id);
         let names: Vec<_> = store.list().unwrap().into_iter().map(|c| c.name).collect();
         assert_eq!(names, ["A", "b"]);
@@ -277,6 +395,7 @@ mod tests {
             &sec,
             cfg("x", PasswordMode::Keyring),
             Some("s3cr3t-PW".into()),
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -306,11 +425,12 @@ mod tests {
             &sec,
             cfg("x", PasswordMode::Keyring),
             Some("pw".into()),
+            None,
         )
         .unwrap();
         let mut again = saved.clone();
         again.name = "renamed".into();
-        save_connection(&store, &sec, again, None).unwrap();
+        save_connection(&store, &sec, again, None, None).unwrap();
         let key = SecretKey::new(saved.id.clone(), SecretKind::DbPassword);
         assert_eq!(sec.get(&key).unwrap().as_deref(), Some("pw"));
         assert_eq!(store.get(&saved.id).unwrap().name, "renamed");
@@ -326,6 +446,7 @@ mod tests {
             &sec,
             cfg("x", PasswordMode::Keyring),
             Some("pw".into()),
+            None,
         )
         .unwrap();
         let key = SecretKey::new(saved.id.clone(), SecretKind::DbPassword);
@@ -342,7 +463,7 @@ mod tests {
             let mut changed = saved.clone();
             changed.name = "renamed".into();
             edit(&mut changed);
-            let err = save_connection(&store, &sec, changed, None).unwrap_err();
+            let err = save_connection(&store, &sec, changed, None, None).unwrap_err();
             assert_eq!(err.kind, ErrorKind::Auth);
             assert_eq!(err.message, "password required");
             assert_eq!(
@@ -355,7 +476,7 @@ mod tests {
         // With a new password the edit goes through and the secret is replaced.
         let mut changed = saved.clone();
         changed.host = "127.0.0.2".into();
-        save_connection(&store, &sec, changed.clone(), Some("pw2".into())).unwrap();
+        save_connection(&store, &sec, changed.clone(), Some("pw2".into()), None).unwrap();
         assert_eq!(store.get(&saved.id).unwrap(), changed);
         assert_eq!(sec.get(&key).unwrap().as_deref(), Some("pw2"));
     }
@@ -370,11 +491,12 @@ mod tests {
             &sec,
             cfg("x", PasswordMode::Keyring),
             Some("pw".into()),
+            None,
         )
         .unwrap();
         let mut ask = saved.clone();
         ask.password_mode = PasswordMode::Ask;
-        save_connection(&store, &sec, ask, None).unwrap();
+        save_connection(&store, &sec, ask, None, None).unwrap();
         assert_eq!(
             sec.get(&SecretKey::new(saved.id, SecretKind::DbPassword))
                 .unwrap(),
@@ -392,6 +514,7 @@ mod tests {
             &sec,
             cfg("x", PasswordMode::Keyring),
             Some("pw".into()),
+            None,
         )
         .unwrap();
         for k in SecretKind::ALL {
@@ -484,6 +607,7 @@ mod tests {
             &BrokenSecrets,
             sqlite_cfg(PasswordMode::Keyring),
             Some("ignored".into()),
+            None,
         )
         .unwrap();
         assert_eq!(saved.password_mode, PasswordMode::None);
@@ -492,7 +616,7 @@ mod tests {
         let mut again = saved.clone();
         again.sqlite_path = Some("/tmp/y.db".into());
         again.password_mode = PasswordMode::Keyring;
-        let again = save_connection(&store, &BrokenSecrets, again, None).unwrap();
+        let again = save_connection(&store, &BrokenSecrets, again, None, None).unwrap();
         assert_eq!(again.password_mode, PasswordMode::None);
         assert_eq!(
             store.get(&saved.id).unwrap().sqlite_path.as_deref(),
@@ -509,7 +633,7 @@ mod tests {
         c.id = "lite-id".into();
         let key = SecretKey::new("lite-id", SecretKind::DbPassword);
         sec.set(&key, "stale").unwrap();
-        save_connection(&store, &sec, c, Some("typed".into())).unwrap();
+        save_connection(&store, &sec, c, Some("typed".into()), None).unwrap();
         assert_eq!(sec.get(&key).unwrap(), None);
     }
 
@@ -540,5 +664,267 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn plan1_config_json_still_parses() {
+        let json = r##"{"id":"c1","name":"old","color":"#888","envTag":"dev","kind":"postgres",
+            "host":"localhost","port":5432,"user":"u","database":null,"sqlitePath":null,
+            "passwordMode":"keyring","group":null}"##;
+        let c: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(c.ssl.mode, SslMode::Prefer);
+        assert_eq!(c.ssl, SslConfig::default());
+        assert_eq!(c.ssh, None);
+    }
+
+    #[test]
+    fn ssh_settings_serde_shape_is_camel_case() {
+        let v = serde_json::to_value(ssh_cfg(SshAuth::Key)).unwrap();
+        assert_eq!(v["ssl"]["mode"], "prefer");
+        assert_eq!(v["ssh"]["auth"], "key");
+        assert_eq!(v["ssh"]["keyFile"], "/home/u/.ssh/id_ed25519");
+        assert_eq!(v["ssh"]["secretMode"], "keyring");
+        let back: ConnectionConfig = serde_json::from_value(v).unwrap();
+        assert_eq!(back, ssh_cfg(SshAuth::Key));
+    }
+
+    #[test]
+    fn ssh_secret_follows_auth_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let sec = MemorySecretStore::new();
+        let saved = save_connection(
+            &store,
+            &sec,
+            ssh_cfg(SshAuth::Password),
+            Some("db-pw".into()),
+            Some("ssh-pw".into()),
+        )
+        .unwrap();
+        let pw_key = SecretKey::new(saved.id.clone(), SecretKind::SshPassword);
+        let pp_key = SecretKey::new(saved.id.clone(), SecretKind::SshPassphrase);
+        assert_eq!(sec.get(&pw_key).unwrap().as_deref(), Some("ssh-pw"));
+        assert_eq!(sec.get(&pp_key).unwrap(), None);
+
+        let mut key = saved.clone();
+        key.ssh = Some(ssh_settings(SshAuth::Key, PasswordMode::Keyring));
+        save_connection(
+            &store,
+            &sec,
+            key,
+            Some("db-pw".into()),
+            Some("key-pass".into()),
+        )
+        .unwrap();
+        assert_eq!(sec.get(&pp_key).unwrap().as_deref(), Some("key-pass"));
+        assert_eq!(sec.get(&pw_key).unwrap(), None);
+        // The DB password is untouched by SSH changes.
+        let db_key = SecretKey::new(saved.id.clone(), SecretKind::DbPassword);
+        assert_eq!(sec.get(&db_key).unwrap().as_deref(), Some("db-pw"));
+
+        // Agent: no SSH secret at all, and the mode is forced to None.
+        let mut agent = saved.clone();
+        agent.ssh = Some(ssh_settings(SshAuth::Agent, PasswordMode::Keyring));
+        let agent = save_connection(
+            &store,
+            &sec,
+            agent,
+            Some("db-pw".into()),
+            Some("ignored".into()),
+        )
+        .unwrap();
+        assert_eq!(agent.ssh.unwrap().secret_mode, PasswordMode::None);
+        assert_eq!(sec.get(&pp_key).unwrap(), None);
+        assert_eq!(sec.get(&pw_key).unwrap(), None);
+    }
+
+    #[test]
+    fn removing_ssh_deletes_both_ssh_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let sec = MemorySecretStore::new();
+        let saved = save_connection(
+            &store,
+            &sec,
+            ssh_cfg(SshAuth::Password),
+            Some("db-pw".into()),
+            Some("ssh-pw".into()),
+        )
+        .unwrap();
+        sec.set(
+            &SecretKey::new(saved.id.clone(), SecretKind::SshPassphrase),
+            "stale",
+        )
+        .unwrap();
+        let mut direct = saved.clone();
+        direct.ssh = None;
+        save_connection(&store, &sec, direct, Some("db-pw".into()), None).unwrap();
+        for kind in [SecretKind::SshPassword, SecretKind::SshPassphrase] {
+            assert_eq!(
+                sec.get(&SecretKey::new(saved.id.clone(), kind)).unwrap(),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn ssh_secret_ask_mode_is_not_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let sec = MemorySecretStore::new();
+        let mut c = ssh_cfg(SshAuth::Password);
+        c.ssh = Some(ssh_settings(SshAuth::Password, PasswordMode::Ask));
+        let saved =
+            save_connection(&store, &sec, c, Some("db-pw".into()), Some("typed".into())).unwrap();
+        let key = SecretKey::new(saved.id.clone(), SecretKind::SshPassword);
+        assert_eq!(sec.get(&key).unwrap(), None);
+    }
+
+    #[test]
+    fn keyring_ssh_secret_is_kept_when_identity_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let sec = MemorySecretStore::new();
+        let saved = save_connection(
+            &store,
+            &sec,
+            ssh_cfg(SshAuth::Password),
+            Some("db-pw".into()),
+            Some("ssh-pw".into()),
+        )
+        .unwrap();
+        let mut renamed = saved.clone();
+        renamed.name = "renamed".into();
+        save_connection(&store, &sec, renamed, None, None).unwrap();
+        let key = SecretKey::new(saved.id.clone(), SecretKind::SshPassword);
+        assert_eq!(sec.get(&key).unwrap().as_deref(), Some("ssh-pw"));
+        assert_eq!(store.get(&saved.id).unwrap().name, "renamed");
+    }
+
+    #[test]
+    fn changing_ssh_host_requires_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let sec = MemorySecretStore::new();
+        let saved = save_connection(
+            &store,
+            &sec,
+            ssh_cfg(SshAuth::Password),
+            Some("db-pw".into()),
+            Some("ssh-pw".into()),
+        )
+        .unwrap();
+        let ssh_key = SecretKey::new(saved.id.clone(), SecretKind::SshPassword);
+        let db_key = SecretKey::new(saved.id.clone(), SecretKind::DbPassword);
+        let unchanged = |store: &ConnectionStore| {
+            assert_eq!(
+                store.get(&saved.id).unwrap(),
+                saved,
+                "row must be unchanged"
+            );
+            assert_eq!(sec.get(&db_key).unwrap().as_deref(), Some("db-pw"));
+            assert_eq!(sec.get(&ssh_key).unwrap().as_deref(), Some("ssh-pw"));
+        };
+        let mut moved = saved.clone();
+        moved.ssh.as_mut().unwrap().host = "other-bastion".into();
+        let err = save_connection(&store, &sec, moved.clone(), None, None).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Auth);
+        assert_eq!(err.message, "password required");
+        unchanged(&store);
+
+        // A new DB password alone is not enough: the SSH secret must be typed again too.
+        let err =
+            save_connection(&store, &sec, moved.clone(), Some("db-pw2".into()), None).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Auth);
+        assert_eq!(err.message, "ssh password required");
+        unchanged(&store);
+
+        type Edit = fn(&mut SshSettings);
+        let edits: [Edit; 4] = [
+            |s| s.port = Some(2222),
+            |s| s.user = Some("root".into()),
+            |s| s.key_file = Some("/other/key".into()),
+            |s| s.port = None,
+        ];
+        for edit in edits {
+            let mut changed = saved.clone();
+            edit(changed.ssh.as_mut().unwrap());
+            let err =
+                save_connection(&store, &sec, changed, Some("db-pw".into()), None).unwrap_err();
+            assert_eq!(err.message, "ssh password required");
+            unchanged(&store);
+        }
+        // Key auth reports the passphrase as the missing secret.
+        let mut key = saved.clone();
+        key.ssh = Some(ssh_settings(SshAuth::Key, PasswordMode::Keyring));
+        let err = save_connection(&store, &sec, key, Some("db-pw".into()), None).unwrap_err();
+        assert_eq!(err.message, "ssh passphrase required");
+        unchanged(&store);
+
+        // With both secrets the edit goes through.
+        save_connection(
+            &store,
+            &sec,
+            moved.clone(),
+            Some("db-pw2".into()),
+            Some("ssh-pw2".into()),
+        )
+        .unwrap();
+        assert_eq!(store.get(&saved.id).unwrap(), moved);
+        assert_eq!(sec.get(&ssh_key).unwrap().as_deref(), Some("ssh-pw2"));
+    }
+
+    #[test]
+    fn same_identity_covers_ssh_target() {
+        let a = ssh_cfg(SshAuth::Password);
+        let mut b = a.clone();
+        b.name = "other name".into();
+        b.ssl.mode = SslMode::VerifyFull;
+        b.ssh.as_mut().unwrap().secret_mode = PasswordMode::Ask;
+        assert!(same_identity(&a, &b));
+        let mut c = a.clone();
+        c.ssh.as_mut().unwrap().auth = SshAuth::Agent;
+        assert!(!same_identity(&a, &c));
+        let mut d = a.clone();
+        d.ssh = None;
+        assert!(!same_identity(&a, &d));
+    }
+
+    #[test]
+    fn config_json_has_no_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let sec = MemorySecretStore::new();
+        let saved = save_connection(
+            &store,
+            &sec,
+            ssh_cfg(SshAuth::Password),
+            Some("DB-s3cret".into()),
+            Some("SSH-s3cret".into()),
+        )
+        .unwrap();
+        let json: String = store
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT config_json FROM connections WHERE id = ?1",
+                params![saved.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(json.contains("bastion.example.com"), "{json}");
+        assert!(!json.contains("DB-s3cret"), "{json}");
+        assert!(!json.contains("SSH-s3cret"), "{json}");
+    }
+
+    #[test]
+    fn sqlite_save_drops_ssh() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let mut c = sqlite_cfg(PasswordMode::None);
+        c.ssh = Some(ssh_settings(SshAuth::Password, PasswordMode::Keyring));
+        let saved = save_connection(&store, &BrokenSecrets, c, None, Some("x".into())).unwrap();
+        assert_eq!(saved.ssh, None);
+        assert_eq!(store.get(&saved.id).unwrap().ssh, None);
     }
 }

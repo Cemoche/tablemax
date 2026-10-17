@@ -6,14 +6,20 @@
 //! its `Arc<dyn Session>` and `Arc<dyn Canceller>` so a batch and a cancel can run
 //! concurrently without touching the map.
 //!
-//! Passwords: resolved (argument, else OS keyring) right before connecting and passed
-//! to the driver in `ConnectParams`; nothing is cached for keyring-only workspaces —
-//! opening a SQL session re-reads the keyring. A password typed by the user when the
+//! Secrets (DB password, SSH password or key passphrase): resolved (argument, else OS
+//! keyring) right before connecting; nothing is cached for keyring-only workspaces —
+//! opening a SQL session re-reads the keyring. A secret typed by the user when the
 //! workspace was opened (`Ask` mode, or an explicit override) cannot be re-read from
-//! anywhere, so it is kept in memory in the workspace entry as a [`HeldPassword`]
+//! anywhere, so it is kept in memory in the workspace entry as a [`HeldSecret`]
 //! (no `Debug` output, not serializable) until the workspace is closed.
+//!
+//! SSH: a workspace whose connection has `ssh` settings opens one tunnel; the browse
+//! connection, every SQL session and every cancel request dial its local end
+//! (`ConnectParams.dial`) while `host` stays the DB host as seen from the SSH server
+//! (also the TLS name). A SQL session opened after the tunnel died reopens it.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -21,13 +27,17 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::time::Instant;
 
-use crate::driver::tls::SslConfig;
 use crate::driver::{
     self, Canceller, ConnectParams, Dialect, DriverKind, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
-use crate::store::{self, ConnectionConfig, ConnectionStore, PasswordMode, same_identity};
+use crate::ssh::config::{SshConfigFile, user_config};
+use crate::ssh::known_hosts::KnownHosts;
+use crate::ssh::tunnel::{self, HostKeyPolicy, SshAuthMaterial, SshTarget, SshTunnel};
+use crate::store::{
+    self, ConnectionConfig, ConnectionStore, PasswordMode, SshAuth, SshSettings, same_identity,
+};
 
 /// How often a pending cancel is re-sent while the statement is still running.
 pub const CANCEL_RESEND_INTERVAL: Duration = Duration::from_millis(100);
@@ -68,19 +78,26 @@ pub enum ExecEvent {
     },
 }
 
-/// A password typed by the user, kept only for the lifetime of its workspace.
+/// A secret typed by the user, kept only for the lifetime of its workspace.
 /// Deliberately not `Serialize`, and its `Debug` output never shows the value.
-struct HeldPassword(String);
+struct HeldSecret(String);
 
-impl std::fmt::Debug for HeldPassword {
+impl std::fmt::Debug for HeldSecret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("HeldPassword(<redacted>)")
+        f.write_str("HeldSecret(<redacted>)")
     }
 }
 
+/// The workspace's SSH tunnel: `Some` from opening to closing for an SSH connection,
+/// `None` without SSH or once closed. Async lock, held while a dead tunnel is
+/// reopened, so concurrent SQL sessions open a single new one.
+type TunnelSlot = Arc<tokio::sync::Mutex<Option<Arc<SshTunnel>>>>;
+
 struct Workspace {
     config: ConnectionConfig,
-    held_password: Option<HeldPassword>,
+    held_password: Option<HeldSecret>,
+    held_ssh_secret: Option<HeldSecret>,
+    tunnel: TunnelSlot,
     browse: Arc<dyn Session>,
     sql_sessions: Vec<String>,
 }
@@ -156,6 +173,9 @@ struct State {
 pub struct SessionManager {
     store: Arc<ConnectionStore>,
     secrets: Arc<dyn SecretStore>,
+    known_hosts: KnownHosts,
+    /// Replaces `~/.ssh/config` (tests); otherwise it is re-read at each connect.
+    ssh_config: Option<Arc<SshConfigFile>>,
     state: Mutex<State>,
 }
 
@@ -178,8 +198,14 @@ where
         .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
 }
 
-fn connect_params(cfg: &ConnectionConfig, password: Option<String>) -> ConnectParams {
-    ConnectParams {
+/// Connects with `cfg`, dialing `tunnel`'s local end when there is one (`host` stays
+/// the DB host as seen from the SSH server, which is also the TLS name).
+async fn connect(
+    cfg: &ConnectionConfig,
+    password: Option<String>,
+    tunnel: Option<&SshTunnel>,
+) -> AppResult<Arc<dyn Session>> {
+    driver::connect(&ConnectParams {
         kind: cfg.kind,
         host: cfg.host.clone(),
         port: cfg.port,
@@ -187,10 +213,77 @@ fn connect_params(cfg: &ConnectionConfig, password: Option<String>) -> ConnectPa
         password,
         database: cfg.database.clone(),
         sqlite_path: cfg.sqlite_path.as_ref().map(Into::into),
-        // Per-connection TLS settings arrive with the connection form (Plan 2, Task 4).
-        ssl: SslConfig::default(),
-        dial: None,
+        ssl: cfg.ssl.clone(),
+        dial: tunnel.map(SshTunnel::local_addr),
+    })
+    .await
+}
+
+/// The SSH settings that apply to `cfg` (SQLite never uses a tunnel).
+fn ssh_of(cfg: &ConnectionConfig) -> Option<&SshSettings> {
+    cfg.ssh.as_ref().filter(|_| cfg.kind != DriverKind::Sqlite)
+}
+
+fn non_empty(s: Option<&str>) -> Option<&str> {
+    s.filter(|s| !s.trim().is_empty())
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// The SSH target for `ssh`: `config.resolve(host)`, overridden by the form's port and
+/// user. Key auth uses the form's key file, else the first existing `IdentityFile`,
+/// else the first existing `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa` (like OpenSSH).
+fn resolve_ssh_target(
+    ssh: &SshSettings,
+    config: &SshConfigFile,
+    home: Option<&Path>,
+    secret: Option<String>,
+) -> AppResult<SshTarget> {
+    if ssh.host.trim().is_empty() {
+        return Err(AppError::new(ErrorKind::Invalid, "ssh host required"));
     }
+    let resolved = config.resolve(&ssh.host);
+    let user = non_empty(ssh.user.as_deref())
+        .or(non_empty(resolved.user.as_deref()))
+        .ok_or_else(|| AppError::new(ErrorKind::Invalid, "ssh user required"))?
+        .to_string();
+    let auth = match ssh.auth {
+        SshAuth::Agent => SshAuthMaterial::Agent,
+        SshAuth::Password => {
+            SshAuthMaterial::Password(secret.ok_or_else(|| ssh.secret_required())?)
+        }
+        SshAuth::Key => {
+            let path = match non_empty(ssh.key_file.as_deref()) {
+                Some(path) => PathBuf::from(path),
+                None => {
+                    let defaults = home.into_iter().flat_map(|h| {
+                        ["id_ed25519", "id_ecdsa", "id_rsa"].map(|n| h.join(".ssh").join(n))
+                    });
+                    resolved
+                        .identity_files
+                        .iter()
+                        .cloned()
+                        .chain(defaults)
+                        .find(|p| p.is_file())
+                        .ok_or_else(|| AppError::new(ErrorKind::Invalid, "ssh key file required"))?
+                }
+            };
+            SshAuthMaterial::Key {
+                path,
+                passphrase: secret,
+            }
+        }
+    };
+    Ok(SshTarget {
+        host: resolved.host_name,
+        port: ssh.port.unwrap_or(resolved.port),
+        user,
+        auth,
+    })
 }
 
 /// Requests cancellation of the batch running on `entry` (no-op when idle).
@@ -243,12 +336,26 @@ async fn shutdown_sql(entry: &SqlSession) -> AppResult<()> {
 }
 
 impl SessionManager {
-    pub fn new(store: Arc<ConnectionStore>, secrets: Arc<dyn SecretStore>) -> Self {
+    /// `known_hosts`: the system file (read only) and the app file (written when the
+    /// user trusts a host key).
+    pub fn new(
+        store: Arc<ConnectionStore>,
+        secrets: Arc<dyn SecretStore>,
+        known_hosts: KnownHosts,
+    ) -> Self {
         Self {
             store,
             secrets,
+            known_hosts,
+            ssh_config: None,
             state: Mutex::new(State::default()),
         }
+    }
+
+    /// Resolves SSH aliases with `config` instead of `~/.ssh/config`.
+    pub fn with_ssh_config(mut self, config: SshConfigFile) -> Self {
+        self.ssh_config = Some(Arc::new(config));
+        self
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -273,9 +380,16 @@ impl SessionManager {
         &self,
         cfg: ConnectionConfig,
         password: Option<String>,
+        ssh_secret: Option<String>,
     ) -> AppResult<ConnectionConfig> {
         let (st, sec) = (self.store.clone(), self.secrets.clone());
-        blocking(move || store::save_connection(&st, sec.as_ref(), cfg, password)).await
+        blocking(move || store::save_connection(&st, sec.as_ref(), cfg, password, ssh_secret)).await
+    }
+
+    /// Concrete host aliases of `~/.ssh/config`.
+    pub async fn ssh_hosts(&self) -> AppResult<Vec<String>> {
+        let config = self.ssh_config.clone();
+        blocking(move || Ok(config.unwrap_or_else(|| Arc::new(user_config())).aliases())).await
     }
 
     pub async fn delete_connection(&self, id: &str) -> AppResult<()> {
@@ -314,32 +428,123 @@ impl SessionManager {
         }
     }
 
-    /// Connects with `cfg` (saved or not), returns the server version, disconnects.
+    /// SSH secret for `ssh` (password or passphrase; none for the agent): the argument
+    /// if given (whatever the mode), else the stored secret in `Keyring` mode for saved
+    /// configs (non-empty id), else none.
+    ///
+    /// Same contract as [`Self::resolve_password`] for `cfg`.
+    async fn resolve_ssh_secret(
+        &self,
+        cfg: &ConnectionConfig,
+        ssh: &SshSettings,
+        secret: Option<String>,
+    ) -> AppResult<Option<String>> {
+        let Some(kind) = ssh.secret_kind() else {
+            return Ok(None);
+        };
+        if secret.is_some() || ssh.secret_mode != PasswordMode::Keyring || cfg.id.is_empty() {
+            return Ok(secret);
+        }
+        let secrets = self.secrets.clone();
+        let key = SecretKey::new(cfg.id.clone(), kind);
+        blocking(move || secrets.get(&key)).await
+    }
+
+    /// Opens the SSH tunnel of `cfg` to its DB `host:port`, or `None` without SSH.
+    async fn open_tunnel(
+        &self,
+        cfg: &ConnectionConfig,
+        ssh_secret: Option<String>,
+        accept_fingerprint: Option<String>,
+    ) -> AppResult<Option<Arc<SshTunnel>>> {
+        let Some(ssh) = ssh_of(cfg) else {
+            return Ok(None);
+        };
+        let secret = self.resolve_ssh_secret(cfg, ssh, ssh_secret).await?;
+        let (config, ssh) = (self.ssh_config.clone(), ssh.clone());
+        let target = blocking(move || {
+            let config = config.unwrap_or_else(|| Arc::new(user_config()));
+            resolve_ssh_target(&ssh, &config, home_dir().as_deref(), secret)
+        })
+        .await?;
+        let policy = HostKeyPolicy {
+            known_hosts: KnownHosts {
+                system: self.known_hosts.system.clone(),
+                app: self.known_hosts.app.clone(),
+            },
+            accept_fingerprint,
+        };
+        tunnel::open_tunnel(&target, &cfg.host, cfg.port, &policy)
+            .await
+            .map(Some)
+    }
+
+    /// The workspace's live tunnel (`None` without SSH), reopened with `held_secret` or
+    /// the keyring when it died. A closed workspace is NotFound.
+    async fn live_tunnel(
+        &self,
+        workspace_id: &str,
+        config: &ConnectionConfig,
+        slot: &TunnelSlot,
+        held_secret: Option<String>,
+    ) -> AppResult<Option<Arc<SshTunnel>>> {
+        if ssh_of(config).is_none() {
+            return Ok(None);
+        }
+        let mut current = slot.lock().await;
+        match current.as_ref() {
+            None => return Err(workspace_not_found(workspace_id)),
+            Some(t) if t.is_alive() => return Ok(Some(t.clone())),
+            Some(_) => {}
+        }
+        // The host key was confirmed when the workspace was opened: no new trust here.
+        let fresh = self.open_tunnel(config, held_secret, None).await?;
+        if let Some(dead) = current.take() {
+            dead.close().await;
+        }
+        *current = fresh.clone();
+        Ok(fresh)
+    }
+
+    /// Connects with `cfg` (saved or not), returns the server version, disconnects
+    /// (and closes the tunnel when `cfg` goes through SSH).
     ///
     /// `cfg` comes from the frontend and may differ from what is stored under
-    /// `cfg.id`: the keyring secret is only reused when the connection identity
-    /// (kind, host, port, user, database, sqlite_path) matches the stored config, so
-    /// an edited config can never send the stored password elsewhere. Otherwise an
-    /// explicit password is required (Auth "password required", before any I/O).
+    /// `cfg.id`: keyring secrets (DB password, SSH secret) are only reused when the
+    /// connection identity (`same_identity`: server, account and SSH target) matches
+    /// the stored config, so an edited config can never send a stored secret
+    /// elsewhere. Otherwise the DB password must be given (Auth "password required",
+    /// before any I/O) and the SSH secret is treated as not stored.
     pub async fn test_connection(
         &self,
         cfg: &ConnectionConfig,
         password: Option<String>,
+        ssh_secret: Option<String>,
+        accept_fingerprint: Option<String>,
     ) -> AppResult<String> {
         let mut cfg = cfg.clone();
         if cfg.kind == DriverKind::Sqlite {
-            // No password, no keyring, no stored identity to check.
-            let session = driver::connect(&connect_params(&cfg, None)).await?;
+            // No password, no keyring, no tunnel, no stored identity to check.
+            let session = connect(&cfg, None, None).await?;
             let version = session.server_version();
             let _ = session.close().await;
             return Ok(version);
         }
-        if cfg.password_mode == PasswordMode::Keyring && password.is_none() && !cfg.id.is_empty() {
+        let db_from_keyring = cfg.password_mode == PasswordMode::Keyring && password.is_none();
+        let ssh_from_keyring = ssh_secret.is_none()
+            && cfg.ssh.as_ref().is_some_and(|s| {
+                s.secret_kind().is_some() && s.secret_mode == PasswordMode::Keyring
+            });
+        if (db_from_keyring || ssh_from_keyring) && !cfg.id.is_empty() {
             let store = self.store.clone();
             let id = cfg.id.clone();
             match blocking(move || store.get(&id)).await {
                 Ok(stored) if same_identity(&stored, &cfg) => {}
-                Ok(_) => return Err(AppError::new(ErrorKind::Auth, "password required")),
+                Ok(_) if db_from_keyring => {
+                    return Err(AppError::new(ErrorKind::Auth, "password required"));
+                }
+                // Another target: no stored secret may be read for it.
+                Ok(_) => cfg.id.clear(),
                 // Not saved: there is no stored identity to bind a secret to.
                 Err(e) if e.kind == ErrorKind::NotFound => cfg.id.clear(),
                 Err(e) => return Err(e),
@@ -347,16 +552,32 @@ impl SessionManager {
         }
         let cfg = &cfg;
         let password = self.resolve_password(cfg, password).await?;
-        let session = driver::connect(&connect_params(cfg, password)).await?;
-        let version = session.server_version();
-        let _ = session.close().await;
-        Ok(version)
+        let tunnel = self
+            .open_tunnel(cfg, ssh_secret, accept_fingerprint)
+            .await?;
+        let result = match connect(cfg, password, tunnel.as_deref()).await {
+            Ok(session) => {
+                let version = session.server_version();
+                let _ = session.close().await;
+                Ok(version)
+            }
+            Err(e) => Err(e),
+        };
+        if let Some(t) = tunnel {
+            t.close().await;
+        }
+        result
     }
 
+    /// Opens a workspace on the saved connection: SSH tunnel first when configured
+    /// (`accept_fingerprint` trusts an unknown host key the user confirmed), then the
+    /// browse connection through it.
     pub async fn open_workspace(
         &self,
         connection_id: &str,
         password: Option<String>,
+        ssh_secret: Option<String>,
+        accept_fingerprint: Option<String>,
     ) -> AppResult<WorkspaceInfo> {
         let store = self.store.clone();
         let id = connection_id.to_string();
@@ -364,10 +585,25 @@ impl SessionManager {
         let held_password = match config.password_mode {
             PasswordMode::None => None,
             _ if config.kind == DriverKind::Sqlite => None,
-            _ => password.clone().map(HeldPassword),
+            _ => password.clone().map(HeldSecret),
         };
+        let held_ssh_secret = ssh_of(&config)
+            .and_then(SshSettings::secret_kind)
+            .and(ssh_secret.clone())
+            .map(HeldSecret);
         let resolved = self.resolve_password(&config, password).await?;
-        let browse = driver::connect(&connect_params(&config, resolved)).await?;
+        let tunnel = self
+            .open_tunnel(&config, ssh_secret, accept_fingerprint)
+            .await?;
+        let browse = match connect(&config, resolved, tunnel.as_deref()).await {
+            Ok(browse) => browse,
+            Err(e) => {
+                if let Some(t) = tunnel {
+                    t.close().await;
+                }
+                return Err(e);
+            }
+        };
         let info = WorkspaceInfo {
             workspace_id: uuid::Uuid::new_v4().to_string(),
             connection_id: config.id.clone(),
@@ -379,6 +615,8 @@ impl SessionManager {
             Workspace {
                 config,
                 held_password,
+                held_ssh_secret,
+                tunnel: Arc::new(tokio::sync::Mutex::new(tunnel)),
                 browse,
                 sql_sessions: Vec::new(),
             },
@@ -386,8 +624,9 @@ impl SessionManager {
         Ok(info)
     }
 
-    /// Closes the workspace, its SQL sessions (cancelling running batches) and its
-    /// browse connection. Every close is attempted; the first error is returned.
+    /// Closes the workspace, its SQL sessions (cancelling running batches), its
+    /// browse connection, then its SSH tunnel. Every close is attempted; the first
+    /// error is returned.
     pub async fn close_workspace(&self, workspace_id: &str) -> AppResult<()> {
         let (ws, sessions) = {
             let mut st = self.state();
@@ -414,7 +653,17 @@ impl SessionManager {
         if let Err(e) = ws.browse.close().await {
             first_err.get_or_insert(e);
         }
+        if let Some(t) = ws.tunnel.lock().await.take() {
+            t.close().await;
+        }
         first_err.map_or(Ok(()), Err)
+    }
+
+    /// The workspace's current SSH tunnel (tests: simulate a dropped SSH connection).
+    #[doc(hidden)]
+    pub async fn workspace_tunnel(&self, workspace_id: &str) -> Option<Arc<SshTunnel>> {
+        let slot = self.state().workspaces.get(workspace_id)?.tunnel.clone();
+        slot.lock().await.clone()
     }
 
     /// The workspace's shared browse connection (schemas, objects, pages, counts).
@@ -426,9 +675,10 @@ impl SessionManager {
             .ok_or_else(|| workspace_not_found(workspace_id))
     }
 
-    /// Opens a dedicated connection with the workspace's parameters.
+    /// Opens a dedicated connection with the workspace's parameters, through its
+    /// tunnel (reopened first if it died).
     pub async fn open_sql_session(&self, workspace_id: &str) -> AppResult<String> {
-        let (config, held) = {
+        let (config, held, held_ssh, slot) = {
             let st = self.state();
             let ws = st
                 .workspaces
@@ -437,10 +687,15 @@ impl SessionManager {
             (
                 ws.config.clone(),
                 ws.held_password.as_ref().map(|p| p.0.clone()),
+                ws.held_ssh_secret.as_ref().map(|p| p.0.clone()),
+                ws.tunnel.clone(),
             )
         };
         let password = self.resolve_password(&config, held).await?;
-        let session = driver::connect(&connect_params(&config, password)).await?;
+        let tunnel = self
+            .live_tunnel(workspace_id, &config, &slot, held_ssh)
+            .await?;
+        let session = connect(&config, password, tunnel.as_deref()).await?;
         self.register_sql_session(workspace_id, session).await
     }
 
@@ -568,9 +823,11 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::driver::tls::SslConfig;
     use crate::driver::{Canceller, DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
     use crate::secrets::{MemorySecretStore, SecretKey, SecretKind};
-    use crate::store::{EnvTag, PasswordMode};
+    use crate::ssh::tunnel::SshAuthMaterial;
+    use crate::store::{EnvTag, PasswordMode, SshAuth, SshSettings};
 
     const WAIT: Duration = Duration::from_secs(10);
     const INFINITE_CTE: &str = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) \
@@ -583,9 +840,19 @@ mod tests {
         mgr: Arc<SessionManager>,
     }
 
+    /// A manager with an empty `~/.ssh/config` and a tempdir app `known_hosts`.
+    fn manager(dir: &tempfile::TempDir, secrets: Arc<dyn SecretStore>) -> SessionManager {
+        let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
+        let known_hosts = KnownHosts {
+            system: None,
+            app: dir.path().join("known_hosts"),
+        };
+        SessionManager::new(Arc::new(store), secrets, known_hosts)
+            .with_ssh_config(SshConfigFile::default())
+    }
+
     fn fixture() -> Fx {
         let dir = tempfile::tempdir().unwrap();
-        let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
         let db_path = dir.path().join("data.db");
         let c = rusqlite::Connection::open(&db_path).unwrap();
         c.execute_batch(
@@ -595,7 +862,7 @@ mod tests {
         .unwrap();
         drop(c);
         let secrets = Arc::new(MemorySecretStore::new());
-        let mgr = Arc::new(SessionManager::new(Arc::new(store), secrets.clone()));
+        let mgr = Arc::new(manager(&dir, secrets.clone()));
         Fx {
             _dir: dir,
             db_path,
@@ -618,6 +885,8 @@ mod tests {
             sqlite_path: None,
             password_mode: mode,
             group: None,
+            ssl: SslConfig::default(),
+            ssh: None,
         }
     }
 
@@ -628,8 +897,15 @@ mod tests {
     }
 
     async fn sqlite_ws(fx: &Fx) -> WorkspaceInfo {
-        let saved = fx.mgr.save_connection(sqlite_cfg(fx), None).await.unwrap();
-        fx.mgr.open_workspace(&saved.id, None).await.unwrap()
+        let saved = fx
+            .mgr
+            .save_connection(sqlite_cfg(fx), None, None)
+            .await
+            .unwrap();
+        fx.mgr
+            .open_workspace(&saved.id, None, None, None)
+            .await
+            .unwrap()
     }
 
     /// Collects events; `rx` yields a copy of each summary as it is emitted.
@@ -711,11 +987,19 @@ mod tests {
         // A non-local host: reaching the driver would yield a Connection error instead.
         let mut c = cfg(DriverKind::Postgres, PasswordMode::Ask);
         c.host = "203.0.113.7".into();
-        let saved = fx.mgr.save_connection(c.clone(), None).await.unwrap();
-        let err = fx.mgr.open_workspace(&saved.id, None).await.unwrap_err();
+        let saved = fx.mgr.save_connection(c.clone(), None, None).await.unwrap();
+        let err = fx
+            .mgr
+            .open_workspace(&saved.id, None, None, None)
+            .await
+            .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Auth);
         assert_eq!(err.message, "password required");
-        let err = fx.mgr.test_connection(&c, None).await.unwrap_err();
+        let err = fx
+            .mgr
+            .test_connection(&c, None, None, None)
+            .await
+            .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Auth);
     }
 
@@ -903,7 +1187,7 @@ mod tests {
         let fx = fixture();
         let c = sqlite_cfg(&fx);
         assert!(c.id.is_empty());
-        let v = fx.mgr.test_connection(&c, None).await.unwrap();
+        let v = fx.mgr.test_connection(&c, None, None, None).await.unwrap();
         assert!(!v.is_empty());
     }
 
@@ -911,7 +1195,11 @@ mod tests {
     async fn unknown_ids_are_not_found() {
         let fx = fixture();
         assert_eq!(
-            fx.mgr.open_workspace("nope", None).await.unwrap_err().kind,
+            fx.mgr
+                .open_workspace("nope", None, None, None)
+                .await
+                .unwrap_err()
+                .kind,
             ErrorKind::NotFound
         );
         assert_eq!(
@@ -1093,6 +1381,8 @@ mod tests {
             Workspace {
                 config: cfg(DriverKind::Postgres, PasswordMode::None),
                 held_password: None,
+                held_ssh_secret: None,
+                tunnel: Default::default(),
                 browse,
                 sql_sessions: Vec::new(),
             },
@@ -1196,13 +1486,17 @@ mod tests {
         c.port = 1;
         let saved = fx
             .mgr
-            .save_connection(c, Some("stored-pw".into()))
+            .save_connection(c, Some("stored-pw".into()), None)
             .await
             .unwrap();
         let mut changed = saved.clone();
         changed.host = "127.0.0.2".into();
         // Reaching the driver would give a Connection error (nothing listens on port 1).
-        let err = fx.mgr.test_connection(&changed, None).await.unwrap_err();
+        let err = fx
+            .mgr
+            .test_connection(&changed, None, None, None)
+            .await
+            .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Auth);
         assert_eq!(err.message, "password required");
     }
@@ -1236,33 +1530,41 @@ mod tests {
             gets: AtomicUsize::new(0),
         });
         let dir = tempfile::tempdir().unwrap();
-        let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
-        let mgr = SessionManager::new(Arc::new(store), secrets.clone());
+        let mgr = manager(&dir, secrets.clone());
         // Nothing listens on port 1: reaching the driver yields a Connection error, which
         // is enough to observe whether the keyring was read first.
         let mut c = cfg(DriverKind::Postgres, PasswordMode::Keyring);
         c.host = "127.0.0.1".into();
         c.port = 1;
-        let saved = mgr.save_connection(c, Some("pw".into())).await.unwrap();
+        let saved = mgr
+            .save_connection(c, Some("pw".into()), None)
+            .await
+            .unwrap();
 
         // Unchanged identity (only cosmetic fields differ): the keyring is read.
         let mut renamed = saved.clone();
         renamed.name = "renamed".into();
         renamed.color = "#000".into();
-        let err = mgr.test_connection(&renamed, None).await.unwrap_err();
+        let err = mgr
+            .test_connection(&renamed, None, None, None)
+            .await
+            .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Connection);
         assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
 
         // Changed identity: Auth error, keyring untouched.
         let mut moved = saved.clone();
         moved.port = 2;
-        let err = mgr.test_connection(&moved, None).await.unwrap_err();
+        let err = mgr
+            .test_connection(&moved, None, None, None)
+            .await
+            .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Auth);
         assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
 
         // An explicit password is always accepted (and the keyring is not read).
         let err = mgr
-            .test_connection(&saved, Some("typed".into()))
+            .test_connection(&saved, Some("typed".into()), None, None)
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Connection);
@@ -1291,15 +1593,27 @@ mod tests {
     async fn sqlite_works_without_a_keyring() {
         let fx = fixture();
         let dir = tempfile::tempdir().unwrap();
-        let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
-        let mgr = SessionManager::new(Arc::new(store), Arc::new(BrokenSecrets));
+        let mgr = manager(&dir, Arc::new(BrokenSecrets));
         // Keyring mode (the form's old default) must not reach the keyring for SQLite.
         let mut c = sqlite_cfg(&fx);
         c.password_mode = PasswordMode::Keyring;
-        assert!(!mgr.test_connection(&c, None).await.unwrap().is_empty());
-        let saved = mgr.save_connection(c, None).await.unwrap();
-        assert!(!mgr.test_connection(&saved, None).await.unwrap().is_empty());
-        let ws = mgr.open_workspace(&saved.id, None).await.unwrap();
+        assert!(
+            !mgr.test_connection(&c, None, None, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let saved = mgr.save_connection(c, None, None).await.unwrap();
+        assert!(
+            !mgr.test_connection(&saved, None, None, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let ws = mgr
+            .open_workspace(&saved.id, None, None, None)
+            .await
+            .unwrap();
         let sid = mgr.open_sql_session(&ws.workspace_id).await.unwrap();
         let c = Collector::new();
         mgr.execute_batch(&sid, sql(&["select count(*) from items"]), c.sink())
@@ -1314,8 +1628,7 @@ mod tests {
     #[tokio::test]
     async fn sqlite_password_resolution_never_touches_secrets() {
         let dir = tempfile::tempdir().unwrap();
-        let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
-        let mgr = SessionManager::new(Arc::new(store), Arc::new(BrokenSecrets));
+        let mgr = manager(&dir, Arc::new(BrokenSecrets));
         for mode in [PasswordMode::Keyring, PasswordMode::Ask, PasswordMode::None] {
             let mut c = cfg(DriverKind::Sqlite, mode);
             c.id = "saved".into();
@@ -1325,5 +1638,188 @@ mod tests {
                 None
             );
         }
+    }
+
+    fn ssh(auth: SshAuth) -> SshSettings {
+        SshSettings {
+            host: "bastion".into(),
+            port: None,
+            user: None,
+            auth,
+            key_file: None,
+            secret_mode: PasswordMode::Keyring,
+        }
+    }
+
+    fn touch(path: &std::path::Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "key").unwrap();
+    }
+
+    #[test]
+    fn ssh_target_form_fields_win_over_the_config() {
+        let home = tempfile::tempdir().unwrap();
+        let config = SshConfigFile::parse(
+            "Host bastion\n  HostName bastion.example.com\n  Port 2200\n  User cfg-user\n",
+            home.path(),
+        );
+        let mut s = ssh(SshAuth::Password);
+        let t = resolve_ssh_target(&s, &config, Some(home.path()), Some("pw".into())).unwrap();
+        assert_eq!(
+            (t.host.as_str(), t.port, t.user.as_str()),
+            ("bastion.example.com", 2200, "cfg-user")
+        );
+        assert!(matches!(t.auth, SshAuthMaterial::Password(ref p) if p == "pw"));
+        s.port = Some(22);
+        s.user = Some("form-user".into());
+        let t = resolve_ssh_target(&s, &config, Some(home.path()), Some("pw".into())).unwrap();
+        assert_eq!((t.port, t.user.as_str()), (22, "form-user"));
+        // An empty user field counts as absent.
+        s.user = Some(String::new());
+        let t = resolve_ssh_target(&s, &config, Some(home.path()), Some("pw".into())).unwrap();
+        assert_eq!(t.user, "cfg-user");
+    }
+
+    #[test]
+    fn ssh_target_without_user_or_password_is_refused() {
+        let home = tempfile::tempdir().unwrap();
+        let config = SshConfigFile::default();
+        let e =
+            resolve_ssh_target(&ssh(SshAuth::Agent), &config, Some(home.path()), None).unwrap_err();
+        assert_eq!(
+            (e.kind, e.message.as_str()),
+            (ErrorKind::Invalid, "ssh user required")
+        );
+        let mut s = ssh(SshAuth::Password);
+        s.user = Some("u".into());
+        let e = resolve_ssh_target(&s, &config, Some(home.path()), None).unwrap_err();
+        assert_eq!(
+            (e.kind, e.message.as_str()),
+            (ErrorKind::Auth, "ssh password required")
+        );
+        s.auth = SshAuth::Agent;
+        let t = resolve_ssh_target(&s, &config, Some(home.path()), Some("x".into())).unwrap();
+        assert!(matches!(t.auth, SshAuthMaterial::Agent));
+        assert_eq!((t.host.as_str(), t.port), ("bastion", 22));
+    }
+
+    #[test]
+    fn ssh_key_file_resolution_order() {
+        let home = tempfile::tempdir().unwrap();
+        let h = home.path();
+        let key_of = |s: &SshSettings, config: &SshConfigFile| match resolve_ssh_target(
+            s,
+            config,
+            Some(h),
+            Some("pp".into()),
+        ) {
+            Ok(t) => match t.auth {
+                SshAuthMaterial::Key { path, passphrase } => {
+                    assert_eq!(passphrase.as_deref(), Some("pp"));
+                    Ok(path)
+                }
+                other => panic!("{other:?}"),
+            },
+            Err(e) => Err(e),
+        };
+        let mut s = ssh(SshAuth::Key);
+        s.user = Some("u".into());
+        let empty = SshConfigFile::default();
+        let e = key_of(&s, &empty).unwrap_err();
+        assert_eq!(
+            (e.kind, e.message.as_str()),
+            (ErrorKind::Invalid, "ssh key file required")
+        );
+
+        // OpenSSH defaults, in order: id_ed25519, id_ecdsa, id_rsa.
+        touch(&h.join(".ssh/id_rsa"));
+        assert_eq!(key_of(&s, &empty).unwrap(), h.join(".ssh/id_rsa"));
+        touch(&h.join(".ssh/id_ecdsa"));
+        assert_eq!(key_of(&s, &empty).unwrap(), h.join(".ssh/id_ecdsa"));
+        touch(&h.join(".ssh/id_ed25519"));
+        assert_eq!(key_of(&s, &empty).unwrap(), h.join(".ssh/id_ed25519"));
+
+        // The first existing IdentityFile beats the defaults.
+        touch(&h.join("keys/second"));
+        let config = SshConfigFile::parse(
+            "Host bastion\n  IdentityFile ~/keys/first\n  IdentityFile ~/keys/second\n",
+            h,
+        );
+        assert_eq!(key_of(&s, &config).unwrap(), h.join("keys/second"));
+
+        // The form's key file beats everything, even when it does not exist (the
+        // tunnel then reports it as unreadable).
+        s.key_file = Some("/elsewhere/key".into());
+        assert_eq!(
+            key_of(&s, &config).unwrap(),
+            PathBuf::from("/elsewhere/key")
+        );
+    }
+
+    #[tokio::test]
+    async fn sqlite_ignores_ssh_settings() {
+        let fx = fixture();
+        let mut c = sqlite_cfg(&fx);
+        c.ssh = Some(ssh(SshAuth::Password));
+        assert!(
+            !fx.mgr
+                .test_connection(&c, None, None, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let saved = fx.mgr.save_connection(c, None, None).await.unwrap();
+        assert_eq!(saved.ssh, None);
+    }
+
+    #[tokio::test]
+    async fn test_connection_reuses_ssh_secret_only_for_unchanged_identity() {
+        let secrets = Arc::new(CountingSecrets {
+            inner: MemorySecretStore::new(),
+            gets: AtomicUsize::new(0),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = manager(&dir, secrets.clone());
+        // Nothing listens on 127.0.0.1:1: reaching the network yields a Connection error.
+        let mut c = cfg(DriverKind::Postgres, PasswordMode::Ask);
+        c.host = "db.internal".into();
+        let mut s = ssh(SshAuth::Password);
+        s.host = "127.0.0.1".into();
+        s.port = Some(1);
+        s.user = Some("u".into());
+        c.ssh = Some(s);
+        let saved = mgr
+            .save_connection(c, None, Some("ssh-pw".into()))
+            .await
+            .unwrap();
+
+        // Unchanged identity: the stored SSH password is read, then the network is reached.
+        let err = mgr
+            .test_connection(&saved, Some("db".into()), None, None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Connection, "{}", err.message);
+        assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
+
+        // Another SSH server: the stored SSH password is never read nor sent.
+        let mut moved = saved.clone();
+        moved.ssh.as_mut().unwrap().host = "127.0.0.2".into();
+        let err = mgr
+            .test_connection(&moved, Some("db".into()), None, None)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (err.kind, err.message.as_str()),
+            (ErrorKind::Auth, "ssh password required")
+        );
+        assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
+
+        // A typed SSH password is always accepted.
+        let err = mgr
+            .test_connection(&moved, Some("db".into()), Some("typed".into()), None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Connection, "{}", err.message);
+        assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
     }
 }

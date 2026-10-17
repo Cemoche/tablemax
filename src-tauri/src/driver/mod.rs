@@ -42,8 +42,9 @@ impl DriverKind {
     }
 }
 
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// Built by the session manager from a stored `ConnectionConfig`; never deserialized
+/// from the frontend (`dial` must only ever point at a tunnel the app opened).
+#[derive(Clone)]
 pub struct ConnectParams {
     pub kind: DriverKind,
     pub host: String,
@@ -52,11 +53,9 @@ pub struct ConnectParams {
     pub password: Option<String>,
     pub database: Option<String>,
     pub sqlite_path: Option<PathBuf>,
-    #[serde(default)]
     pub ssl: SslConfig,
     /// When set, the TCP connection goes to this address (e.g. an SSH tunnel's local
     /// end) while `host` stays the name used for TLS verification and display.
-    #[serde(default)]
     pub dial: Option<SocketAddr>,
 }
 
@@ -169,34 +168,6 @@ pub trait Session: Send + Sync {
     async fn close(&self) -> AppResult<()>;
 }
 
-fn is_local_host(host: &str) -> bool {
-    host.starts_with('/')
-        || host.eq_ignore_ascii_case("localhost")
-        || host
-            .trim_matches(['[', ']'])
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-}
-
-/// Refuses unverified TLS to a remote server. Modes that do not verify the server
-/// (`Disable`, `Prefer`, `Require`) are only allowed for local hosts (`localhost`,
-/// loopback IPs, unix socket dirs) on a direct connection. `VerifyCa`/`VerifyFull`, or
-/// any connection with `dial` (SSH tunnel), are always allowed.
-pub fn ensure_local_host(p: &ConnectParams) -> AppResult<()> {
-    let unverified = matches!(
-        p.ssl.mode,
-        tls::SslMode::Disable | tls::SslMode::Prefer | tls::SslMode::Require
-    );
-    if p.dial.is_some() || !unverified || is_local_host(&p.host) {
-        Ok(())
-    } else {
-        Err(AppError::new(
-            ErrorKind::Connection,
-            "unverified TLS is only allowed for local hosts: use verify-full or verify-ca, or an SSH tunnel",
-        ))
-    }
-}
-
 pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {
     // Driver tasks replace these arms.
     match params.kind {
@@ -212,56 +183,6 @@ pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tls::SslMode;
-
-    fn params(host: &str, mode: SslMode) -> ConnectParams {
-        ConnectParams {
-            kind: DriverKind::Postgres,
-            host: host.into(),
-            port: 5432,
-            user: "u".into(),
-            password: None,
-            database: None,
-            sqlite_path: None,
-            ssl: SslConfig {
-                mode,
-                ..Default::default()
-            },
-            dial: None,
-        }
-    }
-
-    #[test]
-    fn ensure_local_host_allows_unverified_tls_only_locally() {
-        for h in [
-            "localhost",
-            "127.0.0.1",
-            "127.1.2.3",
-            "::1",
-            "/var/run/postgresql",
-        ] {
-            for mode in [SslMode::Disable, SslMode::Prefer, SslMode::Require] {
-                assert!(ensure_local_host(&params(h, mode)).is_ok(), "{h} {mode:?}");
-            }
-        }
-        for h in ["db.example.com", "10.0.0.5", "0.0.0.0"] {
-            for mode in [SslMode::Disable, SslMode::Prefer, SslMode::Require] {
-                let e = ensure_local_host(&params(h, mode)).unwrap_err();
-                assert_eq!(e.kind, ErrorKind::Connection, "{h} {mode:?}");
-                assert!(e.message.contains("unverified TLS"), "{}", e.message);
-            }
-        }
-    }
-
-    #[test]
-    fn ensure_local_host_allows_verified_or_tunnelled_remote() {
-        for mode in [SslMode::VerifyCa, SslMode::VerifyFull] {
-            assert!(ensure_local_host(&params("db.example.com", mode)).is_ok());
-        }
-        let mut p = params("db.example.com", SslMode::Prefer);
-        p.dial = Some("127.0.0.1:40000".parse().unwrap());
-        assert!(ensure_local_host(&p).is_ok());
-    }
 
     #[test]
     fn connect_params_debug_redacts_password() {

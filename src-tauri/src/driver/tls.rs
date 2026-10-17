@@ -46,6 +46,27 @@ pub struct SslConfig {
     pub key_file: Option<String>,
 }
 
+/// `localhost`, a loopback IP (bracketed or not) or a unix socket directory.
+fn is_local_host(host: &str) -> bool {
+    host.starts_with('/')
+        || host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// The SSL mode a new connection starts with: `VerifyFull` for a remote host reached
+/// directly, `Prefer` for a local host or through an SSH tunnel (the tunnel already
+/// encrypts and authenticates the path to the SSH server).
+pub fn default_ssl_mode(host: &str, over_ssh: bool) -> SslMode {
+    if over_ssh || is_local_host(host) {
+        SslMode::Prefer
+    } else {
+        SslMode::VerifyFull
+    }
+}
+
 /// Installs ring as the process-wide rustls provider (mysql_async builds its
 /// `ClientConfig` from the process default). Idempotent.
 pub fn install_crypto_provider() {
@@ -427,5 +448,25 @@ mod tests {
             serde_json::from_str(r#"{"mode":"verifyFull","caFile":"/ca.pem"}"#).unwrap();
         assert_eq!(c.mode, SslMode::VerifyFull);
         assert_eq!(c.ca_file.as_deref(), Some("/ca.pem"));
+    }
+
+    #[test]
+    fn default_ssl_mode_verifies_remote_direct_hosts_only() {
+        for h in ["db.example.com", "10.0.0.5", "0.0.0.0", "pg16"] {
+            assert_eq!(default_ssl_mode(h, false), SslMode::VerifyFull, "{h}");
+            assert_eq!(default_ssl_mode(h, true), SslMode::Prefer, "{h} over ssh");
+        }
+        for h in [
+            "localhost",
+            "LocalHost",
+            "127.0.0.1",
+            "127.1.2.3",
+            "::1",
+            "[::1]",
+            "/var/run/postgresql",
+        ] {
+            assert_eq!(default_ssl_mode(h, false), SslMode::Prefer, "{h}");
+            assert_eq!(default_ssl_mode(h, true), SslMode::Prefer, "{h} over ssh");
+        }
     }
 }

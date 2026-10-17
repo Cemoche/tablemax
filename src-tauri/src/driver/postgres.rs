@@ -139,7 +139,6 @@ fn pg_ssl_mode(mode: SslMode) -> PgSslMode {
 }
 
 pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
-    super::ensure_local_host(p)?;
     let tls =
         rustls_client_config(&p.ssl)?.map(|c| MakeRustlsConnect::new(Arc::unwrap_or_clone(c)));
     let mut cfg = Config::new();

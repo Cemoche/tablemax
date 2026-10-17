@@ -269,7 +269,6 @@ async fn open_session_conn(opts: Opts, mode: SslMode) -> AppResult<(Conn, Opts)>
 }
 
 pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
-    super::ensure_local_host(p)?;
     let (mut conn, opts) = open_session_conn(build_opts(p)?, p.ssl.mode).await?;
     let version = match query_first_string(&mut conn, "SELECT VERSION()").await {
         Ok(v) => v,

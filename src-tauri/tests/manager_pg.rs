@@ -7,12 +7,21 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tablemax_lib::driver::DriverKind;
+use tablemax_lib::driver::tls::SslConfig;
 use tablemax_lib::manager::{ExecEvent, SessionManager};
 use tablemax_lib::secrets::MemorySecretStore;
+use tablemax_lib::ssh::known_hosts::KnownHosts;
 use tablemax_lib::store::{ConnectionConfig, ConnectionStore, EnvTag, PasswordMode};
 use tokio::sync::mpsc;
 
 const WAIT: Duration = Duration::from_secs(15);
+
+fn known_hosts(dir: &tempfile::TempDir) -> KnownHosts {
+    KnownHosts {
+        system: None,
+        app: dir.path().join("known_hosts"),
+    }
+}
 
 #[tokio::test]
 async fn cancel_marks_batch_cancelled_pg() {
@@ -23,6 +32,7 @@ async fn cancel_marks_batch_cancelled_pg() {
     let mgr = Arc::new(SessionManager::new(
         Arc::new(store),
         Arc::new(MemorySecretStore::new()),
+        known_hosts(&dir),
     ));
     let cfg = ConnectionConfig {
         id: String::new(),
@@ -37,10 +47,18 @@ async fn cancel_marks_batch_cancelled_pg() {
         sqlite_path: None,
         password_mode: PasswordMode::Keyring,
         group: None,
+        ssl: SslConfig::default(),
+        ssh: None,
     };
-    let saved = mgr.save_connection(cfg, p.password.clone()).await.unwrap();
+    let saved = mgr
+        .save_connection(cfg, p.password.clone(), None)
+        .await
+        .unwrap();
     // Password comes from the (memory) keyring for both the browse and the SQL session.
-    let ws = mgr.open_workspace(&saved.id, None).await.unwrap();
+    let ws = mgr
+        .open_workspace(&saved.id, None, None, None)
+        .await
+        .unwrap();
     let sid = mgr.open_sql_session(&ws.workspace_id).await.unwrap();
 
     let events: Arc<Mutex<Vec<String>>> = Arc::default();
@@ -102,7 +120,11 @@ async fn test_connection_reuses_keyring_only_for_unchanged_identity_pg() {
     let p = common::params_from_url(url, DriverKind::Postgres);
     let dir = tempfile::tempdir().unwrap();
     let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
-    let mgr = SessionManager::new(Arc::new(store), Arc::new(MemorySecretStore::new()));
+    let mgr = SessionManager::new(
+        Arc::new(store),
+        Arc::new(MemorySecretStore::new()),
+        known_hosts(&dir),
+    );
     let cfg = ConnectionConfig {
         id: String::new(),
         name: "pg".into(),
@@ -116,15 +138,23 @@ async fn test_connection_reuses_keyring_only_for_unchanged_identity_pg() {
         sqlite_path: None,
         password_mode: PasswordMode::Keyring,
         group: None,
+        ssl: SslConfig::default(),
+        ssh: None,
     };
-    let saved = mgr.save_connection(cfg, p.password.clone()).await.unwrap();
+    let saved = mgr
+        .save_connection(cfg, p.password.clone(), None)
+        .await
+        .unwrap();
     // Same identity: the stored password authenticates against the real server.
-    let version = mgr.test_connection(&saved, None).await.unwrap();
+    let version = mgr.test_connection(&saved, None, None, None).await.unwrap();
     assert!(!version.is_empty());
     // Another user on the same server: the stored password must not be sent.
     let mut other = saved.clone();
     other.user = "someone_else".into();
-    let err = mgr.test_connection(&other, None).await.unwrap_err();
+    let err = mgr
+        .test_connection(&other, None, None, None)
+        .await
+        .unwrap_err();
     assert_eq!(err.kind, tablemax_lib::error::ErrorKind::Auth);
     assert_eq!(err.message, "password required");
 }

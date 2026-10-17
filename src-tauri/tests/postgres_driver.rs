@@ -347,16 +347,6 @@ fn pg_params(url: &str, host: &str, ssl: SslConfig) -> ConnectParams {
 }
 
 #[tokio::test]
-async fn pg_rejects_unverified_tls_to_remote_host() {
-    for mode in [SslMode::Disable, SslMode::Prefer, SslMode::Require] {
-        let p = pg_params(&pg_urls()[0], "10.0.0.5", ssl(mode, None));
-        let e = connect_postgres(&p).await.err().unwrap();
-        assert_eq!(e.kind, ErrorKind::Connection);
-        assert!(e.message.contains("unverified TLS"), "{}", e.message);
-    }
-}
-
-#[tokio::test]
 async fn pg_require_encrypts() {
     for url in pg_urls() {
         let s = connect_postgres(&pg_params(&url, "127.0.0.1", ssl(SslMode::Require, None)))

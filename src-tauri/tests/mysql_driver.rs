@@ -419,17 +419,6 @@ fn my_params(url: &str, kind: DriverKind, host: &str, ssl: SslConfig) -> Connect
 }
 
 #[tokio::test]
-async fn mysql_rejects_unverified_tls_to_remote_host() {
-    let (url, kind) = targets().remove(0);
-    for mode in [SslMode::Disable, SslMode::Prefer, SslMode::Require] {
-        let p = my_params(&url, kind, "10.0.0.5", ssl(mode, None));
-        let e = connect_mysql(&p).await.err().unwrap();
-        assert_eq!(e.kind, ErrorKind::Connection);
-        assert!(e.message.contains("unverified TLS"), "{}", e.message);
-    }
-}
-
-#[tokio::test]
 async fn mysql_require_encrypts() {
     for (url, kind) in targets() {
         let p = my_params(&url, kind, "127.0.0.1", ssl(SslMode::Require, None));
