@@ -4,6 +4,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { TableInfo } from "../../lib/types";
+import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { buildEditorTheme } from "../editor/SqlEditor";
 import { StructureTab } from "./StructureTab";
@@ -150,6 +151,22 @@ test("DDL is shown read-only and Copy writes it to the clipboard", async () => {
   await user.click(screen.getByRole("button", { name: s.copy }));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith(DDL));
   await screen.findByText(s.copied);
+});
+
+test("the DDL uses the editor font settings like the SQL editor", async () => {
+  useSettings.setState({
+    settings: { ...DEFAULT_SETTINGS, editorFontFamily: '"Fira Code", monospace', editorFontSize: 18 },
+  });
+  try {
+    renderTab();
+    await userEvent.click(await tab(s.tabs.ddl));
+    await waitFor(() => expect(screen.getByLabelText(s.ddlLabel)).toHaveTextContent(DDL));
+    const host = screen.getByLabelText(s.ddlLabel);
+    expect(host.style.getPropertyValue("--editor-font-family")).toBe('"Fira Code", monospace');
+    expect(host.style.getPropertyValue("--editor-font-size")).toBe("18px");
+  } finally {
+    useSettings.setState({ settings: DEFAULT_SETTINGS });
+  }
 });
 
 test("the DDL follows a forced dark theme while the OS is light", async () => {

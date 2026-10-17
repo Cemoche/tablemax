@@ -8,8 +8,9 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { AppError, Dialect, ForeignKeyInfo, ObjectRef, TableInfo } from "../../lib/types";
 import { useResolvedDark } from "../../lib/theme";
+import { useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
-import { DIALECTS, buildEditorTheme, highlight } from "../editor/SqlEditor";
+import { DIALECTS, buildEditorTheme, editorFontStyle, highlight } from "../editor/SqlEditor";
 
 const s = strings.structure;
 
@@ -154,6 +155,8 @@ function ForeignKeysTable({ info, workspaceId }: { info: TableInfo; workspaceId:
 
 function DdlView({ ddl, dialect }: { ddl: string; dialect: Dialect }) {
   const dark = useResolvedDark();
+  const fontFamily = useSettings((s) => s.settings.editorFontFamily);
+  const fontSize = useSettings((s) => s.settings.editorFontSize);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   useEffect(() => setCopyState("idle"), [ddl]);
   const extensions = useMemo(
@@ -189,7 +192,7 @@ function DdlView({ ddl, dialect }: { ddl: string; dialect: Dialect }) {
         <CodeMirror
           value={ddl}
           height="100%"
-          style={{ height: "100%" }}
+          style={editorFontStyle(fontFamily, fontSize)}
           aria-label={s.ddlLabel}
           theme="none"
           extensions={extensions}
