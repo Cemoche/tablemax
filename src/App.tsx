@@ -20,10 +20,12 @@ function App() {
   const [selected, setSelected] = useState<ConnectionConfig | null>(null);
   /** DB password pasted in a URL, pre-filled in the form of the unsaved connection. */
   const [draftPassword, setDraftPassword] = useState<string | null>(null);
+  const [draftSslExplicit, setDraftSslExplicit] = useState(false);
   const [urlDialog, setUrlDialog] = useState(false);
-  const select = (cfg: ConnectionConfig | null, password: string | null = null) => {
+  const select = (cfg: ConnectionConfig | null, password: string | null = null, sslExplicit = false) => {
     setSelected(cfg);
     setDraftPassword(password);
+    setDraftSslExplicit(sslExplicit);
   };
   const workspaces = useWorkspaces((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaces((s) => s.activeWorkspaceId);
@@ -91,6 +93,7 @@ function App() {
               <ConnectionForm
                 connection={selected}
                 initialPassword={draftPassword}
+                sslExplicit={draftSslExplicit}
                 onSaved={(cfg) => select(cfg)}
                 onDeleted={() => select(null)}
                 onConnect={open}
@@ -102,13 +105,13 @@ function App() {
       {urlDialog && (
         <UrlImportDialog
           onCancel={() => setUrlDialog(false)}
-          onResult={(config, password) => {
+          onResult={(config, password, sslExplicit) => {
             const draft = { ...blankConnection(), ...config };
             const fallback =
               draft.kind === "sqlite"
                 ? (draft.sqlitePath?.split("/").pop() ?? "")
                 : (draft.database ?? draft.host);
-            select({ ...draft, name: fallback }, password);
+            select({ ...draft, name: fallback }, password, sslExplicit);
             setUrlDialog(false);
           }}
         />

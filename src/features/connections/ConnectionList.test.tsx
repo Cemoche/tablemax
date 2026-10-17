@@ -100,3 +100,15 @@ test("the + menu offers New connection and New from URL", async () => {
   await user.click(screen.getByRole("menuitem", { name: "New connection" }));
   expect(onNew).toHaveBeenCalled();
 });
+
+test("Escape closes the + menu and so does a click outside", async () => {
+  const user = userEvent.setup();
+  renderList();
+  await user.click(screen.getByRole("button", { name: "New…" }));
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("menu")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "New…" }));
+  await user.click(screen.getByRole("searchbox"));
+  expect(screen.queryByRole("menu")).toBeNull();
+});

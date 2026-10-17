@@ -86,7 +86,7 @@ test("ssh param round-trips", () => {
     ssh: { host: "bastion.example", port: 2200, user: "deploy", auth: "agent" as const, keyFile: null, secretMode: "none" as const },
   };
   const url = toConnectionUrl(cfg);
-  expect(url).toBe("postgresql://u@db.internal:5432?ssh=deploy%40bastion.example%3A2200");
+  expect(url).toBe("postgresql://u@db.internal:5432?ssh=deploy%40bastion.example%3A2200&ssh-auth=agent");
   expect(parseConnectionUrl(url).config.ssh).toMatchObject({ host: "bastion.example", port: 2200, user: "deploy" });
   expect(parseConnectionUrl("postgresql://u@db.internal/x?ssh=bastion").config.ssh).toMatchObject({
     host: "bastion",
@@ -104,4 +104,65 @@ test("default ssl mode follows the host when sslmode is absent", () => {
 test("rejects unknown scheme and garbage", () => {
   expect(() => parseConnectionUrl("redis://x")).toThrow("Not a valid connection URL");
   expect(() => parseConnectionUrl("not a url")).toThrow("Not a valid connection URL");
+});
+
+const roundTrip = (cfg: ConnectionConfig) => parseConnectionUrl(toConnectionUrl(cfg));
+
+test("sqlite paths with # ? % and spaces round-trip", () => {
+  for (const path of ["/tmp/a#b.db", "/tmp/a?b=1.db", "/tmp/100%25.db", "/tmp/my dir/x y.db"]) {
+    const r = roundTrip({ ...pgCfg, kind: "sqlite", sqlitePath: path });
+    expect(r.config.sqlitePath).toBe(path);
+    expect(r.warnings).toEqual([]);
+  }
+});
+
+test("user and database with @ : / ? # % round-trip", () => {
+  const user = "a@b:c/d?e#f%g";
+  const database = "d@b:n/m?x#y%z";
+  const r = roundTrip({ ...pgCfg, user, database });
+  expect(r.config).toMatchObject({ user, database, host: "db.example.com" });
+  expect(r.password).toBeNull();
+  expect(r.warnings).toEqual([]);
+});
+
+test("ssh auth round-trips and password auth adds no param", () => {
+  const ssh = { host: "bastion", port: null, user: null, auth: "agent" as const, keyFile: null, secretMode: "none" as const };
+  const agent = toConnectionUrl({ ...pgCfg, ssh });
+  expect(agent).toContain("ssh-auth=agent");
+  expect(parseConnectionUrl(agent).config.ssh).toMatchObject({ auth: "agent", secretMode: "none" });
+  const key = toConnectionUrl({ ...pgCfg, ssh: { ...ssh, auth: "key", keyFile: "/home/u/id", secretMode: "keyring" } });
+  expect(key).toContain("ssh-auth=key");
+  expect(key).not.toContain("/home/u/id");
+  expect(parseConnectionUrl(key).config.ssh).toMatchObject({ auth: "key", keyFile: null });
+  const pw = toConnectionUrl({ ...pgCfg, ssh: { ...ssh, auth: "password", secretMode: "keyring" } });
+  expect(pw).not.toContain("ssh-auth");
+  expect(parseConnectionUrl(pw).config.ssh?.auth).toBe("password");
+});
+
+test("sslExplicit is true only for a valid sslmode", () => {
+  expect(parseConnectionUrl("postgresql://u@localhost/x").sslExplicit).toBe(false);
+  expect(parseConnectionUrl("postgresql://u@localhost/x?sslmode=prefer").sslExplicit).toBe(true);
+  expect(parseConnectionUrl("mysql://u@localhost/x?ssl-mode=PREFERRED").sslExplicit).toBe(true);
+  expect(parseConnectionUrl("postgresql://u@localhost/x?sslmode=allow").sslExplicit).toBe(false);
+});
+
+test("an unrecognized sslmode warns as invalid, not unknown", () => {
+  const r = parseConnectionUrl("postgresql://u@db.example.com/x?sslmode=allow");
+  expect(r.warnings).toEqual(['invalid sslmode "allow"']);
+  expect(r.config.ssl?.mode).toBe("verifyFull");
+});
+
+test("a password in the ssh user is dropped with a warning", () => {
+  const r = parseConnectionUrl("postgresql://u@db.internal/x?ssh=deploy%3Ahunter2%40bastion%3A22");
+  expect(r.config.ssh).toMatchObject({ host: "bastion", port: 22, user: "deploy" });
+  expect(JSON.stringify(r)).not.toContain("hunter2");
+  expect(r.warnings).toEqual(["ssh password in the URL was ignored"]);
+});
+
+test("a missing username is left unset and round-trips", () => {
+  const r = parseConnectionUrl("postgresql://db.example.com/x");
+  expect(r.config.user).toBeUndefined();
+  expect(toConnectionUrl({ ...pgCfg, user: "", database: "x" })).toBe(
+    "postgresql://db.example.com:5432/x?sslmode=prefer",
+  );
 });

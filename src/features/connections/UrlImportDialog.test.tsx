@@ -11,7 +11,7 @@ test("shows warnings and returns the config and password", async () => {
   await user.type(screen.getByLabelText("Connection URL"), "mysql://root:pw@127.0.0.1/app?foo=1");
   expect(screen.getByText('unknown parameter "foo"')).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Open form" }));
-  expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ kind: "mySql", port: 3306 }), "pw");
+  expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ kind: "mySql", port: 3306 }), "pw", false);
 });
 
 test("an invalid URL shows an error and cannot be opened", async () => {

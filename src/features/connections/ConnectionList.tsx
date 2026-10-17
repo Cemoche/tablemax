@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
 import type { ConnectionConfig } from "../../lib/types";
 
@@ -42,6 +42,15 @@ const ENV_CLASS: Record<ConnectionConfig["envTag"], string> = {
 export function ConnectionList({ items, selectedId, onSelect, onOpen, onNew, onNewFromUrl }: Props) {
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   const q = query.trim().toLowerCase();
   const shown = q
@@ -106,7 +115,11 @@ export function ConnectionList({ items, selectedId, onSelect, onOpen, onNew, onN
           onChange={(e) => setQuery(e.target.value)}
           className="min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 py-1"
         />
-        <div className="relative">
+        <div
+          ref={menuRef}
+          className="relative"
+          onKeyDown={(e) => e.key === "Escape" && setMenuOpen(false)}
+        >
           <button
             type="button"
             onClick={() => setMenuOpen((o) => !o)}
@@ -122,7 +135,6 @@ export function ConnectionList({ items, selectedId, onSelect, onOpen, onNew, onN
             <div
               role="menu"
               className="absolute right-0 z-10 mt-1 w-48 rounded-sm border border-border bg-surface py-1 shadow-lg"
-              onKeyDown={(e) => e.key === "Escape" && setMenuOpen(false)}
             >
               {(
                 [

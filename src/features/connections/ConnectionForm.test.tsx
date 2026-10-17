@@ -435,3 +435,18 @@ test("an unsaved pre-filled connection shows its password and group suggestions"
   expect(document.querySelector("#cf-groups option")?.getAttribute("value")).toBe("Work");
   expect(ipc.connectionSave).not.toHaveBeenCalled();
 });
+
+test("a URL draft without sslmode keeps following the host default", () => {
+  const draft = { ...saved, id: "", name: "d", host: "localhost" };
+  render(<ConnectionForm connection={draft} sslExplicit={false} onConnect={vi.fn()} />);
+  expect(sslMode()).toBe("prefer");
+  fireEvent.change(screen.getByLabelText("Host"), { target: { value: "db.example.com" } });
+  expect(sslMode()).toBe("verifyFull");
+});
+
+test("a URL draft with an explicit sslmode keeps it when the host changes", () => {
+  const draft = { ...saved, id: "", name: "d", host: "localhost" };
+  render(<ConnectionForm connection={draft} sslExplicit onConnect={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Host"), { target: { value: "db.example.com" } });
+  expect(sslMode()).toBe("prefer");
+});

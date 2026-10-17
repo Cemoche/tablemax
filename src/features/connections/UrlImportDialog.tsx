@@ -4,7 +4,7 @@ import { strings } from "../../lib/strings";
 import type { ConnectionConfig } from "../../lib/types";
 
 interface Props {
-  onResult: (config: Partial<ConnectionConfig>, password: string | null) => void;
+  onResult: (config: Partial<ConnectionConfig>, password: string | null, sslExplicit: boolean) => void;
   onCancel: () => void;
 }
 
@@ -35,7 +35,7 @@ export function UrlImportDialog({ onResult, onCancel }: Props) {
         aria-label={strings.url.dialogTitle}
         onSubmit={(e) => {
           e.preventDefault();
-          if (ok) onResult(ok.config, ok.password);
+          if (ok) onResult(ok.config, ok.password, ok.sslExplicit);
         }}
         className="w-[32rem] rounded-md border border-border bg-surface p-4 shadow-lg"
       >

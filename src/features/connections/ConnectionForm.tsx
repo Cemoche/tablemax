@@ -30,6 +30,8 @@ interface Props {
   connection: ConnectionConfig | null;
   /** Pre-filled DB password for an unsaved connection (from a pasted URL). */
   initialPassword?: string | null;
+  /** The pre-filled unsaved connection's SSL mode came from its URL, not from a default. */
+  sslExplicit?: boolean;
   /** Called with the saved config and the typed DB / SSH secrets (null when untouched). */
   onConnect: (cfg: ConnectionConfig, password: string | null, sshSecret: string | null) => void;
   onSaved?: (cfg: ConnectionConfig) => void;
@@ -41,15 +43,15 @@ type Notice = { tone: "ok" | "error"; text: string } | null;
 const field = "w-full rounded-sm border border-border bg-bg px-2 py-1";
 const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2 disabled:opacity-50";
 
-export function ConnectionForm({ connection, initialPassword = null, onConnect, onSaved, onDeleted }: Props) {
+export function ConnectionForm({ connection, initialPassword = null, sslExplicit = false, onConnect, onSaved, onDeleted }: Props) {
   const [cfg, setCfg] = useState<ConnectionConfig>(normalize(connection ?? blankConnection()));
   const [password, setPassword] = useState(initialPassword ?? "");
   const [sshSecret, setSshSecret] = useState("");
   /**
    * The SSL mode follows host and SSH (defaultSslMode) until the user picks one. A
-   * pre-filled unsaved connection (from a URL) already carries its mode.
+   * pre-filled unsaved connection (from a URL) keeps a mode its URL stated.
    */
-  const [sslPicked, setSslPicked] = useState(connection !== null);
+  const [sslPicked, setSslPicked] = useState(!!connection?.id || sslExplicit);
   const [busy, setBusy] = useState<"test" | "save" | "connect" | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const items = useConnections((s) => s.items);
@@ -60,7 +62,7 @@ export function ConnectionForm({ connection, initialPassword = null, onConnect, 
     setCfg(normalize(connection ?? blankConnection()));
     setPassword(initialPassword ?? "");
     setSshSecret("");
-    setSslPicked(connection !== null);
+    setSslPicked(!!connection?.id || sslExplicit);
     setNotice(null);
     // initialPassword travels with `connection`; it must not reset typed input alone.
     // eslint-disable-next-line react-hooks/exhaustive-deps
