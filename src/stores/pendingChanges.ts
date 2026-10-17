@@ -31,6 +31,8 @@ export interface PendingTab {
   errors: Record<string, string>;
   /** Apply failure not tied to one change (the commit itself, a cancel). */
   error: string | null;
+  /** A commit refused before anything was attempted (another tab commits, another table). */
+  refusal: string | null;
   /**
    * The last commit lost its connection: some or all changes may have been written. The
    * changes stay, but no commit is sent until a page loaded after it (a reload) settles.
@@ -73,6 +75,7 @@ const EMPTY: PendingTab = {
   deletes: {},
   errors: {},
   error: null,
+  refusal: null,
   outcomeUnknown: false,
   object: null,
 };
@@ -214,7 +217,7 @@ export const usePendingChanges = create<PendingState>((set, get) => {
       for (const id of touched) delete errors[id];
       const empty = changeCount(next) === 0;
       const bound = empty ? null : (next.object ?? object ?? null);
-      const tabs = { ...s.tabs, [tabId]: { ...next, errors, error: null, object: bound } };
+      const tabs = { ...s.tabs, [tabId]: { ...next, errors, error: null, refusal: null, object: bound } };
       return { tabs, blocked: empty ? { ...s.blocked, [tabId]: false } : s.blocked };
     });
     return true;
@@ -255,9 +258,19 @@ export const usePendingChanges = create<PendingState>((set, get) => {
       set((s) => {
         if (gone()) return s;
         const committingIn = { ...s.committingIn };
+        let tabs = s.tabs;
         if (on) committingIn[workspaceId] = tabId;
-        else if (committingIn[workspaceId] === tabId) delete committingIn[workspaceId];
-        return { committing: { ...s.committing, [tabId]: on }, committingIn };
+        else if (committingIn[workspaceId] === tabId) {
+          delete committingIn[workspaceId];
+          // The other tabs' "another tab is committing" refusals no longer hold.
+          tabs = Object.fromEntries(
+            Object.entries(tabs).map(([id, t]) => [
+              id,
+              t.refusal === strings.grid.otherTabCommitting ? { ...t, refusal: null } : t,
+            ]),
+          );
+        }
+        return { tabs, committing: { ...s.committing, [tabId]: on }, committingIn };
       });
     const fail = (changeId: string | null, message: string) =>
       set((s) => {
@@ -267,8 +280,8 @@ export const usePendingChanges = create<PendingState>((set, get) => {
           tabs: {
             ...s.tabs,
             [tabId]: changeId
-              ? { ...t, errors: { [changeId]: message }, error: null }
-              : { ...t, errors: {}, error: message },
+              ? { ...t, errors: { [changeId]: message }, error: null, refusal: null }
+              : { ...t, errors: {}, error: message, refusal: null },
           },
         };
       });
@@ -331,7 +344,7 @@ export const usePendingChanges = create<PendingState>((set, get) => {
           const t = s.tabs[tabId];
           if (!t) return s;
           return {
-            tabs: { ...s.tabs, [tabId]: { ...t, errors: {}, error: err.message, outcomeUnknown: true } },
+            tabs: { ...s.tabs, [tabId]: { ...t, errors: {}, error: err.message, refusal: null, outcomeUnknown: true } },
             epoch: { ...s.epoch, [tabId]: (s.epoch[tabId] ?? 0) + 1 },
           };
         });
@@ -535,8 +548,8 @@ export const usePendingChanges = create<PendingState>((set, get) => {
       const list = get().changeList(tabId);
       if (list.length === 0) return true;
       const bound = tab(tabId).object;
-      const refuse = (error: string) => {
-        set((s) => ({ tabs: { ...s.tabs, [tabId]: { ...tab(tabId), errors: {}, error } } }));
+      const refuse = (refusal: string) => {
+        set((s) => ({ tabs: { ...s.tabs, [tabId]: { ...tab(tabId), errors: {}, error: null, refusal } } }));
         return false;
       };
       if (bound && !sameObject(bound, object)) return refuse(strings.grid.otherTableChanges(bound.name));
@@ -552,7 +565,7 @@ export const usePendingChanges = create<PendingState>((set, get) => {
       // Another tab of the workspace started committing meanwhile: close and say why.
       const other = get().committingIn[c.workspaceId];
       if (other !== undefined && other !== tabId) {
-        set((s) => ({ tabs: { ...s.tabs, [tabId]: { ...tab(tabId), errors: {}, error: strings.grid.otherTabCommitting } } }));
+        set((s) => ({ tabs: { ...s.tabs, [tabId]: { ...tab(tabId), errors: {}, error: null, refusal: strings.grid.otherTabCommitting } } }));
         return false;
       }
       return apply(tabId, c.workspaceId, c.object, c.list, true);

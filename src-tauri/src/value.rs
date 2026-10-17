@@ -10,6 +10,7 @@ pub const EXACT_COUNT_THRESHOLD: u64 = 500_000;
 pub fn filtered_count_cap(exact_threshold: u64) -> u64 {
     exact_threshold.saturating_add(1)
 }
+
 pub const TEXT_PREVIEW_CHARS: usize = 10_000;
 pub const BYTES_PREVIEW: usize = 64;
 /// Hard cap on the rows a SQL-tab statement returns (`ResultSet::truncated` when hit).

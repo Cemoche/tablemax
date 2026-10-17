@@ -222,6 +222,7 @@ test("a page loaded after a commit settles it; a reload is allowed when the outc
         deletes: {},
         errors: {},
         error: "lost",
+        refusal: null,
         outcomeUnknown: true,
         object: obj,
       },

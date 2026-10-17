@@ -1153,6 +1153,19 @@ test("Discard after an unknown outcome drops the edits, reloads, and stays block
   expect(screen.getByRole("button", { name: commitName })).toBeEnabled();
 });
 
+test("a cancel that lands on the COMMIT shows the cause-neutral unknown-outcome text", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "connection", message: "The commit was interrupted" });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onEdit(1, 3, "changed"));
+  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  const text = await screen.findByText(strings.grid.commitOutcomeUnknown);
+  expect(text).toHaveTextContent(/interrupted/);
+  expect(text).not.toHaveTextContent(/connection was lost/i);
+});
+
 test("Mod+S from the structure view shows the confirmation, visible and focused", async () => {
   await refusedCommit();
   vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);

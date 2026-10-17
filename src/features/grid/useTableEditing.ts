@@ -296,6 +296,8 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
   const failure = (() => {
     if (!pending) return null;
     if (outcomeUnknown) return strings.grid.commitOutcomeUnknown;
+    // A refusal is no failure: nothing was attempted, so no "Commit failed:" prefix.
+    if (pending.refusal) return pending.refusal;
     if (pending.error) return strings.grid.commitFailed(pending.error);
     const list = store().changeList(tabId);
     const i = list.findIndex((c) => pending.errors[c.id] !== undefined);

@@ -48,7 +48,7 @@ export function isImportExpired(e: AppError): boolean {
 }
 
 /**
- * A protected connection refused an unconfirmed batch: nothing ran. Message = the
+ * A protected connection refused an unconfirmed batch or grid commit: nothing ran. Message = the
  * comma-separated indices of the statements that need confirmation ("1" or "0,1,2").
  */
 export function isConfirmationRequired(e: AppError): boolean {

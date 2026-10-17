@@ -276,7 +276,7 @@ export const strings = {
       `These changes belong to the table ${table}: nothing was written. Go back to it to commit them.`,
     nothingWritten: "Nothing was written; the changes are still pending.",
     commitOutcomeUnknown:
-      "The connection was lost during the commit: some or all changes may have been saved. Reload and check before committing again.",
+      "The commit was interrupted: some or all changes may have been saved. Reload and check before committing again.",
     cancelCommit: "Cancel",
     cancelCommitLabel: "Cancel the commit",
     otherTabCommitting: "Another tab of this connection is committing.",

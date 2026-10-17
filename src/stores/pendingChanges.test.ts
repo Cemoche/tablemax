@@ -339,7 +339,8 @@ test("changes are bound to the table of their first change", async () => {
   expect(s().count(T)).toBe(1);
   await expect(s().commit(T, "w1", other)).resolves.toBe(false);
   expect(ipc.changesApply).not.toHaveBeenCalled();
-  expect(s().tabs[T].error).toBe(strings.grid.otherTableChanges("order_lines"));
+  expect(s().tabs[T].refusal).toBe(strings.grid.otherTableChanges("order_lines"));
+  expect(s().tabs[T].error).toBeNull();
   expect(s().count(T)).toBe(1);
   // Once nothing is pending, the tab can take changes for another table.
   s().discard(T);
@@ -454,12 +455,16 @@ test("one committing tab per workspace", async () => {
   expect(s().committingIn).toEqual({ w1: T });
   // Another tab of the same workspace is refused (and told why); another workspace is not.
   await expect(s().commit("tab2", "w1", obj)).resolves.toBe(false);
-  expect(s().tabs.tab2.error).toBe(strings.grid.otherTabCommitting);
+  // A refusal, not a failure: nothing was attempted.
+  expect(s().tabs.tab2.refusal).toBe(strings.grid.otherTabCommitting);
+  expect(s().tabs.tab2.error).toBeNull();
   expect(ipc.changesApply).toHaveBeenCalledTimes(1);
   vi.mocked(ipc.changesApply).mockResolvedValueOnce(ok);
   await expect(s().commit("tab3", "w2", obj)).resolves.toBe(true);
   resolve(ok);
   await done;
+  // Released: tab2's refusal no longer holds.
+  expect(s().tabs.tab2.refusal).toBeNull();
   expect(s().committingIn).toEqual({});
   // The backend's own refusal of a concurrent commit is shown like any failure.
   vi.mocked(ipc.changesApply).mockRejectedValueOnce({
@@ -527,7 +532,8 @@ test("Run refused because another tab of the workspace commits closes the confir
   await expect(s().confirmCommit(T)).resolves.toBe(false);
   expect(ipc.changesApply).toHaveBeenCalledTimes(1);
   expect(s().confirming[T]).toBeUndefined();
-  expect(s().tabs[T].error).toBe(strings.grid.otherTabCommitting);
+  expect(s().tabs[T].refusal).toBe(strings.grid.otherTabCommitting);
+  expect(s().tabs[T].error).toBeNull();
   expect(s().count(T)).toBe(2);
   expect(s().committingIn).toEqual({ w1: "tab2" });
 });
@@ -577,4 +583,21 @@ test("a confirmed commit that fails shows the error, keeps the changes and asks 
   expect(s().committingIn).toEqual({});
   expect(ipc.changesPreview).toHaveBeenCalledTimes(1);
   expect(ipc.changesApply).toHaveBeenCalledTimes(2);
+});
+
+test("a confirmed commit that loses its connection is an unknown outcome and asks nothing again", async () => {
+  twoChanges();
+  confirmFirst();
+  vi.mocked(ipc.changesPreview).mockResolvedValueOnce(["a", "b"]);
+  await s().commit(T, "w1", obj);
+  const epoch = s().epochOf(T);
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "connection", message: "gone" });
+  await expect(s().confirmCommit(T)).resolves.toBe(false);
+  expect(s().tabs[T].outcomeUnknown).toBe(true);
+  expect(s().epochOf(T)).toBe(epoch + 1);
+  expect(s().count(T)).toBe(2);
+  expect(s().confirming[T]).toBeUndefined();
+  expect(s().committingIn).toEqual({});
+  expect(s().committing[T]).toBe(false);
+  expect(ipc.changesPreview).toHaveBeenCalledTimes(1);
 });
