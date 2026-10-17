@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use common::{mysql_urls, params_from_url, unique_schema};
 use tablemax_lib::driver::mysql::connect_mysql;
 use tablemax_lib::driver::tls::SslConfig;
-use tablemax_lib::driver::{ConnectParams, DriverKind, Session};
+use tablemax_lib::driver::{ConnectParams, DriverKind};
 use tablemax_lib::error::ErrorKind;
 use tablemax_lib::manager::{ExecEvent, SessionManager};
 use tablemax_lib::secrets::MemorySecretStore;
@@ -117,8 +117,7 @@ async fn batch(mgr: &SessionManager, sid: &str, statements: &[&str]) -> Vec<Got>
     };
     let owned: Vec<String> = statements.iter().map(|s| s.to_string()).collect();
     mgr.execute_batch(sid, owned, sink).await.unwrap();
-    let out = std::mem::take(&mut *events.lock().unwrap());
-    out
+    std::mem::take(&mut *events.lock().unwrap())
 }
 
 #[tokio::test]

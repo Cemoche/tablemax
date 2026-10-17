@@ -573,7 +573,7 @@ async fn failed_queries_cleanup_keeps_the_connection() {
                 .into_iter()
                 .map(|c| c.id)
                 .collect::<Vec<_>>(),
-            [a.id.clone()]
+            std::slice::from_ref(&a.id)
         );
         fx.mgr.delete_connection(&a.id).await.unwrap();
     }
