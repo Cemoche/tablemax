@@ -227,8 +227,12 @@ pub async fn table_count(
 pub async fn sql_session_open(
     state: State<'_, SessionManager>,
     workspace_id: String,
+    database: Option<String>,
 ) -> AppResult<String> {
-    state.open_sql_session(&workspace_id).await
+    // `database` (PostgreSQL): the query tab's own database, see `open_sql_session_on`.
+    state
+        .open_sql_session_on(&workspace_id, database.as_deref())
+        .await
 }
 
 #[tauri::command]

@@ -561,6 +561,29 @@ async fn pg_switch_database() {
             scalar(&m.mgr, &new_sql, "select current_database()::text").await,
             other
         );
+        // A query tab whose session was lost reopens it on ITS database, not the
+        // workspace's current one.
+        let reopened = m
+            .mgr
+            .open_sql_session_on(&ws.workspace_id, Some(&original_db))
+            .await
+            .unwrap();
+        assert_eq!(
+            scalar(&m.mgr, &reopened, "select current_database()::text").await,
+            original_db
+        );
+        let e = m
+            .mgr
+            .open_sql_session_on(&ws.workspace_id, Some("tablemax_p4_missing"))
+            .await
+            .unwrap_err();
+        assert_eq!(e.kind, ErrorKind::NotFound, "{}", e.message);
+        let e = m
+            .mgr
+            .open_sql_session_on(&ws.workspace_id, Some(""))
+            .await
+            .unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Invalid, "{}", e.message);
         m.mgr.close_workspace(&ws.workspace_id).await.unwrap();
         admin.close().await.unwrap();
     }
@@ -580,6 +603,13 @@ async fn mysql_and_sqlite_do_not_switch_database() {
         let e = m
             .mgr
             .switch_database(&ws.workspace_id, "whatever")
+            .await
+            .unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Invalid, "{}", e.message);
+        // Nor does a SQL session open on another database.
+        let e = m
+            .mgr
+            .open_sql_session_on(&ws.workspace_id, Some("whatever"))
             .await
             .unwrap_err();
         assert_eq!(e.kind, ErrorKind::Invalid, "{}", e.message);
