@@ -11,7 +11,7 @@ Plan: `docs/superpowers/plans/2026-10-17-tablemax-team-setup.md`. Branch `feat/t
 | Hook giving each session its branch and issue (issue title marked as untrusted data) | `.claude/hooks/session-context.sh` | same |
 | Skills `/pick-issue`, `/work-issue`, `/ship`, `/issue-comment`, `/plan-to-issues` | `.claude/skills/*/SKILL.md` | `gh` flags checked against `gh <cmd> --help` (gh 2.94) |
 | Plan → issues script | `scripts/plan-to-issues.mjs` | `scripts/plan-to-issues.test.mjs` (in `pnpm test`) |
-| CI: frontend, backend (clippy + cargo test on the test databases), hygiene | `.github/workflows/ci.yml` | actionlint 1.7.7, YAML parse; **not run on GitHub yet** |
+| CI: frontend, backend (clippy `--all-targets` + cargo test on the test databases), hygiene | `.github/workflows/ci.yml` | actionlint 1.7.7, YAML parse; **not run on GitHub yet** |
 | Secret scan of tracked files | `scripts/check-no-secrets.sh` (+ `.allow`) | run on the repo and on a throwaway repo with planted tokens |
 | GitHub bootstrap | `scripts/github-bootstrap.sh` | `bash scripts/test-github-bootstrap.sh` (fake `gh`), `--dry-run` against the real repo |
 | Default labels in the issue forms (`type:task` + `status:ready`, `type:bug` + `status:triage`) | `.github/ISSUE_TEMPLATE/*.yml` | YAML parse |

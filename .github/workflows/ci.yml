@@ -40,6 +40,14 @@ jobs:
     name: Backend (clippy, cargo test with test databases)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # The test stack's compose project and host ports, spelled out (scripts/test-dbs.sh
+    # defaults): the logs step below reads the same project.
+    env:
+      TABLEMAX_TEST_PROJECT: tablemax-test-ci
+      TABLEMAX_TEST_PG_PORT: "54321"
+      TABLEMAX_TEST_MYSQL_PORT: "33061"
+      TABLEMAX_TEST_MARIADB_PORT: "33062"
+      TABLEMAX_TEST_SSH_PORT: "2222"
     steps:
       - uses: actions/checkout@v7
       - name: System packages (Tauri, test tools)
@@ -54,8 +62,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Clippy (the Rust half of pnpm lint)
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: Clippy, tests included (stricter than the Rust half of pnpm lint)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Start the test databases and sshd
         run: bash scripts/test-dbs.sh up
       - name: cargo test (same as pnpm test:rust)
@@ -64,12 +72,14 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml
       - name: Container logs on failure
         if: failure()
-        run: docker compose -p tablemax-test -f docker-compose.test.yml logs --tail 200
+        run: docker compose -p "$TABLEMAX_TEST_PROJECT" -f docker-compose.test.yml logs --tail 200
       - name: Stop the test databases
         if: always()
         run: bash scripts/test-dbs.sh down
 
   hygiene:
+    # The keymap action-id fixture (src/lib/keymap-actions.json) is checked by vitest
+    # (src/lib/keymap.test.ts, frontend job) and cargo test (settings.rs, backend job).
     name: Hygiene (Claude hooks, GitHub bootstrap, secrets)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
