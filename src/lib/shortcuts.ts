@@ -109,8 +109,10 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 /**
  * Registers a window `keydown` shortcut for the lifetime of the component. A matching
  * event is `preventDefault`ed (and stopped with `stopPropagation`) before `handler` runs.
- * Skipped on auto-repeat, while a modal is open (unless `allowInModal`) and, with
- * `skipInEditable`, in a field.
+ * Not while a modal is open (unless `allowInModal`) nor, with `skipInEditable`, in a field.
+ * A held combination acts once: its auto-repeats are prevented (and stopped) like the
+ * press, so they never reach the default action or the focused element, but `handler`
+ * does not run again.
  */
 export function useShortcut(
   spec: string,
@@ -129,11 +131,12 @@ export function useShortcut(
   useEffect(() => {
     if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!matchShortcut(e, spec)) return;
+      if (!matchCombination(e, spec)) return;
       if (skipInEditable && isEditableTarget(e.target)) return;
       if (!allowInModal && isModalOpen()) return;
       e.preventDefault();
       if (stopPropagation) e.stopPropagation();
+      if (e.repeat) return;
       handlerRef.current(e);
     };
     window.addEventListener("keydown", onKey, capture);

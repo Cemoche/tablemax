@@ -131,3 +131,23 @@ test("a combination with no modifier to hold switches once per press, without th
   // The least recently used tab (mru is now a, c, b).
   expect(active()).toBe("b");
 });
+
+test("held Ctrl+Tab repeats are prevented (the Tab never moves focus) without advancing", () => {
+  render(<TabSwitcher workspace={workspace} />);
+  const fire = (init: KeyboardEventInit) => {
+    const e = new KeyboardEvent("keydown", { code: "Tab", key: "Tab", ctrlKey: true, cancelable: true, ...init });
+    act(() => {
+      window.dispatchEvent(e);
+    });
+    return e;
+  };
+  fire({});
+  expect(fire({ repeat: true }).defaultPrevented).toBe(true);
+  expect(fire({ repeat: true, shiftKey: true }).defaultPrevented).toBe(true);
+  expect(selected()).toHaveTextContent("Alpha");
+  releaseCtrl();
+  expect(active()).toBe("a");
+  // A repeat arriving with the list closed (e.g. after Escape) is prevented too, opening nothing.
+  expect(fire({ repeat: true }).defaultPrevented).toBe(true);
+  expect(screen.queryByRole("listbox")).toBeNull();
+});

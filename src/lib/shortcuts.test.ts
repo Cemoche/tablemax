@@ -172,3 +172,42 @@ test("matchCombination is matchShortcut without the auto-repeat rule", () => {
   expect(matchCombination(key({ code: "Enter", ctrlKey: true }), "Mod+Enter")).toBe(true);
   expect(matchCombination(key({ code: "Enter", metaKey: true, repeat: true }), "Mod+Enter")).toBe(false);
 });
+
+test("a held combination acts once, but its repeats stay the shortcut's (prevented and stopped)", () => {
+  platform("Linux x86_64");
+  const child = document.createElement("div");
+  document.body.appendChild(child);
+  const childKey = vi.fn();
+  child.addEventListener("keydown", childKey);
+  const handler = vi.fn();
+  renderHook(() => useShortcut("Alt+1", handler, { capture: true, stopPropagation: true, skipInEditable: true }));
+  const fire = (target: Element, init: KeyboardEventInit = {}) => {
+    const e = key({ code: "Digit1", key: "1", altKey: true, bubbles: true, cancelable: true, ...init });
+    target.dispatchEvent(e);
+    return e;
+  };
+  fire(child);
+  const repeats = [fire(child, { repeat: true }), fire(child, { repeat: true })];
+  expect(handler).toHaveBeenCalledTimes(1);
+  expect(repeats.every((e) => e.defaultPrevented)).toBe(true);
+  expect(childKey).not.toHaveBeenCalled();
+  // A repeat in a field or under a modal is not ours: left alone.
+  const input = document.createElement("input");
+  document.body.appendChild(input);
+  expect(fire(input, { repeat: true }).defaultPrevented).toBe(false);
+  const modal = document.createElement("div");
+  modal.setAttribute("aria-modal", "true");
+  document.body.appendChild(modal);
+  expect(fire(child, { repeat: true }).defaultPrevented).toBe(false);
+  expect(handler).toHaveBeenCalledTimes(1);
+});
+
+test("without stopPropagation a repeat is still prevented (no default action), not run", () => {
+  platform("Linux x86_64");
+  const handler = vi.fn();
+  renderHook(() => useShortcut("Mod+T", handler));
+  const e = key({ code: "KeyT", ctrlKey: true, repeat: true, cancelable: true });
+  window.dispatchEvent(e);
+  expect(e.defaultPrevented).toBe(true);
+  expect(handler).not.toHaveBeenCalled();
+});

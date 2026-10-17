@@ -100,3 +100,9 @@ test("a custom close-tab combination closes the tab; Mod+W no longer does", () =
   press({ code: "F4" });
   expect(tabs()).toHaveLength(0);
 });
+
+test("a held Mod+T opens exactly one tab", () => {
+  press({ code: "KeyT" });
+  for (let i = 0; i < 5; i++) press({ code: "KeyT", repeat: true });
+  expect(tabs()).toHaveLength(2);
+});

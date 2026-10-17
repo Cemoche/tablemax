@@ -873,6 +873,37 @@ test("Alt+1 / Alt+2 never reach the focused grid (it would start a cell edit)", 
   expect(gridKey.mock.calls.map(([e]) => (e as KeyboardEvent).code)).not.toContain("Digit2");
 });
 
+test("a held Alt+1 / Alt+2: the repeats never reach the grid (no type-to-edit) and are prevented", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  const el = await screen.findByTestId("grid");
+  el.tabIndex = 0;
+  el.focus();
+  const gridKey = vi.fn();
+  el.addEventListener("keydown", gridKey);
+  const hold = (digit: string, repeat: boolean) => {
+    const e = new KeyboardEvent("keydown", {
+      code: `Digit${digit}`,
+      key: digit,
+      altKey: true,
+      repeat,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      el.dispatchEvent(e);
+    });
+    return e;
+  };
+  hold("2", false);
+  const repeats = [hold("2", true), hold("2", true), hold("1", true)];
+  expect(repeats.every((e) => e.defaultPrevented)).toBe(true);
+  expect(gridKey).not.toHaveBeenCalled();
+  // The press switched; its repeats (even of Alt+1) did nothing more.
+  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
+});
+
 test("Mod+I toggles row details on the physical I key, strictly Ctrl off macOS", async () => {
   const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   onTestFinished(() => spy.mockRestore());

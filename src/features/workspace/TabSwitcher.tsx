@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useEffectiveShortcut } from "../../lib/keymap";
 import { isMac } from "../../lib/platform";
-import { isModalOpen, matchShortcut } from "../../lib/shortcuts";
+import { isModalOpen, matchCombination } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { tabKindLabel, tabsByMru } from "./tabInfo";
@@ -46,12 +46,14 @@ export function TabSwitcher({ workspace }: { workspace: Workspace }) {
       setIndex(i);
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      const fwd = matchShortcut(e, nextSpec);
-      const back = !fwd && matchShortcut(e, prevSpec);
+      // Repeats of a held combination are prevented (Tab would move the focus), never acted on.
+      const fwd = matchCombination(e, nextSpec);
+      const back = !fwd && matchCombination(e, prevSpec);
       const cur = indexRef.current;
       if (cur !== null) {
         if (fwd || back) {
           e.preventDefault();
+          if (e.repeat) return;
           const n = tabsByMru(wsRef.current).length;
           set((cur + (fwd ? 1 : -1) + n) % n);
         } else if (e.code === "Escape") {
@@ -63,12 +65,13 @@ export function TabSwitcher({ workspace }: { workspace: Workspace }) {
       if (!fwd && !back) return;
       if (isModalOpen()) return;
       e.preventDefault();
+      if (e.repeat) return;
       const tabs = tabsByMru(wsRef.current);
       const n = tabs.length;
       if (n < 2) return;
       const target = fwd ? 1 : n - 1;
       heldRef.current = heldModifiers(fwd ? nextSpec : prevSpec);
-      // Nothing held to release: no list to cycle, switch now.
+      // Nothing held to release: no list to cycle (index and heldRef stay unused), switch now.
       if (heldRef.current.length === 0) activateTab(id, tabs[target].id);
       else set(target);
     };

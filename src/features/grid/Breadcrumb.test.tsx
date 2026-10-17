@@ -140,6 +140,22 @@ test("with an empty trail Alt+← is left to the page (not prevented)", () => {
   expect(e.defaultPrevented).toBe(false);
 });
 
+test("a held Alt+← goes back once; its repeats are prevented", () => {
+  render(<Harness />);
+  const hold = (repeat: boolean) => {
+    const e = new KeyboardEvent("keydown", { code: "ArrowLeft", key: "ArrowLeft", altKey: true, repeat, cancelable: true });
+    act(() => {
+      window.dispatchEvent(e);
+    });
+    return e;
+  };
+  expect(hold(false).defaultPrevented).toBe(true);
+  expect(hold(true).defaultPrevented).toBe(true);
+  expect(hold(true).defaultPrevented).toBe(true);
+  expect(tab()).toMatchObject({ object: lines });
+  expect(useGridViews.getState().getTrail("t1")).toEqual([{ object: orders, view: ordersView }]);
+});
+
 test("going back is blocked while changes are pending", async () => {
   const key: RowKey = [["id", { t: "int", v: 42 }]];
   usePendingChanges.getState().toggleDelete("t1", customers, key);
