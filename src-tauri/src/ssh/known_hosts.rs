@@ -10,6 +10,11 @@ pub enum HostKeyVerdict {
     Known,
     Unknown { fingerprint: String },
     Changed { fingerprint: String },
+    /// A known_hosts file could not be read or parsed, so the key cannot be
+    /// checked. Fail closed: never offer to trust. Task 3 maps this to
+    /// `ErrorKind::Connection` with the message
+    /// "cannot verify the SSH host key: <reason>".
+    Unverifiable { reason: String },
 }
 
 pub struct KnownHosts {
@@ -28,17 +33,18 @@ enum FileVerdict {
     Known,
     Unknown,
     Changed,
+    Unverifiable(String),
 }
 
 fn check_file(path: &Path, host: &str, port: u16, key: &PublicKey) -> FileVerdict {
-    if !path.is_file() {
-        return FileVerdict::Unknown;
-    }
     match russh::keys::check_known_hosts_path(host, port, key, path) {
         Ok(true) => FileVerdict::Known,
+        Ok(false) => FileVerdict::Unknown,
         Err(russh::keys::Error::KeyChanged { .. }) => FileVerdict::Changed,
-        // Not found, or an unreadable/garbled file: nothing is known.
-        Ok(false) | Err(_) => FileVerdict::Unknown,
+        Err(russh::keys::Error::IO(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            FileVerdict::Unknown
+        }
+        Err(e) => FileVerdict::Unverifiable(format!("{}: {e}", path.display())),
     }
 }
 
@@ -51,9 +57,21 @@ impl KnownHosts {
             .map(|p| check_file(p, host, port, key))
             .collect();
         let fingerprint = fingerprint(key);
+        // Changed > Unverifiable > Known > Unknown.
         if verdicts.iter().any(|v| matches!(v, FileVerdict::Changed)) {
-            HostKeyVerdict::Changed { fingerprint }
-        } else if verdicts.iter().any(|v| matches!(v, FileVerdict::Known)) {
+            return HostKeyVerdict::Changed { fingerprint };
+        }
+        let reasons: Vec<&str> = verdicts
+            .iter()
+            .filter_map(|v| match v {
+                FileVerdict::Unverifiable(r) => Some(r.as_str()),
+                _ => None,
+            })
+            .collect();
+        if !reasons.is_empty() {
+            return HostKeyVerdict::Unverifiable { reason: reasons.join("; ") };
+        }
+        if verdicts.iter().any(|v| matches!(v, FileVerdict::Known)) {
             HostKeyVerdict::Known
         } else {
             HostKeyVerdict::Unknown { fingerprint }
@@ -134,5 +152,43 @@ mod tests {
         kh.trust("db.example", 2222, &k).unwrap();
         assert_eq!(kh.verify("db.example", 2222, &k), HostKeyVerdict::Known);
         assert!(matches!(kh.verify("db.example", 22, &k), HostKeyVerdict::Unknown { .. }));
+    }
+
+    #[test]
+    fn garbage_matching_line_is_unverifiable_even_if_app_knows_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let k = key();
+        let sys = dir.path().join("sys");
+        std::fs::write(&sys, "db.example ssh-ed25519 !!!notbase64!!!\n").unwrap();
+        let kh = KnownHosts { system: Some(sys.clone()), ..kh(dir.path()) };
+        kh.trust("db.example", 22, &k).unwrap();
+        match kh.verify("db.example", 22, &k) {
+            HostKeyVerdict::Unverifiable { reason } => assert!(reason.contains("sys")),
+            other => panic!("expected Unverifiable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_system_file_is_nothing_known() {
+        let dir = tempfile::tempdir().unwrap();
+        let k = key();
+        let kh = KnownHosts { system: Some(dir.path().join("absent")), ..kh(dir.path()) };
+        assert!(matches!(kh.verify("h", 22, &k), HostKeyVerdict::Unknown { .. }));
+        kh.trust("h", 22, &k).unwrap();
+        assert_eq!(kh.verify("h", 22, &k), HostKeyVerdict::Known);
+    }
+
+    #[test]
+    fn changed_in_either_file_wins_over_known_in_the_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let (k1, k2) = (key(), key());
+        let sys = dir.path().join("sys");
+        let kh = KnownHosts { system: Some(sys.clone()), ..kh(dir.path()) };
+        // system has k1, app has k2; presented k2 -> system Changed, app Known
+        russh::keys::known_hosts::learn_known_hosts_path("h", 22, &k1, &sys).unwrap();
+        kh.trust("h", 22, &k2).unwrap();
+        assert_eq!(kh.verify("h", 22, &k2), HostKeyVerdict::Changed { fingerprint: fingerprint(&k2) });
+        // presented k1 -> system Known, app Changed
+        assert_eq!(kh.verify("h", 22, &k1), HostKeyVerdict::Changed { fingerprint: fingerprint(&k1) });
     }
 }

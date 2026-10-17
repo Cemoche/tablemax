@@ -108,7 +108,13 @@ fn include_paths(arg: &str, home: &Path) -> Vec<PathBuf> {
 }
 
 /// Flattens the text and its includes into `(key, args)` directives.
-fn directives(text: &str, home: &Path, depth: usize, out: &mut Vec<(String, Vec<String>)>) {
+fn directives(
+    text: &str,
+    home: &Path,
+    depth: usize,
+    seen: &mut Vec<PathBuf>,
+    out: &mut Vec<(String, Vec<String>)>,
+) {
     for line in text.lines() {
         let Some((key, args)) = split_line(line) else { continue };
         if key == "include" {
@@ -117,8 +123,13 @@ fn directives(text: &str, home: &Path, depth: usize, out: &mut Vec<(String, Vec<
             }
             for arg in &args {
                 for file in include_paths(arg, home) {
+                    let canon = std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone());
+                    if seen.contains(&canon) {
+                        continue;
+                    }
+                    seen.push(canon);
                     if let Ok(inner) = std::fs::read_to_string(&file) {
-                        directives(&inner, home, depth + 1, out);
+                        directives(&inner, home, depth + 1, seen, out);
                     }
                 }
             }
@@ -131,7 +142,7 @@ fn directives(text: &str, home: &Path, depth: usize, out: &mut Vec<(String, Vec<
 impl SshConfigFile {
     pub fn parse(text: &str, home: &Path) -> Self {
         let mut flat = Vec::new();
-        directives(text, home, 0, &mut flat);
+        directives(text, home, 0, &mut Vec::new(), &mut flat);
         let mut blocks = vec![Block::default()];
         let mut skipping = false;
         for (key, args) in flat {
@@ -326,5 +337,15 @@ mod tests {
         let r = c.resolve("w");
         assert_eq!((r.host_name.as_str(), r.port, r.user.as_deref()), ("work.example", 2022, Some("me")));
         assert_eq!(c.aliases(), vec!["w"]);
+    }
+
+    #[test]
+    fn self_including_config_terminates() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssh = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        std::fs::write(ssh.join("config"), "Include *\nHost h\n  Port 2200\n").unwrap();
+        let c = SshConfigFile::load(&ssh.join("config"), dir.path());
+        assert_eq!(c.resolve("h").port, 2200);
     }
 }
