@@ -82,6 +82,11 @@ quitting with some; a SQL session opened while a switch runs may land on the old
 Final polish: CI should run `cargo clippy --all-targets -- -D warnings` (the review wave
 made it pass; `pnpm lint` and CI still run clippy without `--all-targets`).
 
+8. **Preview tab × page size setting** (found in the smoke run, `integration-v1-smoke.md`):
+   plan 5 Task 6 latches the page size into the grid view on mount, which plan 4's
+   subscription took for a user change, pinning every preview tab. It now pins on page,
+   sort, filters or trail changes only.
+
 ## Results (head after the fixes)
 
 `pnpm install --frozen-lockfile`, `pnpm test` (76 files, 740 tests), `pnpm lint`,
