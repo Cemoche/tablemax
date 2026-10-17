@@ -448,6 +448,27 @@ async fn pg_ddl_mentions_columns_and_constraints() {
 }
 
 #[tokio::test]
+async fn pg_invalid_unique_index_is_never_a_row_key() {
+    for url in pg_urls() {
+        let fx = pg_fixture(&url).await;
+        let q = format!("\"{}\"", fx.schema);
+        assert_eq!(fx.info("uniq").await.row_key, Some(vec!["a".to_string()]));
+        // What a failed CREATE UNIQUE INDEX CONCURRENTLY leaves behind: an index that
+        // does not enforce uniqueness (the test user is a superuser).
+        fx.run(&format!(
+            "UPDATE pg_index SET indisvalid = false \
+             WHERE indexrelid = '{q}.uniq_a_key'::regclass"
+        ))
+        .await;
+        let uniq = fx.info("uniq").await;
+        assert_eq!(uniq.row_key, None, "{:?}", uniq.indexes);
+        assert!(!uniq.editable());
+        // Still listed: it exists (and shows in the DDL).
+        assert!(uniq.indexes.iter().any(|i| i.name == "uniq_a_key"));
+    }
+}
+
+#[tokio::test]
 async fn pg_missing_table_is_not_found() {
     for url in pg_urls() {
         check_missing(&pg_fixture(&url).await).await;

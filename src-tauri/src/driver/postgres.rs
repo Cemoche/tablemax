@@ -382,6 +382,9 @@ struct PgColumn {
 struct PgIndex {
     info: IndexInfo,
     partial: bool,
+    /// `indisvalid AND indislive`: an invalid index (e.g. left by a failed
+    /// `CREATE UNIQUE INDEX CONCURRENTLY`) does not enforce uniqueness.
+    valid: bool,
     /// Backs a PRIMARY KEY / UNIQUE / EXCLUDE constraint (part of the constraint's DDL).
     constraint: bool,
 }
@@ -488,7 +491,8 @@ impl PgSession {
                      AND a.attnum = ix.indkey[s.k - 1] AND a.attnum > 0 \
                    ORDER BY s.k), \
                  EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = ix.indexrelid \
-                   AND con.conrelid = ix.indrelid AND con.contype IN ('p', 'u', 'x')) \
+                   AND con.conrelid = ix.indrelid AND con.contype IN ('p', 'u', 'x')), \
+                 ix.indisvalid AND ix.indislive \
                  FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid \
                  WHERE ix.indrelid = $1",
                 &[&oid],
@@ -507,6 +511,7 @@ impl PgSession {
                 },
                 partial: r.get(4),
                 constraint: r.get(6),
+                valid: r.get(7),
             })
             .collect();
         // Primary first, then by name (as `meta::sort_indexes`).
@@ -767,7 +772,10 @@ impl Session for PgSession {
             .unwrap_or_default();
         let row_key = derive_row_key(
             &primary_key,
-            indexes.iter().filter(|i| !i.partial).map(|i| &i.info),
+            indexes
+                .iter()
+                .filter(|i| i.valid && !i.partial)
+                .map(|i| &i.info),
             &columns,
         );
         let is_view = rel.relkind == "v" || rel.relkind == "m";
