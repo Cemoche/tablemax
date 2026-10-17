@@ -210,8 +210,11 @@ fn cell_select(d: Dialect, info: &TableInfo, key: &RowKey, expr: &str) -> AppRes
 }
 
 /// The statement with each parameter replaced by an escaped literal (`'…'`, `'` doubled;
-/// MySQL also doubles `\`; bytes as `'\x…'` on PostgreSQL, `X'…'` elsewhere). For display
-/// only: never executed.
+/// MySQL also doubles `\`). PostgreSQL writes a text with a backslash as `E'…'` with `\`
+/// doubled and bytes as `E'\\x…'`, so the preview reads the same whatever
+/// `standard_conforming_strings` is; bytes are `X'…'` on MySQL and SQLite. Same literals as
+/// the frontend's `quoteString`/`bytesLiteral` (src/lib/sqlIdent.ts). For display only:
+/// never executed.
 pub fn render_preview(d: Dialect, stmt: &Statement) -> String {
     let literal = |p: &SqlParam| match p {
         // MySQL treats `\` as an escape under its default sql_mode: doubled, so the preview
@@ -220,11 +223,14 @@ pub fn render_preview(d: Dialect, stmt: &Statement) -> String {
         SqlParam::Text(t) if d == Dialect::MySql => {
             format!("'{}'", t.replace('\\', "\\\\").replace('\'', "''"))
         }
+        SqlParam::Text(t) if d == Dialect::Postgres && t.contains('\\') => {
+            format!("E'{}'", t.replace('\\', "\\\\").replace('\'', "''"))
+        }
         SqlParam::Text(t) => format!("'{}'", t.replace('\'', "''")),
         SqlParam::Bytes(b) => {
             let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
             match d {
-                Dialect::Postgres => format!("'\\x{hex}'"),
+                Dialect::Postgres => format!("E'\\\\x{hex}'"),
                 Dialect::MySql | Dialect::Sqlite => format!("X'{hex}'"),
             }
         }
@@ -837,7 +843,7 @@ mod tests {
         };
         assert_eq!(
             render_preview(Dialect::Postgres, &bytes),
-            r"DELETE FROM t WHERE b = '\xdead' AND c = 'x'"
+            r"DELETE FROM t WHERE b = E'\\xdead' AND c = 'x'"
         );
         let bytes = Statement {
             sql: "DELETE FROM t WHERE b = ?".into(),
@@ -857,6 +863,10 @@ mod tests {
             sql: "DELETE FROM t WHERE a = ? AND b = ?".into(),
             params: texts(&[r"C:\new", r"\'; DROP TABLE users; -- "]),
         };
+        let tricky_pg = Statement {
+            sql: "DELETE FROM t WHERE a = $1 AND b = $2 AND c = $3".into(),
+            params: texts(&[r"C:\new", r"\'; DROP TABLE users; -- ", "plain"]),
+        };
         assert_eq!(
             render_preview(Dialect::MySql, &tricky),
             r"DELETE FROM t WHERE a = 'C:\\new' AND b = '\\''; DROP TABLE users; -- '"
@@ -864,6 +874,11 @@ mod tests {
         assert_eq!(
             render_preview(Dialect::Sqlite, &tricky),
             r"DELETE FROM t WHERE a = 'C:\new' AND b = '\''; DROP TABLE users; -- '"
+        );
+        // PostgreSQL: a backslash makes it an E'' literal (same reading in every string mode).
+        assert_eq!(
+            render_preview(Dialect::Postgres, &tricky_pg),
+            r"DELETE FROM t WHERE a = E'C:\\new' AND b = E'\\''; DROP TABLE users; -- ' AND c = 'plain'"
         );
         // $10 is the tenth parameter, not $1 followed by 0.
         let many = Statement {
