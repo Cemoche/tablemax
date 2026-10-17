@@ -27,31 +27,39 @@ Design: [`docs/superpowers/specs/2026-10-16-tablemax-design.md`](docs/superpower
 gh auth login                       # votre propre compte GitHub
 gh repo clone Cemoche/tablemax && cd tablemax
 pnpm install
-claude plugin install superpowers@claude-plugins-official   # recommandé, portée utilisateur
+claude plugin install superpowers@claude-plugins-official --scope project
 pnpm test && pnpm lint && pnpm test:rust   # tout doit être vert
 ```
 
-N'utilisez pas `--scope project` pour le plugin : il écrit `.claude/settings.json`, fichier
-versionné qui n'existe pas encore. Réglages personnels non versionnés : `CLAUDE.local.md`,
-`.claude/settings.local.json`.
+Le plugin `superpowers` est activé par `.claude/settings.json` (versionné) mais chacun doit
+l'installer une fois. Au premier lancement de `claude` dans le dépôt, acceptez de faire
+confiance au dossier : les réglages, hooks et skills du projet s'appliquent alors. Réglages
+personnels non versionnés : `CLAUDE.local.md`, `.claude/settings.local.json`.
 
-### Flux de travail (manuel pour l'instant)
+### Flux de travail
 
-1. Choisir une issue ouverte **sans assigné**.
-2. La prendre avant d'écrire du code : `gh issue edit <n> --add-assignee @me`, puis
-   `gh issue view <n>` pour vérifier que personne d'autre ne l'a prise. L'assignation est
-   la seule prise de ticket (pas encore de labels de statut).
-3. Une branche par issue, `issue-<n>-<slug>`, depuis `origin/main` à jour, de préférence
-   dans un worktree :
+Dans Claude Code, des skills font chaque étape ; les commandes `gh`/`git` équivalentes sont
+dans `CLAUDE.md` (section Workflow) pour travailler sans Claude.
+
+1. **`/pick-issue`** (ou `/pick-issue <n>`, `/pick-issue area:frontend`) : choisit une issue
+   `status:ready` **sans assigné**, vous l'assigne, passe le label à `status:in-progress`,
+   vérifie qu'un coéquipier ne l'a pas prise au même moment (sinon se retire) et poste un court
+   commentaire « Taking this — plan: … ».
+2. Ouvrir une session dans le worktree de l'issue : `claude --worktree issue-<n>` (ou
    `git fetch origin && git worktree add -b issue-<n>-<slug> .worktrees/issue-<n> origin/main`
-   (`.worktrees/` est ignoré par git), ou `claude --worktree issue-<n>` puis
-   `git branch -m issue-<n>-<slug>`.
-4. Travailler, committer au format `<emoji> <type>(<scope>): <description>` (voir
-   `CLAUDE.md`), et passer `pnpm test && pnpm lint` (+ `pnpm test:rust` si le backend change).
-5. Pousser sa branche (`git push -u origin issue-<n>-<slug>`) et ouvrir la PR vers `main`
-   (`gh pr create --base main`) avec le modèle de PR et `Closes #<n>`.
-6. Un coéquipier relit la PR ; **le propriétaire du dépôt merge**.
-7. Après le merge : `git worktree remove .worktrees/issue-<n>`.
+   puis `claude` dans ce dossier). Le hook du projet refuse toute édition sur `main`.
+3. **`/work-issue <n>`** : relit l'issue et ses commentaires, met la branche au nom
+   `issue-<n>-<slug>`, lit le plan ou la spec liés, travaille (Superpowers ou TDD), commente
+   l'issue aux étapes clés (plan écrit, tests verts, bloqué) et finit par
+   `pnpm test && pnpm lint` (+ `pnpm test:rust` si le backend change).
+4. **`/ship`** : relance les vérifications, pousse la branche (Claude demande confirmation),
+   ouvre ou met à jour la PR vers `main` avec `Closes #<n>`, passe l'issue en `status:review`
+   et y met le lien de la PR. Il ne merge jamais.
+5. Un coéquipier relit la PR ; **le propriétaire du dépôt merge**.
+6. Après le merge : `git worktree remove .worktrees/issue-<n>` (ou fermer la session
+   `claude --worktree`).
+
+Pour un message à l'équipe sur une issue : **`/issue-comment <n> <texte>`**.
 
 Deux worktrees qui lancent `pnpm test:rust` en même temps : voir « Two worktrees side by
 side » dans le [README](README.md#two-worktrees-side-by-side).
@@ -64,21 +72,26 @@ side » dans le [README](README.md#two-worktrees-side-by-side).
   propriétaire qui merge).
 - Committer un secret (jeton, mot de passe réel, clé privée).
 
-Le dépôt est privé sur un compte gratuit : GitHub n'offre pas de protection de branche, et
-aucun hook ni CI ne vérifie encore ces règles. Elles tiennent **uniquement par convention**.
+Le dépôt est privé sur un compte gratuit : GitHub n'offre pas de protection de branche. Les
+garde-fous sont côté Claude Code (hook qui refuse l'édition sur `main`, permissions qui
+demandent avant `git push` et refusent `--force` et les pushs sur `main`) et la CI, qui
+signale mais ne bloque pas. Sans Claude, ces règles tiennent par convention.
 
 ### Ajouter une issue
 
-**New issue** sur GitHub (ou `gh issue create --web`) et le formulaire **Task** ou **Bug**.
+**New issue** sur GitHub (ou `gh issue create --web`) et le formulaire **Task** (labels
+`type:task`, `status:ready`) ou **Bug** (`type:bug`, `status:triage`). Pour un plan entier :
+`/plan-to-issues docs/superpowers/plans/<plan>.md --dry-run`, puis sans `--dry-run` (une issue
+par `### Task N`, les issues existantes sont ignorées).
 
-### Prévu, pas encore en place
+### Pas encore actif
 
-Reporté avec la suite du plan `docs/superpowers/plans/2026-10-17-tablemax-team-setup.md` ;
-**rien de ceci n'existe encore** : `.claude/settings.json` partagé (permissions, hooks qui
-refusent l'édition sur `main`, plugin activé pour le projet), les skills `/pick-issue`,
-`/work-issue`, `/ship` et `/plan-to-issues`, les labels (`type:*`, `status:*`, `area:*`…)
-avec labels par défaut dans les formulaires, jalons et board, et la CI
-`.github/workflows/ci.yml`.
+- Les labels (`type:*`, `status:*`, `area:*`, `size:*`, `plan:*`…), jalons, epics et le board
+  GitHub sont créés par `scripts/github-bootstrap.sh`, lancé une fois par le propriétaire
+  (voir `docs/notes/team-setup.md`). Avant cela, les étapes de label des skills échouent :
+  prenez une issue par la seule assignation (`gh issue edit <n> --add-assignee @me`).
+- La CI (`.github/workflows/ci.yml`) n'a pas encore tourné sur GitHub : ses premiers
+  résultats peuvent demander des corrections de la CI elle-même.
 
 ---
 
@@ -102,31 +115,39 @@ avec labels par défaut dans les formulaires, jalons et board, et la CI
 gh auth login                       # your own GitHub account
 gh repo clone Cemoche/tablemax && cd tablemax
 pnpm install
-claude plugin install superpowers@claude-plugins-official   # recommended, user scope
+claude plugin install superpowers@claude-plugins-official --scope project
 pnpm test && pnpm lint && pnpm test:rust   # all green
 ```
 
-Do not install the plugin with `--scope project`: it writes `.claude/settings.json`, a
-tracked file that does not exist yet. Personal, untracked settings: `CLAUDE.local.md`,
+The `superpowers` plugin is enabled by the tracked `.claude/settings.json`, but each developer
+installs it once. The first time you run `claude` in the repo, trust the folder: the project
+settings, hooks and skills then apply. Personal, untracked settings: `CLAUDE.local.md`,
 `.claude/settings.local.json`.
 
-### Workflow (manual for now)
+### Workflow
 
-1. Choose an open issue **with no assignee**.
-2. Claim it before writing code: `gh issue edit <n> --add-assignee @me`, then
-   `gh issue view <n>` to check nobody else took it. The assignment is the only claim (no
-   status labels yet).
-3. One branch per issue, `issue-<n>-<slug>`, from an up-to-date `origin/main`, preferably
-   in a worktree:
+In Claude Code, skills do each step; the matching `gh`/`git` commands are in `CLAUDE.md`
+(Workflow section) for working without Claude.
+
+1. **`/pick-issue`** (or `/pick-issue <n>`, `/pick-issue area:frontend`): picks a
+   `status:ready` issue **with no assignee**, assigns it to you, sets `status:in-progress`,
+   checks no teammate took it at the same moment (backs off if so) and posts a short
+   "Taking this — plan: …" comment.
+2. Open a session in the issue's worktree: `claude --worktree issue-<n>` (or
    `git fetch origin && git worktree add -b issue-<n>-<slug> .worktrees/issue-<n> origin/main`
-   (`.worktrees/` is gitignored), or `claude --worktree issue-<n>` then
-   `git branch -m issue-<n>-<slug>`.
-4. Work, commit as `<emoji> <type>(<scope>): <description>` (see `CLAUDE.md`), and run
+   then `claude` in that folder). The project hook refuses edits on `main`.
+3. **`/work-issue <n>`**: reads the issue and its comments, names the branch
+   `issue-<n>-<slug>`, reads the linked plan or spec, does the work (Superpowers or TDD),
+   comments on the issue at milestones (plan written, tests green, blocked) and ends with
    `pnpm test && pnpm lint` (+ `pnpm test:rust` when the backend changes).
-5. Push your branch (`git push -u origin issue-<n>-<slug>`) and open the PR to `main`
-   (`gh pr create --base main`) with the PR template and `Closes #<n>`.
-6. A teammate reviews the PR; **the repository owner merges**.
-7. After the merge: `git worktree remove .worktrees/issue-<n>`.
+4. **`/ship`**: re-runs the checks, pushes the branch (Claude asks first), opens or updates
+   the PR to `main` with `Closes #<n>`, sets the issue to `status:review` and links the PR on
+   it. It never merges.
+5. A teammate reviews the PR; **the repository owner merges**.
+6. After the merge: `git worktree remove .worktrees/issue-<n>` (or close the
+   `claude --worktree` session).
+
+To tell the team something on an issue: **`/issue-comment <n> <text>`**.
 
 Two worktrees running `pnpm test:rust` at the same time: see "Two worktrees side by side"
 in the [README](README.md#two-worktrees-side-by-side).
@@ -138,17 +159,23 @@ in the [README](README.md#two-worktrees-side-by-side).
 - `git push --force` someone else's branch; merge a PR (the owner merges).
 - Commit a secret (token, real password, private key).
 
-The repository is private on a free plan: GitHub offers no branch protection, and no hook
-or CI checks these rules yet. They hold **by convention only**.
+The repository is private on a free plan: GitHub offers no branch protection. The guards
+live in Claude Code (a hook refusing edits on `main`, permissions that ask before `git push`
+and deny `--force` and pushes to `main`) and in CI, which reports but does not block.
+Without Claude, these rules hold by convention.
 
 ### Adding an issue
 
-**New issue** on GitHub (or `gh issue create --web`) and the **Task** or **Bug** form.
+**New issue** on GitHub (or `gh issue create --web`) and the **Task** form (labels
+`type:task`, `status:ready`) or the **Bug** form (`type:bug`, `status:triage`). For a whole
+plan: `/plan-to-issues docs/superpowers/plans/<plan>.md --dry-run`, then without `--dry-run`
+(one issue per `### Task N`; existing issues are skipped).
 
-### Planned, not set up yet
+### Not live yet
 
-Postponed with the rest of `docs/superpowers/plans/2026-10-17-tablemax-team-setup.md`;
-**none of this exists yet**: a shared `.claude/settings.json` (permissions, hooks refusing
-edits on `main`, plugin enabled for the project), the `/pick-issue`, `/work-issue`, `/ship`
-and `/plan-to-issues` skills, labels (`type:*`, `status:*`, `area:*`…) with default labels
-in the issue forms, milestones and a board, and the CI `.github/workflows/ci.yml`.
+- GitHub labels (`type:*`, `status:*`, `area:*`, `size:*`, `plan:*`…), milestones, epics and
+  the board are created by `scripts/github-bootstrap.sh`, run once by the owner (see
+  `docs/notes/team-setup.md`). Until then the label steps of the skills fail: claim an issue by
+  assignment only (`gh issue edit <n> --add-assignee @me`).
+- CI (`.github/workflows/ci.yml`) has not run on GitHub yet: its first results may need fixes
+  to the CI itself.
