@@ -6,15 +6,10 @@ import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces
 import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
 import { EnvBanner } from "./EnvBanner";
+import { ENV_BORDER } from "./envClasses";
+import { useLiveEnv } from "./useLiveEnv";
 import { ObjectSidebar } from "./ObjectSidebar";
 import { TabBar } from "./TabBar";
-
-const ENV_BORDER = {
-  local: "border-t-env-local",
-  dev: "border-t-env-dev",
-  staging: "border-t-env-staging",
-  prod: "border-t-env-prod",
-} as const;
 
 export function TabContent({ workspace, tab }: { workspace: Workspace; tab: Tab }) {
   if (tab.kind === "table") {
@@ -35,6 +30,7 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
   const closeTab = useWorkspaces((s) => s.closeTab);
   const { id, activeTabId } = workspace;
   const active = workspace.tabs.find((t) => t.id === activeTabId) ?? null;
+  const liveEnv = useLiveEnv(workspace);
 
   // Mod+S (Ctrl, Cmd on macOS) commits the active table tab, unless a modal or the grid's
   // cell editor is open (the edit being typed is not pending yet).
@@ -70,7 +66,7 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <EnvBanner workspace={workspace} />
-      <div className={`flex min-h-0 flex-1 border-t-2 ${ENV_BORDER[workspace.envTag]}`}>
+      <div className={`flex min-h-0 flex-1 border-t-2 ${ENV_BORDER[liveEnv.envTag]}`}>
       <ObjectSidebar workspace={workspace} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar workspace={workspace} />

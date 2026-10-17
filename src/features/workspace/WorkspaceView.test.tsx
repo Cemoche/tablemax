@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
+import type { ConnectionConfig, EnvTag } from "../../lib/types";
+import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { CloseConfirm } from "./CloseConfirm";
@@ -12,6 +14,23 @@ vi.mock("../../lib/ipc");
 vi.mock("./ObjectSidebar", () => ({ ObjectSidebar: () => <div /> }));
 vi.mock("../grid/TableDataTab", () => ({ TableDataTab: () => <div data-testid="table-tab" /> }));
 vi.mock("../editor/QueryTab", () => ({ QueryTab: () => <div data-testid="query-tab" /> }));
+
+const saved = (envTag: EnvTag): ConnectionConfig => ({
+  id: "c1",
+  name: "PG",
+  color: "swatch-1",
+  envTag,
+  kind: "postgres",
+  host: "h",
+  port: 5432,
+  user: "u",
+  database: null,
+  sqlitePath: null,
+  passwordMode: "keyring",
+  group: null,
+  ssl: { mode: "prefer", caFile: null, certFile: null, keyFile: null },
+  ssh: null,
+});
 
 const object = { schema: "public", name: "users" };
 const base: Workspace = {
@@ -42,6 +61,7 @@ const View = () => {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  useConnections.setState({ items: [] });
   useWorkspaces.setState({ workspaces: [base], activeWorkspaceId: "w1", closeRequest: null });
   usePendingChanges.setState({
     tabs: {},
@@ -147,4 +167,12 @@ test("while a commit runs the tab's close button waits (Committing…)", async (
   await userEvent.keyboard("{Control>}w{/Control}");
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(current().tabs).toHaveLength(2);
+});
+
+test("the border follows the live saved tag, not the tag the workspace was opened with", () => {
+  useConnections.setState({ items: [saved("prod")] });
+  const { container } = render(<View />);
+  const border = container.querySelector(".border-t-2");
+  expect(border).toHaveClass("border-t-env-prod");
+  expect(border).not.toHaveClass("border-t-env-dev");
 });

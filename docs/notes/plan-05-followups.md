@@ -44,24 +44,24 @@ after the rebase on Plans 3 and 4) is not done yet: see its checklist below.
 - Task 1: a numeric overflow or negative value in settings.json resets ALL fields to the defaults instead of clamping that field (serde fails on the whole struct).
 - Task 1: the theme is applied after an async IPC, so one frame of the system theme shows at startup; `main.tsx`'s `load()` is untested.
 - Task 1: the settings store's `load()` is not sequenced against an in-flight `update()`; a failed stale update's error is dropped silently.
-- Task 4: NumberField saves every intermediate valid value while typing (60 → 600 → 6000) and the caret jumps; save on blur/Enter like the font field (→ Task 6, before page size / threshold are wired).
+- Task 4: NumberField saves every intermediate valid value while typing: done in Task 6 (Phase A) (saves on Enter or blur).
 - Task 4: ⚙ glyph hard-coded in App.tsx (not in strings.ts).
-- Task 4: Mod+, (App.tsx) accepts metaKey on every platform.
+- Task 4: Mod+, (App.tsx) accepts metaKey on every platform (→ Phase B).
 - Task 4: no tests for the dialog reverting after a failed `settings_set`, nor for Mod+, while ConfirmRunDialog is open.
 - Final fix wave: the font grammar is ASCII only, so a font whose name has non-ASCII letters (CJK font names…) cannot be set; widen to Unicode letters on both sides if users ask.
 
 ### Safe mode (Task 2, Task 3)
 - Task 2: MySQL lexers (safety.rs, mysql.rs `has_multiple_statements`) read every digit after `/*!` as the version, where MySQL reads 5–6; fail-safe.
-- Task 3: cancelling ConfirmRunDialog drops the tab's previous results (`runs.start` runs before the refusal); snapshot and restore them instead (→ Task 6).
-- Task 3: ConfirmRunDialog's Escape/Tab trap works only while focus is inside the overlay (a click on a non-focusable area loses it); window-level Ctrl+T / Ctrl+W still fire while it is open; focus is not restored to the editor (→ Task 6).
-- Task 3: ConfirmRunDialog duplicates `ENV_BG` exported by WorkspaceSwitcher.tsx.
+- Task 3: cancelling ConfirmRunDialog dropped the tab's previous results: done in Task 6 (Phase A) (snapshot restored on refusal).
+- Task 3: ConfirmRunDialog's Escape/Tab trap works only while focus is inside the overlay (a click on a non-focusable area loses it); window-level Ctrl+T / Ctrl+W still fire while it is open; focus is not restored to the editor (→ Phase B).
+- Task 3: ConfirmRunDialog duplicated `ENV_BG`: done in Task 6 (Phase A) (shared `src/features/workspace/envClasses.ts`).
 - Task 3: `useWindowTitle` swallows `windowSetTitle` errors silently.
 - Final review (nit): `classify` is skipped when the mode is Off or ConfirmAll (fine today; matters only if classification gets other uses).
-- Final fix wave: the 2px workspace border under the banner (WorkspaceView `ENV_BORDER`) still uses the tag the workspace was opened with, while the banner shows the live tag; harmless (the opened tag's protection still applies until reopen) but visually mixed after a retag.
+- Final fix wave: the 2px workspace border under the banner (WorkspaceView `ENV_BORDER`) used the tag the workspace was opened with while the banner shows the live tag: done in Task 6 (Phase A) (border and switcher dot use `useLiveEnv`).
 
 ### UI shell
 - Final review: double `border-b` between the App.tsx top bar and WorkspaceSwitcher.
-- Task 4: window-level Ctrl+T / Ctrl+W and Mod+, still fire while a modal (Settings, ConfirmRunDialog) is open; focus not restored on close (→ Task 6).
+- Task 4: window-level Ctrl+T / Ctrl+W and Mod+, still fire while a modal (Settings, ConfirmRunDialog) is open; focus not restored on close (→ Phase B).
 
 ### Packaging (Task 5)
 - Task 5: the .deb package is named `table-max` while the command is `tablemax` (documented in the README).
@@ -71,11 +71,11 @@ after the rebase on Plans 3 and 4) is not done yet: see its checklist below.
 - Final review: tauri bundle targets are Linux-only; the macOS / Windows port needs its own targets.
 
 ## Task 6 checklist (after the rebase on Plans 3 and 4)
-- Grid Commit (`changes_apply`) goes through the same `confirmed` guard as `execute_batch`: `safety::{effective_safe_mode, needs_confirmation}` with the R16 stricter-of-saved-and-opened resolution (`workspace_safe_mode`), refusing with `ConfirmationRequired` before any statement runs, and the dialog shows the SQL that will run.
-- Modal-aware global shortcuts with focus restore: today Ctrl+W pressed under Settings closes the query tab behind it and loses its SQL; Ctrl+T / Ctrl+W / Mod+, must be ignored while a modal is open, and focus must return to where it was on close.
-- NumberField saves on blur/Enter (like the font family field) before page size and the exact count threshold are wired to the grid.
-- Snapshot and restore the tab's query results when the confirmation dialog is cancelled.
-- Replace the local shortcut list (`src/features/settings/shortcuts.ts`) with Plan 4's `DEFAULT_KEYMAP`, keeping `formatShortcut`'s platform modifier names.
+- Done in Task 6 (Phase A): grid Commit (`changes_apply`) goes through the same `confirmed` guard as `execute_batch`: `safety::{effective_safe_mode, needs_confirmation}` with the R16 stricter-of-saved-and-opened resolution (`workspace_safe_mode`), refusing with `ConfirmationRequired` before any statement runs, and the dialog shows the SQL that will run.
+- → Phase B. Modal-aware global shortcuts with focus restore: today Ctrl+W pressed under Settings closes the query tab behind it and loses its SQL; Ctrl+T / Ctrl+W / Mod+, must be ignored while a modal is open, and focus must return to where it was on close.
+- Done in Task 6 (Phase A): NumberField saves on blur/Enter; page size and exact count threshold wired to the grid.
+- Done in Task 6 (Phase A): the tab's query results are restored when the confirmation dialog is cancelled.
+- → Phase B. Replace the local shortcut list (`src/features/settings/shortcuts.ts`) with Plan 4's `DEFAULT_KEYMAP`, keeping `formatShortcut`'s platform modifier names.
 
 ## Open questions for Cem
 - AppImage glibc 2.43 floor: it does not run on Ubuntu 24.04 LTS; a portable build needs an older build host or a CI container. Worth setting up before v1?

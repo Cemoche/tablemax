@@ -1,20 +1,52 @@
 import { strings } from "../../lib/strings";
-import type { EnvTag } from "../../lib/types";
 import { usePendingChanges } from "../../stores/pendingChanges";
-import { useWorkspaces } from "../../stores/workspaces";
-
-export const ENV_BG: Record<EnvTag, string> = {
-  local: "bg-env-local",
-  dev: "bg-env-dev",
-  staging: "bg-env-staging",
-  prod: "bg-env-prod",
-};
+import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { ENV_BG } from "./envClasses";
+import { useLiveEnv } from "./useLiveEnv";
 
 interface Props {
   /** True while the connections view (not a workspace) is shown. */
   connectionsActive: boolean;
   onShowConnections: () => void;
   onSelectWorkspace: (id: string) => void;
+}
+
+interface ItemProps {
+  workspace: Workspace;
+  active: boolean;
+  busy: boolean;
+  onSelect: () => void;
+  onClose: () => void;
+}
+
+/** One hook call per workspace: the dot shows the live saved tag, like the banner. */
+function SwitcherItem({ workspace: w, active, busy, onSelect, onClose }: ItemProps) {
+  const { envTag } = useLiveEnv(w);
+  return (
+    <li
+      className={`flex shrink-0 items-center border-l border-border ${active ? "bg-bg" : "hover:bg-surface-2"}`}
+    >
+      <button
+        type="button"
+        aria-pressed={active}
+        onClick={onSelect}
+        className="flex items-center gap-2 py-1.5 pl-3 pr-1"
+      >
+        <span aria-hidden className={`size-2 rounded-full ${ENV_BG[envTag]}`} />
+        <span className={active ? "font-semibold" : ""}>{w.name}</span>
+      </button>
+      <button
+        type="button"
+        aria-label={strings.workspace.closeWorkspace(w.name)}
+        title={busy ? strings.grid.closeWhileCommitting : undefined}
+        disabled={busy}
+        onClick={onClose}
+        className="mr-1 rounded-sm px-1.5 hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        ×
+      </button>
+    </li>
+  );
 }
 
 export function WorkspaceSwitcher({ connectionsActive, onShowConnections, onSelectWorkspace }: Props) {
@@ -41,34 +73,18 @@ export function WorkspaceSwitcher({ connectionsActive, onShowConnections, onSele
           // A running commit must finish before its workspace can close.
           const busy = w.tabs.some((t) => committing[t.id] === true);
           return (
-            <li
+            <SwitcherItem
               key={w.id}
-              className={`flex shrink-0 items-center border-l border-border ${active ? "bg-bg" : "hover:bg-surface-2"}`}
-            >
-              <button
-                type="button"
-                aria-pressed={active}
-                onClick={() => onSelectWorkspace(w.id)}
-                className="flex items-center gap-2 py-1.5 pl-3 pr-1"
-              >
-                <span aria-hidden className={`size-2 rounded-full ${ENV_BG[w.envTag]}`} />
-                <span className={active ? "font-semibold" : ""}>{w.name}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={strings.workspace.closeWorkspace(w.name)}
-                title={busy ? strings.grid.closeWhileCommitting : undefined}
-                disabled={busy}
-                onClick={() => {
-                  // The workspace is already gone from the UI; a failed backend close
-                  // (e.g. a lost connection) has nothing left to report to.
-                  closeWorkspace(w.id).catch(() => {});
-                }}
-                className="mr-1 rounded-sm px-1.5 hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent"
-              >
-                ×
-              </button>
-            </li>
+              workspace={w}
+              active={active}
+              busy={busy}
+              onSelect={() => onSelectWorkspace(w.id)}
+              onClose={() => {
+                // The workspace is already gone from the UI; a failed backend close
+                // (e.g. a lost connection) has nothing left to report to.
+                closeWorkspace(w.id).catch(() => {});
+              }}
+            />
           );
         })}
       </ul>

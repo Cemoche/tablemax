@@ -1,7 +1,7 @@
 import { safeModeBannerText } from "../../lib/safeMode";
 import { strings } from "../../lib/strings";
 import { type LiveEnvSource, useLiveEnv } from "./useLiveEnv";
-import { ENV_BG } from "./WorkspaceSwitcher";
+import { ENV_BG } from "./envClasses";
 
 interface Props {
   workspace: LiveEnvSource & { name: string };

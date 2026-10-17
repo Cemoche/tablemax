@@ -2,13 +2,7 @@ import { useEffect, useRef } from "react";
 import { safeModeBannerText } from "../../lib/safeMode";
 import { strings } from "../../lib/strings";
 import type { EnvTag, SafeMode } from "../../lib/types";
-
-const ENV_BG: Record<EnvTag, string> = {
-  local: "bg-env-local",
-  dev: "bg-env-dev",
-  staging: "bg-env-staging",
-  prod: "bg-env-prod",
-};
+import { ENV_BG } from "../workspace/envClasses";
 
 interface Props {
   connectionName: string;

@@ -187,3 +187,4 @@ out; lines it resolved in part keep only what is still open.
 - Focus is not restored to the grid after Alt+1; the `contentEditable` guard of the
   shortcuts is untested in jsdom; `altShortcut` duplicates `modShortcut` (dedupe at
   integration).
+- Known behaviour: a high `exact_count_threshold` setting makes filtered counts scan up to that many rows; they hold the browse connection until done and have no user-facing cancel.
