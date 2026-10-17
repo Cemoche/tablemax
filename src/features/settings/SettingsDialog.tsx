@@ -4,7 +4,7 @@ import { strings } from "../../lib/strings";
 import type { Settings, ThemeSetting } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
 import { type NumericSettingKey, SETTINGS_BOUNDS, isValidFontFamily, parseBounded } from "./bounds";
-import { SHORTCUTS } from "./shortcuts";
+import { SHORTCUTS, formatShortcut } from "./shortcuts";
 
 const input = "rounded-sm border border-border bg-bg px-2 py-1";
 const FOCUSABLE = 'button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])';
@@ -235,9 +235,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         <Section title={strings.settings.keyboard}>
           <ul className="flex flex-col gap-1">
             {SHORTCUTS.map((s) => (
-              <li key={s.keys} className="flex justify-between gap-4">
+              <li key={s.label} className="flex justify-between gap-4">
                 <span>{s.label}</span>
-                <kbd className="font-mono text-muted">{s.keys}</kbd>
+                <kbd className="font-mono text-muted">{formatShortcut(s.keys)}</kbd>
               </li>
             ))}
           </ul>

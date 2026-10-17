@@ -133,10 +133,15 @@ test("About shows the version, the license line and the repository as text", asy
   expect(screen.queryByRole("link")).toBeNull();
 });
 
-test("lists the keyboard shortcuts", () => {
+test("lists the keyboard shortcuts with the platform's modifier names", () => {
   setup();
   expect(screen.getByText(strings.settings.shortcutRun)).toBeInTheDocument();
   expect(screen.getByText(strings.settings.shortcutSettings)).toBeInTheDocument();
+  // jsdom is not macOS: Mod reads Ctrl.
+  expect(screen.getByText("Ctrl+Enter")).toBeInTheDocument();
+  expect(screen.getByText("Ctrl+Shift+Enter")).toBeInTheDocument();
+  expect(screen.getByText("Ctrl+,")).toBeInTheDocument();
+  expect(screen.getByRole("dialog").textContent).not.toMatch(/Mod/);
 });
 
 test("Escape closes, even when focus is outside the dialog", async () => {

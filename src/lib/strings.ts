@@ -282,6 +282,18 @@ export const strings = {
     shortcutNewTab: "New query tab",
     shortcutCloseTab: "Close tab",
     shortcutSettings: "Open settings",
+    /** Key names in the shortcut list; `mod` is resolved per platform (ctrl or cmd). */
+    keyNames: {
+      mod: "Ctrl",
+      ctrl: "Ctrl",
+      cmd: "⌘",
+      shift: "Shift",
+      enter: "Enter",
+      comma: ",",
+      t: "T",
+      w: "W",
+    },
+    keySeparator: "+",
     about: "About",
     version: "Version",
     versionUnknown: "…",
