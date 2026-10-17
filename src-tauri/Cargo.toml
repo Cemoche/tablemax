@@ -26,8 +26,12 @@ async-trait = "0.1.92"
 rusqlite = { version = "0.40", features = ["bundled", "column_decltype"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-postgres = "0.7"
+tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8.5"
+webpki-roots = "1.0.9"
 futures-util = { version = "0.3", default-features = false }
-mysql_async = { version = "0.37", default-features = false, features = ["minimal-rust"] }
+mysql_async = { version = "0.37", default-features = false, features = ["minimal-rust", "rustls-tls", "ring", "tls12"] }
 keyring = "4.2"
 uuid = { version = "1", features = ["v4"] }
 

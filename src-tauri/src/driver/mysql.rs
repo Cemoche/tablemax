@@ -1,4 +1,10 @@
-//! MySQL / MariaDB driver on `mysql_async` (no TLS crate in Plan 1; Plan 2 adds rustls).
+//! MySQL / MariaDB driver on `mysql_async`, TLS through its rustls backend.
+//!
+//! TLS: `SslOpts` are derived from the connection's `SslConfig` (see `ssl_opts`). `Prefer`
+//! retries in cleartext only when the server does not offer TLS at all; `VerifyCa` is
+//! refused before any I/O (mysql_async 0.37.1 cannot skip only the name check). With
+//! `dial`, TCP goes to that address and `host` becomes the TLS name. The canceller keeps
+//! the options the session actually connected with (same address, same TLS).
 //!
 //! The `Conn` lives behind an async mutex, so `canceller()` (which never touches it) works
 //! while `execute` is in flight. Cancellation opens a NEW connection with the same
@@ -32,9 +38,13 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use mysql_async::consts::{ColumnFlags, ColumnType};
 use mysql_async::prelude::{FromRow, Queryable};
-use mysql_async::{Column, Conn, Error as MyError, Opts, OptsBuilder, Row, Value};
+use mysql_async::{
+    ClientIdentity, Column, Conn, DriverError, Error as MyError, Opts, OptsBuilder, Row, SslOpts,
+    Value,
+};
 
 use super::sql::{build_page_query, qualified};
+use super::tls::{SslConfig, SslMode, load_files, native_roots};
 use super::{
     Canceller, ColumnMeta, ConnectParams, DbObject, Dialect, ObjectKind, ObjectRef, PageRequest,
     ResultSet, RowCount, Session, StatementOutcome,
@@ -175,30 +185,92 @@ async fn query_first_string(conn: &mut Conn, sql: &str) -> Result<Option<String>
     Ok(rows.into_iter().next().and_then(|r| r.0))
 }
 
-fn build_opts(p: &ConnectParams) -> Opts {
-    OptsBuilder::default()
-        .ip_or_hostname(p.host.clone())
-        .tcp_port(p.port)
+/// `SslOpts` for `ssl` (`None` = cleartext). `tls_name` overrides the name checked
+/// against the certificate (the real host when TCP goes to a `dial` address).
+fn ssl_opts(ssl: &SslConfig, tls_name: Option<&str>) -> AppResult<Option<SslOpts>> {
+    match ssl.mode {
+        SslMode::Disable => return Ok(None),
+        SslMode::VerifyCa => {
+            return Err(AppError::new(
+                ErrorKind::Invalid,
+                "verify-ca is not supported for MySQL yet; use verify-full or require",
+            ));
+        }
+        SslMode::Prefer | SslMode::Require | SslMode::VerifyFull => {}
+    }
+    let files = load_files(ssl)?;
+    let mut o = SslOpts::default();
+    if let Some(ca) = files.ca {
+        o = o
+            .with_root_certs(vec![ca.into()])
+            .with_disable_built_in_roots(true);
+    } else if ssl.mode == SslMode::VerifyFull {
+        // Same roots as PostgreSQL: the OS store, else mysql_async's bundled Mozilla roots.
+        let native: Vec<_> = native_roots()
+            .into_iter()
+            .map(|c| c.as_ref().to_vec().into())
+            .collect();
+        if !native.is_empty() {
+            o = o.with_root_certs(native).with_disable_built_in_roots(true);
+        }
+    }
+    if let Some((cert, key)) = files.identity {
+        o = o.with_client_identity(Some(ClientIdentity::new(cert.into(), key.into())));
+    }
+    if matches!(ssl.mode, SslMode::Prefer | SslMode::Require) {
+        o = o.with_danger_accept_invalid_certs(true);
+    }
+    Ok(Some(o.with_danger_tls_hostname_override(
+        tls_name.map(str::to_string),
+    )))
+}
+
+fn build_opts(p: &ConnectParams) -> AppResult<Opts> {
+    let (addr, port, tls_name) = match p.dial {
+        Some(dial) => (dial.ip().to_string(), dial.port(), Some(p.host.as_str())),
+        None => (p.host.clone(), p.port, None),
+    };
+    Ok(OptsBuilder::default()
+        .ip_or_hostname(addr)
+        .tcp_port(port)
         .user(Some(p.user.clone()))
         .pass(p.password.clone())
         .db_name(p.database.clone())
         // Never silently swap the TCP endpoint for a unix socket reported by the server.
         .prefer_socket(false)
-        .into()
+        .ssl_opts(ssl_opts(&p.ssl, tls_name)?)
+        .into())
+}
+
+/// Connects; the outer error is the timeout, the inner one the driver's.
+async fn try_conn(opts: &Opts) -> AppResult<Result<Conn, MyError>> {
+    tokio::time::timeout(CONNECT_TIMEOUT, Conn::new(opts.clone()))
+        .await
+        .map_err(|_| AppError::new(ErrorKind::Connection, "connection timed out"))
 }
 
 async fn open_conn(opts: &Opts) -> AppResult<Conn> {
-    match tokio::time::timeout(CONNECT_TIMEOUT, Conn::new(opts.clone())).await {
-        Ok(Ok(c)) => Ok(c),
-        Ok(Err(e)) => Err(map_err(&e, false)),
-        Err(_) => Err(AppError::new(ErrorKind::Connection, "connection timed out")),
+    try_conn(opts).await?.map_err(|e| map_err(&e, false))
+}
+
+/// Opens the session connection and returns it with the options that worked: under
+/// `Prefer`, a server without TLS support gets a second, cleartext attempt.
+async fn open_session_conn(opts: Opts, mode: SslMode) -> AppResult<(Conn, Opts)> {
+    match try_conn(&opts).await? {
+        Ok(conn) => Ok((conn, opts)),
+        Err(MyError::Driver(DriverError::NoClientSslFlagFromServer)) if mode == SslMode::Prefer => {
+            let plain: Opts = OptsBuilder::from_opts(opts)
+                .ssl_opts(None::<SslOpts>)
+                .into();
+            Ok((open_conn(&plain).await?, plain))
+        }
+        Err(e) => Err(map_err(&e, false)),
     }
 }
 
 pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
-    super::ensure_local_host(&p.host)?;
-    let opts = build_opts(p);
-    let mut conn = open_conn(&opts).await?;
+    super::ensure_local_host(p)?;
+    let (mut conn, opts) = open_session_conn(build_opts(p)?, p.ssl.mode).await?;
     let version = match query_first_string(&mut conn, "SELECT VERSION()").await {
         Ok(v) => v,
         Err(e) => {

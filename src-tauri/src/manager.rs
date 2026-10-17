@@ -21,6 +21,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::time::Instant;
 
+use crate::driver::tls::SslConfig;
 use crate::driver::{
     self, Canceller, ConnectParams, Dialect, DriverKind, Session, StatementOutcome,
 };
@@ -186,6 +187,9 @@ fn connect_params(cfg: &ConnectionConfig, password: Option<String>) -> ConnectPa
         password,
         database: cfg.database.clone(),
         sqlite_path: cfg.sqlite_path.as_ref().map(Into::into),
+        // Per-connection TLS settings arrive with the connection form (Plan 2, Task 4).
+        ssl: SslConfig::default(),
+        dial: None,
     }
 }
 

@@ -11,7 +11,11 @@ MYSQL_URLS="mysql://root:tablemax@127.0.0.1:33061/tablemax_test,mysql://root:tab
 
 case "${1:-}" in
   up)
+    bash scripts/test-certs.sh
     "${COMPOSE[@]}" up -d --wait
+    # Client-certificate login role (see tests/docker/pg-ssl.sh); idempotent.
+    "${COMPOSE[@]}" exec -T pg16 psql -q -U postgres -d postgres -c \
+      "DO \$\$ BEGIN CREATE ROLE certuser LOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$"
     ;;
   down)
     "${COMPOSE[@]}" down -v
@@ -19,6 +23,7 @@ case "${1:-}" in
   env)
     echo "export TABLEMAX_TEST_PG_URLS=${PG_URLS}"
     echo "export TABLEMAX_TEST_MYSQL_URLS=${MYSQL_URLS}"
+    echo "export TABLEMAX_TEST_TLS_DIR=$(pwd)/.test-secrets/tls"
     ;;
   *)
     echo "usage: $0 up|down|env" >&2

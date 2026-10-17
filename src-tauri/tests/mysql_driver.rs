@@ -3,8 +3,9 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{mysql_urls, params_from_url, unique_schema};
+use common::{mysql_urls, params_from_url, ssl, tls_file, unique_schema};
 use tablemax_lib::driver::mysql::connect_mysql;
+use tablemax_lib::driver::tls::{SslConfig, SslMode};
 use tablemax_lib::driver::{
     ConnectParams, DbObject, DriverKind, ObjectKind, ObjectRef, PageRequest, ResultSet, RowCount,
     Session, SortDir,
@@ -360,41 +361,221 @@ async fn mysql_unreachable_host_is_connection_error() {
     assert_eq!(err.kind, ErrorKind::Connection, "{}", err.message);
 }
 
-#[tokio::test]
-async fn mysql_rejects_non_local_host() {
-    let (url, kind) = targets().remove(0);
-    let mut params = params_from_url(&url, kind);
-    params.host = "10.0.0.5".into();
-    let e = connect_mysql(&params).await.err().unwrap();
-    assert_eq!(e.kind, ErrorKind::Connection);
-    assert!(e.message.contains("TLS is not supported yet"));
+/// Runs `select sleep(30)` and cancels it: must end as `Cancelled` within 4 s, and the
+/// session must stay usable.
+async fn assert_sleep_is_cancelled(s: &Arc<dyn Session>) {
+    let canceller = s.canceller();
+    let start = std::time::Instant::now();
+    let s2 = s.clone();
+    let task = tokio::spawn(async move { s2.execute("select sleep(30)").await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let res = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut task = task;
+        loop {
+            canceller.cancel().await.unwrap();
+            tokio::select! {
+                r = &mut task => break r.unwrap(),
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            }
+        }
+    })
+    .await
+    .expect("cancel timed out");
+    // MySQL reports sleep() interruption as a successful row (1) in some versions.
+    assert_eq!(res.err().unwrap().kind, ErrorKind::Cancelled);
+    assert!(start.elapsed() < Duration::from_secs(4));
+    assert!(s.execute("select 1").await.is_ok());
 }
 
 #[tokio::test]
 async fn mysql_cancel_long_query() {
     for (url, kind) in targets() {
         let (s, _g) = open(&url, kind).await;
-        let canceller = s.canceller();
-        let start = std::time::Instant::now();
-        let s2 = s.clone();
-        let task = tokio::spawn(async move { s2.execute("select sleep(30)").await });
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        let res = tokio::time::timeout(Duration::from_secs(3), async {
-            let mut task = task;
-            loop {
-                canceller.cancel().await.unwrap();
-                tokio::select! {
-                    r = &mut task => break r.unwrap(),
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-                }
-            }
-        })
+        assert_sleep_is_cancelled(&s).await;
+    }
+}
+
+/// The session's `Ssl_cipher` (empty when the connection is not encrypted).
+async fn ssl_cipher(s: &Arc<dyn Session>) -> CellValue {
+    let out = s
+        .execute("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
         .await
-        .expect("cancel timed out");
-        // MySQL reports sleep() interruption as a successful row (1) in some versions.
-        assert_eq!(res.err().unwrap().kind, ErrorKind::Cancelled);
-        assert!(start.elapsed() < Duration::from_secs(4));
-        assert!(s.execute("select 1").await.is_ok());
+        .unwrap();
+    only(out.result.as_ref().unwrap())[1].clone()
+}
+
+fn assert_encrypted(cipher: &CellValue) {
+    match cipher {
+        CellValue::Text(c) => assert!(!c.is_empty(), "connection is not encrypted"),
+        other => panic!("Ssl_cipher: {other:?}"),
+    }
+}
+
+fn my_params(url: &str, kind: DriverKind, host: &str, ssl: SslConfig) -> ConnectParams {
+    let mut p = params_from_url(url, kind);
+    p.host = host.into();
+    p.ssl = ssl;
+    p
+}
+
+#[tokio::test]
+async fn mysql_rejects_unverified_tls_to_remote_host() {
+    let (url, kind) = targets().remove(0);
+    for mode in [SslMode::Disable, SslMode::Prefer, SslMode::Require] {
+        let p = my_params(&url, kind, "10.0.0.5", ssl(mode, None));
+        let e = connect_mysql(&p).await.err().unwrap();
+        assert_eq!(e.kind, ErrorKind::Connection);
+        assert!(e.message.contains("unverified TLS"), "{}", e.message);
+    }
+}
+
+#[tokio::test]
+async fn mysql_require_encrypts() {
+    for (url, kind) in targets() {
+        let p = my_params(&url, kind, "127.0.0.1", ssl(SslMode::Require, None));
+        let s = connect_mysql(&p).await.unwrap();
+        assert_encrypted(&ssl_cipher(&s).await);
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn mysql_disable_stays_cleartext() {
+    for (url, kind) in targets() {
+        let p = my_params(&url, kind, "127.0.0.1", ssl(SslMode::Disable, None));
+        let s = connect_mysql(&p).await.unwrap();
+        assert_eq!(ssl_cipher(&s).await, CellValue::Text(String::new()));
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn mysql_verify_full_ok_on_localhost() {
+    for (url, kind) in targets() {
+        let p = my_params(
+            &url,
+            kind,
+            "localhost",
+            ssl(SslMode::VerifyFull, Some("ca.pem")),
+        );
+        let s = connect_mysql(&p).await.unwrap();
+        assert_encrypted(&ssl_cipher(&s).await);
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn mysql_verify_full_rejects_wrong_name() {
+    for (url, kind) in targets() {
+        // The test certificate has no IP:127.0.0.1 SAN.
+        let p = my_params(
+            &url,
+            kind,
+            "127.0.0.1",
+            ssl(SslMode::VerifyFull, Some("ca.pem")),
+        );
+        let e = connect_mysql(&p).await.err().expect("must fail");
+        assert_eq!(e.kind, ErrorKind::Connection, "{}", e.message);
+        assert!(e.message.contains("not valid for name"), "{}", e.message);
+    }
+}
+
+#[tokio::test]
+async fn mysql_verify_full_rejects_foreign_ca() {
+    for (url, kind) in targets() {
+        let p = my_params(
+            &url,
+            kind,
+            "localhost",
+            ssl(SslMode::VerifyFull, Some("foreign-ca.pem")),
+        );
+        let e = connect_mysql(&p).await.err().expect("must fail");
+        assert_eq!(e.kind, ErrorKind::Connection, "{}", e.message);
+    }
+}
+
+#[tokio::test]
+async fn mysql_verify_ca_is_not_supported() {
+    for (url, kind) in targets() {
+        let p = my_params(
+            &url,
+            kind,
+            "localhost",
+            ssl(SslMode::VerifyCa, Some("ca.pem")),
+        );
+        let e = connect_mysql(&p).await.err().expect("must fail");
+        assert_eq!(e.kind, ErrorKind::Invalid, "{}", e.message);
+        assert!(
+            e.message.contains("verify-ca is not supported"),
+            "{}",
+            e.message
+        );
+    }
+}
+
+#[tokio::test]
+async fn mysql_client_cert_is_presented() {
+    for (url, kind) in targets() {
+        let root = connect_mysql(&params_from_url(&url, kind)).await.unwrap();
+        let user = format!("x_{}", &unique_schema()[2..14]);
+        root.execute(&format!("CREATE USER '{user}'@'%' REQUIRE X509"))
+            .await
+            .unwrap();
+        let mut p = my_params(
+            &url,
+            kind,
+            "localhost",
+            ssl(SslMode::VerifyFull, Some("ca.pem")),
+        );
+        p.user = user.clone();
+        p.password = None;
+        // The throwaway user has no grants on the test database.
+        p.database = None;
+        let without = connect_mysql(&p).await.map(|_| ());
+        p.ssl.cert_file = Some(tls_file("client.pem"));
+        p.ssl.key_file = Some(tls_file("client.key"));
+        let with = connect_mysql(&p).await;
+        let _ = root
+            .execute(&format!("DROP USER IF EXISTS '{user}'@'%'"))
+            .await;
+        assert!(
+            without.is_err(),
+            "REQUIRE X509 user logged in without a cert"
+        );
+        let s = with.unwrap();
+        assert_encrypted(&ssl_cipher(&s).await);
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn mysql_cancel_over_tls() {
+    for (url, kind) in targets() {
+        let p = my_params(&url, kind, "127.0.0.1", ssl(SslMode::Require, None));
+        let s = connect_mysql(&p).await.unwrap();
+        assert_encrypted(&ssl_cipher(&s).await);
+        assert_sleep_is_cancelled(&s).await;
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn mysql_dial_targets_address_and_keeps_tls_name() {
+    for (url, kind) in targets() {
+        let base = params_from_url(&url, kind);
+        // `mysql8` / `mariadb11` do not resolve on the host but are in the certificate:
+        // TCP goes to `dial`, TLS verifies the name (and the canceller follows the same route).
+        let name = if kind == DriverKind::MySql {
+            "mysql8"
+        } else {
+            "mariadb11"
+        };
+        let mut p = my_params(&url, kind, name, ssl(SslMode::VerifyFull, Some("ca.pem")));
+        p.dial = Some(format!("127.0.0.1:{}", base.port).parse().unwrap());
+        let s = connect_mysql(&p).await.unwrap();
+        assert_encrypted(&ssl_cipher(&s).await);
+        assert_sleep_is_cancelled(&s).await;
+        s.close().await.unwrap();
     }
 }
 

@@ -1,4 +1,9 @@
-//! PostgreSQL driver on `tokio-postgres` (NoTls only in Plan 1; Plan 2 adds rustls).
+//! PostgreSQL driver on `tokio-postgres`, TLS through `tokio-postgres-rustls`.
+//!
+//! TLS: `Disable` connects with `NoTls`; `Prefer` lets the server decline TLS; every other
+//! mode requires it, the certificate checks living in the rustls config (see `tls`).
+//! `host` is always the TLS/display name; `dial`, when set, is the TCP target
+//! (`hostaddr` + `port`). The cancel token keeps both and reuses the same TLS connector.
 //!
 //! The `Client` is `&self`-usable, so no mutex is needed and `canceller()` works while
 //! `execute` is in flight. The connection future runs on a tokio task; when it ends the
@@ -21,11 +26,15 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
+use tokio_postgres::config::SslMode as PgSslMode;
 use tokio_postgres::error::SqlState;
+use tokio_postgres::tls::MakeTlsConnect;
 use tokio_postgres::types::Type;
-use tokio_postgres::{CancelToken, Client, Config, NoTls, SimpleQueryMessage};
+use tokio_postgres::{CancelToken, Client, Config, NoTls, SimpleQueryMessage, Socket};
+use tokio_postgres_rustls::MakeRustlsConnect;
 
 use super::sql::{build_page_query, qualified};
+use super::tls::{SslMode, rustls_client_config};
 use super::{
     Canceller, ColumnMeta, ConnectParams, DbObject, Dialect, ObjectKind, ObjectRef, PageRequest,
     ResultSet, RowCount, Session, StatementOutcome,
@@ -38,20 +47,26 @@ use crate::value::{
 struct PgSession {
     client: Client,
     cancel: CancelToken,
+    /// The connector the session was opened with (`None` = `NoTls`), reused to cancel.
+    tls: Option<MakeRustlsConnect>,
     lost: Arc<AtomicBool>,
     conn_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     version: String,
 }
 
-struct PgCanceller(CancelToken);
+struct PgCanceller {
+    token: CancelToken,
+    tls: Option<MakeRustlsConnect>,
+}
 
 #[async_trait]
 impl Canceller for PgCanceller {
     async fn cancel(&self) -> AppResult<()> {
-        self.0
-            .cancel_query(NoTls)
-            .await
-            .map_err(|e| AppError::new(ErrorKind::Connection, e.to_string()))
+        match &self.tls {
+            Some(tls) => self.token.cancel_query(tls.clone()).await,
+            None => self.token.cancel_query(NoTls).await,
+        }
+        .map_err(|e| AppError::new(ErrorKind::Connection, with_causes(&e)))
     }
 }
 
@@ -75,8 +90,21 @@ fn map_db_error(e: &tokio_postgres::Error) -> Option<AppError> {
     Some(AppError::new(kind, db.message()))
 }
 
+/// `e` followed by its sources: tokio-postgres' own message omits the cause (e.g. which
+/// certificate check failed during the TLS handshake).
+fn with_causes(e: &tokio_postgres::Error) -> String {
+    let mut msg = e.to_string();
+    let mut cause = std::error::Error::source(e);
+    while let Some(c) = cause {
+        msg.push_str(": ");
+        msg.push_str(&c.to_string());
+        cause = c.source();
+    }
+    msg
+}
+
 fn map_connect_err(e: tokio_postgres::Error) -> AppError {
-    map_db_error(&e).unwrap_or_else(|| AppError::new(ErrorKind::Connection, e.to_string()))
+    map_db_error(&e).unwrap_or_else(|| AppError::new(ErrorKind::Connection, with_causes(&e)))
 }
 
 /// Error during a call on a live session: a non-server error means the link is gone.
@@ -84,10 +112,44 @@ fn map_err(e: tokio_postgres::Error) -> AppError {
     map_db_error(&e).unwrap_or_else(|| AppError::new(ErrorKind::ConnectionLost, e.to_string()))
 }
 
+/// Connects and drives the connection on a task that flags `lost` when it ends.
+async fn open_client<T>(
+    cfg: &Config,
+    tls: T,
+    lost: Arc<AtomicBool>,
+) -> AppResult<(Client, tokio::task::JoinHandle<()>)>
+where
+    T: MakeTlsConnect<Socket>,
+    T::Stream: Send + 'static,
+{
+    let (client, connection) = cfg.connect(tls).await.map_err(map_connect_err)?;
+    let handle = tokio::spawn(async move {
+        let _ = connection.await;
+        lost.store(true, Ordering::SeqCst);
+    });
+    Ok((client, handle))
+}
+
+fn pg_ssl_mode(mode: SslMode) -> PgSslMode {
+    match mode {
+        SslMode::Disable => PgSslMode::Disable,
+        SslMode::Prefer => PgSslMode::Prefer,
+        SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull => PgSslMode::Require,
+    }
+}
+
 pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
-    super::ensure_local_host(&p.host)?;
+    super::ensure_local_host(p)?;
+    let tls =
+        rustls_client_config(&p.ssl)?.map(|c| MakeRustlsConnect::new(Arc::unwrap_or_clone(c)));
     let mut cfg = Config::new();
-    cfg.host(&p.host).port(p.port).user(&p.user);
+    cfg.host(&p.host)
+        .user(&p.user)
+        .ssl_mode(pg_ssl_mode(p.ssl.mode));
+    match p.dial {
+        Some(addr) => cfg.hostaddr(addr.ip()).port(addr.port()),
+        None => cfg.port(p.port),
+    };
     if let Some(pw) = &p.password {
         cfg.password(pw);
     }
@@ -95,13 +157,11 @@ pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> 
         cfg.dbname(db);
     }
     cfg.connect_timeout(Duration::from_secs(10));
-    let (client, connection) = cfg.connect(NoTls).await.map_err(map_connect_err)?;
     let lost = Arc::new(AtomicBool::new(false));
-    let flag = lost.clone();
-    let handle = tokio::spawn(async move {
-        let _ = connection.await;
-        flag.store(true, Ordering::SeqCst);
-    });
+    let (client, handle) = match &tls {
+        Some(tls) => open_client(&cfg, tls.clone(), lost.clone()).await?,
+        None => open_client(&cfg, NoTls, lost.clone()).await?,
+    };
     // The text decoders assume hex bytea output.
     let init = async {
         client
@@ -126,6 +186,7 @@ pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> 
     Ok(Arc::new(PgSession {
         client,
         cancel,
+        tls,
         lost,
         conn_task: Mutex::new(Some(handle)),
         version,
@@ -386,7 +447,10 @@ impl Session for PgSession {
     }
 
     fn canceller(&self) -> Arc<dyn Canceller> {
-        Arc::new(PgCanceller(self.cancel.clone()))
+        Arc::new(PgCanceller {
+            token: self.cancel.clone(),
+            tls: self.tls.clone(),
+        })
     }
 
     async fn close(&self) -> AppResult<()> {

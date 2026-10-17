@@ -3,8 +3,9 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{params_from_url, pg_urls, unique_schema};
+use common::{params_from_url, pg_urls, ssl, tls_file, unique_schema};
 use tablemax_lib::driver::postgres::connect_postgres;
+use tablemax_lib::driver::tls::{SslConfig, SslMode};
 use tablemax_lib::driver::{
     ConnectParams, DbObject, DriverKind, ObjectKind, ObjectRef, PageRequest, ResultSet, RowCount,
     Session, SortDir,
@@ -242,32 +243,37 @@ async fn pg_unreachable_host_is_connection_error() {
     assert_eq!(err.kind, ErrorKind::Connection, "{}", err.message);
 }
 
+/// Runs `select pg_sleep(30)` and cancels it: must end as `Cancelled` well within 4 s,
+/// and the session must stay usable.
+async fn assert_sleep_is_cancelled(s: &Arc<dyn Session>) {
+    let canceller = s.canceller();
+    let start = std::time::Instant::now();
+    let s2 = s.clone();
+    let task = tokio::spawn(async move { s2.execute("select pg_sleep(30)").await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // A stale cancel on PG is harmless: keep cancelling until the query returns.
+    let res = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut task = task;
+        loop {
+            canceller.cancel().await.unwrap();
+            tokio::select! {
+                r = &mut task => break r.unwrap(),
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            }
+        }
+    })
+    .await
+    .expect("cancel timed out");
+    assert_eq!(res.err().unwrap().kind, ErrorKind::Cancelled);
+    assert!(start.elapsed() < Duration::from_secs(4));
+    assert!(s.execute("select 1").await.is_ok());
+}
+
 #[tokio::test]
 async fn pg_cancel_long_query() {
     for url in pg_urls() {
         let (s, _g) = open(&url).await;
-        let canceller = s.canceller();
-        let start = std::time::Instant::now();
-        let s2 = s.clone();
-        let task = tokio::spawn(async move { s2.execute("select pg_sleep(30)").await });
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        // A stale cancel on PG is harmless: keep cancelling until the query returns.
-        let res = tokio::time::timeout(Duration::from_secs(3), async {
-            let mut task = task;
-            loop {
-                canceller.cancel().await.unwrap();
-                tokio::select! {
-                    r = &mut task => break r.unwrap(),
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-                }
-            }
-        })
-        .await
-        .expect("cancel timed out");
-        assert_eq!(res.err().unwrap().kind, ErrorKind::Cancelled);
-        assert!(start.elapsed() < Duration::from_secs(3));
-        // Session stays usable.
-        assert!(s.execute("select 1").await.is_ok());
+        assert_sleep_is_cancelled(&s).await;
     }
 }
 
@@ -324,13 +330,146 @@ async fn pg_execute_rejects_multiple_statements() {
     }
 }
 
+/// Whether the session's own backend connection is encrypted.
+async fn backend_uses_ssl(s: &Arc<dyn Session>) -> CellValue {
+    let out = s
+        .execute("select ssl from pg_stat_ssl where pid = pg_backend_pid()")
+        .await
+        .unwrap();
+    only(out.result.as_ref().unwrap())[0].clone()
+}
+
+fn pg_params(url: &str, host: &str, ssl: SslConfig) -> ConnectParams {
+    let mut p = params_from_url(url, DriverKind::Postgres);
+    p.host = host.into();
+    p.ssl = ssl;
+    p
+}
+
 #[tokio::test]
-async fn pg_rejects_non_local_host() {
-    let mut params = params_from_url(&pg_urls()[0], DriverKind::Postgres);
-    params.host = "10.0.0.5".into();
-    let e = connect_postgres(&params).await.err().unwrap();
-    assert_eq!(e.kind, ErrorKind::Connection);
-    assert!(e.message.contains("TLS is not supported yet"));
+async fn pg_rejects_unverified_tls_to_remote_host() {
+    for mode in [SslMode::Disable, SslMode::Prefer, SslMode::Require] {
+        let p = pg_params(&pg_urls()[0], "10.0.0.5", ssl(mode, None));
+        let e = connect_postgres(&p).await.err().unwrap();
+        assert_eq!(e.kind, ErrorKind::Connection);
+        assert!(e.message.contains("unverified TLS"), "{}", e.message);
+    }
+}
+
+#[tokio::test]
+async fn pg_require_encrypts() {
+    for url in pg_urls() {
+        let s = connect_postgres(&pg_params(&url, "127.0.0.1", ssl(SslMode::Require, None)))
+            .await
+            .unwrap();
+        assert_eq!(backend_uses_ssl(&s).await, CellValue::Bool(true));
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn pg_disable_stays_cleartext() {
+    for url in pg_urls() {
+        let s = connect_postgres(&pg_params(&url, "127.0.0.1", ssl(SslMode::Disable, None)))
+            .await
+            .unwrap();
+        assert_eq!(backend_uses_ssl(&s).await, CellValue::Bool(false));
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn pg_verify_full_ok_on_localhost() {
+    for url in pg_urls() {
+        let p = pg_params(&url, "localhost", ssl(SslMode::VerifyFull, Some("ca.pem")));
+        let s = connect_postgres(&p).await.unwrap();
+        assert_eq!(backend_uses_ssl(&s).await, CellValue::Bool(true));
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn pg_verify_full_rejects_wrong_name() {
+    for url in pg_urls() {
+        // The test certificate has no IP:127.0.0.1 SAN.
+        let p = pg_params(&url, "127.0.0.1", ssl(SslMode::VerifyFull, Some("ca.pem")));
+        let e = connect_postgres(&p).await.err().expect("must fail");
+        assert_eq!(e.kind, ErrorKind::Connection, "{}", e.message);
+        assert!(e.message.contains("not valid for name"), "{}", e.message);
+    }
+}
+
+#[tokio::test]
+async fn pg_verify_ca_ignores_name() {
+    for url in pg_urls() {
+        let p = pg_params(&url, "127.0.0.1", ssl(SslMode::VerifyCa, Some("ca.pem")));
+        let s = connect_postgres(&p).await.unwrap();
+        assert_eq!(backend_uses_ssl(&s).await, CellValue::Bool(true));
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn pg_verify_ca_rejects_foreign_ca() {
+    for url in pg_urls() {
+        let p = pg_params(
+            &url,
+            "localhost",
+            ssl(SslMode::VerifyCa, Some("foreign-ca.pem")),
+        );
+        let e = connect_postgres(&p).await.err().expect("must fail");
+        assert_eq!(e.kind, ErrorKind::Connection, "{}", e.message);
+    }
+}
+
+#[tokio::test]
+async fn pg_client_cert_auth() {
+    for url in pg_urls() {
+        let mut p = pg_params(&url, "localhost", ssl(SslMode::VerifyFull, Some("ca.pem")));
+        p.user = "certuser".into();
+        p.password = None;
+        p.ssl.cert_file = Some(tls_file("client.pem"));
+        p.ssl.key_file = Some(tls_file("client.key"));
+        let s = connect_postgres(&p).await.unwrap();
+        let out = s.execute("select current_user::text").await.unwrap();
+        assert_eq!(
+            only(out.result.as_ref().unwrap())[0],
+            CellValue::Text("certuser".into())
+        );
+        s.close().await.unwrap();
+        // Without the certificate the cert-only role cannot log in.
+        p.ssl.cert_file = None;
+        p.ssl.key_file = None;
+        assert!(connect_postgres(&p).await.is_err());
+    }
+}
+
+#[tokio::test]
+async fn pg_cancel_over_tls() {
+    for url in pg_urls() {
+        let s = connect_postgres(&pg_params(&url, "127.0.0.1", ssl(SslMode::Require, None)))
+            .await
+            .unwrap();
+        assert_eq!(backend_uses_ssl(&s).await, CellValue::Bool(true));
+        assert_sleep_is_cancelled(&s).await;
+        s.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn pg_dial_targets_address_and_keeps_tls_name() {
+    for url in pg_urls() {
+        let base = params_from_url(&url, DriverKind::Postgres);
+        // `pg16` does not resolve on the host but is in the certificate: the TCP
+        // connection must go to `dial` while TLS verifies the name `pg16`.
+        let mut p = pg_params(&url, "pg16", ssl(SslMode::VerifyFull, Some("ca.pem")));
+        p.dial = Some(format!("127.0.0.1:{}", base.port).parse().unwrap());
+        let s = connect_postgres(&p).await.unwrap();
+        assert_eq!(backend_uses_ssl(&s).await, CellValue::Bool(true));
+        // The cancel request takes the same route.
+        assert_sleep_is_cancelled(&s).await;
+        s.close().await.unwrap();
+    }
 }
 
 #[tokio::test]

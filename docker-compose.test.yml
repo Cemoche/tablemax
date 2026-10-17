@@ -1,11 +1,28 @@
 name: tablemax-test
 
+# TLS material comes from scripts/test-certs.sh (run by scripts/test-dbs.sh up).
 services:
   pg16:
     image: postgres:16-alpine
     environment:
       POSTGRES_PASSWORD: tablemax
       POSTGRES_DB: tablemax_test
+    entrypoint: ["/usr/local/bin/pg-ssl.sh"]
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/tls/server.pem
+      - -c
+      - ssl_key_file=/var/lib/postgresql/tls/server.key
+      - -c
+      - ssl_ca_file=/var/lib/postgresql/tls/ca.pem
+      - -c
+      - hba_file=/var/lib/postgresql/tls/pg_hba.conf
+    volumes:
+      - ./.test-secrets/tls:/tls:ro
+      - ./tests/docker/pg-ssl.sh:/usr/local/bin/pg-ssl.sh:ro
     ports:
       - "127.0.0.1:54321:5432"
     healthcheck:
@@ -19,6 +36,9 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: tablemax
       MYSQL_DATABASE: tablemax_test
+    command: ["--ssl-ca=/tls/ca.pem", "--ssl-cert=/tls/server.pem", "--ssl-key=/tls/server.key"]
+    volumes:
+      - ./.test-secrets/tls:/tls:ro
     ports:
       - "127.0.0.1:33061:3306"
     healthcheck:
@@ -32,6 +52,9 @@ services:
     environment:
       MARIADB_ROOT_PASSWORD: tablemax
       MARIADB_DATABASE: tablemax_test
+    command: ["--ssl-ca=/tls/ca.pem", "--ssl-cert=/tls/server.pem", "--ssl-key=/tls/server.key"]
+    volumes:
+      - ./.test-secrets/tls:/tls:ro
     ports:
       - "127.0.0.1:33062:3306"
     healthcheck:

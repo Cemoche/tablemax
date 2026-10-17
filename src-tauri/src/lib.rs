@@ -16,6 +16,7 @@ use crate::store::ConnectionStore;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    driver::tls::install_crypto_provider();
     tauri::Builder::default()
         .setup(|app| {
             let dir = app.path().app_data_dir()?;

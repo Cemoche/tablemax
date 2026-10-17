@@ -2,7 +2,9 @@ pub mod mysql;
 pub mod postgres;
 pub mod sql;
 pub mod sqlite;
+pub mod tls;
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::CellValue;
+use tls::SslConfig;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +52,12 @@ pub struct ConnectParams {
     pub password: Option<String>,
     pub database: Option<String>,
     pub sqlite_path: Option<PathBuf>,
+    #[serde(default)]
+    pub ssl: SslConfig,
+    /// When set, the TCP connection goes to this address (e.g. an SSH tunnel's local
+    /// end) while `host` stays the name used for TLS verification and display.
+    #[serde(default)]
+    pub dial: Option<SocketAddr>,
 }
 
 impl std::fmt::Debug for ConnectParams {
@@ -62,6 +71,8 @@ impl std::fmt::Debug for ConnectParams {
             .field("password", &password)
             .field("database", &self.database)
             .field("sqlite_path", &self.sqlite_path)
+            .field("ssl", &self.ssl)
+            .field("dial", &self.dial)
             .finish()
     }
 }
@@ -158,21 +169,30 @@ pub trait Session: Send + Sync {
     async fn close(&self) -> AppResult<()>;
 }
 
-/// Plan 1 has no TLS: refuse any host that is not local so nothing travels in cleartext.
-/// Allowed: `localhost`, loopback IPs (127.0.0.0/8, ::1) and unix socket dirs (`/...`).
-pub fn ensure_local_host(host: &str) -> AppResult<()> {
-    let ok = host.starts_with('/')
+fn is_local_host(host: &str) -> bool {
+    host.starts_with('/')
         || host.eq_ignore_ascii_case("localhost")
         || host
             .trim_matches(['[', ']'])
             .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback());
-    if ok {
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Refuses unverified TLS to a remote server. Modes that do not verify the server
+/// (`Disable`, `Prefer`, `Require`) are only allowed for local hosts (`localhost`,
+/// loopback IPs, unix socket dirs) on a direct connection. `VerifyCa`/`VerifyFull`, or
+/// any connection with `dial` (SSH tunnel), are always allowed.
+pub fn ensure_local_host(p: &ConnectParams) -> AppResult<()> {
+    let unverified = matches!(
+        p.ssl.mode,
+        tls::SslMode::Disable | tls::SslMode::Prefer | tls::SslMode::Require
+    );
+    if p.dial.is_some() || !unverified || is_local_host(&p.host) {
         Ok(())
     } else {
         Err(AppError::new(
             ErrorKind::Connection,
-            "TLS is not supported yet: only local connections are allowed in this build",
+            "unverified TLS is only allowed for local hosts: use verify-full or verify-ca, or an SSH tunnel",
         ))
     }
 }
@@ -192,9 +212,27 @@ pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tls::SslMode;
+
+    fn params(host: &str, mode: SslMode) -> ConnectParams {
+        ConnectParams {
+            kind: DriverKind::Postgres,
+            host: host.into(),
+            port: 5432,
+            user: "u".into(),
+            password: None,
+            database: None,
+            sqlite_path: None,
+            ssl: SslConfig {
+                mode,
+                ..Default::default()
+            },
+            dial: None,
+        }
+    }
 
     #[test]
-    fn ensure_local_host_allows_only_local() {
+    fn ensure_local_host_allows_unverified_tls_only_locally() {
         for h in [
             "localhost",
             "127.0.0.1",
@@ -202,15 +240,27 @@ mod tests {
             "::1",
             "/var/run/postgresql",
         ] {
-            assert!(ensure_local_host(h).is_ok(), "{h}");
+            for mode in [SslMode::Disable, SslMode::Prefer, SslMode::Require] {
+                assert!(ensure_local_host(&params(h, mode)).is_ok(), "{h} {mode:?}");
+            }
         }
         for h in ["db.example.com", "10.0.0.5", "0.0.0.0"] {
-            assert_eq!(
-                ensure_local_host(h).unwrap_err().kind,
-                ErrorKind::Connection,
-                "{h}"
-            );
+            for mode in [SslMode::Disable, SslMode::Prefer, SslMode::Require] {
+                let e = ensure_local_host(&params(h, mode)).unwrap_err();
+                assert_eq!(e.kind, ErrorKind::Connection, "{h} {mode:?}");
+                assert!(e.message.contains("unverified TLS"), "{}", e.message);
+            }
         }
+    }
+
+    #[test]
+    fn ensure_local_host_allows_verified_or_tunnelled_remote() {
+        for mode in [SslMode::VerifyCa, SslMode::VerifyFull] {
+            assert!(ensure_local_host(&params("db.example.com", mode)).is_ok());
+        }
+        let mut p = params("db.example.com", SslMode::Prefer);
+        p.dial = Some("127.0.0.1:40000".parse().unwrap());
+        assert!(ensure_local_host(&p).is_ok());
     }
 
     #[test]
@@ -223,6 +273,8 @@ mod tests {
             password: Some("s3cret-value".into()),
             database: None,
             sqlite_path: None,
+            ssl: SslConfig::default(),
+            dial: None,
         };
         let out = format!("{:?}", params);
         assert!(!out.contains("s3cret-value"));
