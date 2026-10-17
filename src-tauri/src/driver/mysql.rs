@@ -1559,6 +1559,25 @@ impl MySession {
         }
     }
 
+    /// An earlier re-read failed: try again before deciding anything. A second failure
+    /// ends the session (reported as lost), so the manager's reconnect paths rebuild it
+    /// instead of the session refusing everything forever.
+    async fn recheck_session_state(&self, inner: &mut Inner) -> AppResult<()> {
+        if inner.modes_unknown
+            && let Some(conn) = inner.conn.as_mut()
+        {
+            let reread = read_session_modes(conn).await;
+            if let Err(e) = retry_reread(inner, reread) {
+                self.lost.store(true, Ordering::SeqCst);
+                if let Some(c) = inner.conn.take() {
+                    let _ = tokio::time::timeout(CONNECT_TIMEOUT, c.disconnect()).await;
+                }
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
     async fn run(&self, sql: &str) -> AppResult<(Option<ResultSet>, u64)> {
         self.run_bound(sql, &[], false).await
     }
@@ -1576,21 +1595,7 @@ impl MySession {
         }
         let mut guard = self.inner.lock().await;
         let inner = &mut *guard;
-        // An earlier re-read failed: try again before deciding anything. A second failure
-        // ends the session (reported as lost), so the manager's reconnect paths rebuild it
-        // instead of the session refusing everything forever.
-        if inner.modes_unknown
-            && let Some(conn) = inner.conn.as_mut()
-        {
-            let reread = read_session_modes(conn).await;
-            if let Err(e) = retry_reread(inner, reread) {
-                self.lost.store(true, Ordering::SeqCst);
-                if let Some(c) = inner.conn.take() {
-                    let _ = tokio::time::timeout(CONNECT_TIMEOUT, c.disconnect()).await;
-                }
-                return Err(e);
-            }
-        }
+        self.recheck_session_state(inner).await?;
         // Checked under the lock: `modes` and the charset reflect every earlier statement.
         if let Some(e) = refusal(
             sql,
@@ -2274,6 +2279,8 @@ impl Session for MySession {
         }
         let mut guard = self.inner.lock().await;
         let inner = &mut *guard;
+        // The same session guard as `run_bound` (unknown state, unsafe client charset).
+        self.recheck_session_state(inner).await?;
         if stmts
             .iter()
             .any(|s| has_multiple_statements(&s.sql, inner.modes))
@@ -2282,6 +2289,16 @@ impl Session for MySession {
                 ErrorKind::Invalid,
                 "apply accepts exactly one statement per change",
             ));
+        }
+        if let Some(e) = stmts.iter().find_map(|s| {
+            refusal(
+                &s.sql,
+                inner.modes,
+                inner.unsafe_charset.as_deref(),
+                inner.modes_unknown,
+            )
+        }) {
+            return Err(e);
         }
         let Some(conn) = inner.conn.as_mut() else {
             return Err(Self::gone());

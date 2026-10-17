@@ -777,6 +777,34 @@ async fn mysql_refuses_multibyte_unsafe_client_charsets() {
     }
 }
 
+/// Grid commits (`apply`) go through the same session guard as `execute`: refused while
+/// the client charset is unsafe, accepted again once it is back.
+#[tokio::test]
+async fn mysql_apply_refused_under_an_unsafe_client_charset() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!("create table `{n}`.t(a int)"))
+            .await
+            .unwrap();
+        let insert = [tablemax_lib::driver::query::Statement {
+            sql: format!("insert into `{n}`.t values (1)"),
+            params: vec![],
+        }];
+        s.execute("SET NAMES gbk").await.unwrap();
+        let e = s.apply(&insert, &[false]).await.expect_err("refused");
+        assert_eq!(e.kind, ErrorKind::Invalid, "{url}");
+        assert!(e.message.contains("client character set"), "{}", e.message);
+        s.execute("SET NAMES utf8mb4").await.unwrap();
+        assert!(s.apply(&insert, &[false]).await.unwrap().applied);
+        let rs = s
+            .execute(&format!("select count(*) from `{n}`.t"))
+            .await
+            .unwrap();
+        assert_eq!(only(rs.result.as_ref().unwrap())[0], CellValue::Int(1), "{url}");
+    }
+}
+
 /// MySQL 9 JavaScript routines (`AS $$ … $$`) hide their body from the lexer: refused.
 #[tokio::test]
 async fn mysql_refuses_dollar_quoted_bodies() {
