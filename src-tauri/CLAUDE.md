@@ -42,10 +42,11 @@ A new command = function in `commands.rs` + entry in `tauri::generate_handler!` 
   `HostKeyChanged`, `ConfirmationRequired`. Pick the kind the frontend should branch on; a
   new kind also goes into `ErrorKind` in `src/lib/types.ts`.
 - `ConfirmationRequired`: `execute_batch` refuses an unconfirmed batch on a protected
-  connection before anything of it runs (message: the indices to confirm). Future write
-  paths (grid commits…) must go through the same guard (`safety::effective_safe_mode` +
-  `needs_confirmation`, with the stricter-of-saved-and-opened resolution of
-  `workspace_safe_mode`).
+  connection before anything of it runs (message: the indices to confirm). Grid commits
+  (`changes_apply`) go through the same guard, every change counting as a write, before
+  anything is built or the commit slot is taken. Any future write path must too
+  (`safety::needs_confirmation` with the stricter-of-saved-and-opened mode of
+  `workspace_safe_mode`, which fails closed to `ConfirmAll`).
 
 ## Async and I/O
 

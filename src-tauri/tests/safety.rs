@@ -1,16 +1,19 @@
-//! Safe mode through the SessionManager, on SQLite (no test server needed): a batch that
-//! needs a confirmation is refused before anything of it runs.
+//! Safe mode through the SessionManager, on SQLite (no test server needed): a batch or a
+//! grid commit that needs a confirmation is refused before anything of it runs.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use tablemax_lib::driver::DriverKind;
+use tablemax_lib::driver::dml::{EditValue, RowChange, RowKey};
 use tablemax_lib::driver::tls::SslConfig;
+use tablemax_lib::driver::{DriverKind, ObjectRef};
 use tablemax_lib::error::ErrorKind;
 use tablemax_lib::manager::{ExecEvent, SessionManager};
 use tablemax_lib::secrets::MemorySecretStore;
 use tablemax_lib::ssh::known_hosts::KnownHosts;
 use tablemax_lib::store::{ConnectionConfig, ConnectionStore, EnvTag, PasswordMode, SafeMode};
+use tablemax_lib::value::CellValue;
 
 struct Fx {
     _dir: tempfile::TempDir,
@@ -355,4 +358,179 @@ async fn unreadable_store_fails_closed() {
     assert_eq!(err.kind, ErrorKind::ConfirmationRequired);
     assert_eq!(err.message, "0");
     assert!(events.all().is_empty());
+}
+
+// ---------------------------------------------------------------------------------------
+// Grid commits (`changes_apply`): always writes, same guard as a batch.
+// ---------------------------------------------------------------------------------------
+
+/// Saves the connection and opens a workspace on it.
+async fn workspace(
+    fx: &Fx,
+    env_tag: EnvTag,
+    safe_mode: Option<SafeMode>,
+) -> (ConnectionConfig, String) {
+    let saved = fx
+        .mgr
+        .save_connection(cfg(&fx.db_path, env_tag, safe_mode), None, None)
+        .await
+        .unwrap();
+    let ws = fx
+        .mgr
+        .open_workspace(&saved.id, None, None, None)
+        .await
+        .unwrap();
+    (saved, ws.workspace_id)
+}
+
+fn items() -> ObjectRef {
+    ObjectRef {
+        schema: Some("main".into()),
+        name: "items".into(),
+    }
+}
+
+fn rename(id: i64, name: &str) -> RowChange {
+    RowChange::Update {
+        key: RowKey(vec![("id".into(), CellValue::Int(id))]),
+        set: vec![("name".into(), EditValue::Text(name.into()))],
+    }
+}
+
+/// Renames both rows to `name`.
+fn rename_both(name: &str) -> Vec<RowChange> {
+    vec![rename(1, name), rename(2, name)]
+}
+
+/// `changes_cancel` returns at once: no commit (ctl) is installed in the workspace. A
+/// leftover ctl would make it wait for a commit that never ends.
+async fn cancel_is_a_no_op(fx: &Fx, ws: &str) {
+    let started = Instant::now();
+    fx.mgr.changes_cancel(ws).await.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "no commit left behind"
+    );
+}
+
+#[tokio::test]
+async fn grid_commit_on_a_protected_connection_needs_confirmation() {
+    for (env_tag, safe_mode) in [
+        // prod defaults to confirmWrites.
+        (EnvTag::Prod, None),
+        (EnvTag::Local, Some(SafeMode::ConfirmWrites)),
+        (EnvTag::Local, Some(SafeMode::ConfirmAll)),
+    ] {
+        let fx = fixture();
+        let (_, ws) = workspace(&fx, env_tag, safe_mode).await;
+        let err = fx
+            .mgr
+            .changes_apply(&ws, &items(), &rename_both("z"), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::ConfirmationRequired, "{safe_mode:?}");
+        assert_eq!(err.message, "0,1", "{safe_mode:?}");
+        assert_eq!(names(&fx.db_path), ["a", "b"], "table unchanged");
+        cancel_is_a_no_op(&fx, &ws).await;
+
+        // Confirmed: applied.
+        let o = fx
+            .mgr
+            .changes_apply(&ws, &items(), &rename_both("z"), true)
+            .await
+            .unwrap();
+        assert!(o.applied, "{o:?}");
+        assert_eq!(names(&fx.db_path), ["z", "z"]);
+    }
+}
+
+/// The guard runs first: a change that could not even be built is still refused for
+/// confirmation, so nothing of an unconfirmed commit is built or run.
+#[tokio::test]
+async fn unconfirmed_grid_commit_builds_nothing() {
+    let fx = fixture();
+    let (_, ws) = workspace(&fx, EnvTag::Prod, None).await;
+    let bad = vec![RowChange::Update {
+        key: RowKey(vec![("id".into(), CellValue::Int(1))]),
+        set: vec![("nope".into(), EditValue::Text("x".into()))],
+    }];
+    let err = fx
+        .mgr
+        .changes_apply(&ws, &items(), &bad, false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::ConfirmationRequired, "0")
+    );
+    // Confirmed, the same change is built and refused as invalid.
+    let err = fx
+        .mgr
+        .changes_apply(&ws, &items(), &bad, true)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Invalid);
+}
+
+#[tokio::test]
+async fn grid_commit_without_safe_mode_needs_no_confirmation() {
+    for (env_tag, safe_mode) in [
+        // Explicitly off, even on prod.
+        (EnvTag::Prod, Some(SafeMode::Off)),
+        // Default (by environment) on a non-prod tag: off.
+        (EnvTag::Dev, None),
+    ] {
+        let fx = fixture();
+        let (_, ws) = workspace(&fx, env_tag, safe_mode).await;
+        let o = fx
+            .mgr
+            .changes_apply(&ws, &items(), &rename_both("y"), false)
+            .await
+            .unwrap();
+        assert!(o.applied, "{env_tag:?} {safe_mode:?}: {o:?}");
+        assert_eq!(names(&fx.db_path), ["y", "y"]);
+    }
+}
+
+/// Nothing to write: nothing to confirm.
+#[tokio::test]
+async fn empty_grid_commit_needs_no_confirmation() {
+    let fx = fixture();
+    let (_, ws) = workspace(&fx, EnvTag::Local, Some(SafeMode::ConfirmAll)).await;
+    let o = fx
+        .mgr
+        .changes_apply(&ws, &items(), &[], false)
+        .await
+        .unwrap();
+    assert!(o.applied, "{o:?}");
+}
+
+/// Ruling R16: a connection retagged to prod while its workspace is open protects the
+/// next grid commit at once.
+#[tokio::test]
+async fn grid_commit_after_a_retag_to_prod_needs_confirmation() {
+    let fx = fixture();
+    let (saved, ws) = workspace(&fx, EnvTag::Local, None).await;
+    let o = fx
+        .mgr
+        .changes_apply(&ws, &items(), &rename_both("x"), false)
+        .await
+        .unwrap();
+    assert!(o.applied, "{o:?}");
+    let prod = ConnectionConfig {
+        env_tag: EnvTag::Prod,
+        ..saved
+    };
+    fx.mgr.save_connection(prod, None, None).await.unwrap();
+    let err = fx
+        .mgr
+        .changes_apply(&ws, &items(), &rename_both("w"), false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::ConfirmationRequired, "0,1")
+    );
+    assert_eq!(names(&fx.db_path), ["x", "x"]);
+    cancel_is_a_no_op(&fx, &ws).await;
 }

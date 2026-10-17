@@ -108,9 +108,17 @@ export const changesPreview = (workspaceId: string, object: ObjectRef, changes: 
  * Applies every change in one transaction on the browse connection (all or nothing).
  * Rejects with invalid "change <i>: <reason>" before running anything, cancelled (rolled
  * back), or connectionLost / connection (outcome unknown: COMMIT may have been sent).
+ *
+ * Safe mode: without `confirmed`, a commit the connection's safe mode wants confirmed is
+ * rejected with confirmationRequired (message: the change indices, "0,1") before anything
+ * is built or run; re-send it with `confirmed = true` once the user confirmed.
  */
-export const changesApply = (workspaceId: string, object: ObjectRef, changes: RowChange[]) =>
-  invoke<ApplyOutcome>("changes_apply", { workspaceId, object, changes });
+export const changesApply = (
+  workspaceId: string,
+  object: ObjectRef,
+  changes: RowChange[],
+  confirmed = false,
+) => invoke<ApplyOutcome>("changes_apply", { workspaceId, object, changes, confirmed });
 
 /** Cancels the workspace's commit in flight (no-op when none): it rejects with cancelled. */
 export const changesCancel = (workspaceId: string) =>

@@ -263,15 +263,20 @@ pub async fn changes_preview(
         .await
 }
 
-/// All changes in one transaction on the browse connection (all or nothing).
+/// All changes in one transaction on the browse connection (all or nothing). Without
+/// `confirmed`, refused with `ConfirmationRequired` on a connection whose safe mode wants
+/// writes confirmed (nothing built or run).
 #[tauri::command]
 pub async fn changes_apply(
     state: State<'_, SessionManager>,
     workspace_id: String,
     object: ObjectRef,
     changes: Vec<RowChange>,
+    confirmed: bool,
 ) -> AppResult<ApplyOutcome> {
-    state.changes_apply(&workspace_id, &object, &changes).await
+    state
+        .changes_apply(&workspace_id, &object, &changes, confirmed)
+        .await
 }
 
 /// Cancels the workspace's commit in flight (no-op when none): rolled back, `Cancelled`.

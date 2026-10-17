@@ -1062,12 +1062,30 @@ impl SessionManager {
     /// everything is rolled back and the result is `Cancelled`. A lost connection is
     /// returned as `ConnectionLost` (outcome unknown if COMMIT was already sent) and the
     /// browse connection is rebuilt by the next call; a write is never retried.
+    ///
+    /// Safe mode: every change is a write. Unless `confirmed`, a non-empty commit the
+    /// workspace's effective mode wants confirmed is refused with `ConfirmationRequired`
+    /// (message: the change indices, `"0,1"`) before anything else: nothing is built or
+    /// run.
     pub async fn changes_apply(
         &self,
         workspace_id: &str,
         obj: &ObjectRef,
         changes: &[RowChange],
+        confirmed: bool,
     ) -> AppResult<ApplyOutcome> {
+        if !confirmed && !changes.is_empty() {
+            let mode = self.workspace_safe_mode(workspace_id).await?;
+            let classes = vec![safety::StatementClass::Write; changes.len()];
+            let pending = safety::needs_confirmation(mode, &classes);
+            if !pending.is_empty() {
+                let indices: Vec<String> = pending.iter().map(usize::to_string).collect();
+                return Err(AppError::new(
+                    ErrorKind::ConfirmationRequired,
+                    indices.join(","),
+                ));
+            }
+        }
         let ctl = Arc::new(ApplyCtl::default());
         self.state()
             .workspaces
@@ -1262,13 +1280,13 @@ impl SessionManager {
     }
 
     /// The workspace's effective safe mode (Ruling R16): the stricter of the saved
-    /// connection's (re-read from the store at each batch) and the config the workspace
-    /// was opened with. Tightening (a stricter mode, a retag to prod) applies to the next
-    /// batch at once; loosening (a looser mode, a retag away from prod, or an identity
-    /// change pointing the saved connection elsewhere) only at the next workspace open.
-    /// A deleted connection keeps the opened config's mode. Fails closed: a store error
-    /// yields `ConfirmAll`. The frontend shows the same rule (`enforcedSafeMode` in
-    /// src/lib/safeMode.ts).
+    /// connection's (re-read from the store at each batch and grid commit) and the config
+    /// the workspace was opened with. Tightening (a stricter mode, a retag to prod) applies
+    /// to the next batch or commit at once; loosening (a looser mode, a retag away from
+    /// prod, or an identity change pointing the saved connection elsewhere) only at the
+    /// next workspace open. A deleted connection keeps the opened config's mode. Fails
+    /// closed: a store error yields `ConfirmAll`. The frontend shows the same rule
+    /// (`enforcedSafeMode` in src/lib/safeMode.ts).
     async fn workspace_safe_mode(&self, workspace_id: &str) -> AppResult<SafeMode> {
         let opened = {
             let st = self.state();
@@ -2283,7 +2301,11 @@ mod tests {
                 r#"DELETE FROM "main"."items" WHERE "id" = '2'"#,
             ]
         );
-        let o = fx.mgr.changes_apply(&ws, &items, &changes).await.unwrap();
+        let o = fx
+            .mgr
+            .changes_apply(&ws, &items, &changes, false)
+            .await
+            .unwrap();
         assert!(o.applied, "{o:?}");
         assert_eq!(o.affected, vec![1, 1, 1]);
         let rows = fx
@@ -2324,6 +2346,7 @@ mod tests {
                     RowChange::Delete { key: key(1) },
                     RowChange::Delete { key: key(2) },
                 ],
+                false,
             )
             .await
             .unwrap();

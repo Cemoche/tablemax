@@ -288,7 +288,7 @@ impl Fx {
 
     async fn apply(&self, name: &str, changes: Vec<RowChange>) -> ApplyOutcome {
         self.mgr
-            .changes_apply(&self.ws, &self.obj(name), &changes)
+            .changes_apply(&self.ws, &self.obj(name), &changes, false)
             .await
             .unwrap_or_else(|e| panic!("{:?} apply {name}: {e:?}", self.kind))
     }
@@ -671,7 +671,7 @@ async fn read_only_tables_refuse_changes() {
             let changes = vec![change];
             let e = fx
                 .mgr
-                .changes_apply(&fx.ws, &obj, &changes)
+                .changes_apply(&fx.ws, &obj, &changes, false)
                 .await
                 .unwrap_err();
             assert_eq!(e.kind, ErrorKind::Invalid, "{k:?} {name}");
@@ -726,7 +726,7 @@ async fn preview_renders_literals_and_names_the_bad_change() {
                 .await
                 .unwrap_err(),
             fx.mgr
-                .changes_apply(&fx.ws, &obj, &changes)
+                .changes_apply(&fx.ws, &obj, &changes, false)
                 .await
                 .unwrap_err(),
         ] {
@@ -1279,7 +1279,8 @@ async fn commit_waiting_on_a_row_lock_is_cancellable() {
             update(int_key(2), &[("v", text("20"))]),
             update(int_key(1), &[("v", text("11"))]),
         ];
-        let running = tokio::spawn(async move { mgr.changes_apply(&ws, &obj, &changes).await });
+        let running =
+            tokio::spawn(async move { mgr.changes_apply(&ws, &obj, &changes, false).await });
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(!running.is_finished(), "{k:?}: the commit must wait for the lock");
         let started = std::time::Instant::now();
@@ -1475,6 +1476,7 @@ async fn binary_columns_are_flagged_and_refuse_text() {
                     &fx.ws,
                     &fx.obj("bin"),
                     &[update(int_key(1), &[(col, text("1"))])],
+                    false,
                 )
                 .await
                 .unwrap_err();
