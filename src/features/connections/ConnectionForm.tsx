@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { toConnectionUrl } from "../../lib/connectionUrl";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
@@ -27,6 +28,8 @@ import { hostKeyLabel, useConnectFlow } from "./useConnectFlow";
 interface Props {
   /** null = new connection. */
   connection: ConnectionConfig | null;
+  /** Pre-filled DB password for an unsaved connection (from a pasted URL). */
+  initialPassword?: string | null;
   /** Called with the saved config and the typed DB / SSH secrets (null when untouched). */
   onConnect: (cfg: ConnectionConfig, password: string | null, sshSecret: string | null) => void;
   onSaved?: (cfg: ConnectionConfig) => void;
@@ -38,23 +41,29 @@ type Notice = { tone: "ok" | "error"; text: string } | null;
 const field = "w-full rounded-sm border border-border bg-bg px-2 py-1";
 const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2 disabled:opacity-50";
 
-export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Props) {
+export function ConnectionForm({ connection, initialPassword = null, onConnect, onSaved, onDeleted }: Props) {
   const [cfg, setCfg] = useState<ConnectionConfig>(normalize(connection ?? blankConnection()));
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState(initialPassword ?? "");
   const [sshSecret, setSshSecret] = useState("");
-  /** The SSL mode follows host and SSH (defaultSslMode) until the user picks one. */
-  const [sslPicked, setSslPicked] = useState(!!connection?.id);
+  /**
+   * The SSL mode follows host and SSH (defaultSslMode) until the user picks one. A
+   * pre-filled unsaved connection (from a URL) already carries its mode.
+   */
+  const [sslPicked, setSslPicked] = useState(connection !== null);
   const [busy, setBusy] = useState<"test" | "save" | "connect" | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
+  const items = useConnections((s) => s.items);
   const save = useConnections((s) => s.save);
   const remove = useConnections((s) => s.remove);
 
   useEffect(() => {
     setCfg(normalize(connection ?? blankConnection()));
-    setPassword("");
+    setPassword(initialPassword ?? "");
     setSshSecret("");
-    setSslPicked(!!connection?.id);
+    setSslPicked(connection !== null);
     setNotice(null);
+    // initialPassword travels with `connection`; it must not reset typed input alone.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
 
   const patch = (p: Partial<ConnectionConfig>) => setCfg((c) => withSslMode({ ...c, ...p }, sslPicked));
@@ -70,7 +79,20 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Pr
   const isExisting = cfg.id !== "";
 
   const stored = connection?.id ? connection.ssh : null;
-  const outgoing = () => forBackend(cfg, stored, typedSsh);
+  const outgoing = () => forBackend({ ...cfg, group: cfg.group?.trim() || null }, stored, typedSsh);
+
+  const groups = [...new Set(items.map((c) => c.group?.trim()).filter((g): g is string => !!g))].sort(
+    (a, b) => a.localeCompare(b),
+  );
+
+  const onCopyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(toConnectionUrl(cfg));
+      setNotice({ tone: "ok", text: strings.form.urlCopied });
+    } catch {
+      setNotice({ tone: "error", text: strings.form.urlCopyFailed });
+    }
+  };
 
   const testFlow = useConnectFlow((s, config: ConnectionConfig) =>
     ipc.connectionTest(config, s.password, s.sshSecret, s.acceptFingerprint),
@@ -145,6 +167,22 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Pr
         <label className="flex flex-col gap-1">
           <span className="text-muted">{strings.form.name}</span>
           <input className={field} value={cfg.name} onChange={(e) => patch({ name: e.target.value })} />
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-muted">{strings.form.group}</span>
+          <input
+            className={field}
+            list="cf-groups"
+            value={cfg.group ?? ""}
+            placeholder={strings.form.groupPlaceholder}
+            onChange={(e) => patch({ group: e.target.value || null })}
+          />
+          <datalist id="cf-groups">
+            {groups.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
         </label>
 
         <div className="flex items-center gap-2" role="group" aria-label={strings.form.color}>
@@ -306,6 +344,11 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Pr
           >
             {strings.form.connect}
           </button>
+          {isExisting && (
+            <button type="button" className={btn} onClick={onCopyUrl}>
+              {strings.form.copyUrl}
+            </button>
+          )}
           {isExisting && (
             <button type="button" className={`${btn} ml-auto text-danger`} disabled={busy !== null} onClick={onDelete}>
               {strings.form.delete}

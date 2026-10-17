@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { ConnectPrompt } from "./features/connections/ConnectPrompt";
 import { ConnectionForm } from "./features/connections/ConnectionForm";
+import { UrlImportDialog } from "./features/connections/UrlImportDialog";
+import { blankConnection } from "./features/connections/connectionDraft";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { hostKeyLabel, useConnectFlow } from "./features/connections/useConnectFlow";
 import { toAppError } from "./lib/errors";
@@ -16,6 +18,13 @@ function App() {
   const items = useConnections((s) => s.items);
   const load = useConnections((s) => s.load);
   const [selected, setSelected] = useState<ConnectionConfig | null>(null);
+  /** DB password pasted in a URL, pre-filled in the form of the unsaved connection. */
+  const [draftPassword, setDraftPassword] = useState<string | null>(null);
+  const [urlDialog, setUrlDialog] = useState(false);
+  const select = (cfg: ConnectionConfig | null, password: string | null = null) => {
+    setSelected(cfg);
+    setDraftPassword(password);
+  };
   const workspaces = useWorkspaces((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaces((s) => s.activeWorkspaceId);
   const openWorkspace = useWorkspaces((s) => s.openWorkspace);
@@ -72,22 +81,38 @@ function App() {
             <ConnectionList
               items={items}
               selectedId={selected?.id ?? null}
-              onSelect={setSelected}
+              onSelect={(cfg) => select(cfg)}
               onOpen={(cfg) => open(cfg)}
-              onNew={() => setSelected(null)}
+              onNew={() => select(null)}
+              onNewFromUrl={() => setUrlDialog(true)}
             />
             <main className="min-w-0 flex-1 overflow-y-auto">
               {loadError && <p className="p-3 text-danger">{loadError}</p>}
               <ConnectionForm
                 connection={selected}
-                onSaved={setSelected}
-                onDeleted={() => setSelected(null)}
+                initialPassword={draftPassword}
+                onSaved={(cfg) => select(cfg)}
+                onDeleted={() => select(null)}
                 onConnect={open}
               />
             </main>
           </>
         )}
       </div>
+      {urlDialog && (
+        <UrlImportDialog
+          onCancel={() => setUrlDialog(false)}
+          onResult={(config, password) => {
+            const draft = { ...blankConnection(), ...config };
+            const fallback =
+              draft.kind === "sqlite"
+                ? (draft.sqlitePath?.split("/").pop() ?? "")
+                : (draft.database ?? draft.host);
+            select({ ...draft, name: fallback }, password);
+            setUrlDialog(false);
+          }}
+        />
+      )}
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />
     </div>
   );

@@ -408,3 +408,30 @@ test("a stored MySQL connection in verify-ca mode shows verify-full", () => {
   render(<ConnectionForm connection={my} onConnect={vi.fn()} />);
   expect(sslMode()).toBe("verifyFull");
 });
+
+test("Copy URL copies the URL without the password", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  render(<ConnectionForm connection={saved} onConnect={vi.fn()} />);
+  await userEvent.click(screen.getByRole("button", { name: "Copy URL" }));
+  expect(writeText).toHaveBeenCalledWith("postgresql://me@localhost:5432/app");
+});
+
+test("a new connection has no Copy URL button", () => {
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+  expect(screen.queryByRole("button", { name: "Copy URL" })).toBeNull();
+});
+
+test("an unsaved pre-filled connection shows its password and group suggestions", () => {
+  useConnections.setState({ items: [{ ...saved, group: "Work" }] });
+  render(
+    <ConnectionForm
+      connection={{ ...saved, id: "", name: "from url" }}
+      initialPassword="s3cret"
+      onConnect={vi.fn()}
+    />,
+  );
+  expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("s3cret");
+  expect(document.querySelector("#cf-groups option")?.getAttribute("value")).toBe("Work");
+  expect(ipc.connectionSave).not.toHaveBeenCalled();
+});
