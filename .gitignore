@@ -10,3 +10,8 @@ src-tauri/gen/schemas/
 *.tsbuildinfo
 .env
 .test-secrets/
+
+# Claude Code: per-session worktrees and personal settings
+.claude/worktrees/
+.claude/settings.local.json
+CLAUDE.local.md

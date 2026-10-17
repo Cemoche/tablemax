@@ -1,0 +1,46 @@
+name: Bug
+description: Something does not work as it should.
+labels: ["type:bug", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste real passwords, tokens, private keys or production data. Replace them with placeholders.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Observed
+      description: What happens instead. Error messages, logs (redacted), screenshots.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: App version or `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and database
+      description: OS and version, display server, database engine and version, SSH/SSL if used.
+      placeholder: Ubuntu 26.04 (Wayland), PostgreSQL 16 over SSH
+    validations:
+      required: true

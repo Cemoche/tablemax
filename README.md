@@ -14,6 +14,13 @@ pnpm test:rust    # starts test databases, runs cargo tests
 pnpm lint         # tsc + clippy
 ```
 
+## Contributing
+
+The work is tracked in GitHub issues: one issue, one branch `issue-<n>-<slug>`, one
+worktree, one pull request to `main`. Setup, workflow and rules (for people and their
+Claude Code agents) are in [CONTRIBUTING.md](CONTRIBUTING.md); agent rules in
+[CLAUDE.md](CLAUDE.md).
+
 ## Connections
 
 - **SSL / TLS**: modes `disable`, `prefer`, `require` (encrypted, certificate not checked),
