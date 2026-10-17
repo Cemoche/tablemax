@@ -25,7 +25,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-/** Integer field: a valid value is saved at once, an invalid one shows an inline error and saves nothing. */
+/**
+ * Integer field: typing only edits a draft; Enter or blur saves it when it is a whole number
+ * within the bounds. An invalid draft shows an inline error, saves nothing and is kept on blur
+ * so it can be fixed. Escape reverts the draft (and does not close the dialog).
+ */
 function NumberField({ field, label }: { field: NumericSettingKey; label: string }) {
   const value = useSettings((s) => s.settings[field]);
   const update = useSettings((s) => s.update);
@@ -34,14 +38,12 @@ function NumberField({ field, label }: { field: NumericSettingKey; label: string
   const { min, max } = SETTINGS_BOUNDS[field];
   const text = draft ?? String(value);
   const invalid = draft !== null && parseBounded(field, draft) === null;
-  const change = (next: string) => {
-    const n = parseBounded(field, next);
-    if (n === null) {
-      setDraft(next);
-      return;
-    }
+  const commit = () => {
+    if (draft === null) return;
+    const n = parseBounded(field, draft);
+    if (n === null) return;
     setDraft(null);
-    void update({ [field]: n } as Partial<Settings>);
+    if (n !== value) void update({ [field]: n } as Partial<Settings>);
   };
   return (
     <div className="flex flex-col gap-1">
@@ -56,8 +58,16 @@ function NumberField({ field, label }: { field: NumericSettingKey; label: string
         value={text}
         aria-invalid={invalid}
         aria-describedby={invalid ? `${id}-error` : undefined}
-        onChange={(e) => change(e.target.value)}
-        onBlur={() => setDraft(null)}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape" && draft !== null) {
+            // Reverts the draft only; the dialog's own Escape (on the document) must not fire.
+            e.stopPropagation();
+            setDraft(null);
+          }
+        }}
+        onBlur={commit}
       />
       {invalid && (
         <p id={`${id}-error`} className="text-danger">
@@ -114,7 +124,7 @@ function FontFamilyField() {
   );
 }
 
-/** Modal settings editor; valid changes are saved through the settings store (the font family on Enter or blur). */
+/** Modal settings editor; valid changes are saved through the settings store (the font family and numbers on Enter or blur). */
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useSettings((s) => s.settings);
   const error = useSettings((s) => s.error);

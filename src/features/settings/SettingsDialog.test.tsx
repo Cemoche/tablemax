@@ -67,7 +67,55 @@ test("a valid number is saved and clears the error", async () => {
   await userEvent.clear(input);
   await userEvent.paste("500");
   expect(input).not.toHaveAttribute("aria-invalid", "true");
+  await userEvent.keyboard("{Enter}");
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, pageSize: 500 });
+});
+
+test("a number is saved on Enter or blur, not while typing", async () => {
+  setup();
+  const input = screen.getByLabelText(strings.settings.pageSize);
+  await userEvent.clear(input);
+  await userEvent.type(input, "6");
+  await userEvent.type(input, "0");
+  await userEvent.type(input, "0");
+  expect(input).toHaveValue("600");
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+  await userEvent.keyboard("{Enter}");
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, pageSize: 600 });
+  const size = screen.getByLabelText(strings.settings.fontSize);
+  await userEvent.clear(size);
+  await userEvent.type(size, "16");
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
+  await userEvent.tab();
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(2);
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith(expect.objectContaining({ editorFontSize: 16 }));
+});
+
+test("an invalid number keeps its draft and error on Enter and blur, and sends nothing", async () => {
+  setup();
+  const input = screen.getByLabelText(strings.settings.pageSize);
+  await userEvent.clear(input);
+  await userEvent.type(input, "6000");
+  await userEvent.keyboard("{Enter}");
+  await userEvent.tab();
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveValue("6000");
+  expect(screen.getByText(strings.settings.range(50, 5000))).toBeInTheDocument();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+});
+
+test("Escape reverts a number draft without closing the dialog; without a draft it closes", async () => {
+  const { onClose } = setup();
+  const input = screen.getByLabelText(strings.settings.pageSize);
+  await userEvent.clear(input);
+  await userEvent.type(input, "77");
+  await userEvent.keyboard("{Escape}");
+  expect(input).toHaveValue(String(DEFAULT_SETTINGS.pageSize));
+  expect(onClose).not.toHaveBeenCalled();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+  await userEvent.keyboard("{Escape}");
+  expect(onClose).toHaveBeenCalled();
 });
 
 test("the auto LIMIT checkbox is saved", async () => {
