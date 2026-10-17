@@ -32,6 +32,8 @@ interface Props {
   completionSource?: CompletionSource | null;
   /** Non-blocking message for the user (a failed format). */
   onNotice?: (message: string) => void;
+  /** The CodeMirror view once created (null on unmount), for insert/replace from panels. */
+  onView?: (view: EditorView | null) => void;
 }
 
 const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
@@ -73,6 +75,34 @@ export async function formatEditor(view: EditorView, dialect: Dialect, onError: 
     userEvent: "input.format",
     scrollIntoView: true,
   });
+}
+
+/**
+ * Inserts `text` at the cursor (replacing the selection) in ONE undoable transaction and
+ * puts the cursor after it.
+ */
+export function insertAtCursor(view: EditorView, text: string): void {
+  const sel = view.state.selection.main;
+  view.dispatch({
+    changes: { from: sel.from, to: sel.to, insert: text },
+    selection: CmSelection.cursor(sel.from + text.length),
+    annotations: isolateHistory.of("full"),
+    userEvent: "input.paste",
+    scrollIntoView: true,
+  });
+  view.focus();
+}
+
+/** Replaces the whole content with `text` in ONE undoable transaction. */
+export function replaceDocument(view: EditorView, text: string): void {
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: text },
+    selection: CmSelection.cursor(text.length),
+    annotations: isolateHistory.of("full"),
+    userEvent: "input.paste",
+    scrollIntoView: true,
+  });
+  view.focus();
 }
 
 // All colors come from the design tokens (they follow the system color scheme).
@@ -147,6 +177,7 @@ export function SqlEditor({
   tabId,
   completionSource,
   onNotice,
+  onView,
 }: Props) {
   // Latest callbacks and inputs, so the extensions never have to be rebuilt for them.
   const runRef = useRef(onRun);
@@ -155,6 +186,9 @@ export function SqlEditor({
   completionRef.current = completionSource;
   const noticeRef = useRef(onNotice);
   noticeRef.current = onNotice;
+  const viewCbRef = useRef(onView);
+  viewCbRef.current = onView;
+  useEffect(() => () => viewCbRef.current?.(null), []);
   const dialectRef = useRef(dialect);
   dialectRef.current = dialect;
 
@@ -238,6 +272,7 @@ export function SqlEditor({
       onChange={onChange}
       onCreateEditor={(view) => {
         viewRef.current = view;
+        viewCbRef.current?.(view);
       }}
       onUpdate={(u) => {
         if (onSelectionChange && (u.selectionSet || u.docChanged)) {

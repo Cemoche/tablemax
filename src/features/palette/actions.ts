@@ -2,6 +2,7 @@ import { isMac } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { useCatalog } from "../../stores/catalog";
+import { useQueryPanels } from "../../stores/queryPanels";
 import { hasEditorCommand, runEditorCommand } from "../editor/editorCommands";
 import { tabsByMru } from "../workspace/tabInfo";
 
@@ -123,6 +124,17 @@ export const ACTIONS: Action[] = [
     when: (c) => connected(c) && c.workspace?.currentSchema != null,
     run: (c) => {
       if (c.workspace) void useCatalog.getState().refreshCatalog(c.workspace.id, c.workspace.currentSchema);
+    },
+  },
+  // Plan 4 Task 8 (ruling R7): toggles the history panel of the active SQL tab.
+  {
+    id: "history.toggle",
+    title: t.openHistory,
+    shortcut: "Mod+Shift+H",
+    when: (c) => queryTab(c) !== null,
+    run: (c) => {
+      const q = queryTab(c);
+      if (q) useQueryPanels.getState().toggleHistory(q.id);
     },
   },
 ];

@@ -7,6 +7,7 @@
  * (invalid JSON, unknown version, bad shape) is ignored, and is not overwritten before
  * the user changes something.
  */
+import { toAppError } from "../lib/errors";
 import * as ipc from "../lib/ipc";
 import type { Dialect, DriverKind, ObjectRef } from "../lib/types";
 import { useConnections } from "./connections";
@@ -14,7 +15,8 @@ import { type Tab, type Workspace, useWorkspaces } from "./workspaces";
 
 export type SessionTab =
   | { kind: "table"; object: ObjectRef; preview: boolean }
-  | { kind: "query"; title: string; sql: string };
+  /** `savedName` (optional, Plan 4 Task 8): the saved query the tab is linked to. */
+  | { kind: "query"; title: string; sql: string; savedName?: string };
 
 export interface SessionWorkspace {
   connectionId: string;
@@ -54,7 +56,9 @@ export function snapshot(state: {
         (t): SessionTab =>
           t.kind === "table"
             ? { kind: "table", object: { schema: t.object.schema, name: t.object.name }, preview: t.preview }
-            : { kind: "query", title: t.title, sql: t.sql },
+            : t.savedName
+              ? { kind: "query", title: t.title, sql: t.sql, savedName: t.savedName }
+              : { kind: "query", title: t.title, sql: t.sql },
       ),
     })),
   };
@@ -79,7 +83,9 @@ function parseTab(v: unknown): SessionTab | null {
   }
   if (v.kind === "query") {
     if (typeof v.title !== "string" || typeof v.sql !== "string") return null;
-    return { kind: "query", title: v.title, sql: v.sql };
+    if (v.savedName === undefined) return { kind: "query", title: v.title, sql: v.sql };
+    if (typeof v.savedName !== "string") return null;
+    return { kind: "query", title: v.title, sql: v.sql, savedName: v.savedName };
   }
   return null;
 }
@@ -136,7 +142,18 @@ function restoredWorkspaces(snap: SessionSnapshot): { workspaces: Workspace[]; a
       (t): Tab =>
         t.kind === "table"
           ? { id: crypto.randomUUID(), kind: "table", object: t.object, title: t.object.name, preview: t.preview }
-          : { id: crypto.randomUUID(), kind: "query", title: t.title, sql: t.sql, sqlSessionId: null },
+          : t.savedName
+            ? {
+                id: crypto.randomUUID(),
+                kind: "query",
+                title: t.title,
+                sql: t.sql,
+                sqlSessionId: null,
+                savedName: t.savedName,
+                // Unknown until the file is read (`hydrateSavedLinks`): no "modified" dot yet.
+                savedSql: undefined,
+              }
+            : { id: crypto.randomUUID(), kind: "query", title: t.title, sql: t.sql, sqlSessionId: null },
     );
     const active = sw.activeTabIndex === null ? null : tabs[sw.activeTabIndex];
     const ws: Workspace = {
@@ -159,6 +176,40 @@ function restoredWorkspaces(snap: SessionSnapshot): { workspaces: Workspace[]; a
     workspaces.push(ws);
   });
   return { workspaces, activeId };
+}
+
+/**
+ * Restored tabs linked to a saved query: reads each file (no connection needed) so the
+ * "modified" dot compares with what is on disk. A file deleted meanwhile unlinks the
+ * tab (its text stays); another failure leaves the state unknown (no dot).
+ */
+async function hydrateSavedLinks(): Promise<void> {
+  const jobs: Promise<void>[] = [];
+  for (const w of useWorkspaces.getState().workspaces) {
+    for (const t of w.tabs) {
+      if (t.kind !== "query" || !t.savedName || t.savedSql !== undefined) continue;
+      const { id: tabId, savedName: name } = t;
+      const connectionId = w.connectionId;
+      const apply = (patch: { savedName?: string | null; savedSql: string | null }) => {
+        // The workspace id changes when it connects: find the tab by its own id.
+        const st = useWorkspaces.getState();
+        const ws = st.workspaces.find((x) => x.tabs.some((y) => y.id === tabId));
+        const cur = ws?.tabs.find((y) => y.id === tabId);
+        if (ws && cur?.kind === "query" && cur.savedName === name) st.updateTab(ws.id, tabId, patch);
+      };
+      jobs.push(
+        (async () => {
+          try {
+            const sql = await ipc.savedQueryRead(connectionId, name);
+            if (typeof sql === "string") apply({ savedSql: sql });
+          } catch (e) {
+            if (toAppError(e).kind === "notFound") apply({ savedName: null, savedSql: null });
+          }
+        })(),
+      );
+    }
+  }
+  await Promise.all(jobs);
 }
 
 /** False until the initial restore is over: nothing is saved before. */
@@ -192,6 +243,7 @@ export async function restoreSession(): Promise<void> {
     lastJson = currentJson();
     ready = true;
   }
+  void hydrateSavedLinks();
 }
 
 /**

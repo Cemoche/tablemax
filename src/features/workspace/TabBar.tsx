@@ -1,5 +1,5 @@
 import { strings } from "../../lib/strings";
-import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { type Workspace, isQueryModified, useWorkspaces } from "../../stores/workspaces";
 import { TabList } from "./TabList";
 
 export function TabBar({ workspace }: { workspace: Workspace }) {
@@ -44,6 +44,11 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                 }`}
               >
                 {t.title}
+                {isQueryModified(t) && (
+                  <span aria-hidden="true" title={strings.savedQueries.modified} className="ml-1 text-warning">
+                    {strings.savedQueries.modifiedDot}
+                  </span>
+                )}
               </button>
               <button
                 type="button"

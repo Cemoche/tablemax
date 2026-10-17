@@ -8,7 +8,20 @@ import { useQueryRuns } from "./queryRuns";
 
 export type Tab =
   | { id: string; kind: "table"; object: ObjectRef; title: string; preview: boolean }
-  | { id: string; kind: "query"; title: string; sql: string; sqlSessionId: string | null };
+  | {
+      id: string;
+      kind: "query";
+      title: string;
+      sql: string;
+      sqlSessionId: string | null;
+      /** Saved query this tab is linked to (Mod+S overwrites it); absent/null: none. */
+      savedName?: string | null;
+      /**
+       * Text of the saved query as last saved or read, to show the "modified" dot.
+       * `undefined` while unknown (a restored tab before its file was read).
+       */
+      savedSql?: string | null;
+    };
 
 /**
  * `disconnected`: restored from the last session (or a cancelled/failed reconnect); its
@@ -80,7 +93,13 @@ interface WorkspacesState {
   updateTab: (
     wsId: string,
     tabId: string,
-    patch: Partial<{ sql: string; sqlSessionId: string | null; title: string }>,
+    patch: Partial<{
+      sql: string;
+      sqlSessionId: string | null;
+      title: string;
+      savedName: string | null;
+      savedSql: string | null;
+    }>,
   ) => void;
   /**
    * Adds restored (disconnected) workspaces, skipping connections already open, and
@@ -90,9 +109,19 @@ interface WorkspacesState {
   /** Asks App to connect a disconnected workspace (no-op otherwise). */
   requestConnect: (wsId: string) => void;
   clearConnectRequest: () => void;
+  /**
+   * Activates the query tab linked to the saved query `name`, else opens a new query tab
+   * titled `name` with `sql`, linked to it (Plan 4 Task 8).
+   */
+  openSavedQueryTab: (wsId: string, name: string, sql: string) => void;
   /** App-level: is the object sidebar shown? (the palette's "Toggle sidebar") */
   sidebarVisible: boolean;
   toggleSidebar: () => void;
+}
+
+/** True when a query tab linked to a saved query differs from the saved text. */
+export function isQueryModified(tab: Tab): boolean {
+  return tab.kind === "query" && !!tab.savedName && typeof tab.savedSql === "string" && tab.savedSql !== tab.sql;
 }
 
 /** Per-workspace query counter: never reused, even after tabs close. */
@@ -442,6 +471,22 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     },
 
     clearConnectRequest: () => set({ connectRequest: null }),
+
+    openSavedQueryTab: (wsId, name, sql) =>
+      update(wsId, (w) => {
+        const linked = w.tabs.find((t) => t.kind === "query" && t.savedName === name);
+        if (linked) return { ...w, activeTabId: linked.id, mru: touch(w.mru, linked.id) };
+        const tab: Tab = {
+          id: crypto.randomUUID(),
+          kind: "query",
+          title: name,
+          sql,
+          sqlSessionId: null,
+          savedName: name,
+          savedSql: sql,
+        };
+        return { ...w, tabs: [...w.tabs, tab], activeTabId: tab.id, mru: touch(w.mru, tab.id) };
+      }),
 
     sidebarVisible: true,
     toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),

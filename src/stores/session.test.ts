@@ -126,7 +126,7 @@ test("parseSnapshot ignores unknown extra fields", () => {
   const extra = JSON.parse(JSON.stringify(snap));
   extra.future = true;
   extra.workspaces[0].pinned = [1];
-  extra.workspaces[0].tabs[1].savedName = "daily";
+  extra.workspaces[0].tabs[1].pinnedAt = 3; // savedName is a known field since Plan 4 Task 8
   expect(parseSnapshot(JSON.stringify(extra))).toEqual(snap);
 });
 
@@ -298,4 +298,55 @@ test("stop unsubscribes", async () => {
   await vi.advanceTimersByTimeAsync(2000);
   window.dispatchEvent(new Event("beforeunload"));
   expect(ipc.sessionSave).not.toHaveBeenCalled();
+});
+
+// ---- Plan 4 Task 8: saved query links ----
+
+test("a query tab linked to a saved query keeps the link in the snapshot (optional field)", () => {
+  const w = workspace({
+    tabs: [{ id: "t2", kind: "query", title: "report", sql: "select 2", sqlSessionId: null, savedName: "report", savedSql: "select 1" }],
+    activeTabId: "t2",
+  });
+  const s = snapshot({ workspaces: [w], activeWorkspaceId: "w1" });
+  // Only the name is persisted, never the saved text.
+  expect(s.workspaces[0].tabs).toEqual([{ kind: "query", title: "report", sql: "select 2", savedName: "report" }]);
+  expect(parseSnapshot(JSON.stringify(s))).toEqual(s);
+  // Absent: unchanged shape. Wrong type: rejected.
+  expect(parseSnapshot(JSON.stringify(snap))).toEqual(snap);
+  const bad = JSON.parse(JSON.stringify(s));
+  bad.workspaces[0].tabs[0].savedName = 3;
+  expect(parseSnapshot(JSON.stringify(bad))).toBeNull();
+});
+
+test("a restored linked tab compares with the file content, read lazily", async () => {
+  const linked: SessionSnapshot = {
+    version: 1,
+    activeWorkspaceIndex: 0,
+    workspaces: [
+      {
+        connectionId: "c1",
+        currentSchema: null,
+        database: null,
+        activeTabIndex: 0,
+        tabs: [
+          { kind: "query", title: "report", sql: "select 2", savedName: "report" },
+          { kind: "query", title: "gone", sql: "select 9", savedName: "gone" },
+        ],
+      },
+    ],
+  };
+  vi.mocked(ipc.sessionLoad).mockResolvedValue(JSON.stringify(linked));
+  vi.mocked(ipc.savedQueryRead).mockImplementation(async (_c, name) => {
+    if (name === "report") return "select 1";
+    throw { kind: "notFound", message: "saved query gone not found" };
+  });
+  await restoreSession();
+  await vi.waitFor(() => {
+    const [a, b] = state().workspaces[0].tabs;
+    expect(a).toMatchObject({ savedName: "report", savedSql: "select 1" });
+    // Deleted meanwhile: the tab is unlinked, its text stays.
+    expect(b).toMatchObject({ savedName: null, sql: "select 9" });
+  });
+  expect(ipc.savedQueryRead).toHaveBeenCalledWith("c1", "report");
+  expect(ipc.workspaceOpen).not.toHaveBeenCalled();
 });

@@ -370,3 +370,37 @@ test("Mod+/ toggles a line comment with a space after --", async () => {
   press(view, { key: "/", code: "Slash", keyCode: 191, ctrlKey: true });
   expect(view.state.doc.toString()).toBe("select 1");
 });
+
+test("history: click inserts at the cursor, double-click replaces, one undo each (real editor)", async () => {
+  editorMode.real = true;
+  vi.mocked(ipc.historyList).mockResolvedValue([
+    { id: 1, connectionId: "c1", sql: "select 42", executedAt: Date.now(), elapsedMs: 1, rows: 1, error: null },
+  ]);
+  await setup("select 1;\n");
+  const view = editorView();
+  act(() => view.dispatch({ selection: { anchor: 10 } }));
+  await userEvent.click(screen.getByRole("button", { name: strings.history.toggle }));
+  const item = await screen.findByRole("button", { name: /select 42/ });
+  fireEvent.click(item, { detail: 0 }); // keyboard activation inserts at once
+  expect(view.state.doc.toString()).toBe("select 1;\nselect 42");
+  await userEvent.dblClick(item);
+  expect(view.state.doc.toString()).toBe("select 42");
+  act(() => {
+    undo(view);
+  });
+  expect(view.state.doc.toString()).toBe("select 1;\nselect 42");
+  act(() => {
+    undo(view);
+  });
+  expect(view.state.doc.toString()).toBe("select 1;\n");
+});
+
+test("a run with a DELIMITER block sends the procedure whole, without the DELIMITER lines", async () => {
+  await setup("DELIMITER //\nCREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END //\nDELIMITER ;\nCALL p();", "mySql");
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual([
+    "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END",
+    "CALL p()",
+  ]);
+});

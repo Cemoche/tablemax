@@ -92,3 +92,20 @@ test("shortcuts are rendered per platform", () => {
   expect(formatShortcut("Ctrl+Tab")).toBe("⌃Tab");
   spy.mockRestore();
 });
+
+test("Open history is offered for a query tab only and toggles its history panel", async () => {
+  const { useQueryPanels } = await import("../../stores/queryPanels");
+  const t = strings.palette.action;
+  useQueryPanels.setState({ history: {} });
+  const action = visibleActions(ctx(ws())).find((a) => a.title === t.openHistory);
+  expect(action?.shortcut).toBe("Mod+Shift+H");
+  action?.run(ctx(ws()));
+  expect(useQueryPanels.getState().history.q1).toBe(true);
+  action?.run(ctx(ws()));
+  expect(useQueryPanels.getState().history.q1).toBe(false);
+  const tableTab = ws({
+    tabs: [{ id: "t1", kind: "table", object: { schema: "public", name: "x" }, title: "x", preview: false }],
+    activeTabId: "t1",
+  });
+  expect(titles(ctx(tableTab))).not.toContain(t.openHistory);
+});
