@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
-import { GridContextMenu } from "./GridContextMenu";
+import { GridContextMenu, joinMenuGroups } from "./GridContextMenu";
 
 const setup = () => {
   const onClose = vi.fn();
@@ -41,4 +41,11 @@ test("Escape and a click outside close the menu", async () => {
   await userEvent.click(screen.getByRole("button", { name: "outside" }));
   expect(onClose).toHaveBeenCalledTimes(2);
   expect(a).not.toHaveBeenCalled();
+});
+
+test("joinMenuGroups puts one separator between non-empty groups", () => {
+  const a = { label: "a", onSelect: () => {} };
+  const b = { label: "b", onSelect: () => {} };
+  expect(joinMenuGroups([[], [a], [], [b, a]])).toEqual([a, "separator", b, a]);
+  expect(joinMenuGroups([[], []])).toEqual([]);
 });

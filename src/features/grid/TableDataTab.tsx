@@ -1,13 +1,16 @@
 import { modShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, ObjectRef } from "../../lib/types";
-import { DataGrid } from "./DataGrid";
+import { Breadcrumb } from "./Breadcrumb";
+import { DataGrid, type GridEditing } from "./DataGrid";
 import { FilterBar } from "./FilterBar";
-import { GridContextMenu } from "./GridContextMenu";
+import { GridContextMenu, joinMenuGroups } from "./GridContextMenu";
 import { PendingChangesPanel } from "./PendingChangesPanel";
 import { RowDetailPanel } from "./RowDetailPanel";
 import { DEFAULT_PAGE_SIZE, formatRowCount, usePagedTable } from "./usePagedTable";
+import { useFkLinks } from "./useFkLinks";
 import { useRowDetail } from "./useRowDetail";
+import { useSelectionCopy } from "./useSelectionCopy";
 import { useTableEditing } from "./useTableEditing";
 
 interface Props {
@@ -20,16 +23,45 @@ interface Props {
 const btn =
   "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
 
-export function TableDataTab({ workspaceId, tabId, object, dialect }: Props) {
+export function TableDataTab(props: Props) {
+  // Kept across foreign key navigation (the panel shows the referenced row once selected).
+  const detail = useRowDetail();
+  // Another table (foreign key navigation) starts afresh: page, grid, selection, menus.
+  return (
+    <TableDataView key={JSON.stringify([props.object.schema, props.object.name])} {...props} detail={detail} />
+  );
+}
+
+function TableDataView({
+  workspaceId,
+  tabId,
+  object,
+  dialect,
+  detail,
+}: Props & { detail: ReturnType<typeof useRowDetail> }) {
   const t = usePagedTable(workspaceId, object, tabId);
   const e = useTableEditing({ workspaceId, tabId, object, result: t.result, reload: t.reload });
-  const detail = useRowDetail();
+  const links = useFkLinks({ workspaceId, tabId, object, dialect, info: e.info, data: t.result, model: e.model });
+  const copy = useSelectionCopy(e.model, dialect, object);
   const rows = t.result?.rows.length ?? 0;
   const from = t.page * DEFAULT_PAGE_SIZE + 1;
   const columns = (e.info?.columns ?? t.result?.columns ?? []).map((c) => c.name);
+  const editing: GridEditing | undefined = e.editing && {
+    ...e.editing,
+    linkAt: (row, col) => links.linksAt(row, col).length > 0,
+    onOpenLink: (row, col) => {
+      const first = links.linksAt(row, col)[0];
+      if (first) links.open(first);
+    },
+  };
+  const target = e.menuTarget;
+  const menuItems = target
+    ? joinMenuGroups([links.menuItems(target.row, target.col), e.menuItems, copy.menuItems(target.block)])
+    : [];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} />
       <FilterBar dialect={dialect} columns={columns} filters={t.filters} onApply={t.setFilters} />
       {t.error && (
         <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger">
@@ -86,6 +118,14 @@ export function TableDataTab({ workspaceId, tabId, object, dialect }: Props) {
           <p className="text-muted">{strings.grid.nothingWritten}</p>
         </div>
       )}
+      {copy.notice && (
+        <div
+          role={copy.notice.error ? "alert" : "status"}
+          className={`border-b border-border px-3 py-1 text-sm ${copy.notice.error ? "text-danger" : "text-muted"}`}
+        >
+          {copy.notice.text}
+        </div>
+      )}
       {e.blocked && e.count > 0 && (
         <div role="status" className="border-b border-border px-3 py-1 text-sm text-warning">
           {strings.grid.commitOrDiscardFirst}
@@ -95,7 +135,7 @@ export function TableDataTab({ workspaceId, tabId, object, dialect }: Props) {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1">
             {t.result && (
-              <DataGrid data={t.result} sort={t.sort} onSort={t.setSort} editing={e.editing} />
+              <DataGrid data={t.result} sort={t.sort} onSort={t.setSort} editing={editing} />
             )}
           </div>
           {e.editable && <PendingChangesPanel workspaceId={workspaceId} tabId={tabId} object={object} />}
@@ -110,16 +150,18 @@ export function TableDataTab({ workspaceId, tabId, object, dialect }: Props) {
             row={e.selectedRow}
             onChange={e.setValue}
             onAction={e.runAction}
+            linksAt={links.linksAt}
+            onOpenLink={links.open}
             onClose={detail.close}
           />
         )}
       </div>
-      {e.menu && (
+      {target && menuItems.length > 0 && (
         <GridContextMenu
-          x={e.menu.x}
-          y={e.menu.y}
-          label={e.menu.label}
-          items={e.menu.items}
+          x={target.x}
+          y={target.y}
+          label={strings.grid.menuLabel}
+          items={menuItems}
           onClose={e.closeMenu}
         />
       )}

@@ -2,6 +2,17 @@ import { useEffect, useRef } from "react";
 
 export type MenuItem = { label: string; onSelect: () => void; disabled?: boolean } | "separator";
 
+/** The non-empty groups, one separator between two groups. */
+export function joinMenuGroups(groups: MenuItem[][]): MenuItem[] {
+  const out: MenuItem[] = [];
+  for (const g of groups) {
+    if (g.length === 0) continue;
+    if (out.length > 0) out.push("separator");
+    out.push(...g);
+  }
+  return out;
+}
+
 interface Props {
   /** Viewport position of the click. */
   x: number;
@@ -50,7 +61,7 @@ export function GridContextMenu({ x, y, label, items, onClose }: Props) {
           <div key={`sep-${i}`} role="separator" className="my-1 border-t border-border" />
         ) : (
           <button
-            key={item.label}
+            key={`${i}\u0000${item.label}`}
             type="button"
             role="menuitem"
             disabled={item.disabled}

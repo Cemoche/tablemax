@@ -265,6 +265,27 @@ export const strings = {
       duplicateRow: "Duplicate row",
       deleteRow: "Delete row",
       restoreRow: "Restore row",
+      openReferenced: "Open referenced row",
+    },
+    /** A column in several foreign keys: one menu entry per referenced table. */
+    openReferencedIn: (table: string) => `Open referenced row in ${table}`,
+    /** Drawn at the right of a foreign key cell that links to a row (Mod+click opens it). */
+    fkIndicator: "↗",
+    fkLinkButton: (table: string) => `→ ${table}`,
+    copyAs: {
+      tsv: "Copy as TSV",
+      csv: "Copy as CSV",
+      json: "Copy as JSON",
+      insert: "Copy as SQL INSERT",
+    },
+    copyFailed: (message: string) => `Could not copy: ${message}`,
+    copySkippedInserts: (n: number) =>
+      `${n.toLocaleString("en-US")} new ${n === 1 ? "row was" : "rows were"} not copied (not committed yet).`,
+    trail: {
+      label: "Navigation trail",
+      separator: "›",
+      crumb: (table: string, filter: string) => (filter ? `${table} (${filter})` : table),
+      back: "Back (Alt+←)",
     },
     discardTitle: "Discard pending changes?",
     discardConfirm: (n: number) =>

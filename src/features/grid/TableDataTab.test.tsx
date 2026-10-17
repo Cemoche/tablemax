@@ -3,9 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
-import type { CellValue, ResultSet, RowKey } from "../../lib/types";
+import type { CellValue, ForeignKeyInfo, ResultSet, RowKey } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
 import { usePendingChanges } from "../../stores/pendingChanges";
+import { useWorkspaces } from "../../stores/workspaces";
 import { tableInfo } from "../../test/tableInfo";
 import type { DataGridProps } from "./DataGrid";
 import { TableDataTab } from "./TableDataTab";
@@ -48,7 +49,7 @@ const pending = () => usePendingChanges.getState();
 beforeEach(() => {
   vi.resetAllMocks();
   grid = null;
-  useGridViews.setState({ views: {} });
+  useGridViews.setState({ views: {}, trails: {} });
   usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo());
   vi.mocked(ipc.changesPreview).mockResolvedValue([]);
@@ -393,4 +394,207 @@ test("a filter change with pending changes is blocked like a page change", async
   expect(quick).toHaveValue("id = 1");
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
   expect(useGridViews.getState().getView("t1").filters).toEqual([]);
+});
+
+const ordersRef = { schema: "public", name: "orders" };
+const fkInfo = (over: Partial<ForeignKeyInfo> = {}) =>
+  tableInfo({
+    foreignKeys: [
+      {
+        name: "order_lines_order_fk",
+        columns: ["order_id"],
+        refSchema: "public",
+        refTable: "orders",
+        refColumns: ["id"],
+        onUpdate: "NO ACTION",
+        onDelete: "CASCADE",
+        ...over,
+      },
+    ],
+  });
+
+/** Tab t1 of workspace w1 showing order_lines, rendered from the store like WorkspaceView. */
+function setTab() {
+  useWorkspaces.setState({
+    workspaces: [
+      {
+        id: "w1",
+        connectionId: "c1",
+        name: "PG",
+        color: "swatch-1",
+        envTag: "local",
+        dialect: "postgres",
+        schemas: ["public"],
+        currentSchema: "public",
+        tabs: [{ id: "t1", kind: "table", object: obj, title: obj.name }],
+        activeTabId: "t1",
+      },
+    ],
+    activeWorkspaceId: "w1",
+  });
+}
+function StoreTab() {
+  const tab = useWorkspaces((s) => s.workspaces[0].tabs[0]);
+  if (tab.kind !== "table") return null;
+  return <TableDataTab workspaceId="w1" tabId="t1" object={tab.object} dialect="postgres" />;
+}
+const theTab = () => useWorkspaces.getState().workspaces[0].tabs[0];
+
+test("Ctrl+click on a foreign key opens the referenced row in the same tab", async () => {
+  setTab();
+  vi.mocked(ipc.tableInfo).mockResolvedValue(fkInfo());
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<StoreTab />);
+  await waitFor(() => expect(grid?.editing?.linkAt(0, 1)).toBe(true));
+  expect(grid!.editing!.linkAt(0, 3)).toBe(false);
+  act(() => grid!.editing!.onOpenLink(0, 1));
+  const filters = [{ column: "id", op: "eq", values: ["42"] }];
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", {
+      object: ordersRef,
+      limit: 300,
+      offset: 0,
+      sort: null,
+      filters,
+    }),
+  );
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", ordersRef, filters);
+  expect(ipc.tableInfo).toHaveBeenLastCalledWith("w1", ordersRef, false);
+  expect(theTab()).toMatchObject({ id: "t1", object: ordersRef, title: "orders" });
+  expect(screen.getByRole("navigation", { name: strings.grid.trail.label })).toHaveTextContent(
+    "order_lines›orders (id = 42)",
+  );
+});
+
+test("a composite foreign key filters on every referenced column (menu entry)", async () => {
+  setTab();
+  vi.mocked(ipc.tableInfo).mockResolvedValue(
+    fkInfo({ columns: ["order_id", "line"], refTable: "shipments", refColumns: ["order_ref", "line_no"] }),
+  );
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<StoreTab />);
+  await waitFor(() => expect(grid?.editing?.linkAt(1, 2)).toBe(true));
+  act(() => grid!.editing!.onContextMenu(1, 2, 5, 5));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.openReferenced }));
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith(
+      "w1",
+      expect.objectContaining({
+        object: { schema: "public", name: "shipments" },
+        filters: [
+          { column: "order_ref", op: "eq", values: ["42"] },
+          { column: "line_no", op: "eq", values: ["1"] },
+        ],
+      }),
+    ),
+  );
+});
+
+test("opening a referenced row is blocked while changes are pending", async () => {
+  setTab();
+  vi.mocked(ipc.tableInfo).mockResolvedValue(fkInfo());
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  pending().toggleDelete("t1", key(1));
+  render(<StoreTab />);
+  await waitFor(() => expect(grid?.editing?.linkAt(0, 1)).toBe(true));
+  act(() => grid!.editing!.onOpenLink(0, 1));
+  expect(await screen.findByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
+  expect(theTab()).toMatchObject({ object: obj });
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
+  expect(useGridViews.getState().getTrail("t1")).toEqual([]);
+});
+
+test("the row details link opens the referenced row and the details stay open", async () => {
+  setTab();
+  vi.mocked(ipc.tableInfo).mockResolvedValue(fkInfo());
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<StoreTab />);
+  await waitFor(() => expect(grid?.editing?.linkAt(0, 1)).toBe(true));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
+  act(() => grid!.editing!.onSelect(0));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.openReferencedIn("orders") }));
+  await waitFor(() => expect(theTab()).toMatchObject({ object: ordersRef }));
+  expect(screen.getByRole("button", { name: strings.grid.rowDetails })).toHaveAttribute("aria-pressed", "true");
+});
+
+/** A clipboard holding the last text written (jsdom has none). */
+function stubClipboard() {
+  const clip = { text: "", writeText: vi.fn(async (t: string) => void (clip.text = t)) };
+  Object.defineProperty(navigator, "clipboard", { value: clip, configurable: true });
+  return clip;
+}
+
+test("Copy as CSV / SQL INSERT copies the displayed selection, without new rows", async () => {
+  const clip = stubClipboard();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.addRow }));
+  // Display rows: 0 = the new row, 1 = line 0, 2 = line 1 (with a pending edit).
+  act(() => grid!.editing!.onEdit(2, 3, "it's edited"));
+  const block = { rows: [0, 1, 2], cols: [2, 3] };
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5, block));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.csv }));
+  await waitFor(() =>
+    expect(clip.text).toBe("line,note\r\n0,note 0\r\n1,it's edited"),
+  );
+  expect(screen.getByText(strings.grid.copySkippedInserts(1))).toBeInTheDocument();
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5, block));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.insert }));
+  await waitFor(() =>
+    expect(clip.text).toBe(
+      `INSERT INTO "public"."order_lines" ("line", "note") VALUES (0, 'note 0');\n` +
+        `INSERT INTO "public"."order_lines" ("line", "note") VALUES (1, 'it''s edited');`,
+    ),
+  );
+});
+
+test("Copy as JSON of a clicked cell outside the selection; a clipboard error shows inline", async () => {
+  const clip = stubClipboard();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onContextMenu(1, 4, 5, 5, { rows: [0], cols: [0] }));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.json }));
+  await waitFor(() =>
+    expect(clip.text).toBe('[\n  {\n    "total": "1.50"\n  }\n]'),
+  );
+  clip.writeText.mockRejectedValue(new Error("denied"));
+  act(() => grid!.editing!.onContextMenu(1, 4, 5, 5));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.tsv }));
+  expect(await screen.findByText(strings.grid.copyFailed("denied"))).toBeInTheDocument();
+});
+
+test("a read-only table still offers the copy entries", async () => {
+  vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo({ rowKey: null, primaryKey: [] }));
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await screen.findByText(strings.grid.readOnlyNoKey);
+  await waitFor(() => expect(grid?.editing).toBeDefined());
+  act(() => grid!.editing!.onContextMenu(0, 3, 5, 5));
+  expect(screen.getByRole("menuitem", { name: strings.grid.copyAs.tsv })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: strings.grid.menu.setNull })).toBeNull();
+});
+
+test("a column in two foreign keys offers one menu entry per referenced table", async () => {
+  setTab();
+  const base = fkInfo().foreignKeys[0];
+  vi.mocked(ipc.tableInfo).mockResolvedValue(
+    tableInfo({ foreignKeys: [base, { ...base, name: "archive_fk", refTable: "orders_archive" }] }),
+  );
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
+  render(<StoreTab />);
+  await waitFor(() => expect(grid?.editing?.linkAt(0, 1)).toBe(true));
+  act(() => grid!.editing!.onContextMenu(0, 1, 5, 5));
+  expect(screen.queryByRole("menuitem", { name: strings.grid.menu.openReferenced })).toBeNull();
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.openReferencedIn("orders_archive") }));
+  await waitFor(() => expect(theTab()).toMatchObject({ object: { schema: "public", name: "orders_archive" } }));
 });

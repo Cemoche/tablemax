@@ -8,6 +8,7 @@ import type { GridEditing } from "./DataGrid";
 import { buildGridModel, type MenuAction, menuActions } from "./editModel";
 import { cellText, insertValuesOf, parseEditorInput, readOnlyReason } from "./editing";
 import type { MenuItem } from "./GridContextMenu";
+import { blockAt, type CellBlock } from "./gridSelection";
 import { useTableInfo } from "./useTableInfo";
 
 interface Args {
@@ -32,9 +33,14 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
   const blocked = usePendingChanges((s) => s.blocked[tabId] ?? false);
   const committing = usePendingChanges((s) => s.committing[tabId] ?? false);
   const appliedSeq = usePendingChanges((s) => s.applied[tabId] ?? 0);
-  const [menuAt, setMenuAt] = useState<{ row: number; col: number | null; x: number; y: number } | null>(
-    null,
-  );
+  const [menuAt, setMenuAt] = useState<{
+    row: number;
+    col: number | null;
+    x: number;
+    y: number;
+    /** What the menu's copy entries copy. */
+    block: CellBlock;
+  } | null>(null);
   /** Why the cell the user tried to edit is read-only, or a failed load. */
   const [hint, setHint] = useState<string | null>(null);
   /**
@@ -158,12 +164,14 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     }
   };
 
-  const editing: GridEditing | undefined = model
+  /** The grid's editing hooks; the tab adds the foreign key links. */
+  const editing: Omit<GridEditing, "linkAt" | "onOpenLink"> | undefined = model
     ? {
         model,
         onEdit: (row, col, text) => setValue(row, col, parseEditorInput(text, {})),
         loadFull,
-        onContextMenu: (row, col, x, y) => setMenuAt({ row, col, x, y }),
+        onContextMenu: (row, col, x, y, selection) =>
+          setMenuAt({ row, col, x, y, block: blockAt(selection ?? null, row, col, model.columns.length) }),
         onActivate: (row, col) => setHint(model.cell(row, col).reason),
         onEditorOpen: (open) => store().setEditorOpen(tabId, open),
         selectedRow,
@@ -171,10 +179,11 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
       }
     : undefined;
 
+  /** The editing entries of the context menu (why a cell is read-only, then the actions). */
   const menuItems: MenuItem[] = [];
   if (menuAt && model) {
     const reason = menuAt.col !== null ? model.cell(menuAt.row, menuAt.col).reason : null;
-    if (reason) menuItems.push({ label: reason, disabled: true, onSelect: () => {} }, "separator");
+    if (reason) menuItems.push({ label: reason, disabled: true, onSelect: () => {} });
     for (const a of menuActions(model, menuAt.row, menuAt.col)) {
       if (a === "duplicateRow" && menuItems.length > 0 && menuItems[menuItems.length - 1] !== "separator") {
         menuItems.push("separator");
@@ -185,10 +194,6 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
       });
     }
   }
-  const menu =
-    menuAt && menuItems.length > 0
-      ? { x: menuAt.x, y: menuAt.y, label: strings.grid.menuLabel, items: menuItems }
-      : null;
 
   const failure = (() => {
     if (!pending) return null;
@@ -210,7 +215,9 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     committing,
     hint,
     failure,
-    menu,
+    /** Where the context menu was opened (null: closed). */
+    menuTarget: model ? menuAt : null,
+    menuItems,
     closeMenu: () => setMenuAt(null),
     /** Display row selected in the grid (null: none, or the row is gone). */
     selectedRow,

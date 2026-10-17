@@ -58,6 +58,8 @@ function renderPanel(
       row={opts.row === undefined ? 0 : opts.row}
       onChange={onChange}
       onAction={onAction}
+      linksAt={() => []}
+      onOpenLink={() => {}}
       onClose={() => {}}
     />,
   );

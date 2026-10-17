@@ -5,7 +5,7 @@ import { useWorkspaces } from "./workspaces";
 
 vi.mock("../lib/ipc");
 
-beforeEach(() => useGridViews.setState({ views: {} }));
+beforeEach(() => useGridViews.setState({ views: {}, trails: {} }));
 
 test("views default, patch and drop", () => {
   const v = useGridViews.getState();
@@ -40,4 +40,21 @@ test("closing a table tab drops its view", () => {
   useGridViews.getState().setView("t1", { page: 2 });
   useWorkspaces.getState().closeTab("w1", "t1");
   expect(useGridViews.getState().views).not.toHaveProperty("t1");
+});
+
+test("the trail pushes, truncates and is dropped with the view", () => {
+  const v = useGridViews.getState();
+  const entry = (name: string) => ({
+    object: { schema: "public", name },
+    view: { page: 1, sort: null, filters: [] },
+  });
+  expect(v.getTrail("t1")).toEqual([]);
+  v.pushTrail("t1", entry("a"));
+  v.pushTrail("t1", entry("b"));
+  expect(useGridViews.getState().getTrail("t1")).toEqual([entry("a"), entry("b")]);
+  useGridViews.getState().truncateTrail("t1", 1);
+  expect(useGridViews.getState().getTrail("t1")).toEqual([entry("a")]);
+  useGridViews.getState().dropView("t1");
+  expect(useGridViews.getState().getTrail("t1")).toEqual([]);
+  expect(useGridViews.getState().trails).not.toHaveProperty("t1");
 });

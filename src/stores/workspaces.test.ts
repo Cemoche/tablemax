@@ -229,3 +229,20 @@ test("closing a workspace with pending changes asks first, then drops them", asy
   expect(usePendingChanges.getState().tabs[t.id]).toBeUndefined();
   expect(usePendingChanges.getState().tabs[u.id]).toBeUndefined();
 });
+
+test("navigateTableTab changes the object and title of a table tab, in place", async () => {
+  const id = await open();
+  useWorkspaces.getState().openTableTab(id, { schema: "public", name: "orders" });
+  useWorkspaces.getState().openQueryTab(id);
+  const [table, query] = ws().tabs;
+  useWorkspaces.getState().navigateTableTab(id, table.id, { schema: "sales", name: "customers" });
+  expect(ws().tabs[0]).toEqual({
+    id: table.id,
+    kind: "table",
+    object: { schema: "sales", name: "customers" },
+    title: "customers",
+  });
+  // Query tabs have no object: unchanged.
+  useWorkspaces.getState().navigateTableTab(id, query.id, { schema: "x", name: "y" });
+  expect(ws().tabs[1]).toEqual(query);
+});

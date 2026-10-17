@@ -5,6 +5,7 @@ import { strings } from "../../lib/strings";
 import type { CellValue, EditValue, ObjectRef, ResultSet, TableInfo } from "../../lib/types";
 import { type EditCell, type GridModel, type MenuAction, menuActions } from "./editModel";
 import { cellText, readOnlyReason } from "./editing";
+import type { FkLink } from "./fkLinks";
 import { prettyJson } from "./prettyJson";
 
 interface Props {
@@ -19,6 +20,9 @@ interface Props {
   onChange: (row: number, col: number, value: EditValue) => void;
   /** A cell action of the grid's menu (Set NULL, Set empty string, Set DEFAULT, Revert cell). */
   onAction: (action: MenuAction, row: number, col: number) => void;
+  /** The foreign key links of a cell (each field offers to open them). */
+  linksAt: (row: number, col: number) => FkLink[];
+  onOpenLink: (link: FkLink) => void;
   onClose: () => void;
 }
 
@@ -149,6 +153,8 @@ export function RowDetailPanel(p: Props) {
                   onRetry={full.retry}
                   actions={menuActions(p.model, p.row!, col).filter((a) => FIELD_ACTIONS.includes(a))}
                   showReason={tableEditable && !keyIssue}
+                  links={p.linksAt(p.row!, col)}
+                  onOpenLink={p.onOpenLink}
                   onChange={(v) => p.onChange(p.row!, col, v)}
                   onAction={(a) => p.onAction(a, p.row!, col)}
                 />
@@ -169,6 +175,8 @@ interface FieldProps {
   actions: MenuAction[];
   /** Say why this column is read-only (not when the whole table or row is). */
   showReason: boolean;
+  links: FkLink[];
+  onOpenLink: (link: FkLink) => void;
   onChange: (value: EditValue) => void;
   onAction: (action: MenuAction) => void;
   onRetry: () => void;
@@ -178,7 +186,19 @@ interface FieldProps {
 const editValueOf = (v: CellValue | "default"): EditValue =>
   v === "default" ? { t: "default" } : v.t === "null" ? { t: "null" } : { t: "text", v: cellText(v) };
 
-function Field({ name, type, cell, full, actions, showReason, onChange, onAction, onRetry }: FieldProps) {
+function Field({
+  name,
+  type,
+  cell,
+  full,
+  actions,
+  showReason,
+  links,
+  onOpenLink,
+  onChange,
+  onAction,
+  onRetry,
+}: FieldProps) {
   const id = useId();
   /** What the user typed, while the field has the focus (the store has it too). */
   const [draft, setDraft] = useState<string | null>(null);
@@ -214,6 +234,22 @@ function Field({ name, type, cell, full, actions, showReason, onChange, onAction
         </label>
         <span className="truncate text-xs text-muted">{type}</span>
         {cell.edited && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-warning" />}
+        {links.length > 0 && (
+          <span className="ml-auto flex min-w-0 shrink-0 gap-1">
+            {links.map((l) => (
+              <button
+                key={l.fk.name}
+                type="button"
+                aria-label={strings.grid.openReferencedIn(l.object.name)}
+                title={strings.grid.openReferencedIn(l.object.name)}
+                onClick={() => onOpenLink(l)}
+                className="max-w-40 truncate rounded-sm px-1 text-xs text-accent hover:bg-surface-2"
+              >
+                {strings.grid.fkLinkButton(l.object.name)}
+              </button>
+            ))}
+          </span>
+        )}
       </div>
       <textarea
         id={id}

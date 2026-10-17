@@ -15,12 +15,13 @@ import {
 } from "@glideapps/glide-data-grid";
 import "@glideapps/glide-data-grid/dist/index.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isModKey } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { ResultSet, SortDir } from "../../lib/types";
 import { CellEditorOverlay } from "./CellEditorOverlay";
 import { type CellContent, cellContent } from "./cellContent";
 import type { GridModel } from "./editModel";
-import { selectedRowOf, withSelectedRow } from "./gridSelection";
+import { type CellBlock, selectedRowOf, selectionBlock, withSelectedRow } from "./gridSelection";
 import { useGridTheme } from "./gridTheme";
 
 const ROW_HEIGHT = 24;
@@ -34,8 +35,15 @@ export interface GridEditing {
   onEdit: (row: number, col: number, text: string) => void;
   /** Loads the whole value of a truncated cell before it is edited. */
   loadFull: (row: number, col: number) => Promise<string>;
-  /** Right click; `col` null on the row marker; x/y in viewport pixels. */
-  onContextMenu: (row: number, col: number | null, x: number, y: number) => void;
+  /**
+   * Right click; `col` null on the row marker; x/y in viewport pixels; `selection` = the
+   * cells selected at that moment (null: none).
+   */
+  onContextMenu: (row: number, col: number | null, x: number, y: number, selection?: CellBlock | null) => void;
+  /** The cell is a foreign key value that links to a row (indicator, Mod+click). */
+  linkAt: (row: number, col: number) => boolean;
+  /** Opens the row the cell references (Mod+click). */
+  onOpenLink: (row: number, col: number) => void;
   /** Enter / double click, also on a read-only cell (to say why it is read-only). */
   onActivate: (row: number, col: number) => void;
   /** The cell editor opened (true) or closed (false). */
@@ -128,7 +136,9 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
           copyData: c.copyText,
           allowOverlay: cell.editable,
           readonly: !cell.editable,
-          contentAlign: c.kind === "number" ? "right" : undefined,
+          // A link keeps its value on the left: the indicator is drawn on the right.
+          contentAlign:
+            c.kind === "number" && !editingRef.current?.linkAt(row, col) ? "right" : undefined,
           themeOverride: theme,
         };
       }
@@ -163,13 +173,22 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
     [model, editThemes],
   );
 
-  // Rows to delete are struck through.
+  // Rows to delete are struck through; foreign key links get an indicator on the right.
   const drawCell = useCallback<DrawCellCallback>(
     (args, drawContent) => {
       drawContent();
+      const { ctx, rect, theme: t } = args;
+      if (editingRef.current?.linkAt(args.row, args.col)) {
+        ctx.save();
+        ctx.fillStyle = t.accentColor;
+        ctx.font = `${t.baseFontStyle} ${t.fontFamily}`;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        ctx.fillText(strings.grid.fkIndicator, rect.x + rect.width - 4, rect.y + rect.height / 2);
+        ctx.restore();
+      }
       const r = model?.rows[args.row];
       if (r?.kind !== "row" || !r.deleted) return;
-      const { ctx, rect, theme: t } = args;
       const y = Math.round(rect.y + rect.height / 2) + 0.5;
       ctx.save();
       ctx.strokeStyle = t.textDark;
@@ -255,6 +274,12 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
         onCellEdited: ([col, row]: Item, v: GridCell) => {
           if (v.kind === GridCellKind.Text) editingRef.current?.onEdit(row, col, v.data);
         },
+        onCellClicked: ([col, row]: Item, e: CellClickedEventArgs) => {
+          const ed = editingRef.current;
+          if (col < 0 || !isModKey(e) || !ed?.linkAt(row, col)) return;
+          e.preventDefault();
+          ed.onOpenLink(row, col);
+        },
         onCellContextMenu: ([col, row]: Item, e: CellClickedEventArgs) => {
           e.preventDefault();
           editingRef.current?.onContextMenu(
@@ -262,6 +287,7 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
             col < 0 ? null : col,
             e.bounds.x + e.localEventX,
             e.bounds.y + e.localEventY,
+            selectionBlock(selection, model ? model.rows.length : data.rows.length, data.columns.length),
           );
         },
       })}

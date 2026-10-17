@@ -39,6 +39,11 @@ interface WorkspacesState {
   setActiveWorkspace: (id: string) => void;
   setSchema: (wsId: string, schema: string) => void;
   openTableTab: (wsId: string, object: ObjectRef) => void;
+  /**
+   * Shows another table in a table tab (foreign key navigation); the title follows. The
+   * caller keeps the tab's view and trail in step (features/grid/tableNavigation).
+   */
+  navigateTableTab: (wsId: string, tabId: string, object: ObjectRef) => void;
   openQueryTab: (wsId: string) => void;
   /**
    * Closes a tab. A table tab with pending changes is not closed: `closeRequest` asks the
@@ -207,6 +212,14 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
         const tab: Tab = { id: crypto.randomUUID(), kind: "table", object, title: object.name };
         return { ...w, tabs: [...w.tabs, tab], activeTabId: tab.id };
       }),
+
+    navigateTableTab: (wsId, tabId, object) =>
+      update(wsId, (w) => ({
+        ...w,
+        tabs: w.tabs.map((t) =>
+          t.id === tabId && t.kind === "table" ? { ...t, object, title: object.name } : t,
+        ),
+      })),
 
     openQueryTab: (wsId) =>
       update(wsId, (w) => {
