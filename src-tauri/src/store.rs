@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::driver::DriverKind;
-use crate::driver::tls::SslConfig;
+use crate::driver::tls::{SslConfig, default_ssl_mode};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
 
@@ -142,8 +142,17 @@ impl ConnectionStore {
         self.conn.lock().map_err(|_| io_err("store lock poisoned"))
     }
 
+    /// Parses a stored config. A config saved before SSL settings existed (no `ssl`
+    /// key) gets the default mode for its host (`default_ssl_mode`), not the serde
+    /// default: a remote host must not silently switch to unverified TLS.
     fn parse(json: &str) -> AppResult<ConnectionConfig> {
-        serde_json::from_str(json).map_err(io_err)
+        let value: serde_json::Value = serde_json::from_str(json).map_err(io_err)?;
+        let legacy = value.get("ssl").is_none();
+        let mut cfg: ConnectionConfig = serde_json::from_value(value).map_err(io_err)?;
+        if legacy {
+            cfg.ssl.mode = default_ssl_mode(&cfg.host, cfg.ssh.is_some());
+        }
+        Ok(cfg)
     }
 
     pub fn list(&self) -> AppResult<Vec<ConnectionConfig>> {
@@ -668,13 +677,49 @@ mod tests {
 
     #[test]
     fn plan1_config_json_still_parses() {
-        let json = r##"{"id":"c1","name":"old","color":"#888","envTag":"dev","kind":"postgres",
-            "host":"localhost","port":5432,"user":"u","database":null,"sqlitePath":null,
-            "passwordMode":"keyring","group":null}"##;
-        let c: ConnectionConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(c.ssl.mode, SslMode::Prefer);
-        assert_eq!(c.ssl, SslConfig::default());
-        assert_eq!(c.ssh, None);
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let legacy = |id: &str, host: &str| {
+            format!(
+                r##"{{"id":"{id}","name":"old","color":"#888","envTag":"dev","kind":"postgres",
+                "host":"{host}","port":5432,"user":"u","database":null,"sqlitePath":null,
+                "passwordMode":"keyring","group":null}}"##
+            )
+        };
+        let conn = store.lock().unwrap();
+        for (id, host) in [("local", "localhost"), ("remote", "db.example.com")] {
+            conn.execute(
+                "INSERT INTO connections(id, name, config_json) VALUES(?1, 'old', ?2)",
+                params![id, legacy(id, host)],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        // A legacy local host keeps Prefer; a legacy remote host is verified, never
+        // silently downgraded to unverified TLS.
+        let local = store.get("local").unwrap();
+        assert_eq!(local.ssl, SslConfig::default());
+        assert_eq!(local.ssl.mode, SslMode::Prefer);
+        assert_eq!(local.ssh, None);
+        let remote = store.get("remote").unwrap();
+        assert_eq!(remote.ssl.mode, SslMode::VerifyFull);
+        assert_eq!(remote.ssl.ca_file, None);
+        assert_eq!(remote.ssh, None);
+        let listed: Vec<_> = store
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|c| c.ssl.mode)
+            .collect();
+        assert!(listed.contains(&SslMode::VerifyFull), "{listed:?}");
+
+        // An explicit mode is never rewritten.
+        let mut explicit = cfg("explicit", PasswordMode::Ask);
+        explicit.host = "db.example.com".into();
+        explicit.ssl.mode = SslMode::Require;
+        let saved =
+            save_connection(&store, &MemorySecretStore::new(), explicit, None, None).unwrap();
+        assert_eq!(store.get(&saved.id).unwrap().ssl.mode, SslMode::Require);
     }
 
     #[test]
