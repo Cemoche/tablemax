@@ -1,12 +1,11 @@
 name: Task
 description: A unit of work small enough for one branch and one pull request.
-labels: ["type:task", "status:ready"]
 body:
   - type: markdown
     attributes:
       value: |
         One task = one branch `issue-<n>-<slug>` = one PR with `Closes #<n>`.
-        Take it with `/pick-issue` (or assign yourself and set `status:in-progress`) before coding.
+        Assign yourself before starting.
   - type: textarea
     id: context
     attributes:

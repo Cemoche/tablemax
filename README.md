@@ -16,10 +16,10 @@ pnpm lint         # tsc + clippy
 
 ## Contributing
 
-The work is tracked in GitHub issues: one issue, one branch `issue-<n>-<slug>`, one
-worktree, one pull request to `main`. Setup, workflow and rules (for people and their
-Claude Code agents) are in [CONTRIBUTING.md](CONTRIBUTING.md); agent rules in
-[CLAUDE.md](CLAUDE.md).
+Pick an issue with no assignee, assign yourself, work on a branch `issue-<n>-<slug>` and
+open a pull request to `main` with `Closes #<n>`; the owner merges. Setup, workflow and
+rules (for people and their Claude Code agents) are in [CONTRIBUTING.md](CONTRIBUTING.md);
+agent rules in [CLAUDE.md](CLAUDE.md).
 
 ## Connections
 

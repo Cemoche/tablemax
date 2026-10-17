@@ -1,6 +1,5 @@
 name: Bug
 description: Something does not work as it should.
-labels: ["type:bug", "status:triage"]
 body:
   - type: markdown
     attributes:

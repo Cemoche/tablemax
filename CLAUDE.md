@@ -46,34 +46,30 @@ and ports: see README.md, "Two worktrees side by side".
   screenshots when the change is visible.
 - No user-visible string outside `src/lib/strings.ts`; no secret in any committed file.
 
-## Workflow (issue → branch → worktree → PR)
+## Workflow (issue → branch → PR), manual for now
 
-1. **Take an issue** with `/pick-issue [filter]`: it lists open `status:ready` issues with
-   no assignee, assigns you, swaps `status:ready` for `status:in-progress` and re-reads the
-   issue to back off if someone else got it first. By hand:
-   `gh issue edit <n> --add-assignee @me --add-label status:in-progress --remove-label status:ready`.
-   Do this **before** writing any code. **Never take an issue that already has an assignee.**
-2. **Work in a worktree**, never in the main checkout: `claude --worktree issue-<n>` (creates
-   `.claude/worktrees/issue-<n>/` on branch `worktree-issue-<n>`, from a fresh `origin/main`).
-3. **`/work-issue <n>`**: renames or creates the branch `issue-<n>-<slug>`, checks the assignment,
-   reads the issue and its linked plan/spec, then does the work (see Superpowers below).
-4. **`/ship`**: re-runs the checks, pushes the branch, opens or updates the PR to `main`
-   with `Closes #<n>`, sets `status:review`. It never merges.
+1. **Claim an issue** by assigning yourself, **before** writing any code:
+   `gh issue edit <n> --add-assignee @me`. The assignment is the only claim (no status
+   labels yet). **Never take an issue that already has an assignee**; re-read it after
+   assigning (`gh issue view <n>`) and back off if someone else is on it too.
+2. **One branch per issue**, `issue-<n>-<slug>`, from an up-to-date `origin/main`. A
+   worktree is recommended so parallel work never shares a checkout:
+   `git fetch origin && git worktree add -b issue-<n>-<slug> .worktrees/issue-<n> origin/main`
+   (`.worktrees/` is gitignored), or `claude --worktree issue-<n>` (creates
+   `.claude/worktrees/issue-<n>/` on branch `worktree-issue-<n>`: rename it with
+   `git branch -m issue-<n>-<slug>`).
+3. Read the issue and its linked plan/spec, do the work (see Superpowers below), meet the
+   Definition of done.
+4. **Push your branch and open a PR to `main`**: `git push -u origin issue-<n>-<slug>`, then
+   `gh pr create --base main` with the body of `.github/pull_request_template.md`
+   (`Closes #<n>`, test commands and output).
 5. A teammate reviews; **the owner merges**. Agents never merge.
 
-- `/plan-to-issues <plan-file> [--dry-run] [--assign-me]` turns a plan's `### Task N`
-  sections into issues (one per task, no duplicates).
-- One issue = one branch `issue-<n>-<slug>` = one worktree = one PR containing `Closes #<n>`.
+- One issue = one branch = one PR containing `Closes #<n>`.
 - **Only the assignee pushes to an issue branch.** Never push to `main`, never
   `--force` someone else's branch, never commit on `main`.
-- The repo is private on a free plan: GitHub has no branch protection here. These rules
-  are enforced by convention, by `.claude/settings.json` (permissions, hooks:
-  `block-main-edits.sh` refuses edits on `main`/`master`, `session-context.sh` prints the
-  branch and its issue) and by an informative CI (`.github/workflows/ci.yml`).
-- Labels: `type:task|bug|epic|chore`, `status:triage|ready|in-progress|review|blocked`,
-  `area:frontend|backend|infra|docs|security`, `size:S|M|L`, `plan:3|4|5`, `post-v1`,
-  `good first issue`. Keep `status:*` current (one at a time); `status:blocked` + a comment
-  saying on what.
+- The repo is private on a free plan: GitHub has no branch protection here, and no hook or
+  CI checks these rules yet. They hold **by convention only**.
 - Scope creep: out-of-issue findings become a new issue (issue form or `gh issue create`),
   not extra commits.
 
@@ -84,7 +80,7 @@ Format `<emoji> <type>(<scope>): <description>`, e.g. `🐛 fix(ssh): re-ask a r
 | ✨ feat | 🐛 fix | 🏗️ refactor | 🔥 chore | 📝 docs | ✅ test | 🎨 style | ⚡ perf | ⏪ revert | 🔒 security |
 |---|---|---|---|---|---|---|---|---|---|
 
-Small commits, local until `/ship`. Stage files by name (no `git add -A` of unrelated files).
+Small commits, local until you push the branch. Stage files by name (no `git add -A` of unrelated files).
 
 ## Security and copy rules (spec §4)
 
@@ -103,21 +99,37 @@ Small commits, local until `/ship`. Stage files by name (no `git add -A` of unre
 
 ## Superpowers plugin (recommended)
 
-Enabled at project scope in `.claude/settings.json`; install it once per machine:
-`claude plugin install superpowers@claude-plugins-official --scope project`.
+Each developer installs it once: `claude plugin install superpowers@claude-plugins-official`
+(user scope by default). Do not use `--scope project`: it writes the tracked
+`.claude/settings.json`, which does not exist yet (see Planned team workflow).
 For non-trivial work: `superpowers:brainstorming` → `superpowers:writing-plans` (plan in
 `docs/superpowers/plans/`) → `superpowers:subagent-driven-development`. Small issues: TDD
 directly (`superpowers:test-driven-development`).
 
 ## Where to look
 
-- What to build and why: the spec, then the plan linked from the issue (or its epic).
-- Plans done: `2026-10-16-tablemax-01-foundations.md`, `2026-10-17-tablemax-02-connections.md`,
-  `2026-10-17-tablemax-team-setup.md`. Next: Plan 3 (Data), 4 (Tabs & editor),
-  5 (Safety & packaging) — one milestone and epic issue each.
-- Deferred work: `docs/notes/plan-0*-followups.md` (also filed as issues).
+- What to build and why: the spec, then the plan linked from the issue.
+- Plans done: `2026-10-16-tablemax-01-foundations.md`, `2026-10-17-tablemax-02-connections.md`.
+  Partly done, rest postponed: `2026-10-17-tablemax-team-setup.md` (only its Task 1, these
+  rules, is in place). Next: Plan 3 (Data), 4 (Tabs & editor), 5 (Safety & packaging).
+- Deferred work: `docs/notes/plan-0*-followups.md`.
 - Human onboarding and setup: `CONTRIBUTING.md`.
 - Personal, untracked overrides: `CLAUDE.local.md`, `.claude/settings.local.json`.
+
+## Planned team workflow (not set up yet)
+
+Postponed with the rest of the team-setup plan. **None of this exists yet: do not call
+these skills, rely on these hooks or labels, or wait for this CI.**
+
+- Shared `.claude/settings.json`: permissions, hooks (`block-main-edits.sh` refusing edits
+  on `main`/`master`, `session-context.sh` printing the branch and its issue), superpowers
+  enabled at project scope, `worktree.baseRef: "fresh"`.
+- Skills: `/pick-issue [filter]` (claim a ready issue, race-safe), `/work-issue <n>`,
+  `/ship` (checks, push, PR, `status:review`), `/plan-to-issues <plan-file> [--dry-run]
+  [--assign-me]` (one issue per `### Task N`).
+- Labels `type:*`, `status:*`, `area:*`, `size:*`, `plan:*`, `post-v1`, `good first issue`,
+  milestones, epics and a board; the issue forms get default labels once these exist.
+- CI `.github/workflows/ci.yml` (frontend, backend with test databases, hygiene).
 
 ## Language
 
