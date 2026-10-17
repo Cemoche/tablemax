@@ -680,6 +680,102 @@ async fn mysql_lexer_follows_session_sql_mode() {
     }
 }
 
+/// After `SET NAMES gbk` (and the other client charsets whose multi-byte characters can
+/// end with a 0x5C byte) the server reads `\'` after such a character as the end of the
+/// string, so the lexer would miss a second statement: every statement is refused until
+/// the charset is back to a safe one (an ASCII SET is still accepted to get there).
+#[tokio::test]
+async fn mysql_refuses_multibyte_unsafe_client_charsets() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!("create table `{n}`.t(a int)"))
+            .await
+            .unwrap();
+        // UTF-8 `中` is E4 B8 AD: read as gbk, `AD 5C` is one character and eats the `\`.
+        let payload = format!("select '中\\'; drop table `{n}`.t; -- '");
+        for set in [
+            "SET NAMES gbk",
+            "set character set big5",
+            "SET character_set_client = sjis",
+            "SET NAMES cp932",
+            "SET NAMES gb18030",
+        ] {
+            if set.contains("gb18030") && kind == DriverKind::MariaDb {
+                continue; // MariaDB has no gb18030.
+            }
+            s.execute(set).await.unwrap();
+            for sql in [payload.as_str(), "select 1"] {
+                let e = s.execute(sql).await.err().unwrap();
+                assert_eq!(e.kind, ErrorKind::Invalid, "{set}: {sql}");
+                assert!(
+                    e.message.contains("client character set")
+                        && e.message.contains("SET NAMES utf8mb4"),
+                    "{set}: {}",
+                    e.message
+                );
+            }
+            s.execute("SET NAMES utf8mb4").await.unwrap();
+            assert_eq!(s.list_objects(Some(n)).await.unwrap().len(), 1, "{set}");
+            // Back to normal: the same text is one statement (a string literal).
+            assert!(s.execute(&payload).await.is_ok(), "{set}");
+        }
+        // A failing statement that changes nothing is followed by a re-read too.
+        s.execute("SET NAMES gbk").await.unwrap();
+        assert!(s.execute("SET NAMES no_such_charset").await.is_err());
+        assert_eq!(
+            s.execute("select 1").await.err().unwrap().kind,
+            ErrorKind::Invalid
+        );
+        s.execute("SET NAMES utf8mb4").await.unwrap();
+        assert!(s.execute("select 1").await.is_ok());
+    }
+}
+
+/// MySQL 9 JavaScript routines (`AS $$ … $$`) hide their body from the lexer: refused.
+#[tokio::test]
+async fn mysql_refuses_dollar_quoted_bodies() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        for sql in [
+            format!("create function `{n}`.f() returns int language javascript as $$ return 1; $$"),
+            format!("create function `{n}`.f() returns int language javascript as $js$ return 1 $js$"),
+            format!("create function `{n}`.f() returns int language javascript as $$ ' $$; drop database `{n}`; -- '"),
+        ] {
+            let e = s.execute(&sql).await.err().unwrap();
+            assert_eq!(e.kind, ErrorKind::Invalid, "{sql}");
+            assert!(e.message.contains("dollar-quoted"), "{}", e.message);
+        }
+        // `$` inside identifiers is not a dollar quote.
+        assert!(s.execute("select 1 as a$b, 2 as `$$`").await.is_ok());
+    }
+}
+
+/// The modes are re-read after a failing statement as well: a MariaDB anonymous block
+/// keeps a `SET NAMES` it ran before failing. (Stored routines, and these blocks for
+/// sql_mode, restore the caller's values when they return.)
+#[tokio::test]
+async fn mysql_modes_are_reread_after_an_error() {
+    for (url, kind) in targets() {
+        if kind != DriverKind::MariaDb {
+            continue;
+        }
+        let (s, _g) = open(&url, kind).await;
+        let e = s
+            .execute("BEGIN NOT ATOMIC SET NAMES gbk; SIGNAL SQLSTATE '45000'; END")
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Query);
+        let e = s.execute("select 1").await.err().unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+        assert!(e.message.contains("client character set gbk"), "{}", e.message);
+        s.execute("SET NAMES utf8mb4").await.unwrap();
+        assert!(s.execute("select 1").await.is_ok());
+    }
+}
+
 #[tokio::test]
 async fn mysql_failed_cancel_does_not_report_cancelled() {
     for (url, kind) in targets() {

@@ -28,7 +28,14 @@
 //! input with more than one statement as `Invalid` BEFORE anything reaches the server.
 //! Executable comments (`/*! ... */`, `/*M! ... */`) are scanned as code since the server
 //! runs their content. The lexer follows the session's `sql_mode` (NO_BACKSLASH_ESCAPES,
-//! ANSI_QUOTES): it is read at connect and re-read after any statement that may change it.
+//! ANSI_QUOTES): it is read at connect and re-read after any statement that may change it
+//! (whether that statement succeeded or failed). The lexer reads the text as UTF-8 (what
+//! the driver sends): when the session's client character set is one whose multi-byte
+//! characters can end with an ASCII byte such as `\` (big5, cp932, gb18030, gbk, sjis),
+//! the server would tokenize differently, so every statement is refused until the user
+//! switches back (an ASCII-only `SET …` is still accepted for that). The client charset
+//! is read and re-read with sql_mode. Dollar-quoted bodies (`AS $$ … $$`, MySQL 9
+//! JavaScript routines) are refused too: the lexer does not see through them.
 //! Compound statements (`CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT … BEGIN … END`, MariaDB
 //! `BEGIN NOT ATOMIC … END`) are one statement: the `;` inside their body do not count.
 //! The body tracker is conservative (see `Compound`): when in doubt it refuses, and an
@@ -83,9 +90,23 @@ impl Modes {
     }
 }
 
+/// Client character sets in which the trailing byte of a multi-byte character can be an
+/// ASCII byte (0x5C `\`, a quote…): the server would not split such text where the
+/// UTF-8 lexer does.
+const UNSAFE_CLIENT_CHARSETS: [&str; 5] = ["big5", "cp932", "gb18030", "gbk", "sjis"];
+
+/// The charset's name when it is one of [`UNSAFE_CLIENT_CHARSETS`].
+fn unsafe_client_charset(charset: Option<&str>) -> Option<String> {
+    let cs = charset?.trim().to_ascii_lowercase();
+    UNSAFE_CLIENT_CHARSETS.contains(&cs.as_str()).then_some(cs)
+}
+
 struct Inner {
     conn: Option<Conn>,
     modes: Modes,
+    /// The session's client character set when it is unsafe for the lexer (see
+    /// [`UNSAFE_CLIENT_CHARSETS`]); `None` when it is safe.
+    unsafe_charset: Option<String>,
     /// MariaDB only: (database, table) -> columns constrained by `json_valid(...)`.
     json_cache: HashMap<(String, String), HashSet<String>>,
 }
@@ -179,6 +200,20 @@ fn from_rows<T: FromRow>(rows: Vec<Row>) -> AppResult<Vec<T>> {
             })
         })
         .collect()
+}
+
+/// The session's sql_mode flags and its unsafe client character set, if any.
+async fn read_session_modes(conn: &mut Conn) -> Result<(Modes, Option<String>), AppError> {
+    let row: Option<Row> = conn
+        .query_first::<Row, _>("SELECT @@SESSION.sql_mode, @@SESSION.character_set_client")
+        .await
+        .map_err(|e| map_err(&e, true))?;
+    let rows: Vec<(Option<String>, Option<String>)> = from_rows(row.into_iter().collect())?;
+    let (mode, charset) = rows.into_iter().next().unwrap_or_default();
+    Ok((
+        Modes::from_sql_mode(&mode.unwrap_or_default()),
+        unsafe_client_charset(charset.as_deref()),
+    ))
 }
 
 /// First column of the first row as text (`None` for no row or NULL), without panicking.
@@ -285,7 +320,7 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
     };
     let conn_id = conn.id();
     let version = version.unwrap_or_default();
-    let mode = match query_first_string(&mut conn, "SELECT @@SESSION.sql_mode").await {
+    let (modes, unsafe_charset) = match read_session_modes(&mut conn).await {
         Ok(v) => v,
         Err(e) => {
             let _ = conn.disconnect().await;
@@ -299,7 +334,8 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
         inner: tokio::sync::Mutex::new(Inner {
             conn: Some(conn),
             json_cache: HashMap::new(),
-            modes: Modes::from_sql_mode(&mode.unwrap_or_default()),
+            modes,
+            unsafe_charset,
         }),
         lost: AtomicBool::new(false),
         canceller: Arc::new(MyCanceller {
@@ -1121,6 +1157,42 @@ fn has_multiple_statements(sql: &str, modes: Modes) -> bool {
     !compound.finish()
 }
 
+/// True when `sql` holds a dollar-quote word (`$$`, `$tag$…`): MySQL 9 reads a body
+/// between such quotes (JavaScript routines) that the lexer cannot see through.
+fn has_dollar_quote(sql: &str, modes: Modes) -> bool {
+    lex(sql, modes).0.into_iter().any(|t| match t {
+        Tok::Word(w) => w.strip_prefix('$').is_some_and(|rest| rest.contains('$')),
+        _ => false,
+    })
+}
+
+/// Why `sql` must not be sent, checked before anything reaches the server: an unsafe
+/// client character set (only an ASCII-only `SET …` passes, to switch back), a
+/// dollar-quoted body, or more than one statement.
+fn refusal(sql: &str, modes: Modes, unsafe_charset: Option<&str>) -> Option<AppError> {
+    if let Some(cs) = unsafe_charset
+        && !(sql.is_ascii() && first_word(sql) == "set")
+    {
+        return Some(AppError::new(
+            ErrorKind::Invalid,
+            format!("client character set {cs} is not supported: use SET NAMES utf8mb4"),
+        ));
+    }
+    if has_dollar_quote(sql, modes) {
+        return Some(AppError::new(
+            ErrorKind::Invalid,
+            "dollar-quoted bodies are not supported",
+        ));
+    }
+    if has_multiple_statements(sql, modes) {
+        return Some(AppError::new(
+            ErrorKind::Invalid,
+            "execute accepts exactly one statement",
+        ));
+    }
+    None
+}
+
 fn type_name(col: &Column) -> String {
     use ColumnType::*;
     let unsigned = col.flags().contains(ColumnFlags::UNSIGNED_FLAG);
@@ -1274,28 +1346,36 @@ fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
     }
 }
 
-/// Statements after which `@@SESSION.sql_mode` must be re-read.
-fn may_change_sql_mode(sql: &str) -> bool {
-    if sql.to_ascii_lowercase().contains("sql_mode") {
-        return true;
-    }
-    let w = sql
-        .trim_start()
+/// The first word of `sql`, lower-cased ("" when it starts with something else).
+fn first_word(sql: &str) -> String {
+    sql.trim_start()
         .split(|c: char| !c.is_ascii_alphabetic())
         .next()
         .unwrap_or("")
-        .to_ascii_lowercase();
-    matches!(w.as_str(), "set" | "execute" | "call")
+        .to_ascii_lowercase()
+}
+
+/// Statements after which `@@SESSION.sql_mode` and the client character set must be
+/// re-read.
+fn may_change_session_modes(sql: &str) -> bool {
+    let lower = sql.to_ascii_lowercase();
+    if ["sql_mode", "names", "character", "charset"]
+        .iter()
+        .any(|k| lower.contains(k))
+    {
+        return true;
+    }
+    matches!(
+        first_word(sql).as_str(),
+        "set" | "execute" | "call" | "begin"
+    )
 }
 
 fn is_ddl(sql: &str) -> bool {
-    let w = sql
-        .trim_start()
-        .split(|c: char| !c.is_ascii_alphabetic())
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    matches!(w.as_str(), "create" | "alter" | "drop" | "rename")
+    matches!(
+        first_word(sql).as_str(),
+        "create" | "alter" | "drop" | "rename"
+    )
 }
 
 /// Column names constrained by `json_valid(`col`)` in a CHECK clause.
@@ -1328,12 +1408,9 @@ impl MySession {
         }
         let mut guard = self.inner.lock().await;
         let inner = &mut *guard;
-        // Checked under the lock: `modes` reflects every earlier statement.
-        if has_multiple_statements(sql, inner.modes) {
-            return Err(AppError::new(
-                ErrorKind::Invalid,
-                "execute accepts exactly one statement",
-            ));
+        // Checked under the lock: `modes` and the charset reflect every earlier statement.
+        if let Some(e) = refusal(sql, inner.modes, inner.unsafe_charset.as_deref()) {
+            return Err(e);
         }
         let Some(conn) = inner.conn.as_mut() else {
             return Err(Self::gone());
@@ -1346,10 +1423,14 @@ impl MySession {
         let out = Self::run_on(conn, &mut inner.json_cache, self.mariadb, sql).await;
         self.canceller.running.store(false, Ordering::SeqCst);
         let was_cancelled = self.canceller.cancelled_seq.load(Ordering::SeqCst) == my_seq;
-        if out.is_ok() && may_change_sql_mode(sql) {
-            match query_first_string(conn, "SELECT @@SESSION.sql_mode").await {
-                Ok(Some(m)) => inner.modes = Modes::from_sql_mode(&m),
-                Ok(None) => {}
+        // Also after an error: a CALL / EXECUTE may change the modes and then fail.
+        let link_lost = matches!(&out, Err(e) if e.kind == ErrorKind::ConnectionLost);
+        if !link_lost && may_change_session_modes(sql) {
+            match read_session_modes(conn).await {
+                Ok((modes, charset)) => {
+                    inner.modes = modes;
+                    inner.unsafe_charset = charset;
+                }
                 Err(err) => {
                     self.note_loss(&err);
                     if err.kind == ErrorKind::ConnectionLost {
@@ -1783,9 +1864,81 @@ mod tests {
             }
         );
         assert_eq!(Modes::from_sql_mode(""), DEFAULT);
-        assert!(may_change_sql_mode("SET SESSION SQL_MODE = ''"));
-        assert!(may_change_sql_mode("set @@sql_mode=1"));
-        assert!(!may_change_sql_mode("select 1"));
+        assert!(may_change_session_modes("SET SESSION SQL_MODE = ''"));
+        assert!(may_change_session_modes("set @@sql_mode=1"));
+        assert!(!may_change_session_modes("select 1"));
+    }
+
+    #[test]
+    fn client_charset_triggers_a_reread() {
+        for sql in [
+            "SET NAMES gbk",
+            "/*!40101 SET NAMES gbk */",
+            "set character set big5",
+            "SET @@character_set_client = sjis",
+            "select 1 /*!40101 , @@charset */",
+            "begin not atomic set names gbk; end",
+            "execute s",
+            "call p()",
+        ] {
+            assert!(may_change_session_modes(sql), "{sql}");
+        }
+        assert!(!may_change_session_modes("select a from t"));
+    }
+
+    #[test]
+    fn unsafe_client_charsets_are_recognised() {
+        for cs in ["gbk", "GBK", "big5", "cp932", "gb18030", "sjis"] {
+            assert!(unsafe_client_charset(Some(cs)).is_some(), "{cs}");
+        }
+        for cs in ["utf8mb4", "utf8mb3", "latin1", "ascii", "binary", "ujis", "euckr"] {
+            assert_eq!(unsafe_client_charset(Some(cs)), None, "{cs}");
+        }
+        assert_eq!(unsafe_client_charset(None), None);
+    }
+
+    #[test]
+    fn unsafe_client_charset_refuses_everything_but_an_ascii_set() {
+        let refused = |sql: &str| refusal(sql, DEFAULT, Some("gbk"));
+        for sql in [
+            "select '中\\'; drop table t; -- '",
+            "select 1",
+            "set @x = '中'",
+            "/*!40101 SET NAMES utf8mb4 */",
+        ] {
+            let e = refused(sql).expect(sql);
+            assert_eq!(e.kind, ErrorKind::Invalid);
+            assert_eq!(
+                e.message,
+                "client character set gbk is not supported: use SET NAMES utf8mb4"
+            );
+        }
+        for sql in ["SET NAMES utf8mb4", "set character set utf8mb4", "SET NAMES latin1;"] {
+            assert!(refused(sql).is_none(), "{sql}");
+        }
+        // The ASCII SET still goes through the single-statement check.
+        assert_eq!(
+            refused("SET NAMES utf8mb4; drop table t").unwrap().message,
+            "execute accepts exactly one statement"
+        );
+        // A safe charset changes nothing.
+        assert!(refusal("select '中\\'; x'", DEFAULT, None).is_none());
+    }
+
+    #[test]
+    fn dollar_quoted_bodies_are_refused() {
+        for sql in [
+            "create function f() returns int language javascript as $$ return 1; $$",
+            "create function f() returns int language javascript as $js$return 1$js$",
+            "create function f() returns int language javascript as $$ ' $$; drop table t; -- '",
+            "select $$x$$",
+        ] {
+            let e = refusal(sql, DEFAULT, None).expect(sql);
+            assert_eq!(e.message, "dollar-quoted bodies are not supported", "{sql}");
+        }
+        for sql in ["select 1 as a$b", "select `$$`", "select '$$'", "select $a"] {
+            assert!(refusal(sql, DEFAULT, None).is_none(), "{sql}");
+        }
     }
 
     #[test]
