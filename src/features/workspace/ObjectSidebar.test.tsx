@@ -95,7 +95,7 @@ test("database switch failure shows a message and keeps the old database", async
   const sel = await screen.findByRole("combobox", { name: strings.sidebar.database });
   await waitFor(() => expect(within(sel).getAllByRole("option")).toHaveLength(2));
   await userEvent.selectOptions(sel, "other");
-  expect(await screen.findByText(strings.sidebar.switchFailed)).toBeTruthy();
+  expect(await screen.findByText(new RegExp(`${strings.sidebar.switchFailed}.*nope`))).toBeTruthy();
   expect(useWorkspaces.getState().workspaces[0].database).toBe("app");
 });
 
@@ -187,4 +187,24 @@ test("Refresh reloads objects, routines, databases and forces the catalog", asyn
   expect(ipc.routinesList).toHaveBeenCalledTimes(2);
   expect(ipc.databasesList).toHaveBeenCalledTimes(2);
   expect(ipc.catalogGet).toHaveBeenCalledWith("w1", "public", true);
+});
+
+test("switching database reloads objects and routines even when the schema stays", async () => {
+  vi.mocked(ipc.workspaceSwitchDatabase).mockResolvedValue({
+    workspaceId: "w1",
+    dialect: "postgres",
+    database: "other",
+  } as never);
+  useWorkspaces.setState({ workspaces: [{ ...workspace, database: "app" }] });
+  const view = (ws: Workspace) => <ObjectSidebar workspace={ws} />;
+  const { rerender } = render(view({ ...workspace, database: "app" }));
+  await screen.findByRole("button", { name: /orders/ });
+  vi.mocked(ipc.objectsList).mockResolvedValue([{ schema: "public", name: "fresh", kind: "table" }]);
+  const sel = await screen.findByRole("combobox", { name: strings.sidebar.database });
+  await waitFor(() => expect(within(sel).getAllByRole("option")).toHaveLength(2));
+  await userEvent.selectOptions(sel, "other");
+  await waitFor(() => expect(useWorkspaces.getState().workspaces[0].database).toBe("other"));
+  rerender(view(useWorkspaces.getState().workspaces[0]));
+  expect(await screen.findByRole("button", { name: /fresh/ })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /orders/ })).toBeNull();
 });

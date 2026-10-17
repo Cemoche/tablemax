@@ -58,7 +58,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
     return () => {
       stale = true;
     };
-  }, [id, currentSchema, reload]);
+  }, [id, currentSchema, database, reload]);
 
   useEffect(() => {
     let stale = false;
@@ -73,7 +73,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
     return () => {
       stale = true;
     };
-  }, [id, currentSchema, reload]);
+  }, [id, currentSchema, database, reload]);
 
   useEffect(() => {
     if (!isPg || status !== "connected") return;
@@ -131,8 +131,8 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
     setSwitching(true);
     try {
       await switchDatabase(id, name);
-    } catch {
-      setSwitchError(strings.sidebar.switchFailed);
+    } catch (e) {
+      setSwitchError(`${strings.sidebar.switchFailed}: ${toAppError(e).message}`);
     } finally {
       setSwitching(false);
     }
@@ -253,6 +253,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
           <select
             aria-label={strings.sidebar.schema}
             value={currentSchema ?? ""}
+            disabled={switching}
             onChange={(e) => setSchema(id, e.target.value)}
             className="min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 py-1"
           >
@@ -265,6 +266,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
           <button
             type="button"
             onClick={refresh}
+            disabled={switching}
             className="rounded-sm border border-border bg-bg px-2 py-1 hover:bg-surface-2"
           >
             {strings.sidebar.refresh}

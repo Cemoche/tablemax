@@ -65,9 +65,12 @@ interface WorkspacesState {
   /** `sql` is the initial content of the new tab (default empty). */
   openQueryTab: (wsId: string, sql?: string) => void;
   /**
-   * PostgreSQL only: switches the workspace's database, then reloads its schemas and
-   * resets the current schema. Rejects (workspace unchanged) when the switch fails.
-   * Open table tabs of the previous database are left as they are.
+   * PostgreSQL only: switches the workspace's database, closes its table tabs (they
+   * would otherwise query the new database under the old title; query tabs stay, they
+   * keep their own SQL sessions), then reloads its schemas and resets the current
+   * schema. Rejects with the workspace unchanged when the switch itself fails. Once the
+   * switch succeeded the store follows the backend: a schemas failure leaves no schemas
+   * and rejects. A second call while one runs for the same workspace is ignored.
    */
   switchDatabase: (wsId: string, database: string) => Promise<void>;
   closeTab: (wsId: string, tabId: string) => void;
@@ -93,6 +96,8 @@ interface WorkspacesState {
 const queryCounters = new Map<string, number>();
 /** In-flight opens, so a double click does not open two backend workspaces. */
 const opening = new Map<string, Promise<void>>();
+/** Workspaces with a database switch in flight. */
+const switching = new Set<string>();
 
 export function defaultSchema(
   dialect: Dialect,
@@ -333,14 +338,31 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       }),
 
     switchDatabase: async (wsId, database) => {
-      const info = await ipc.workspaceSwitchDatabase(wsId, database);
-      const schemas = await ipc.schemasList(wsId);
-      update(wsId, (w) => ({
-        ...w,
-        database: info.database ?? database,
-        schemas,
-        currentSchema: defaultSchema(w.dialect, schemas, info.database ?? database),
-      }));
+      if (switching.has(wsId)) return;
+      switching.add(wsId);
+      try {
+        const info = await ipc.workspaceSwitchDatabase(wsId, database);
+        const db = info.database ?? database;
+        const stale = get().workspaces.find((w) => w.id === wsId)?.tabs ?? [];
+        for (const t of stale) {
+          if (t.kind === "table") get().closeTab(wsId, t.id);
+        }
+        update(wsId, (w) => ({ ...w, database: db }));
+        let schemas: string[];
+        try {
+          schemas = await ipc.schemasList(wsId);
+        } catch (e) {
+          update(wsId, (w) => ({ ...w, schemas: [], currentSchema: null }));
+          throw e;
+        }
+        update(wsId, (w) => ({
+          ...w,
+          schemas,
+          currentSchema: defaultSchema(w.dialect, schemas, db),
+        }));
+      } finally {
+        switching.delete(wsId);
+      }
     },
 
     openQueryTab: (wsId, sql = "") =>

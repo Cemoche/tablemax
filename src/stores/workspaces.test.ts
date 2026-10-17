@@ -451,3 +451,44 @@ test("restoreWorkspaces skips a connection already open and keeps the active wor
   expect(useWorkspaces.getState().workspaces.map((w) => w.id)).toEqual([id, "restored:2"]);
   expect(useWorkspaces.getState().activeWorkspaceId).toBe(id);
 });
+
+test("switchDatabase closes table tabs, keeps query tabs and updates database and schemas", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, { schema: "public", name: "t1" });
+  s.openTableTab(id, { schema: "public", name: "t2" }, { preview: true });
+  s.openQueryTab(id);
+  const q = ws().tabs.find((t) => t.kind === "query")?.id;
+  const dropView = vi.spyOn(useGridViews.getState(), "dropView");
+  vi.mocked(ipc.workspaceSwitchDatabase).mockResolvedValue(info({ database: "other" }));
+  vi.mocked(ipc.schemasList).mockResolvedValue(["public", "x"]);
+  await useWorkspaces.getState().switchDatabase(id, "other");
+  expect(ws().tabs.map((t) => t.id)).toEqual([q]);
+  expect(ws().mru).toEqual([q]);
+  expect(ws().activeTabId).toBe(q);
+  expect(dropView).toHaveBeenCalledTimes(2);
+  expect(ws()).toMatchObject({ database: "other", schemas: ["public", "x"], currentSchema: "public" });
+});
+
+test("switchDatabase keeps the store on the new database when schemasList fails", async () => {
+  const id = await open();
+  vi.mocked(ipc.workspaceSwitchDatabase).mockResolvedValue(info({ database: "other" }));
+  vi.mocked(ipc.schemasList).mockRejectedValue({ kind: "io", message: "boom" });
+  await expect(useWorkspaces.getState().switchDatabase(id, "other")).rejects.toBeTruthy();
+  expect(ws()).toMatchObject({ database: "other", schemas: [], currentSchema: null });
+});
+
+test("switchDatabase failure leaves the workspace untouched; concurrent calls are ignored", async () => {
+  const id = await open();
+  useWorkspaces.getState().openTableTab(id, { schema: "public", name: "t1" });
+  vi.mocked(ipc.workspaceSwitchDatabase).mockRejectedValueOnce({ kind: "invalid", message: "nope" });
+  await expect(useWorkspaces.getState().switchDatabase(id, "other")).rejects.toBeTruthy();
+  expect(ws().tabs).toHaveLength(1);
+  let release: (v: ReturnType<typeof info>) => void = () => {};
+  vi.mocked(ipc.workspaceSwitchDatabase).mockReturnValueOnce(new Promise((r) => (release = r)));
+  const first = useWorkspaces.getState().switchDatabase(id, "a");
+  await useWorkspaces.getState().switchDatabase(id, "b");
+  release(info({ database: "a" }));
+  await first;
+  expect(ipc.workspaceSwitchDatabase).toHaveBeenCalledTimes(2);
+});
