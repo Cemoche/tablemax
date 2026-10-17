@@ -591,14 +591,15 @@ impl PgSession {
                  pg_get_expr(d.adbin, d.adrelid), a.attidentity::text, a.attgenerated::text, \
                  col_description(a.attrelid, a.attnum), \
                  quote_literal(col_description(a.attrelid, a.attnum)), \
-                 format_type(a.atttypid, -1), \
-                 (WITH RECURSIVE ty(oid, base) AS ( \
+                 b.base_type, b.is_bytea \
+                 FROM pg_attribute a \
+                 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+                 CROSS JOIN LATERAL (WITH RECURSIVE ty(oid, base) AS ( \
                     SELECT t.oid, t.typbasetype FROM pg_type t WHERE t.oid = a.atttypid \
                     UNION ALL \
                     SELECT t.oid, t.typbasetype FROM pg_type t JOIN ty ON t.oid = ty.base \
-                  ) SELECT bool_or(ty.oid = 'bytea'::regtype) FROM ty) \
-                 FROM pg_attribute a \
-                 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+                  ) SELECT format_type(max(ty.oid) FILTER (WHERE ty.base = 0), -1) AS base_type, \
+                    bool_or(ty.oid = 'bytea'::regtype) AS is_bytea FROM ty) b \
                  WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped \
                  ORDER BY a.attnum",
                 &[&oid],

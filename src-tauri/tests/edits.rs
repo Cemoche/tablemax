@@ -1105,6 +1105,93 @@ async fn pg_char_and_bit_casts_keep_the_whole_value() {
     }
 }
 
+#[tokio::test]
+async fn pg_domains_with_typmod_never_truncate() {
+    for url in pg_urls() {
+        let fx = pg_fixture(&url).await;
+        let s = quote_ident(Dialect::Postgres, &fx.schema);
+        fx.run(&format!("CREATE DOMAIN {s}.d5 AS varchar(5)")).await;
+        fx.run(&format!("CREATE DOMAIN {s}.d5b AS {s}.d5")).await;
+        fx.run(&format!("CREATE DOMAIN {s}.c3 AS char(3)")).await;
+        let t = fx.q("dom");
+        fx.run(&format!(
+            "CREATE TABLE {t} (k {s}.c3 PRIMARY KEY, s {s}.d5, s2 {s}.d5b, v int)"
+        ))
+        .await;
+        fx.run(&format!(
+            "INSERT INTO {t} VALUES ('a', 'abcde', 'abcde', 1), ('abc', 'x', 'x', 2)"
+        ))
+        .await;
+        let info = fx.mgr.table_info(&fx.ws, &fx.obj("dom")).await.unwrap();
+        let bases: Vec<&str> = info.columns.iter().map(|c| c.base_type.as_str()).collect();
+        assert_eq!(bases, ["bpchar", "character varying", "character varying", "integer"]);
+
+        // Too long for the domain's varchar(5) (directly and through a domain over it):
+        // an error, never a cut.
+        for col in ["s", "s2"] {
+            let o = fx
+                .apply("dom", vec![update(int_key_text("abc"), &[(col, text("abcdefg"))])])
+                .await;
+            assert!(!o.applied, "{col}: {o:?}");
+            assert_eq!(o.error.expect("error").kind, ErrorKind::Query, "{col}");
+        }
+        let o = fx
+            .apply(
+                "dom",
+                vec![RowChange::Insert {
+                    values: set(&[("k", text("zz")), ("s", text("abcdefg"))]),
+                }],
+            )
+            .await;
+        assert!(!o.applied, "{o:?}");
+        let rs = fx.page("dom").await;
+        assert_eq!(rs.rows.len(), 2);
+        assert_eq!(cell(&rs, 1, "s"), CellValue::Text("x".into()));
+
+        // Filters compare whole values: 'abcdefg' is not 'abcde', 'abcd' is not 'abc'.
+        let filtered = |column: &str, value: &str| {
+            let req = PageRequest {
+                object: fx.obj("dom"),
+                limit: 300,
+                offset: 0,
+                sort: None,
+                filters: vec![Filter {
+                    column: Some(column.into()),
+                    op: FilterOp::Eq,
+                    values: vec![value.into()],
+                }],
+            };
+            let (mgr, ws) = (fx.mgr.clone(), fx.ws.clone());
+            async move { mgr.table_page(&ws, &req).await.unwrap().rows.len() }
+        };
+        assert_eq!(filtered("s", "abcdefg").await, 0);
+        assert_eq!(filtered("s2", "abcdefg").await, 0);
+        assert_eq!(filtered("s", "abcde").await, 1);
+        assert_eq!(filtered("k", "abcd").await, 0);
+        assert_eq!(filtered("k", "abc").await, 1);
+
+        // The char(3) domain key hits exactly its row ('a' must not match 'abc').
+        let rs = fx.page("dom").await;
+        let abc = (0..rs.rows.len())
+            .find(|&i| as_str(&cell(&rs, i, "k")) == "abc")
+            .unwrap();
+        let o = fx
+            .apply("dom", vec![update(key(&rs, abc, &["k"]), &[("s", text("hello"))])])
+            .await;
+        assert!(o.applied, "{o:?}");
+        assert_eq!(o.affected, vec![1]);
+        let rs = fx.page("dom").await;
+        let a = (0..rs.rows.len())
+            .find(|&i| as_str(&cell(&rs, i, "k")) == "a  ")
+            .unwrap();
+        assert_eq!(cell(&rs, a, "s"), CellValue::Text("abcde".into()));
+    }
+}
+
+fn int_key_text(k: &str) -> RowKey {
+    RowKey(vec![("k".into(), CellValue::Text(k.into()))])
+}
+
 /// `CREATE TABLE <name> (k <ty> PRIMARY KEY, v varchar(10))` with one row per literal
 /// (`v` = `r<i>`); updates then deletes the row `r<target>` by the key loaded from the
 /// page, checking no neighbour is touched.
