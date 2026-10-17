@@ -1,5 +1,6 @@
 name: Task
 description: A unit of work small enough for one branch and one pull request.
+labels: ["type:task", "status:ready"]
 body:
   - type: markdown
     attributes:

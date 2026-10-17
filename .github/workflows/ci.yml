@@ -69,12 +69,14 @@ jobs:
         run: bash scripts/test-dbs.sh down
 
   hygiene:
-    name: Hygiene (Claude hooks, secrets)
+    name: Hygiene (Claude hooks, GitHub bootstrap, secrets)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - name: Claude Code hook tests
         run: bash scripts/test-claude-hooks.sh
+      - name: GitHub bootstrap script (fake gh, no network)
+        run: bash scripts/test-github-bootstrap.sh
       - name: No secrets in tracked files
         run: bash scripts/check-no-secrets.sh
