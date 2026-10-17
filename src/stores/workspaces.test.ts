@@ -355,6 +355,41 @@ test("the first sort or page change in a preview tab pins it", async () => {
   expect(ws().tabs[0]).toMatchObject({ preview: false });
 });
 
+test("a pending change pins a preview tab; opening or viewing it does not", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users, { preview: true });
+  s.openTableTab(id, orders);
+  const [pv, pinned] = ws().tabs.map((t) => t.id);
+  usePendingChanges.getState().addInsert(pinned, orders);
+  expect(ws().tabs[0]).toMatchObject({ preview: true });
+  usePendingChanges.getState().addInsert(pv, users);
+  expect(ws().tabs[0]).toMatchObject({ preview: false });
+  // The next single click opens a new preview tab instead of replacing the edited one.
+  s.openTableTab(id, { schema: "public", name: "items" }, { preview: true });
+  expect(ws().tabs).toHaveLength(3);
+  expect(usePendingChanges.getState().count(pv)).toBe(1);
+});
+
+test("filtering a preview tab pins it", async () => {
+  const id = await open();
+  useWorkspaces.getState().openTableTab(id, users, { preview: true });
+  const pv = ws().tabs[0].id;
+  useGridViews.getState().setView(pv, { filters: [{ column: "id", op: "eq", values: ["1"] }], page: 0 });
+  expect(ws().tabs[0]).toMatchObject({ preview: false });
+});
+
+test("following a foreign key in a preview tab pins it", async () => {
+  const id = await open();
+  useWorkspaces.getState().openTableTab(id, orders, { preview: true });
+  const pv = ws().tabs[0].id;
+  const view = { page: 0, sort: null, filters: [{ column: "id", op: "eq" as const, values: ["42"] }] };
+  useWorkspaces.getState().navigateTableTab(id, pv, users, view, [{ object: orders, view: { page: 0, sort: null, filters: [] } }]);
+  expect(ws().tabs[0]).toMatchObject({ object: users, preview: false });
+  useWorkspaces.getState().openTableTab(id, { schema: "public", name: "items" }, { preview: true });
+  expect(ws().tabs.map((t) => t.title)).toEqual(["users", "items"]);
+});
+
 test("replacing a preview tab drops its grid view and mru entry", async () => {
   const id = await open();
   const s = useWorkspaces.getState();

@@ -596,11 +596,25 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
   };
 });
 
-// First sort or page change in a preview tab pins it (Plan 4, ruling R1). Editing and
-// filtering call `pinTab` themselves once they exist.
+// A preview tab is pinned by the first change the user makes in it (Plan 4, ruling R1), so
+// a single click in the sidebar never replaces it: a sort, page or filter change and a
+// foreign key navigation (all in its grid view) here, a pending edit below.
 useGridViews.subscribe((state, prev) => {
   for (const tabId of Object.keys(state.views)) {
     if (state.views[tabId] === prev.views[tabId]) continue;
+    for (const w of useWorkspaces.getState().workspaces) {
+      if (w.tabs.some((t) => t.id === tabId && t.kind === "table" && t.preview)) {
+        useWorkspaces.getState().pinTab(w.id, tabId);
+      }
+    }
+  }
+});
+
+usePendingChanges.subscribe((state, prev) => {
+  for (const tabId of Object.keys(state.tabs)) {
+    if (state.tabs[tabId] === prev.tabs[tabId] || usePendingChanges.getState().count(tabId) === 0) {
+      continue;
+    }
     for (const w of useWorkspaces.getState().workspaces) {
       if (w.tabs.some((t) => t.id === tabId && t.kind === "table" && t.preview)) {
         useWorkspaces.getState().pinTab(w.id, tabId);
