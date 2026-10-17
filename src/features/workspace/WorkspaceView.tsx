@@ -5,6 +5,7 @@ import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
+import { EnvBanner } from "./EnvBanner";
 import { ObjectSidebar } from "./ObjectSidebar";
 import { TabBar } from "./TabBar";
 
@@ -67,7 +68,9 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
   }, [id, activeTabId, openQueryTab, closeTab]);
 
   return (
-    <div className={`flex h-full min-h-0 border-t-2 ${ENV_BORDER[workspace.envTag]}`}>
+    <div className="flex h-full min-h-0 flex-col">
+      <EnvBanner workspace={workspace} />
+      <div className={`flex min-h-0 flex-1 border-t-2 ${ENV_BORDER[workspace.envTag]}`}>
       <ObjectSidebar workspace={workspace} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar workspace={workspace} />
@@ -81,6 +84,7 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

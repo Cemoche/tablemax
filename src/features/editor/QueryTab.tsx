@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { toAppError } from "../../lib/errors";
+import { isConfirmationRequired, parseConfirmationIndices, toAppError } from "../../lib/errors";
 import { strings } from "../../lib/strings";
+import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
+import { useLiveEnv } from "../workspace/useLiveEnv";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { ResultsPanel } from "./ResultsPanel";
@@ -42,8 +44,11 @@ export function QueryTab({ workspace, tab }: Props) {
   const textRef = useRef(tab.sql);
   const selRef = useRef<EditorSelection>({ from: 0, to: 0, head: 0 });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** A batch the backend refused until confirmed; Run resends these exact statements. */
+  const [pending, setPending] = useState<{ stmts: Statement[]; flagged: number[] } | null>(null);
   const run = useQueryRuns((s) => s.runs[tabId]);
   const running = run?.running ?? false;
+  const env = useLiveEnv(workspace);
 
   const flush = useCallback(() => {
     if (saveTimer.current) {
@@ -76,7 +81,7 @@ export function QueryTab({ workspace, tab }: Props) {
     }
   };
 
-  const execute = async (stmts: Statement[]) => {
+  const execute = async (stmts: Statement[], confirmed = false) => {
     const runs = useQueryRuns.getState();
     if (stmts.length === 0 || runs.runs[tabId]?.running) return;
     flush();
@@ -104,9 +109,16 @@ export function QueryTab({ workspace, tab }: Props) {
             dropLostSession(sid);
           }
         },
+        confirmed,
       );
     } catch (e) {
       const err = toAppError(e);
+      if (isConfirmationRequired(err)) {
+        // Nothing ran: forget the run just started and ask first.
+        useQueryRuns.getState().drop(tabId);
+        setPending({ stmts, flagged: parseConfirmationIndices(err.message, stmts.length) });
+        return;
+      }
       useQueryRuns.getState().preflightFailed(tabId, err);
       if (err.kind === "connectionLost" && sessionId) dropLostSession(sessionId);
     }
@@ -159,6 +171,21 @@ export function QueryTab({ workspace, tab }: Props) {
       <div className="min-h-0 flex-1 basis-1/2 border-t border-border">
         <ResultsPanel run={run} />
       </div>
+      {pending && (
+        <ConfirmRunDialog
+          connectionName={workspace.name}
+          envTag={env.envTag}
+          safeMode={env.mode}
+          statements={pending.stmts.map((s) => s.text)}
+          flagged={pending.flagged}
+          onCancel={() => setPending(null)}
+          onRun={() => {
+            const { stmts } = pending;
+            setPending(null);
+            void execute(stmts, true);
+          }}
+        />
+      )}
     </div>
   );
 }

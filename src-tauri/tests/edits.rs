@@ -109,6 +109,7 @@ fn config(kind: DriverKind, p: Option<&ConnectParams>, sqlite: Option<String>) -
         group: None,
         ssl: SslConfig::default(),
         ssh: None,
+        safe_mode: None,
     }
 }
 

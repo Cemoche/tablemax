@@ -5,9 +5,12 @@ import { Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import CodeMirror from "@uiw/react-codemirror";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useMemo, useRef } from "react";
 import { strings } from "../../lib/strings";
+import { useResolvedDark } from "../../lib/theme";
 import type { Dialect } from "../../lib/types";
+import { useSettings } from "../../stores/settings";
+import { isValidFontFamily } from "../settings/bounds";
 
 export type RunMode = "current" | "all";
 export interface EditorSelection {
@@ -27,15 +30,21 @@ interface Props {
 
 export const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
 
-// All colors come from the design tokens (they follow the system color scheme).
+// All colors come from the design tokens (they follow data-theme / the system color scheme).
+// The user's font reaches the editor only through the --editor-font-family and
+// --editor-font-size custom properties set on its container (CSSOM, never CSS text), so
+// the theme rules stay static and a settings value can never add a CSS rule.
 export const editorThemeSpec = {
   "&": {
     height: "100%",
     color: "var(--text)",
     backgroundColor: "var(--surface)",
-    fontSize: "var(--text-md)",
+    fontSize: "var(--editor-font-size, var(--text-md))",
   },
-  ".cm-scroller": { fontFamily: "var(--font-mono)", backgroundColor: "var(--surface)" },
+  ".cm-scroller": {
+    fontFamily: "var(--editor-font-family, var(--font-mono))",
+    backgroundColor: "var(--surface)",
+  },
   ".cm-content": { caretColor: "var(--text)", color: "var(--text)", backgroundColor: "var(--surface)" },
   ".cm-line": { color: "var(--text)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
@@ -64,19 +73,16 @@ export const editorThemeSpec = {
 /** `dark` only selects CodeMirror's base theme; every color comes from the tokens. */
 export const buildEditorTheme = (dark: boolean) => EditorView.theme(editorThemeSpec, { dark });
 
-export function usePrefersDark() {
-  const mq = () =>
-    typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-  const [dark, setDark] = useState(() => mq()?.matches ?? false);
-  useEffect(() => {
-    const m = mq();
-    if (!m) return;
-    const on = () => setDark(m.matches);
-    on();
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, []);
-  return dark;
+/**
+ * The container style carrying the user's font. A family outside the safe grammar is
+ * ignored (defence in depth: the settings store and the backend reject it already); an
+ * empty one leaves the `--font-mono` fallback.
+ */
+export function editorFontStyle(fontFamily: string, fontSize?: number): CSSProperties {
+  const vars: Record<string, string> = {};
+  if (fontFamily && isValidFontFamily(fontFamily)) vars["--editor-font-family"] = fontFamily;
+  if (fontSize && Number.isFinite(fontSize)) vars["--editor-font-size"] = `${fontSize}px`;
+  return { height: "100%", ...vars } as CSSProperties;
 }
 
 export const highlight = syntaxHighlighting(
@@ -95,7 +101,9 @@ export function SqlEditor({ value, onChange, dialect, onRun, onSelectionChange }
   const runRef = useRef(onRun);
   runRef.current = onRun;
 
-  const dark = usePrefersDark();
+  const dark = useResolvedDark();
+  const fontFamily = useSettings((s) => s.settings.editorFontFamily);
+  const fontSize = useSettings((s) => s.settings.editorFontSize);
   const extensions = useMemo(
     () => [
       sql({ dialect: DIALECTS[dialect] }),
@@ -129,7 +137,7 @@ export function SqlEditor({ value, onChange, dialect, onRun, onSelectionChange }
     <CodeMirror
       value={value}
       height="100%"
-      style={{ height: "100%" }}
+      style={editorFontStyle(fontFamily, fontSize)}
       aria-label={strings.query.editorLabel}
       theme="none"
       extensions={extensions}

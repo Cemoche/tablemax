@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { SettingsDialog } from "./features/settings/SettingsDialog";
+import { strings } from "./lib/strings";
 import { ConnectPrompt } from "./features/connections/ConnectPrompt";
 import { ConnectionForm } from "./features/connections/ConnectionForm";
 import { ImportDialog } from "./features/connections/ImportDialog";
@@ -7,6 +9,7 @@ import { blankConnection } from "./features/connections/connectionDraft";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlow";
 import { toAppError } from "./lib/errors";
+import { useWindowTitle } from "./features/workspace/useWindowTitle";
 import { WorkspaceSwitcher } from "./features/workspace/WorkspaceSwitcher";
 import { CloseConfirm } from "./features/workspace/CloseConfirm";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
@@ -25,6 +28,7 @@ function App() {
   const [draftSslExplicit, setDraftSslExplicit] = useState(false);
   const [urlDialog, setUrlDialog] = useState(false);
   const [importDialog, setImportDialog] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const select = (cfg: ConnectionConfig | null, password: string | null = null, sslExplicit = false) => {
     setSelected(cfg);
     setDraftPassword(password);
@@ -37,12 +41,25 @@ function App() {
   const [view, setView] = useState<View>("connections");
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? null;
   const showWorkspace = view === "workspace" && activeWorkspace !== null;
+  useWindowTitle(showWorkspace ? activeWorkspace : null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Each open is bound to its connection; a newer open supersedes a pending one.
   const openFlow = useConnectFlow(async (s, cfg: ConnectionConfig) => {
     await openWorkspace(cfg.id, s.password, s.sshSecret, s.acceptFingerprint);
     return true;
   });
+
+  // Mod+, opens the settings (a modifier combo, so it is fine while typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     load().catch((e) => setLoadError(toAppError(e).message));
@@ -66,16 +83,29 @@ function App() {
 
   return (
     <div className="flex h-screen flex-col bg-bg text-fg">
-      {workspaces.length > 0 && (
-        <WorkspaceSwitcher
-          connectionsActive={!showWorkspace}
-          onShowConnections={() => setView("connections")}
-          onSelectWorkspace={(id) => {
-            setActiveWorkspace(id);
-            setView("workspace");
-          }}
-        />
-      )}
+      <div className="flex items-stretch border-b border-border bg-surface">
+        <div className="min-w-0 flex-1">
+          {workspaces.length > 0 && (
+            <WorkspaceSwitcher
+              connectionsActive={!showWorkspace}
+              onShowConnections={() => setView("connections")}
+              onSelectWorkspace={(id) => {
+                setActiveWorkspace(id);
+                setView("workspace");
+              }}
+            />
+          )}
+        </div>
+        <button
+          type="button"
+          aria-label={strings.settings.open}
+          title={strings.settings.open}
+          onClick={() => setSettingsOpen(true)}
+          className="shrink-0 px-3 py-1.5 hover:bg-surface-2"
+        >
+          <span aria-hidden>⚙</span>
+        </button>
+      </div>
       <div className="flex min-h-0 flex-1">
         {showWorkspace ? (
           <main className="min-w-0 flex-1">
@@ -120,6 +150,7 @@ function App() {
           }}
         />
       )}
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {importDialog && <ImportDialog onClose={() => setImportDialog(false)} />}
       <CloseConfirm />
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />

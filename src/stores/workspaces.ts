@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../lib/ipc";
 import { strings } from "../lib/strings";
-import type { ConnectionConfig, Dialect, EnvTag, ObjectRef } from "../lib/types";
+import type { ConnectionConfig, Dialect, EnvTag, ObjectRef, SafeMode } from "../lib/types";
 import { useConnections } from "./connections";
 import { type GridView, type TrailEntry, useGridViews } from "./gridViews";
 import { usePendingChanges } from "./pendingChanges";
@@ -16,7 +16,9 @@ export interface Workspace {
   connectionId: string;
   name: string;
   color: string;
+  /** Tag and safe mode the workspace was opened with (the saved connection may change since). */
   envTag: EnvTag;
+  safeMode?: SafeMode | null;
   dialect: Dialect;
   schemas: string[];
   currentSchema: string | null;
@@ -121,6 +123,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       name: cfg.name,
       color: cfg.color,
       envTag: cfg.envTag,
+      safeMode: cfg.safeMode ?? null,
       dialect: info.dialect,
       schemas,
       currentSchema: defaultSchema(info.dialect, schemas, cfg.database),

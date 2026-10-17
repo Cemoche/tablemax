@@ -46,3 +46,23 @@ export function isWrongExportPassword(e: AppError): boolean {
 export function isImportExpired(e: AppError): boolean {
   return e.kind === "notFound" && e.message === "import expired";
 }
+
+/**
+ * A protected connection refused an unconfirmed batch: nothing ran. Message = the
+ * comma-separated indices of the statements that need confirmation ("1" or "0,1,2").
+ */
+export function isConfirmationRequired(e: AppError): boolean {
+  return e.kind === "confirmationRequired";
+}
+
+/**
+ * The statement indices a `confirmationRequired` message names. Tolerant: an
+ * unparsable message (or an out-of-range index) means every statement needs it.
+ */
+export function parseConfirmationIndices(message: string, count: number): number[] {
+  const all = Array.from({ length: count }, (_, i) => i);
+  const parts = message.split(",").map((p) => p.trim());
+  if (parts.length === 0 || parts.some((p) => !/^\d+$/.test(p))) return all;
+  const idx = [...new Set(parts.map(Number))].filter((i) => i < count).sort((a, b) => a - b);
+  return idx.length > 0 ? idx : all;
+}

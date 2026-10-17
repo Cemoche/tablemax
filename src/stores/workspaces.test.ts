@@ -68,6 +68,15 @@ test("openWorkspace picks public for postgres and activates; reopening just acti
   expect(useWorkspaces.getState().workspaces).toHaveLength(1);
 });
 
+test("the workspace keeps the tag and safe mode it was opened with", async () => {
+  useConnections.setState({ items: [cfg({ envTag: "prod", safeMode: "confirmAll" })] });
+  await open();
+  expect(ws()).toMatchObject({ envTag: "prod", safeMode: "confirmAll" });
+  // A later edit of the saved connection does not rewrite what the workspace was opened with.
+  useConnections.setState({ items: [cfg({ envTag: "dev", safeMode: "off" })] });
+  expect(ws()).toMatchObject({ envTag: "prod", safeMode: "confirmAll" });
+});
+
 test("mysql default schema is the connection database when present", async () => {
   useConnections.setState({ items: [cfg({ kind: "mySql", database: "shop" })] });
   vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ dialect: "mySql" }));

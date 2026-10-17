@@ -14,6 +14,9 @@ pub enum ErrorKind {
     Invalid,
     HostKeyUnknown,
     HostKeyChanged,
+    /// Safe mode: the batch needs a confirmation and nothing of it was run; the message
+    /// lists the indices of the statements to confirm, comma-separated (`"0,2"`).
+    ConfirmationRequired,
 }
 
 #[derive(Debug, thiserror::Error, Serialize)]

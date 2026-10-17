@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TableMax app icon: an original drawing (a stylised data grid), made for TableMax. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f6fd6"/>
+      <stop offset="1" stop-color="#1b3f8f"/>
+    </linearGradient>
+  </defs>
+  <!-- Background tile -->
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#bg)"/>
+  <!-- Table card -->
+  <rect x="192" y="232" width="640" height="560" rx="64" fill="#f4f7fc"/>
+  <!-- Header row -->
+  <path d="M192 296a64 64 0 0 1 64-64h512a64 64 0 0 1 64 64v80H192z" fill="#0f2350"/>
+  <!-- Row separators -->
+  <rect x="192" y="510" width="640" height="16" fill="#c9d4e8"/>
+  <rect x="192" y="644" width="640" height="16" fill="#c9d4e8"/>
+  <!-- Column separators -->
+  <rect x="397" y="376" width="16" height="416" fill="#c9d4e8"/>
+  <rect x="611" y="376" width="16" height="416" fill="#c9d4e8"/>
+  <!-- Selected cell -->
+  <rect x="413" y="526" width="198" height="118" fill="#ffb02e"/>
+</svg>

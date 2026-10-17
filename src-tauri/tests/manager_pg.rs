@@ -51,6 +51,7 @@ async fn cancel_marks_batch_cancelled_pg() {
         group: None,
         ssl: SslConfig::default(),
         ssh: None,
+        safe_mode: None,
     };
     let saved = mgr
         .save_connection(cfg, p.password.clone(), None)
@@ -85,6 +86,7 @@ async fn cancel_marks_batch_cancelled_pg() {
         m.execute_batch(
             &s,
             vec!["select pg_sleep(30)".into(), "select 2".into()],
+            false,
             sink,
         )
         .await
@@ -142,6 +144,7 @@ async fn test_connection_reuses_keyring_only_for_unchanged_identity_pg() {
         group: None,
         ssl: SslConfig::default(),
         ssh: None,
+        safe_mode: None,
     };
     let saved = mgr
         .save_connection(cfg, p.password.clone(), None)
@@ -179,6 +182,7 @@ fn pg_cfg(host: &str, mode: PasswordMode) -> (ConnectionConfig, Option<String>) 
         group: None,
         ssl: SslConfig::default(),
         ssh: None,
+        safe_mode: None,
     };
     (cfg, p.password)
 }

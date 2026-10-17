@@ -14,7 +14,9 @@ import type {
   PageRequest,
   ResultSet,
   RowChange,
+  Settings,
   RowCount,
+  SafeMode,
   SshAuth,
   SslMode,
   TableInfo,
@@ -175,4 +177,47 @@ test("EditValue, RowChange and ApplyOutcome", () => {
   }`);
   expect(o.failedIndex).toBe(1);
   expect(o.error?.kind).toBe("query");
+});
+
+// settings.rs Settings (camelCase; theme is "system" | "light" | "dark").
+test("Settings", () => {
+  const s: Settings = JSON.parse(`{
+    "version":1,"theme":"dark","editorFontFamily":"","editorFontSize":13,"pageSize":300,
+    "exactCountThreshold":500000,"autoLimitDefault":false,"autoLimitValue":1000,
+    "keymap":{"run":"Mod-Enter"}
+  }`);
+  expect(s.theme).toBe("dark");
+  expect(s.keymap.run).toBe("Mod-Enter");
+  expect(Object.keys(s).sort()).toEqual([
+    "autoLimitDefault",
+    "autoLimitValue",
+    "editorFontFamily",
+    "editorFontSize",
+    "exactCountThreshold",
+    "keymap",
+    "pageSize",
+    "theme",
+    "version",
+  ]);
+});
+
+// store.rs SafeMode and ConnectionConfig.safeMode (safety.rs serde_names), error.rs
+// ConfirmationRequired.
+test("Safe mode", () => {
+  const modes: SafeMode[] = JSON.parse('["off","confirmAll","confirmWrites"]');
+  expect(modes).toHaveLength(3);
+  const c: ConnectionConfig = JSON.parse(`{
+    "id":"x","name":"n","color":"swatch-1","envTag":"prod","kind":"postgres",
+    "host":"h","port":5432,"user":"u","database":null,"sqlitePath":null,
+    "passwordMode":"ask","group":null,
+    "ssl":{"mode":"prefer","caFile":null,"certFile":null,"keyFile":null},"ssh":null,
+    "safeMode":"confirmAll"
+  }`);
+  expect(c.safeMode).toBe("confirmAll");
+  // Default (by environment), and configs saved before safe mode existed.
+  const legacy: ConnectionConfig = { ...c, safeMode: null };
+  expect(legacy.safeMode).toBeNull();
+  const kind: ErrorKind = "confirmationRequired";
+  const e = JSON.parse('{"kind":"confirmationRequired","message":"0,2"}');
+  expect(e.kind).toBe(kind);
 });

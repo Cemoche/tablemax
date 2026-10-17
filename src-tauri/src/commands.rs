@@ -15,6 +15,7 @@ use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::import::{ImportPreview, ImportResult};
 use crate::manager::{ExecEvent, SessionManager, WorkspaceInfo};
+use crate::settings::{self, Settings};
 use crate::store::ConnectionConfig;
 use crate::value::CellValue;
 
@@ -300,15 +301,20 @@ pub async fn sql_session_close(
 }
 
 /// Streams [`ExecEvent`]s on `on_event`; resolves once `BatchFinished` was sent.
+/// Rejects with `ConfirmationRequired` (no event, nothing run) when the connection's
+/// safe mode wants the batch confirmed and `confirmed` is false.
 #[tauri::command]
 pub async fn sql_execute(
     state: State<'_, SessionManager>,
     session_id: String,
     statements: Vec<String>,
+    confirmed: bool,
     on_event: Channel<ExecEvent>,
 ) -> AppResult<()> {
+    // `confirmed`: the user confirmed this batch in the safe mode dialog. Which
+    // statements need it is decided by the backend from the stored connection.
     state
-        .execute_batch(&session_id, statements, move |event| {
+        .execute_batch(&session_id, statements, confirmed, move |event| {
             // A closed webview just drops the event; the batch still runs to completion.
             let _ = on_event.send(event);
         })
@@ -318,6 +324,51 @@ pub async fn sql_execute(
 #[tauri::command]
 pub async fn sql_cancel(state: State<'_, SessionManager>, session_id: String) -> AppResult<()> {
     state.cancel(&session_id).await
+}
+
+fn settings_path(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?;
+    Ok(dir.join("settings.json"))
+}
+
+#[tauri::command]
+pub async fn settings_get(app: AppHandle) -> AppResult<Settings> {
+    let path = settings_path(&app)?;
+    tokio::task::spawn_blocking(move || settings::load(&path))
+        .await
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))
+}
+
+/// Saves the settings and returns the stored value (out-of-range numbers clamped, an
+/// unsafe editor font family reset to "": see `Settings::clamped`).
+#[tauri::command]
+pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Settings> {
+    let path = settings_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let clamped = settings.clamped();
+        settings::save(&path, &clamped)?;
+        Ok(clamped)
+    })
+    .await
+    .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
+}
+
+/// The app version, from the package info.
+#[tauri::command]
+pub fn app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+/// Sets the title of the calling window (`TableMax — <connection> [PROD]`). Done here
+/// rather than from JS so the capabilities stay at `core:default`.
+#[tauri::command]
+pub fn window_set_title(window: tauri::WebviewWindow, title: String) -> AppResult<()> {
+    window
+        .set_title(&title)
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))
 }
 
 #[cfg(test)]

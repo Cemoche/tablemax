@@ -7,8 +7,9 @@ import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { AppError, Dialect, ForeignKeyInfo, ObjectRef, TableInfo } from "../../lib/types";
+import { useResolvedDark } from "../../lib/theme";
 import { useWorkspaces } from "../../stores/workspaces";
-import { DIALECTS, buildEditorTheme, highlight, usePrefersDark } from "../editor/SqlEditor";
+import { DIALECTS, buildEditorTheme, highlight } from "../editor/SqlEditor";
 
 const s = strings.structure;
 
@@ -152,7 +153,7 @@ function ForeignKeysTable({ info, workspaceId }: { info: TableInfo; workspaceId:
 }
 
 function DdlView({ ddl, dialect }: { ddl: string; dialect: Dialect }) {
-  const dark = usePrefersDark();
+  const dark = useResolvedDark();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   useEffect(() => setCopyState("idle"), [ddl]);
   const extensions = useMemo(

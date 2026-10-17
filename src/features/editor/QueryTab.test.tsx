@@ -1,8 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import type { ExecEvent } from "../../lib/types";
+import type { ConnectionConfig } from "../../lib/types";
+import { useConnections } from "../../stores/connections";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "./QueryTab";
@@ -65,6 +67,7 @@ const setup = async (sql = "select 1; select 2") => {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  useConnections.setState({ items: [] });
   useQueryRuns.setState({ runs: {} });
   vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s1");
   vi.mocked(ipc.sqlCancel).mockResolvedValue(undefined);
@@ -247,4 +250,69 @@ test("other errors keep the session", async () => {
   });
   expect(ipc.sqlSessionClose).not.toHaveBeenCalled();
   expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: "s1" });
+});
+
+describe("safe mode confirmation", () => {
+  const refuse = (indices: string) => {
+    vi.mocked(ipc.sqlExecute).mockRejectedValueOnce({ kind: "confirmationRequired", message: indices });
+  };
+
+  test("a refused batch opens the dialog listing every statement, flagged ones marked", async () => {
+    await setup("select 1; delete from t; select 2");
+    refuse("1");
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("n · DEV");
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(items[1]).toHaveAttribute("data-flagged", "true");
+    expect(items[0]).not.toHaveAttribute("data-flagged");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
+  test("Run resends exactly the same statements with confirmed: true", async () => {
+    await setup("select 1; delete from t; select 2");
+    refuse("1");
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await screen.findByRole("dialog");
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
+    const [first, second] = vi.mocked(ipc.sqlExecute).mock.calls;
+    expect(second[1]).toEqual(first[1]);
+    expect(first[3] ?? false).toBe(false);
+    expect(second[3]).toBe(true);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    act(() => resolveExec());
+  });
+
+  test("Cancel runs nothing more and clears the pending run", async () => {
+    await setup("delete from t");
+    refuse("0");
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await screen.findByRole("dialog");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(ipc.sqlExecute).toHaveBeenCalledTimes(1);
+    expect(useQueryRuns.getState().runs["t1"]?.running ?? false).toBe(false);
+    expect(screen.getByRole("button", { name: "Run all" })).toBeEnabled();
+  });
+
+  test("the dialog shows the live tag and the enforced mode", async () => {
+    // Opened as dev (setup), saved as prod since: protection applies at once.
+    useConnections.setState({ items: [{ id: "c1", envTag: "prod", safeMode: null } as ConnectionConfig] });
+    await setup("delete from t");
+    refuse("0");
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("n · PROD");
+    expect(dialog).toHaveTextContent("Safe mode: confirm writes");
+  });
+
+  test("an unparsable refusal flags every statement", async () => {
+    await setup("select 1; select 2");
+    refuse("???");
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await screen.findByRole("dialog");
+    expect(screen.getAllByRole("listitem").every((i) => i.getAttribute("data-flagged") === "true")).toBe(true);
+  });
 });

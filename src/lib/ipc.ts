@@ -17,6 +17,7 @@ import type {
   RowChange,
   RowCount,
   RowKey,
+  Settings,
   TableInfo,
   WorkspaceInfo,
 } from "./types";
@@ -126,15 +127,30 @@ export const sqlSessionClose = (sessionId: string) =>
  * resolving. The promise settles after the backend sent `batchFinished` (or rejects
  * on a pre-flight error such as an unknown session or a query already running);
  * UI state must be driven by the events.
+ * Safe mode: without `confirmed`, a batch the connection's safe mode wants confirmed
+ * rejects with `confirmationRequired` before anything runs (no event is sent, not even
+ * `batchFinished`); re-run it with `confirmed = true` once the user confirmed.
  */
 export const sqlExecute = (
   sessionId: string,
   statements: string[],
   onEvent: (e: ExecEvent) => void,
+  confirmed = false,
 ) => {
   const channel = new Channel<ExecEvent>();
   channel.onmessage = onEvent;
-  return invoke<void>("sql_execute", { sessionId, statements, onEvent: channel });
+  return invoke<void>("sql_execute", { sessionId, statements, confirmed, onEvent: channel });
 };
 
 export const sqlCancel = (sessionId: string) => invoke<void>("sql_cancel", { sessionId });
+
+/** Sets the calling window's title (no JS permission needed: done in Rust). */
+export const windowSetTitle = (title: string) => invoke<void>("window_set_title", { title });
+
+export const settingsGet = () => invoke<Settings>("settings_get");
+
+/** Saves the settings; resolves with the stored value (out-of-range numbers clamped). */
+export const settingsSet = (settings: Settings) => invoke<Settings>("settings_set", { settings });
+
+/** The app version (from the package info). */
+export const appVersion = () => invoke<string>("app_version");

@@ -7,6 +7,12 @@ export type DriverKind = "postgres" | "mySql" | "mariaDb" | "sqlite";
 export type Dialect = "postgres" | "mySql" | "sqlite";
 export type EnvTag = "local" | "dev" | "staging" | "prod";
 export type PasswordMode = "keyring" | "ask" | "none";
+/**
+ * Safe mode of a connection (store.rs SafeMode): which statements are confirmed before
+ * a batch runs. A connection's `null` (Default, by environment) is confirmWrites on prod
+ * and off otherwise, decided by the backend.
+ */
+export type SafeMode = "off" | "confirmAll" | "confirmWrites";
 
 export type ErrorKind =
   | "connection"
@@ -21,7 +27,12 @@ export type ErrorKind =
   /** SSH server key not in any known_hosts; message = its "SHA256:…" fingerprint. */
   | "hostKeyUnknown"
   /** SSH server key differs from known_hosts; message = the received fingerprint. */
-  | "hostKeyChanged";
+  | "hostKeyChanged"
+  /**
+   * Safe mode: nothing of the batch ran; message = the indices of the statements to
+   * confirm, comma-separated ("1", "0,2"). Re-run it with `confirmed`.
+   */
+  | "confirmationRequired";
 
 export interface AppError {
   kind: ErrorKind;
@@ -97,6 +108,8 @@ export interface ConnectionConfig {
   ssl: SslConfig;
   /** Database reached through this SSH server (host/port as seen from it). */
   ssh: SshSettings | null;
+  /** null or absent: Default (by environment). */
+  safeMode?: SafeMode | null;
 }
 
 /** Something an import could not carry over as is (import/tableplus.rs ImportWarning). */
@@ -300,3 +313,20 @@ export type ExecEvent =
   | { event: "statementFinished"; data: { index: number; outcome: StatementOutcome } }
   | { event: "statementFailed"; data: { index: number; error: AppError } }
   | { event: "batchFinished"; data: { cancelled: boolean } };
+
+// settings.rs (camelCase on the wire).
+export type ThemeSetting = "system" | "light" | "dark";
+
+export interface Settings {
+  version: number;
+  theme: ThemeSetting;
+  /** "" = use the --font-mono token. */
+  editorFontFamily: string;
+  editorFontSize: number;
+  pageSize: number;
+  exactCountThreshold: number;
+  autoLimitDefault: boolean;
+  autoLimitValue: number;
+  /** Action id to shortcut; empty = defaults. */
+  keymap: Record<string, string>;
+}
