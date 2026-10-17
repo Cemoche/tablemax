@@ -2,6 +2,34 @@
 
 A free, fast desktop database client. Tauri 2 + React + TypeScript + Rust.
 
+## Installation (Linux)
+
+`pnpm build:app` (`tauri build`) produces two packages under
+`src-tauri/target/release/bundle/`:
+
+- **`.deb`** (`deb/TableMax_<version>_amd64.deb`, Debian package name `table-max`):
+  `sudo apt install ./TableMax_<version>_amd64.deb`. It declares
+  `libwebkit2gtk-4.1-0` and `libgtk-3-0` (satisfied by `libgtk-3-0t64` on Ubuntu 24.04),
+  which apt pulls in. Run `tablemax` or use the "TableMax" desktop entry (category
+  Development). Remove with `sudo apt remove table-max`.
+- **AppImage** (`appimage/TableMax_<version>_amd64.AppImage`), self-contained:
+  `chmod +x TableMax_*.AppImage && ./TableMax_*.AppImage`. It needs FUSE 2
+  (`libfuse2t64` on Ubuntu 24.04); without it, run it with
+  `APPIMAGE_EXTRACT_AND_RUN=1`. It follows the desktop's light/dark preference; set
+  `APPIMAGE_GTK_THEME=Adwaita:dark` to force a dark GTK theme.
+
+Both packages contain a binary linked against the build machine's glibc: a build made on
+Ubuntu 26.04 needs glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+). Build on the oldest
+distribution you want to support.
+
+Runtime notes: saving passwords in the keyring needs a Secret Service provider
+(GNOME Keyring or KWallet, present on standard desktops); without one, choose "Ask each
+time" for passwords. App data (connections, `settings.json`, the app's `known_hosts`) lives
+in `~/.local/share/dev.tablemax.app/`.
+
+The app icon is drawn for TableMax (`assets/icon/tablemax.svg`); `pnpm icons` regenerates
+`src-tauri/icons/` from it.
+
 ## Development
 
 Prerequisites (Ubuntu): `libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`, Node 22, pnpm, Rust, Docker.
