@@ -5,6 +5,7 @@ import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
 import { ObjectSidebar } from "./ObjectSidebar";
 import { TabBar } from "./TabBar";
+import { TabSwitcher } from "./TabSwitcher";
 
 const ENV_BORDER = {
   local: "border-t-env-local",
@@ -47,6 +48,7 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
       <ObjectSidebar workspace={workspace} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar workspace={workspace} />
+        <TabSwitcher workspace={workspace} />
         <div className="min-h-0 flex-1 overflow-auto">
           {active ? (
             <TabContent key={active.id} workspace={workspace} tab={active} />

@@ -7,7 +7,7 @@ import { useGridViews } from "./gridViews";
 import { useQueryRuns } from "./queryRuns";
 
 export type Tab =
-  | { id: string; kind: "table"; object: ObjectRef; title: string }
+  | { id: string; kind: "table"; object: ObjectRef; title: string; preview: boolean }
   | { id: string; kind: "query"; title: string; sql: string; sqlSessionId: string | null };
 
 export interface Workspace {
@@ -21,6 +21,8 @@ export interface Workspace {
   currentSchema: string | null;
   tabs: Tab[];
   activeTabId: string | null;
+  /** Tab ids, most recently used first. */
+  mru: string[];
 }
 
 interface WorkspacesState {
@@ -36,7 +38,14 @@ interface WorkspacesState {
   closeWorkspace: (id: string) => Promise<void>;
   setActiveWorkspace: (id: string) => void;
   setSchema: (wsId: string, schema: string) => void;
-  openTableTab: (wsId: string, object: ObjectRef) => void;
+  /**
+   * `preview: true` (sidebar single click) reuses the workspace's one preview tab;
+   * the default opens a pinned tab. An object already open is just activated
+   * (and pinned when opened without `preview`).
+   */
+  openTableTab: (wsId: string, object: ObjectRef, opts?: { preview?: boolean }) => void;
+  /** Turns a preview tab into a regular one (no-op otherwise). */
+  pinTab: (wsId: string, tabId: string) => void;
   openQueryTab: (wsId: string) => void;
   closeTab: (wsId: string, tabId: string) => void;
   activateTab: (wsId: string, tabId: string) => void;
@@ -69,6 +78,8 @@ export function defaultSchema(
   }
 }
 
+const touch = (mru: string[], id: string) => [id, ...mru.filter((x) => x !== id)];
+
 const sameObject = (a: ObjectRef, b: ObjectRef) => a.schema === b.schema && a.name === b.name;
 
 export const useWorkspaces = create<WorkspacesState>((set, get) => {
@@ -100,6 +111,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       currentSchema: defaultSchema(info.dialect, schemas, cfg.database),
       tabs: [],
       activeTabId: null,
+      mru: [],
     };
     queryCounters.delete(ws.id);
     set((s) => ({ workspaces: [...s.workspaces, ws], activeWorkspaceId: ws.id }));
@@ -152,12 +164,45 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
 
     setSchema: (wsId, schema) => update(wsId, (w) => ({ ...w, currentSchema: schema })),
 
-    openTableTab: (wsId, object) =>
+    openTableTab: (wsId, object, opts) => {
+      const preview = opts?.preview ?? false;
+      let dropped: string | null = null;
       update(wsId, (w) => {
         const existing = w.tabs.find((t) => t.kind === "table" && sameObject(t.object, object));
-        if (existing) return { ...w, activeTabId: existing.id };
-        const tab: Tab = { id: crypto.randomUUID(), kind: "table", object, title: object.name };
-        return { ...w, tabs: [...w.tabs, tab], activeTabId: tab.id };
+        if (existing) {
+          const tabs =
+            !preview && existing.kind === "table" && existing.preview
+              ? w.tabs.map((t) => (t.id === existing.id ? { ...existing, preview: false } : t))
+              : w.tabs;
+          return { ...w, tabs, activeTabId: existing.id, mru: touch(w.mru, existing.id) };
+        }
+        const tab: Tab = {
+          id: crypto.randomUUID(),
+          kind: "table",
+          object,
+          title: object.name,
+          preview,
+        };
+        const old = preview ? w.tabs.find((t) => t.kind === "table" && t.preview) : undefined;
+        let tabs: Tab[];
+        let mru = w.mru;
+        if (old) {
+          dropped = old.id;
+          tabs = w.tabs.map((t) => (t.id === old.id ? tab : t));
+          mru = mru.filter((x) => x !== old.id);
+        } else {
+          tabs = [...w.tabs, tab];
+        }
+        return { ...w, tabs, activeTabId: tab.id, mru: touch(mru, tab.id) };
+      });
+      if (dropped) useGridViews.getState().dropView(dropped);
+    },
+
+    pinTab: (wsId, tabId) =>
+      update(wsId, (w) => {
+        const t = w.tabs.find((x) => x.id === tabId);
+        if (!t || t.kind !== "table" || !t.preview) return w;
+        return { ...w, tabs: w.tabs.map((x) => (x.id === tabId ? { ...t, preview: false } : x)) };
       }),
 
     openQueryTab: (wsId) =>
@@ -171,7 +216,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
           sql: "",
           sqlSessionId: null,
         };
-        return { ...w, tabs: [...w.tabs, tab], activeTabId: tab.id };
+        return { ...w, tabs: [...w.tabs, tab], activeTabId: tab.id, mru: touch(w.mru, tab.id) };
       }),
 
     closeTab: (wsId, tabId) => {
@@ -186,13 +231,21 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       update(wsId, (w) => {
         const idx = w.tabs.findIndex((t) => t.id === tabId);
         const tabs = w.tabs.filter((t) => t.id !== tabId);
+        const mru = w.mru.filter((x) => x !== tabId && tabs.some((t) => t.id === x));
         const activeTabId =
-          w.activeTabId === tabId ? (tabs[idx] ?? tabs[idx - 1])?.id ?? null : w.activeTabId;
-        return { ...w, tabs, activeTabId };
+          w.activeTabId === tabId
+            ? (mru[0] ?? (tabs[idx] ?? tabs[idx - 1])?.id ?? null)
+            : w.activeTabId;
+        return { ...w, tabs, activeTabId, mru };
       });
     },
 
-    activateTab: (wsId, tabId) => update(wsId, (w) => ({ ...w, activeTabId: tabId })),
+    activateTab: (wsId, tabId) =>
+      update(wsId, (w) =>
+        w.tabs.some((t) => t.id === tabId)
+          ? { ...w, activeTabId: tabId, mru: touch(w.mru, tabId) }
+          : w,
+      ),
 
     updateTab: (wsId, tabId, patch) =>
       update(wsId, (w) => ({
@@ -200,4 +253,17 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
         tabs: w.tabs.map((t) => (t.id === tabId && t.kind === "query" ? { ...t, ...patch } : t)),
       })),
   };
+});
+
+// First sort or page change in a preview tab pins it (Plan 4, ruling R1). Editing and
+// filtering call `pinTab` themselves once they exist.
+useGridViews.subscribe((state, prev) => {
+  for (const tabId of Object.keys(state.views)) {
+    if (state.views[tabId] === prev.views[tabId]) continue;
+    for (const w of useWorkspaces.getState().workspaces) {
+      if (w.tabs.some((t) => t.id === tabId && t.kind === "table" && t.preview)) {
+        useWorkspaces.getState().pinTab(w.id, tabId);
+      }
+    }
+  }
 });

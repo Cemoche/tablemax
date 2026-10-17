@@ -1,9 +1,11 @@
 import { strings } from "../../lib/strings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { TabList } from "./TabList";
 
 export function TabBar({ workspace }: { workspace: Workspace }) {
   const activateTab = useWorkspaces((s) => s.activateTab);
   const closeTab = useWorkspaces((s) => s.closeTab);
+  const pinTab = useWorkspaces((s) => s.pinTab);
   const openQueryTab = useWorkspaces((s) => s.openQueryTab);
   const { id } = workspace;
   return (
@@ -36,7 +38,10 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                 role="tab"
                 aria-selected={active}
                 onClick={() => activateTab(id, t.id)}
-                className={`max-w-48 truncate py-1.5 pl-3 pr-1 ${active ? "font-semibold" : ""}`}
+                onDoubleClick={() => pinTab(id, t.id)}
+                className={`max-w-48 truncate py-1.5 pl-3 pr-1 ${active ? "font-semibold" : ""} ${
+                  t.kind === "table" && t.preview ? "italic" : ""
+                }`}
               >
                 {t.title}
               </button>
@@ -61,6 +66,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
       >
         +
       </button>
+      <TabList workspace={workspace} />
     </div>
   );
 }

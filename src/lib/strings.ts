@@ -180,6 +180,13 @@ export const strings = {
     newQueryTab: "New query tab",
     closeTab: (title: string) => `Close ${title}`,
     queryTitle: (n: number) => `Query ${n}`,
+    tabList: "Search tabs",
+    tabListFilter: "Filter tabs",
+    tabListLabel: "All tabs",
+    tabListEmpty: "No matching tab",
+    tabListIcon: "▾",
+    tabSwitcherLabel: "Recent tabs",
+    tabKind: { table: "Table", query: "Query" },
   },
   query: {
     editorLabel: "SQL editor",

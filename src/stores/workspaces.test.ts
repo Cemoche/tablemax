@@ -2,6 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../lib/ipc";
 import type { ConnectionConfig } from "../lib/types";
 import { useConnections } from "./connections";
+import { useGridViews } from "./gridViews";
 import { useQueryRuns } from "./queryRuns";
 import { useWorkspaces } from "./workspaces";
 
@@ -37,6 +38,7 @@ const info = (over = {}) => ({
 beforeEach(() => {
   vi.resetAllMocks();
   useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null });
+  useGridViews.setState({ views: {} });
   useConnections.setState({ items: [cfg()] });
   vi.mocked(ipc.workspaceOpen).mockResolvedValue(info());
   vi.mocked(ipc.schemasList).mockResolvedValue(["audit", "public"]);
@@ -176,4 +178,111 @@ test("closing a query tab drops its run state", async () => {
   useQueryRuns.getState().start(tab.id, 1);
   useWorkspaces.getState().closeTab(id, tab.id);
   expect(useQueryRuns.getState().runs[tab.id]).toBeUndefined();
+});
+
+const users = { schema: "public", name: "users" };
+const orders = { schema: "public", name: "orders" };
+const previews = () => ws().tabs.filter((t) => t.kind === "table" && t.preview);
+
+test("two single clicks leave one preview tab showing the second object", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users, { preview: true });
+  s.openTableTab(id, orders, { preview: true });
+  expect(ws().tabs).toHaveLength(1);
+  expect(ws().tabs[0]).toMatchObject({ kind: "table", object: orders, preview: true });
+  expect(ws().activeTabId).toBe(ws().tabs[0].id);
+  expect(ws().mru).toEqual([ws().tabs[0].id]);
+});
+
+test("a preview tab does not replace a pinned tab and opens next to it", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users);
+  s.openTableTab(id, orders, { preview: true });
+  expect(ws().tabs.map((t) => t.title)).toEqual(["users", "orders"]);
+  expect(ws().tabs[0]).toMatchObject({ preview: false });
+});
+
+test("a single click on an object already pinned activates it, no preview duplicate", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users);
+  s.openTableTab(id, orders);
+  s.openTableTab(id, users, { preview: true });
+  expect(ws().tabs).toHaveLength(2);
+  expect(previews()).toHaveLength(0);
+  expect(ws().activeTabId).toBe(ws().tabs[0].id);
+});
+
+test("a double click pins the preview tab of that object", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users, { preview: true });
+  s.openTableTab(id, users, { preview: false });
+  expect(ws().tabs).toHaveLength(1);
+  expect(ws().tabs[0]).toMatchObject({ preview: false });
+  s.openTableTab(id, orders, { preview: true });
+  expect(ws().tabs.map((t) => t.title)).toEqual(["users", "orders"]);
+});
+
+test("pinTab pins a preview tab", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users, { preview: true });
+  s.pinTab(id, ws().tabs[0].id);
+  expect(ws().tabs[0]).toMatchObject({ preview: false });
+  s.openTableTab(id, orders, { preview: true });
+  expect(ws().tabs).toHaveLength(2);
+});
+
+test("the first sort or page change in a preview tab pins it", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users, { preview: true });
+  s.openTableTab(id, orders);
+  const [pv, pinned] = ws().tabs.map((t) => t.id);
+  useGridViews.getState().setView(pinned, { page: 1 });
+  expect(ws().tabs[0]).toMatchObject({ preview: true });
+  useGridViews.getState().setView(pv, { sort: ["id", "asc"] });
+  expect(ws().tabs[0]).toMatchObject({ preview: false });
+});
+
+test("replacing a preview tab drops its grid view and mru entry", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users, { preview: true });
+  const first = ws().tabs[0].id;
+  s.openTableTab(id, orders, { preview: true });
+  expect(useGridViews.getState().views[first]).toBeUndefined();
+  expect(ws().mru).not.toContain(first);
+});
+
+test("mru lists tabs most recently used first, query tabs included", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users);
+  s.openQueryTab(id);
+  s.openTableTab(id, orders);
+  const [a, b, c] = ws().tabs.map((t) => t.id);
+  expect(ws().mru).toEqual([c, b, a]);
+  s.activateTab(id, a);
+  expect(ws().mru).toEqual([a, c, b]);
+  s.openTableTab(id, orders); // already open: activates and bumps
+  expect(ws().mru).toEqual([c, a, b]);
+});
+
+test("closing the active tab activates the previous one in mru", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  for (let i = 0; i < 3; i++) s.openQueryTab(id);
+  const [a, b, c] = ws().tabs.map((t) => t.id);
+  s.activateTab(id, a);
+  s.activateTab(id, c);
+  s.closeTab(id, c);
+  expect(ws().activeTabId).toBe(a);
+  expect(ws().mru).toEqual([a, b]);
+  s.closeTab(id, b); // inactive: the active tab is kept
+  expect(ws().activeTabId).toBe(a);
+  expect(ws().mru).toEqual([a]);
 });

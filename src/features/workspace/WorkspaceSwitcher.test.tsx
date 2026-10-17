@@ -33,6 +33,7 @@ beforeEach(() => {
         currentSchema: null,
         tabs: [],
         activeTabId: null,
+        mru: [],
       } satisfies Workspace,
     ],
     activeWorkspaceId: "w1",

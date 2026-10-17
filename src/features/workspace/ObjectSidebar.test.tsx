@@ -18,6 +18,7 @@ const workspace: Workspace = {
   currentSchema: "public",
   tabs: [],
   activeTabId: null,
+  mru: [],
 };
 
 beforeEach(() => {
@@ -50,4 +51,15 @@ test("clicking an object opens a table tab", async () => {
     kind: "table",
     title: "orders",
   });
+});
+
+test("single click opens a preview tab, double click pins it", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  const orders = await screen.findByRole("button", { name: /orders/ });
+  await userEvent.click(orders);
+  expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ preview: true });
+  await userEvent.dblClick(orders);
+  const tabs = useWorkspaces.getState().workspaces[0].tabs;
+  expect(tabs).toHaveLength(1);
+  expect(tabs[0]).toMatchObject({ preview: false });
 });

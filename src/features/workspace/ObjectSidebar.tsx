@@ -84,7 +84,8 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
             <li key={`${o.kind}:${o.name}`}>
               <button
                 type="button"
-                onClick={() => openTableTab(id, { schema: o.schema, name: o.name })}
+                onClick={() => openTableTab(id, { schema: o.schema, name: o.name }, { preview: true })}
+                onDoubleClick={() => openTableTab(id, { schema: o.schema, name: o.name })}
                 className="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-surface-2"
               >
                 <span

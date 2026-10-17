@@ -53,6 +53,7 @@ const setup = async (sql = "select 1; select 2") => {
         currentSchema: "public",
         tabs: [{ id: "t1", kind: "query", title: "Query 1", sql, sqlSessionId: null }],
         activeTabId: "t1",
+        mru: [],
       } satisfies Workspace,
     ],
     activeWorkspaceId: "w1",
