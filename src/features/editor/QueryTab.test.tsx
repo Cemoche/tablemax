@@ -322,6 +322,23 @@ describe("safe mode confirmation", () => {
     expect(useQueryRuns.getState().runs["t1"]).toEqual(before);
   });
 
+  test("a refusal arriving after the tab was closed leaves no run and no dialog", async () => {
+    await setup("delete from t");
+    let reject: (e: unknown) => void = () => {};
+    vi.mocked(ipc.sqlExecute).mockImplementationOnce(
+      () =>
+        new Promise<void>((_, rej) => {
+          reject = rej;
+        }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
+    act(() => useWorkspaces.getState().closeTab("w1", "t1"));
+    await act(async () => reject({ kind: "confirmationRequired", message: "0" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(useQueryRuns.getState().runs["t1"]).toBeUndefined();
+  });
+
   test("the dialog shows the live tag and the enforced mode", async () => {
     // Opened as dev (setup), saved as prod since: protection applies at once.
     useConnections.setState({ items: [{ id: "c1", envTag: "prod", safeMode: null } as ConnectionConfig] });

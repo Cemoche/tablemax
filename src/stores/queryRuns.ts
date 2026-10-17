@@ -76,10 +76,13 @@ export const useQueryRuns = create<QueryRunsState>((set) => {
       ),
     restore: (tabId, previous) =>
       set((s) => {
-        const runs = { ...s.runs };
-        if (previous) runs[tabId] = previous;
-        else delete runs[tabId];
-        return { runs };
+        if (!previous) {
+          if (!(tabId in s.runs)) return s;
+          const runs = { ...s.runs };
+          delete runs[tabId];
+          return { runs };
+        }
+        return { runs: { ...s.runs, [tabId]: previous } };
       }),
     drop: (tabId) =>
       set((s) => {

@@ -115,6 +115,11 @@ export function QueryTab({ workspace, tab }: Props) {
     } catch (e) {
       const err = toAppError(e);
       if (isConfirmationRequired(err)) {
+        if (!tabExists(wsId, tabId)) {
+          // Tab closed while the batch was in flight: nothing to restore or ask about.
+          useQueryRuns.getState().drop(tabId);
+          return;
+        }
         // Nothing ran: put the previous results back and ask first.
         useQueryRuns.getState().restore(tabId, previous);
         setPending({ stmts, flagged: parseConfirmationIndices(err.message, stmts.length) });

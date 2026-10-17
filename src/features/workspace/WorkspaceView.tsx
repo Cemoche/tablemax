@@ -7,9 +7,9 @@ import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
 import { EnvBanner } from "./EnvBanner";
 import { ENV_BORDER } from "./envClasses";
-import { useLiveEnv } from "./useLiveEnv";
 import { ObjectSidebar } from "./ObjectSidebar";
 import { TabBar } from "./TabBar";
+import { useLiveEnv } from "./useLiveEnv";
 
 export function TabContent({ workspace, tab }: { workspace: Workspace; tab: Tab }) {
   if (tab.kind === "table") {
