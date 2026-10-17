@@ -1,9 +1,9 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { isMac, isModalOpen, matchShortcut, useShortcut } from "./shortcuts";
+import { isModalOpen, matchShortcut, useShortcut } from "./shortcuts";
 
-// Tests simulate the platform by spying on `navigator.platform` (isMac reads it, unless
-// `navigator.userAgentData.platform` is present, which jsdom lacks).
+// Tests simulate the platform by spying on `navigator.platform` (lib/platform's isMac reads
+// it, unless `navigator.userAgentData.platform` is present, which jsdom lacks).
 const platform = (p: string) => vi.spyOn(navigator, "platform", "get").mockReturnValue(p);
 
 const key = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
@@ -11,13 +11,6 @@ const key = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
 afterEach(() => {
   vi.restoreAllMocks();
   document.body.innerHTML = "";
-});
-
-test("isMac follows navigator.platform", () => {
-  platform("MacIntel");
-  expect(isMac()).toBe(true);
-  platform("Linux x86_64");
-  expect(isMac()).toBe(false);
 });
 
 test("Mod is Ctrl off macOS and Meta on macOS", () => {

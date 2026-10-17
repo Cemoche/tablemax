@@ -2,6 +2,7 @@ import { Command } from "cmdk";
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
+import { formatShortcut } from "../../lib/platform";
 import { isModalOpen, useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import type { ConnectionConfig } from "../../lib/types";
@@ -10,7 +11,7 @@ import { useConnections } from "../../stores/connections";
 import { useWorkspaces } from "../../stores/workspaces";
 import { runEditorCommand } from "../editor/editorCommands";
 import { tabKindLabel } from "../workspace/tabInfo";
-import { type ActionCtx, formatShortcut, visibleActions } from "./actions";
+import { type ActionCtx, visibleActions } from "./actions";
 import { fuzzyScore, rank } from "./fuzzy";
 
 /** The opener is gone (its tab was replaced): focus the active tab's editor or content. */

@@ -1,9 +1,10 @@
 import { beforeEach, expect, test, vi } from "vitest";
+import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Workspace } from "../../stores/workspaces";
 import { useWorkspaces } from "../../stores/workspaces";
 import { registerEditorCommands } from "../editor/editorCommands";
-import { type ActionCtx, formatShortcut, visibleActions } from "./actions";
+import { type ActionCtx, visibleActions } from "./actions";
 
 vi.mock("../../lib/ipc");
 
@@ -88,8 +89,8 @@ test("shortcuts are rendered per platform", () => {
   expect(formatShortcut("Mod+Shift+F")).toBe("Ctrl+Shift+F");
   expect(formatShortcut("Ctrl+Tab")).toBe("Ctrl+Tab");
   const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
-  expect(formatShortcut("Mod+Shift+F")).toBe("⌘⇧F");
-  expect(formatShortcut("Ctrl+Tab")).toBe("⌃Tab");
+  expect(formatShortcut("Mod+Shift+F")).toBe("⌘+Shift+F");
+  expect(formatShortcut("Ctrl+Tab")).toBe("Ctrl+Tab");
   spy.mockRestore();
 });
 

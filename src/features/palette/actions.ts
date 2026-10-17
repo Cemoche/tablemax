@@ -1,4 +1,3 @@
-import { isMac } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { useCatalog } from "../../stores/catalog";
@@ -141,12 +140,3 @@ export const ACTIONS: Action[] = [
 
 export const visibleActions = (ctx: ActionCtx): Action[] =>
   ACTIONS.filter((a) => a.when?.(ctx) ?? true);
-
-const MAC_KEYS: Record<string, string> = { Mod: "⌘", Ctrl: "⌃", Shift: "⇧", Alt: "⌥" };
-
-/** "Mod+Shift+F" -> "Ctrl+Shift+F", or "⌘⇧F" on macOS. */
-export function formatShortcut(spec: string): string {
-  const parts = spec.split("+");
-  if (isMac()) return parts.map((p) => MAC_KEYS[p] ?? p).join("");
-  return parts.map((p) => (p === "Mod" ? "Ctrl" : p)).join("+");
-}

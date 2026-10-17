@@ -1,15 +1,5 @@
 import { useEffect, useRef } from "react";
-
-/**
- * True on macOS. Reads `navigator.userAgentData.platform` when present, else
- * `navigator.platform`. Tests simulate a platform with
- * `vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel")`.
- */
-export function isMac(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
-  return /mac/i.test(uaData?.platform || navigator.platform || "");
-}
+import { isMac } from "./platform";
 
 /** True while a modal dialog (any element with `aria-modal="true"`) is open. */
 export function isModalOpen(): boolean {
