@@ -108,3 +108,59 @@ demo SSH connection reports "The SSH host key has changed" once: remove the
 `[127.0.0.1]:2222` line of that file (and the stale `~/.ssh/known_hosts` entries:
 `ssh-keygen -R "[127.0.0.1]:2222"`), then trust the new key. From now on the key survives
 image rebuilds.
+
+## Final fix wave — MySQL 8 and MariaDB 11 in the real app
+
+Debug build of the fix-wave branch (`cargo build`, `pnpm web` +
+`src-tauri/target/debug/tablemax`) on a private Xvfb display (`GDK_BACKEND=x11`), driven
+with xdotool and checked on screenshots. Isolated session: `HOME`, `XDG_DATA_HOME`,
+`XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and `XDG_RUNTIME_DIR` in a scratch directory, a
+private `dbus-run-session` with its own unlocked `gnome-keyring-daemon`; every secret in
+"Ask each time" mode, so the keyring held nothing. The real
+`~/.local/share/dev.tablemax.app` and `~/.ssh/known_hosts` were not touched (their mtimes
+predate the session). Test containers from `scripts/test-dbs.sh up`. A throwaway database
+`tablemax_manual` (table `checks`, 3 rows) was created on both servers for the check and
+dropped afterwards. The four connections were created in the form (not seeded).
+
+### Verified
+- **MySQL 8, direct, verify-full**: MySQL `localhost:33061`, user `root`, database
+  `tablemax_manual`, password "Ask each time", SSL "Verify CA and host name" (the MySQL
+  list has no "Verify CA", as intended), CA picked through the native GTK picker (a copy
+  of `.test-secrets/tls/ca.pem` in the scratch home: typing the worktree path in the
+  picker's location bar was mangled by GTK's autocompletion). Connect → "Password
+  required" → `tablemax` → workspace opens; `checks` shows rows 1–3 of 3; a SQL tab
+  running `select variable_value as tls, @@version … from
+  performance_schema.session_status where variable_name = 'Ssl_version'` returns
+  `TLSv1.3`, `8.4.11`.
+- **MariaDB 11, direct, verify-full**: same on `localhost:33062` → table rows 1–3 of 3;
+  the query (on `information_schema.session_status`) returns `TLSv1.3`,
+  `11.4.12-MariaDB-ubu2404`.
+- **MySQL 8 through the SSH tunnel**: host `mysql8:3306`, `root` / `tablemax` (Ask), SSH
+  `127.0.0.1:2222`, user `tunnel`, password auth, "Ask each time". Enabling the tunnel
+  switched the SSL mode from verify-full to Prefer (default for a tunnel); verify-full and
+  the CA were then picked explicitly. Connect → "Password required" → "SSH password
+  required": a wrong SSH password was given on purpose → "Unknown SSH host" dialog naming
+  `127.0.0.1:2222`, with the new text "TableMax has no record of this server's key…" and
+  `SHA256:hUMmwhvJd6o+rIX9A9IzS/ufX9vxzq/kXT0eCIHmtUA` (the stable test host key) →
+  "Trust and connect" → the SSH password prompt came back with "The SSH password was not
+  accepted" (final fix wave item 6; the flow used to end there) → `tunnel-pass` →
+  workspace opens; `checks` rows 1–3 of 3. The query returns `TLSv1.3`,
+  `root@172.28.0.3` (the sshd container's address: the connection went through the
+  tunnel) and the mysql8 container's host name, so verify-full checked the certificate
+  against `mysql8` while TCP went to the tunnel's local end. The app's `known_hosts` now
+  holds `[127.0.0.1]:2222 ssh-ed25519 …`.
+- **MariaDB 11 through the SSH tunnel**: host `mariadb11:3306`, same SSH settings, SSL
+  left at the tunnel default (Prefer). No host-key prompt this time (key known). Table
+  rows 1–3 of 3; the query returns `TLSv1.3` (Prefer negotiated TLS), `root@172.28.0.3`,
+  `11.4.12-MariaDB-ubu2404`, `3`.
+- **Require warning** (item 7): new PostgreSQL connection, host `db.example.com` (the
+  mode became "Verify CA and host name" by itself), mode "Require (no verification)" →
+  "The certificate of this host is not verified: traffic is encrypted, but anyone on the
+  network path could pose as the server. Use a verify mode or an SSH tunnel."
+- `app.db` (4 connections) and every file of the scratch app data dir: no `tunnel-pass`,
+  `not-the-password`, `"tablemax"` nor `'tablemax'`.
+
+### Observed, not changed
+- Ctrl+T right after clicking a table in the sidebar created "Query 1" but left the
+  table tab active (the "+" button of the tab bar opens and activates it). Plan 1
+  behaviour, outside this wave.
