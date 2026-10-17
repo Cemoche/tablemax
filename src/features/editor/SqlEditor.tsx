@@ -25,7 +25,7 @@ interface Props {
   onSelectionChange?: (sel: EditorSelection) => void;
 }
 
-const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
+export const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
 
 // All colors come from the design tokens (they follow the system color scheme).
 export const editorThemeSpec = {
@@ -64,7 +64,7 @@ export const editorThemeSpec = {
 /** `dark` only selects CodeMirror's base theme; every color comes from the tokens. */
 export const buildEditorTheme = (dark: boolean) => EditorView.theme(editorThemeSpec, { dark });
 
-function usePrefersDark() {
+export function usePrefersDark() {
   const mq = () =>
     typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
   const [dark, setDark] = useState(() => mq()?.matches ?? false);
@@ -79,7 +79,7 @@ function usePrefersDark() {
   return dark;
 }
 
-const highlight = syntaxHighlighting(
+export const highlight = syntaxHighlighting(
   HighlightStyle.define([
     { tag: [t.keyword, t.operatorKeyword, t.modifier], color: "var(--accent)", fontWeight: "600" },
     { tag: [t.string, t.special(t.string)], color: "var(--success)" },
