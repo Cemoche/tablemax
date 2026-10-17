@@ -26,6 +26,12 @@ interface CatalogState {
 export const catalogKey = (wsId: string, schema: string | null) => `${wsId}\u0000${schema ?? ""}`;
 
 const inflight = new Map<string, Promise<Catalog | null>>();
+/**
+ * Bumped by `dropWorkspace`: a load started under an older epoch belongs to a closed
+ * workspace or to the database it browsed before a switch, and must not write back.
+ */
+const epochs = new Map<string, number>();
+const epochOf = (wsId: string) => epochs.get(wsId) ?? 0;
 
 export const useCatalog = create<CatalogState>((set, get) => {
   const load = (wsId: string, schema: string | null, refresh: boolean) => {
@@ -36,9 +42,12 @@ export const useCatalog = create<CatalogState>((set, get) => {
       const { [key]: _drop, ...errors } = s.errors;
       return { loading: { ...s.loading, [key]: true }, errors };
     });
-    const p = (async () => {
+    const epoch = epochOf(wsId);
+    const current = () => epochOf(wsId) === epoch;
+    const p: Promise<Catalog | null> = (async () => {
       try {
         const catalog = await ipc.catalogGet(wsId, schema, refresh);
+        if (!current()) return null;
         set((s) => ({
           catalogs: {
             ...s.catalogs,
@@ -47,14 +56,17 @@ export const useCatalog = create<CatalogState>((set, get) => {
         }));
         return catalog;
       } catch (e) {
-        set((s) => ({ errors: { ...s.errors, [key]: toAppError(e).message } }));
+        if (current()) set((s) => ({ errors: { ...s.errors, [key]: toAppError(e).message } }));
         return null;
       } finally {
-        inflight.delete(key);
-        set((s) => {
-          const { [key]: _done, ...loading } = s.loading;
-          return { loading };
-        });
+        // After a drop, the key's bookkeeping belongs to the newer load (if any).
+        if (current()) {
+          inflight.delete(key);
+          set((s) => {
+            const { [key]: _done, ...loading } = s.loading;
+            return { loading };
+          });
+        }
       }
     })();
     inflight.set(key, p);
@@ -71,13 +83,17 @@ export const useCatalog = create<CatalogState>((set, get) => {
       return load(wsId, schema, false);
     },
     refreshCatalog: (wsId, schema) => load(wsId, schema, true),
-    dropWorkspace: (wsId) =>
+    dropWorkspace: (wsId) => {
+      epochs.set(wsId, epochOf(wsId) + 1);
+      const prefix = `${wsId}\u0000`;
+      for (const k of [...inflight.keys()]) if (k.startsWith(prefix)) inflight.delete(k);
+      const keep = <T>(rec: Record<string, T>) =>
+        Object.fromEntries(Object.entries(rec).filter(([k]) => !k.startsWith(prefix)));
       set((s) => {
         const { [wsId]: _gone, ...catalogs } = s.catalogs;
-        const prefix = `${wsId}\u0000`;
-        const errors = Object.fromEntries(Object.entries(s.errors).filter(([k]) => !k.startsWith(prefix)));
-        return { catalogs, errors };
-      }),
+        return { catalogs, errors: keep(s.errors), loading: keep(s.loading) };
+      });
+    },
   };
 });
 

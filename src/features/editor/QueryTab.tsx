@@ -1,14 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { toAppError } from "../../lib/errors";
 import { strings } from "../../lib/strings";
+import { useAutoLimit } from "../../stores/autoLimit";
+import { useCatalog } from "../../stores/catalog";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { applyAutoLimit } from "./autoLimit";
+import { buildCompletionSource } from "./completion";
 import { ResultsPanel } from "./ResultsPanel";
 import { type EditorSelection, type RunMode, SqlEditor } from "./SqlEditor";
 import { type Statement, splitStatements, statementAt } from "./splitStatements";
 
 const SAVE_DEBOUNCE_MS = 300;
+/** Row cap added by "Auto LIMIT" (Plan 5 makes it a setting). */
+export const AUTO_LIMIT_ROWS = 1000;
 
 const btn =
   "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
@@ -44,6 +50,28 @@ export function QueryTab({ workspace, tab }: Props) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const run = useQueryRuns((s) => s.runs[tabId]);
   const running = run?.running ?? false;
+  const autoLimit = useAutoLimit((s) => !!s.on[tabId]);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Completion catalog of the current schema (loaded once per schema by the store); other
+  // schemas already in the store are offered as `schema.table`.
+  const { status, currentSchema: schema, database, schemas } = workspace;
+  useEffect(() => {
+    if (status === "connected") void useCatalog.getState().ensureCatalog(wsId, schema);
+  }, [wsId, schema, status, database]);
+  const wsCatalogs = useCatalog((s) => s.catalogs[wsId]);
+  const completionSource = useMemo(() => {
+    const key = schema ?? "";
+    const others = Object.entries(wsCatalogs ?? {})
+      .filter(([k]) => k !== key)
+      .map(([, e]) => e.catalog);
+    return buildCompletionSource(wsCatalogs?.[key]?.catalog ?? null, dialect, {
+      otherCatalogs: others,
+      schemas,
+      loadSchema: (s) =>
+        status === "connected" ? useCatalog.getState().ensureCatalog(wsId, s) : Promise.resolve(null),
+    });
+  }, [wsCatalogs, schema, schemas, dialect, status, wsId]);
 
   const flush = useCallback(() => {
     if (saveTimer.current) {
@@ -62,6 +90,7 @@ export function QueryTab({ workspace, tab }: Props) {
   );
 
   const onChange = (v: string) => {
+    if (notice) setNotice(null);
     textRef.current = v;
     setText(v);
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -95,9 +124,10 @@ export function QueryTab({ workspace, tab }: Props) {
         useWorkspaces.getState().updateTab(wsId, tabId, { sqlSessionId: sessionId });
       }
       const sid = sessionId;
+      const limited = useAutoLimit.getState().on[tabId];
       await ipc.sqlExecute(
         sid,
-        stmts.map((s) => s.text),
+        stmts.map((s) => (limited ? applyAutoLimit(s.text, dialect, AUTO_LIMIT_ROWS) : s.text)),
         (e) => {
           useQueryRuns.getState().applyEvent(tabId, e);
           if (e.event === "statementFailed" && e.data.error.kind === "connectionLost") {
@@ -144,6 +174,22 @@ export function QueryTab({ workspace, tab }: Props) {
             {strings.query.cancel}
           </button>
         )}
+        {notice && (
+          <span role="status" className="truncate text-sm text-warning">
+            {notice}
+          </span>
+        )}
+        <label
+          className="ml-auto flex shrink-0 items-center gap-1 text-sm"
+          title={strings.query.autoLimitHint(AUTO_LIMIT_ROWS)}
+        >
+          <input
+            type="checkbox"
+            checked={autoLimit}
+            onChange={(e) => useAutoLimit.getState().setAutoLimit(tabId, e.target.checked)}
+          />
+          {strings.query.autoLimit(AUTO_LIMIT_ROWS)}
+        </label>
       </div>
       <div className="min-h-0 flex-1 basis-1/2">
         <SqlEditor
@@ -152,6 +198,8 @@ export function QueryTab({ workspace, tab }: Props) {
           onChange={onChange}
           dialect={dialect}
           onRun={(m) => runModeRef.current(m)}
+          completionSource={completionSource}
+          onNotice={setNotice}
           onSelectionChange={(s) => {
             selRef.current = s;
           }}

@@ -49,3 +49,32 @@ test("refreshCatalog asks the backend to rebuild and replaces the entry", async 
   expect(ipc.catalogGet).toHaveBeenLastCalledWith("w1", "public", true);
   expect(useCatalog.getState().catalogs.w1.public.catalog).toBe(fresh);
 });
+
+test("a load started before dropWorkspace never writes after it", async () => {
+  const deferred: Array<(c: Catalog) => void> = [];
+  vi.mocked(ipc.catalogGet).mockImplementation(() => new Promise<Catalog>((r) => deferred.push(r)));
+  const stale = useCatalog.getState().ensureCatalog("w1", "public");
+  expect(useCatalog.getState().loading).not.toEqual({});
+  useCatalog.getState().dropWorkspace("w1");
+  expect(useCatalog.getState().loading).toEqual({});
+
+  // A load after the drop does not reuse the stale call.
+  const fresh = useCatalog.getState().ensureCatalog("w1", "public");
+  expect(ipc.catalogGet).toHaveBeenCalledTimes(2);
+
+  const newDb: Catalog = { schema: "public", tables: [] };
+  deferred[1](newDb);
+  await expect(fresh).resolves.toBe(newDb);
+  deferred[0](cat("public")); // the old database answers last
+  await expect(stale).resolves.toBeNull();
+  expect(useCatalog.getState().catalogs.w1.public.catalog).toBe(newDb);
+  expect(useCatalog.getState().loading).toEqual({});
+
+  // Same for a failure of the stale call: no error is recorded.
+  vi.mocked(ipc.catalogGet).mockRejectedValueOnce({ kind: "io", message: "old db gone" });
+  const failing = useCatalog.getState().refreshCatalog("w1", "public");
+  useCatalog.getState().dropWorkspace("w1");
+  await expect(failing).resolves.toBeNull();
+  expect(useCatalog.getState().errors).toEqual({});
+  expect(useCatalog.getState().catalogs.w1).toBeUndefined();
+});

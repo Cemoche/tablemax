@@ -209,6 +209,10 @@ export const strings = {
     failedNoIndex: (message: string) => message,
     connectionLostHint: "Connection lost — run again to reconnect",
     empty: "Write a query and press Ctrl+Enter to run it",
+    // Plan 4 Task 7: editor toolbar and formatting.
+    autoLimit: (rows: number) => `Auto LIMIT ${rows}`,
+    autoLimitHint: (rows: number) => `Run adds LIMIT ${rows} to SELECT statements that have none`,
+    formatFailed: "Could not format: the SQL could not be parsed",
   },
   sidebar: {
     label: "Objects",
