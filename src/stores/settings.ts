@@ -22,36 +22,56 @@ interface SettingsState {
   loaded: boolean;
   /** Message of the last failed load/update; cleared by the next successful one. */
   error: string | null;
+  /** Last value stored by the backend; what a failed update reverts to. */
+  confirmed: Settings;
   load: () => Promise<void>;
   /** Optimistic: applies `patch` at once, then the (clamped) value the backend stored. */
   update: (patch: Partial<Settings>) => Promise<void>;
 }
 
+// Updates reach the backend one at a time, in order. `latest` numbers the updates so a
+// superseded one never overwrites the optimistic state of a newer one; `confirmed` is
+// the last value the backend stored (a store field, so tests can reset it), which a failed latest update reverts to.
+let latest = 0;
+let queue: Promise<void> = Promise.resolve();
+
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   loaded: false,
   error: null,
+  confirmed: DEFAULT_SETTINGS,
   load: async () => {
     try {
       const settings = await ipc.settingsGet();
       applyTheme(settings.theme);
-      set({ settings, loaded: true, error: null });
+      set({ settings, confirmed: settings, loaded: true, error: null });
     } catch (e) {
       set({ loaded: true, error: toAppError(e).message });
     }
   },
-  update: async (patch) => {
-    const previous = get().settings;
-    const next = { ...previous, ...patch };
+  update: (patch) => {
+    const seq = ++latest;
+    const next = { ...get().settings, ...patch };
     applyTheme(next.theme);
     set({ settings: next });
-    try {
-      const stored = await ipc.settingsSet(next);
-      applyTheme(stored.theme);
-      set({ settings: stored, error: null });
-    } catch (e) {
-      applyTheme(previous.theme);
-      set({ settings: previous, error: toAppError(e).message });
-    }
+    const run = async () => {
+      try {
+        const stored = await ipc.settingsSet(next);
+        set({ confirmed: stored });
+        if (seq === latest) {
+          applyTheme(stored.theme);
+          set({ settings: stored, error: null });
+        }
+      } catch (e) {
+        if (seq === latest) {
+          const { confirmed } = get();
+          applyTheme(confirmed.theme);
+          set({ settings: confirmed, error: toAppError(e).message });
+        }
+      }
+    };
+    const done = queue.then(run);
+    queue = done;
+    return done;
   },
 }));

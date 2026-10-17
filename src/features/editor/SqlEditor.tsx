@@ -63,15 +63,26 @@ export const editorThemeSpec = {
   },
 };
 
-/** `dark` only selects CodeMirror's base theme; every color comes from the tokens. */
-export const buildEditorTheme = (dark: boolean) => EditorView.theme(editorThemeSpec, { dark });
-
-/** User font settings; an empty family keeps the `--font-mono` token. */
-export const buildEditorFont = (family: string, size: number) =>
-  EditorView.theme({
-    "&": { fontSize: `${size}px` },
-    ...(family ? { ".cm-scroller": { fontFamily: family } } : {}),
-  });
+/**
+ * `dark` only selects CodeMirror's base theme; every color comes from the tokens. The
+ * user's font is merged into the same rules (one rule per selector, so nothing competes
+ * with it); an empty family keeps the `--font-mono` token.
+ */
+export const buildEditorTheme = (dark: boolean, fontFamily = "", fontSize?: number) =>
+  EditorView.theme(
+    {
+      ...editorThemeSpec,
+      "&": {
+        ...editorThemeSpec["&"],
+        ...(fontSize ? { fontSize: `${fontSize}px` } : {}),
+      },
+      ".cm-scroller": {
+        ...editorThemeSpec[".cm-scroller"],
+        ...(fontFamily ? { fontFamily } : {}),
+      },
+    },
+    { dark },
+  );
 
 const highlight = syntaxHighlighting(
   HighlightStyle.define([
@@ -95,8 +106,7 @@ export function SqlEditor({ value, onChange, dialect, onRun, onSelectionChange }
   const extensions = useMemo(
     () => [
       sql({ dialect: DIALECTS[dialect] }),
-      buildEditorTheme(dark),
-      buildEditorFont(fontFamily, fontSize),
+      buildEditorTheme(dark, fontFamily, fontSize),
       highlight,
       EditorView.lineWrapping,
       Prec.highest(

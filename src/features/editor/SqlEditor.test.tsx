@@ -46,16 +46,26 @@ test("editor follows data-theme while the OS is light", async () => {
   expect(editorClass()).not.toBe(light);
 });
 
-test("editor font size and family come from the settings", async () => {
-  mount();
+test("the user font is the only font rule of the editor theme", async () => {
+  const { container } = mount();
   await act(async () =>
     useSettings.setState({
       settings: { ...DEFAULT_SETTINGS, editorFontSize: 20, editorFontFamily: "Fira Code" },
     }),
   );
   const rules = Array.from(document.querySelectorAll("style"))
-    .map((s) => s.textContent)
-    .join("\n");
-  expect(rules).toContain("font-size: 20px");
-  expect(rules).toContain("Fira Code");
+    .flatMap((s) => (s.textContent ?? "").split("}"))
+    .map((r) => r.trim());
+  const scroller = rules.filter((r) => r.includes("Fira Code"));
+  expect(scroller).toHaveLength(1);
+  expect(scroller[0]).toContain(".cm-scroller");
+  expect(scroller[0]).not.toContain("var(--font-mono)");
+  // The rule is scoped to this editor's theme class, and no other rule of that scope sets a font.
+  const scope = /\.(ͼ[\w]+)/.exec(scroller[0])![1];
+  expect(container.querySelector(".cm-editor")?.classList.contains(scope)).toBe(true);
+  const scoped = rules.filter((r) => r.includes(`.${scope}`));
+  expect(scoped.filter((r) => /font-family/.test(r))).toHaveLength(1);
+  const sized = scoped.filter((r) => /font-size/.test(r));
+  expect(sized).toHaveLength(1);
+  expect(sized[0]).toContain("font-size: 20px");
 });

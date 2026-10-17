@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +82,9 @@ pub fn load(path: &Path) -> Settings {
         .unwrap_or_default()
 }
 
+/// Serialises saves: they share one temp file name.
+static SAVE_LOCK: Mutex<()> = Mutex::new(());
+
 /// Writes the clamped settings atomically (temp file in the same directory, then rename).
 pub fn save(path: &Path, settings: &Settings) -> AppResult<()> {
     let io = |e: std::io::Error| AppError::new(ErrorKind::Io, e.to_string());
@@ -92,14 +96,18 @@ pub fn save(path: &Path, settings: &Settings) -> AppResult<()> {
     std::fs::create_dir_all(dir).map_err(io)?;
     // Same directory as the target so the rename stays on one filesystem.
     let tmp = path.with_extension("json.tmp");
-    let mut file = std::fs::File::create(&tmp).map_err(io)?;
-    file.write_all(&json).map_err(io)?;
-    file.sync_all().map_err(io)?;
-    drop(file);
-    std::fs::rename(&tmp, path).map_err(|e| {
+    let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let result = (|| {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(&json)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    })();
+    if let Err(e) = result {
         let _ = std::fs::remove_file(&tmp);
-        io(e)
-    })?;
+        return Err(io(e));
+    }
     Ok(())
 }
 
@@ -188,5 +196,30 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["settings.json".to_string()]);
         assert_eq!(load(&path(&dir)).page_size, 100);
+    }
+
+    #[test]
+    fn concurrent_saves_leave_a_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir);
+        let inputs: Vec<Settings> = (0..16)
+            .map(|i| Settings {
+                page_size: 100 + i,
+                ..Settings::default()
+            })
+            .collect();
+        let handles: Vec<_> = inputs
+            .iter()
+            .cloned()
+            .map(|s| {
+                let p = p.clone();
+                std::thread::spawn(move || save(&p, &s))
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap().unwrap();
+        }
+        assert!(inputs.contains(&load(&p)));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
