@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { modShortcut } from "../../lib/platform";
+import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, ObjectRef } from "../../lib/types";
 import { StructureTab } from "../structure/StructureTab";
@@ -123,7 +123,7 @@ function TableDataView({
             onClick={e.commit}
             disabled={e.count === 0 || e.locked || e.outcomeUnknown}
           >
-            {e.committing ? strings.grid.committing : strings.grid.commit(modShortcut("S"))}
+            {e.committing ? strings.grid.committing : strings.grid.commit(formatShortcut("Mod+S"))}
           </button>
           {e.committing ? (
             <button
@@ -224,7 +224,7 @@ function TableDataView({
           type="button"
           className={`${btn} aria-pressed:bg-surface-2`}
           aria-pressed={detail.open}
-          title={strings.grid.rowDetailsShortcut(modShortcut("I"))}
+          title={strings.grid.rowDetailsShortcut(formatShortcut("Mod+I"))}
           onClick={detail.toggle}
         >
           {strings.grid.rowDetails}

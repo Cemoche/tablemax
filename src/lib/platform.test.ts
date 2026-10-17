@@ -1,11 +1,36 @@
-import { expect, test } from "vitest";
-import { altShortcut, isMacPlatform, isModKey } from "./platform";
+import { afterEach, expect, test, vi } from "vitest";
+import { SHORTCUTS } from "../features/settings/shortcuts";
+import { currentPlatform, formatShortcut, isMac, isModKey } from "./platform";
+
+afterEach(() => vi.restoreAllMocks());
+
+test("macOS detection from arguments", () => {
+  expect(isMac("MacIntel", "")).toBe(true);
+  expect(isMac("macOS", "")).toBe(true);
+  expect(isMac("", "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)")).toBe(true);
+  expect(isMac("Linux x86_64", "Mozilla/5.0 (X11; Linux x86_64)")).toBe(false);
+  expect(isMac("Win32", "")).toBe(false);
+  expect(isMac("", "")).toBe(false);
+});
+
+test("macOS detection from the navigator", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  expect(isMac()).toBe(true);
+  expect(formatShortcut("Mod+S")).toBe("⌘+S");
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  expect(isMac()).toBe(false);
+  expect(formatShortcut("Mod+S")).toBe("Ctrl+S");
+});
+
+test("the platform comes from userAgentData, else navigator.platform", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  expect(currentPlatform()).toBe("MacIntel");
+  vi.stubGlobal("navigator", { platform: "Linux x86_64", userAgentData: { platform: "macOS" } });
+  expect(currentPlatform()).toBe("macOS");
+  vi.unstubAllGlobals();
+});
 
 test("Mod is Cmd on macOS and Ctrl elsewhere", () => {
-  expect(isMacPlatform("MacIntel", "")).toBe(true);
-  expect(isMacPlatform("", "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)")).toBe(true);
-  expect(isMacPlatform("Linux x86_64", "Mozilla/5.0 (X11; Linux x86_64)")).toBe(false);
-  expect(isMacPlatform("Win32", "")).toBe(false);
   const e = (ctrlKey: boolean, metaKey: boolean) => ({ ctrlKey, metaKey });
   expect(isModKey(e(true, false), false)).toBe(true);
   expect(isModKey(e(false, true), false)).toBe(false);
@@ -13,7 +38,29 @@ test("Mod is Cmd on macOS and Ctrl elsewhere", () => {
   expect(isModKey(e(true, false), true)).toBe(false);
 });
 
-test("Alt shortcuts read ⌥ on macOS", () => {
-  expect(altShortcut("1", true)).toBe("⌥1");
-  expect(altShortcut("1", false)).toBe("Alt+1");
+test("formatShortcut reads Mod as Ctrl or ⌘", () => {
+  expect(formatShortcut("Mod+Enter", false)).toBe("Ctrl+Enter");
+  expect(formatShortcut("Mod+Shift+Enter", false)).toBe("Ctrl+Shift+Enter");
+  expect(formatShortcut("Mod+Shift+Enter", true)).toBe("⌘+Shift+Enter");
+  expect(formatShortcut("Mod+,", true)).toBe("⌘+,");
+  expect(formatShortcut("Mod+/", false)).toBe("Ctrl+/");
+  expect(formatShortcut("Mod+s", true)).toBe("⌘+S");
+});
+
+test("a literal Ctrl stays Ctrl on macOS, Alt reads ⌥ there", () => {
+  expect(formatShortcut("Ctrl+T", true)).toBe("Ctrl+T");
+  expect(formatShortcut("Alt+1", true)).toBe("⌥+1");
+  expect(formatShortcut("Alt+1", false)).toBe("Alt+1");
+  expect(formatShortcut("Meta+K", false)).toBe("⌘+K");
+});
+
+test("odd specs do not crash", () => {
+  expect(() => formatShortcut("Mod++", false)).not.toThrow();
+  expect(formatShortcut("", false)).toBe("");
+});
+
+test("no listed shortcut is shown with a literal Mod", () => {
+  for (const mac of [false, true]) {
+    for (const s of SHORTCUTS) expect(formatShortcut(s.spec, mac)).not.toMatch(/Mod/);
+  }
 });

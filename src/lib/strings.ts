@@ -470,16 +470,17 @@ export const strings = {
     shortcutNewTab: "New query tab",
     shortcutCloseTab: "Close tab",
     shortcutSettings: "Open settings",
-    /** Key names in the shortcut list; `mod` is resolved per platform (ctrl or cmd). */
+    shortcutCommit: "Commit pending changes (table tabs)",
+    shortcutRowDetails: "Show or hide the row details (table tabs)",
+    shortcutDataView: "Show the rows (table tabs)",
+    shortcutStructureView: "Show the structure (table tabs)",
+    /** Modifier names in shortcut labels; `Mod` resolves to cmd on macOS, ctrl elsewhere. */
     keyNames: {
-      mod: "Ctrl",
       ctrl: "Ctrl",
       cmd: "⌘",
+      alt: "Alt",
+      option: "⌥",
       shift: "Shift",
-      enter: "Enter",
-      comma: ",",
-      t: "T",
-      w: "W",
     },
     keySeparator: "+",
     about: "About",

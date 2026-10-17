@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { altShortcut } from "../../lib/platform";
+import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 
 export type TableView = "data" | "structure";
@@ -51,7 +51,7 @@ export function ViewToggle({ view, onChange }: { view: TableView; onChange: (v: 
           type="button"
           role="tab"
           aria-selected={view === k}
-          title={(k === "data" ? v.dataShortcut : v.structureShortcut)(altShortcut(digit))}
+          title={(k === "data" ? v.dataShortcut : v.structureShortcut)(formatShortcut(`Alt+${digit}`))}
           onClick={() => onChange(k)}
           className={`border-b-2 px-3 py-1 ${
             view === k ? "border-accent text-fg" : "border-transparent text-muted hover:text-fg"
