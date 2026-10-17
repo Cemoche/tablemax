@@ -8,7 +8,11 @@ const byName = (a: ConnectionConfig, b: ConnectionConfig) =>
 interface ConnectionsState {
   items: ConnectionConfig[];
   load: () => Promise<void>;
-  save: (cfg: ConnectionConfig, password: string | null) => Promise<ConnectionConfig>;
+  save: (
+    cfg: ConnectionConfig,
+    password: string | null,
+    sshSecret?: string | null,
+  ) => Promise<ConnectionConfig>;
   remove: (id: string) => Promise<void>;
 }
 
@@ -18,8 +22,8 @@ export const useConnections = create<ConnectionsState>((set, get) => ({
     const list = await ipc.connectionsList();
     set({ items: [...list].sort(byName) });
   },
-  save: async (cfg, password) => {
-    const saved = await ipc.connectionSave(cfg, password);
+  save: async (cfg, password, sshSecret = null) => {
+    const saved = await ipc.connectionSave(cfg, password, sshSecret);
     set({ items: [...get().items.filter((c) => c.id !== saved.id), saved].sort(byName) });
     return saved;
   },

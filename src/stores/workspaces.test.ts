@@ -20,6 +20,8 @@ const cfg = (over: Partial<ConnectionConfig> = {}): ConnectionConfig => ({
   sqlitePath: null,
   passwordMode: "keyring",
   group: null,
+  ssl: { mode: "prefer", caFile: null, certFile: null, keyFile: null },
+  ssh: null,
   ...over,
 });
 
@@ -46,6 +48,11 @@ const open = async () => {
   return useWorkspaces.getState().workspaces[0].id;
 };
 const ws = () => useWorkspaces.getState().workspaces[0];
+
+test("openWorkspace forwards the secrets and the accepted fingerprint", async () => {
+  await useWorkspaces.getState().openWorkspace("c1", "pw", "ssh-pw", "SHA256:fp");
+  expect(ipc.workspaceOpen).toHaveBeenCalledWith("c1", "pw", "ssh-pw", "SHA256:fp");
+});
 
 test("openWorkspace picks public for postgres and activates; reopening just activates", async () => {
   await open();

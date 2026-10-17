@@ -1,0 +1,45 @@
+import { expect, test } from "vitest";
+import type { ConnectionConfig, SshSettings } from "../../lib/types";
+import { blankConnection, forBackend, withSslMode } from "./connectionDraft";
+
+const ssh = (over: Partial<SshSettings> = {}): SshSettings => ({
+  host: "bastion",
+  port: null,
+  user: null,
+  auth: "key",
+  keyFile: null,
+  secretMode: "keyring",
+  ...over,
+});
+const cfg = (s: SshSettings | null, over: Partial<ConnectionConfig> = {}): ConnectionConfig => ({
+  ...blankConnection(),
+  ssh: s,
+  ...over,
+});
+
+test("key auth without a typed or stored passphrase is sent as secret mode none", () => {
+  expect(forBackend(cfg(ssh()), null, null).ssh?.secretMode).toBe("none");
+  expect(forBackend(cfg(ssh()), null, "pp").ssh?.secretMode).toBe("keyring");
+  expect(forBackend(cfg(ssh()), ssh(), null).ssh?.secretMode).toBe("keyring");
+  expect(forBackend(cfg(ssh()), ssh({ auth: "password" }), null).ssh?.secretMode).toBe("none");
+  expect(forBackend(cfg(ssh({ secretMode: "ask" })), null, null).ssh?.secretMode).toBe("ask");
+});
+
+test("the agent never has a secret; password auth is sent unchanged", () => {
+  expect(forBackend(cfg(ssh({ auth: "agent" })), null, null).ssh?.secretMode).toBe("none");
+  const pw = cfg(ssh({ auth: "password" }));
+  expect(forBackend(pw, null, null)).toBe(pw);
+  const direct = cfg(null);
+  expect(forBackend(direct, null, null)).toBe(direct);
+});
+
+test("withSslMode defaults until picked and never keeps verify-ca on MySQL", () => {
+  const remote = cfg(null, { host: "db.example.com" });
+  expect(withSslMode(remote, false).ssl.mode).toBe("verifyFull");
+  expect(withSslMode(cfg(ssh(), { host: "db.example.com" }), false).ssl.mode).toBe("prefer");
+  expect(withSslMode(remote, true).ssl.mode).toBe("prefer");
+  const verifyCa = { ...remote, ssl: { ...remote.ssl, mode: "verifyCa" as const } };
+  expect(withSslMode(verifyCa, true).ssl.mode).toBe("verifyCa");
+  expect(withSslMode({ ...verifyCa, kind: "mySql" }, true).ssl.mode).toBe("verifyFull");
+  expect(withSslMode({ ...verifyCa, kind: "mariaDb" }, true).ssl.mode).toBe("verifyFull");
+});

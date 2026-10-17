@@ -2,9 +2,13 @@ import { expect, test } from "vitest";
 import type {
   CellValue,
   ConnectionConfig,
+  ErrorKind,
   ExecEvent,
+  FilePurpose,
   ResultSet,
   RowCount,
+  SshAuth,
+  SslMode,
   WorkspaceInfo,
 } from "./types";
 
@@ -52,8 +56,32 @@ test("WorkspaceInfo, RowCount and ConnectionConfig fixtures", () => {
     sqlitePath: null,
     passwordMode: "none",
     group: null,
+    ssl: { mode: "verifyFull", caFile: "/ca.pem", certFile: null, keyFile: null },
+    ssh: null,
   };
   expect(Object.keys(c)).toContain("envTag");
+});
+
+// Literal JSON of ConnectionConfig with SSL and SSH, as store.rs serialises it
+// (ssh_settings_serde_shape_is_camel_case).
+test("ConnectionConfig with ssl and ssh settings", () => {
+  const c: ConnectionConfig = JSON.parse(`{
+    "id":"x","name":"n","color":"swatch-1","envTag":"dev","kind":"postgres",
+    "host":"pg16","port":5432,"user":"postgres","database":"tablemax_demo","sqlitePath":null,
+    "passwordMode":"keyring","group":null,
+    "ssl":{"mode":"verifyCa","caFile":"/ca.pem","certFile":"/c.pem","keyFile":"/k.pem"},
+    "ssh":{"host":"bastion","port":2222,"user":"tunnel","auth":"key","keyFile":"/id","secretMode":"ask"}
+  }`);
+  const modes: SslMode[] = ["disable", "prefer", "require", "verifyCa", "verifyFull"];
+  const auths: SshAuth[] = ["password", "key", "agent"];
+  expect(modes).toContain(c.ssl.mode);
+  expect(auths).toContain(c.ssh?.auth);
+  expect(c.ssh?.secretMode).toBe("ask");
+  expect(c.ssl.keyFile).toBe("/k.pem");
+  const purposes: FilePurpose[] = ["caCert", "clientCert", "clientKey", "sshKey", "tableplusExport"];
+  expect(purposes).toHaveLength(5);
+  const kinds: ErrorKind[] = ["hostKeyUnknown", "hostKeyChanged"];
+  expect(kinds).toHaveLength(2);
 });
 
 test("ResultSet carries the truncated flag", () => {

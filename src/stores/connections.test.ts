@@ -18,6 +18,8 @@ const cfg = (id: string, name: string): ConnectionConfig => ({
   sqlitePath: null,
   passwordMode: "keyring",
   group: null,
+  ssl: { mode: "prefer", caFile: null, certFile: null, keyFile: null },
+  ssh: null,
 });
 
 beforeEach(() => {
@@ -37,8 +39,8 @@ test("store load sorts by name and remove drops item", async () => {
 
 test("save upserts the returned config and forwards the password", async () => {
   vi.mocked(ipc.connectionSave).mockResolvedValue(cfg("9", "Zed"));
-  const saved = await useConnections.getState().save(cfg("", "Zed"), "pw");
-  expect(ipc.connectionSave).toHaveBeenCalledWith(expect.objectContaining({ name: "Zed" }), "pw");
+  const saved = await useConnections.getState().save(cfg("", "Zed"), "pw", "ssh-pw");
+  expect(ipc.connectionSave).toHaveBeenCalledWith(expect.objectContaining({ name: "Zed" }), "pw", "ssh-pw");
   expect(saved.id).toBe("9");
   expect(useConnections.getState().items).toHaveLength(1);
 });

@@ -13,3 +13,21 @@ export function toAppError(e: unknown): AppError {
 export function isPasswordRequired(e: AppError): boolean {
   return e.kind === "auth" && e.message === "password required";
 }
+
+export function isSshPasswordRequired(e: AppError): boolean {
+  return e.kind === "auth" && e.message === "ssh password required";
+}
+
+export function isSshPassphraseRequired(e: AppError): boolean {
+  return e.kind === "auth" && e.message === "ssh passphrase required";
+}
+
+/** Message = the server key's "SHA256:…" fingerprint. */
+export function isHostKeyUnknown(e: AppError): boolean {
+  return e.kind === "hostKeyUnknown";
+}
+
+/** Message = the received key's fingerprint; the connection is blocked. */
+export function isHostKeyChanged(e: AppError): boolean {
+  return e.kind === "hostKeyChanged";
+}

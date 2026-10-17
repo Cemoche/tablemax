@@ -1,5 +1,5 @@
 // TypeScript mirrors of the Rust serde types (all camelCase on the wire).
-// Sources: src-tauri/src/{value,error,store,manager}.rs and driver/mod.rs.
+// Sources: src-tauri/src/{value,error,store,manager,commands}.rs and driver/{mod,tls}.rs.
 // Pinned by types.shape.test.ts.
 
 export type DriverKind = "postgres" | "mySql" | "mariaDb" | "sqlite";
@@ -16,7 +16,11 @@ export type ErrorKind =
   | "notFound"
   | "secret"
   | "io"
-  | "invalid";
+  | "invalid"
+  /** SSH server key not in any known_hosts; message = its "SHA256:…" fingerprint. */
+  | "hostKeyUnknown"
+  /** SSH server key differs from known_hosts; message = the received fingerprint. */
+  | "hostKeyChanged";
 
 export interface AppError {
   kind: ErrorKind;
@@ -36,6 +40,36 @@ export type CellValue =
   | { t: "json"; v: string }
   | { t: "temporal"; v: string };
 
+/** libpq-style TLS modes (driver/tls.rs). MySQL/MariaDB do not support verifyCa yet. */
+export type SslMode = "disable" | "prefer" | "require" | "verifyCa" | "verifyFull";
+
+export interface SslConfig {
+  mode: SslMode;
+  caFile: string | null;
+  certFile: string | null;
+  keyFile: string | null;
+}
+
+export type SshAuth = "password" | "key" | "agent";
+
+/** SSH tunnel settings (store.rs SshSettings); no secret fields. */
+export interface SshSettings {
+  /** A ~/.ssh/config alias or a host name. */
+  host: string;
+  /** Overrides the config's Port (default 22). */
+  port: number | null;
+  /** Overrides the config's User. */
+  user: string | null;
+  auth: SshAuth;
+  /** Private key for key auth; else the config's IdentityFile or ~/.ssh/id_*. */
+  keyFile: string | null;
+  /** Where the SSH password / key passphrase lives; always "none" for the agent. */
+  secretMode: PasswordMode;
+}
+
+/** What file_pick picks a file for (commands.rs FilePurpose). */
+export type FilePurpose = "caCert" | "clientCert" | "clientKey" | "sshKey" | "tableplusExport";
+
 /**
  * Persisted connection settings (no secret fields).
  * `color` stores a swatch id "swatch-1".."swatch-6" (see SWATCHES), which maps to the
@@ -54,6 +88,9 @@ export interface ConnectionConfig {
   sqlitePath: string | null;
   passwordMode: PasswordMode;
   group: string | null;
+  ssl: SslConfig;
+  /** Database reached through this SSH server (host/port as seen from it). */
+  ssh: SshSettings | null;
 }
 
 export const SWATCHES = [

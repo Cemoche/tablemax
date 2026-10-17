@@ -5,6 +5,7 @@ import type {
   ConnectionConfig,
   DbObject,
   ExecEvent,
+  FilePurpose,
   ObjectRef,
   PageRequest,
   ResultSet,
@@ -14,17 +15,38 @@ import type {
 
 export const connectionsList = () => invoke<ConnectionConfig[]>("connections_list");
 
-export const connectionSave = (config: ConnectionConfig, password: string | null) =>
-  invoke<ConnectionConfig>("connection_save", { config, password });
+export const connectionSave = (
+  config: ConnectionConfig,
+  password: string | null,
+  sshSecret: string | null,
+) => invoke<ConnectionConfig>("connection_save", { config, password, sshSecret });
 
 export const connectionDelete = (id: string) => invoke<void>("connection_delete", { id });
 
-/** Resolves with the server version string. */
-export const connectionTest = (config: ConnectionConfig, password: string | null) =>
-  invoke<string>("connection_test", { config, password });
+/**
+ * Resolves with the server version string. `acceptFingerprint` trusts an unknown SSH
+ * host key the user confirmed (the "SHA256:…" message of a hostKeyUnknown error).
+ */
+export const connectionTest = (
+  config: ConnectionConfig,
+  password: string | null,
+  sshSecret: string | null,
+  acceptFingerprint: string | null,
+) => invoke<string>("connection_test", { config, password, sshSecret, acceptFingerprint });
 
-export const workspaceOpen = (connectionId: string, password: string | null) =>
-  invoke<WorkspaceInfo>("workspace_open", { connectionId, password });
+export const workspaceOpen = (
+  connectionId: string,
+  password: string | null,
+  sshSecret: string | null,
+  acceptFingerprint: string | null,
+) =>
+  invoke<WorkspaceInfo>("workspace_open", { connectionId, password, sshSecret, acceptFingerprint });
+
+/** Concrete host aliases of ~/.ssh/config. */
+export const sshHostsList = () => invoke<string[]>("ssh_hosts_list");
+
+/** Opens the native file picker (from Rust); null when cancelled. */
+export const filePick = (purpose: FilePurpose) => invoke<string | null>("file_pick", { purpose });
 
 export const workspaceClose = (workspaceId: string) =>
   invoke<void>("workspace_close", { workspaceId });

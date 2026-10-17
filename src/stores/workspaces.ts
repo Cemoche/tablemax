@@ -26,7 +26,13 @@ export interface Workspace {
 interface WorkspacesState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  openWorkspace: (connectionId: string, password?: string | null) => Promise<void>;
+  /** Secrets typed by the user; `acceptFingerprint` trusts a confirmed unknown host key. */
+  openWorkspace: (
+    connectionId: string,
+    password?: string | null,
+    sshSecret?: string | null,
+    acceptFingerprint?: string | null,
+  ) => Promise<void>;
   closeWorkspace: (id: string) => Promise<void>;
   setActiveWorkspace: (id: string) => void;
   setSchema: (wsId: string, schema: string) => void;
@@ -69,8 +75,13 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
   const update = (wsId: string, fn: (w: Workspace) => Workspace) =>
     set((s) => ({ workspaces: s.workspaces.map((w) => (w.id === wsId ? fn(w) : w)) }));
 
-  const doOpen = async (cfg: ConnectionConfig, password: string | null) => {
-    const info = await ipc.workspaceOpen(cfg.id, password);
+  const doOpen = async (
+    cfg: ConnectionConfig,
+    password: string | null,
+    sshSecret: string | null,
+    acceptFingerprint: string | null,
+  ) => {
+    const info = await ipc.workspaceOpen(cfg.id, password, sshSecret, acceptFingerprint);
     let schemas: string[];
     try {
       schemas = await ipc.schemasList(info.workspaceId);
@@ -98,7 +109,12 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     workspaces: [],
     activeWorkspaceId: null,
 
-    openWorkspace: async (connectionId, password = null) => {
+    openWorkspace: async (
+      connectionId,
+      password = null,
+      sshSecret = null,
+      acceptFingerprint = null,
+    ) => {
       const existing = get().workspaces.find((w) => w.connectionId === connectionId);
       if (existing) {
         set({ activeWorkspaceId: existing.id });
@@ -108,7 +124,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       if (inflight) return inflight;
       const cfg = useConnections.getState().items.find((c) => c.id === connectionId);
       if (!cfg) throw { kind: "notFound", message: strings.workspace.openFailed };
-      const p = doOpen(cfg, password).finally(() => opening.delete(connectionId));
+      const p = doOpen(cfg, password, sshSecret, acceptFingerprint).finally(() => opening.delete(connectionId));
       opening.set(connectionId, p);
       return p;
     },
