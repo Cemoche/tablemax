@@ -11,6 +11,7 @@ and the integration rules; this note records what differed and what was fixed).
 | 2 | `feat/plan-05-safety` | 0d1ff9c | 6 files |
 | 3 | `feat/plan-03-data` (fix wave) | 76082b3 | none |
 | 4 | `feat/plan-04-navigation` | d3aa06a | 23 files |
+| 5 | `fix/plan-04-review` | 922f9ee | 4 files |
 
 ## New since the rehearsal
 
@@ -43,6 +44,15 @@ and the integration rules; this note records what differed and what was fixed).
 4. **`data-theme="dark"` × pending colours** (`tokens.css`): the three `--pending-*` tokens;
    `src/styles/tokens.test.ts` checks both dark blocks override the same tokens.
 5. Mod+S commit rewritten with `useShortcut`, gated on `connected` and the cell editor.
+6. **MySQL cancel race** (`mysql.rs`, product bug behind the flaky cancel tests): an
+   interrupted `SLEEP()` row could reach the session before the canceller recorded the
+   delivered KILL, so Cancel showed a result. The canceller settles each attempt before
+   disconnecting; a statement that returns while a cancel was requested awaits it
+   (bounded). Stress test `mysql_cancel_reported_even_when_the_result_beats_the_kill_reply`.
+7. **Review wave × earlier plans** (`mysql.rs`): the session re-read after every statement
+   runs after the cancel outcome is settled; the dollar-quote refusal checks both readings
+   of executable comments (plan 5); grid commits (`apply`, plan 3) go through the same
+   session guard (unknown state, unsafe client charset).
 
 ## Left for plan 5 Task 6
 
@@ -59,11 +69,14 @@ and the integration rules; this note records what differed and what was fixed).
 
 Follow-ups: pending changes are not in plan 4's session snapshot and nothing asks before
 quitting with some; a SQL session opened while a switch runs may land on the old database
-(`open_sql_session` reads it without the slot lock); `mysql_cancel_over_tls` fails about
-1 run in 20 (an interrupted `sleep()` returned as a row: timing, unchanged by the merges).
+(`open_sql_session` reads it without the slot lock).
+
+Final polish: CI should run `cargo clippy --all-targets -- -D warnings` (the review wave
+made it pass; `pnpm lint` and CI still run clippy without `--all-targets`).
 
 ## Results (head after the fixes)
 
-`pnpm install --frozen-lockfile`, `pnpm test` (76 files, 730 tests), `pnpm lint`,
-`cargo check --all-targets`, `pnpm test:rust` on project `tablemax-test-int` (400 passed,
-2 ignored), hook / bootstrap / secret checks: all green.
+`pnpm install --frozen-lockfile`, `pnpm test` (76 files, 740 tests), `pnpm lint`,
+`cargo clippy --all-targets -- -D warnings`, `pnpm test:rust` on project
+`tablemax-test-int` (417 passed, 2 ignored; `mysql_driver` 10 consecutive runs green),
+hook / bootstrap / secret checks: all green.

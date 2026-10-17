@@ -48,6 +48,14 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                 }`}
               >
                 {t.title}
+                {t.kind === "query" && t.database && workspace.database && t.database !== workspace.database && (
+                  <span
+                    title={strings.workspace.tabDatabase(t.database)}
+                    className="ml-1 rounded-sm border border-border px-1 text-xs font-normal not-italic text-muted"
+                  >
+                    {t.database}
+                  </span>
+                )}
                 {isQueryModified(t) && (
                   <span aria-hidden="true" title={strings.savedQueries.modified} className="ml-1 text-warning">
                     {strings.savedQueries.modifiedDot}

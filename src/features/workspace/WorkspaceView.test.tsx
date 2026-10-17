@@ -1,4 +1,5 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
@@ -105,4 +106,41 @@ test("a held Mod+T opens exactly one tab", () => {
   press({ code: "KeyT" });
   for (let i = 0; i < 5; i++) press({ code: "KeyT", repeat: true });
   expect(tabs()).toHaveLength(2);
+});
+
+/** Renders the store's workspace and keeps it in sync with the store. */
+function renderLive(over: Partial<Workspace>) {
+  cleanup();
+  useWorkspaces.setState({ workspaces: [{ ...workspace, ...over }], activeWorkspaceId: "w1" });
+  const Live = () => {
+    const w = useWorkspaces((s) => s.workspaces[0]);
+    return w ? <WorkspaceView workspace={w} /> : null;
+  };
+  render(<Live />);
+}
+
+test("a query tab on another database than the workspace shows a database badge", () => {
+  renderLive({
+    database: "other",
+    tabs: [
+      { id: "a", kind: "query", title: "Query 1", sql: "", sqlSessionId: "s1", database: "app" },
+      { id: "b", kind: "query", title: "Query 2", sql: "", sqlSessionId: "s2", database: "other" },
+      { id: "c", kind: "query", title: "Query 3", sql: "", sqlSessionId: null },
+    ],
+  });
+  const badges = screen.getAllByTitle(strings.workspace.tabDatabase("app"));
+  expect(badges).toHaveLength(1);
+  expect(badges[0]).toHaveTextContent("app");
+  expect(screen.getByRole("tab", { name: /Query 1/ })).toContainElement(badges[0]);
+  expect(screen.queryByTitle(strings.workspace.tabDatabase("other"))).toBeNull();
+});
+
+test("a workspace notice is shown until dismissed", async () => {
+  const notice = strings.session.databaseFallback("dropped", "app");
+  renderLive({ notice });
+  // The environment banner is a status too: pick the notice by its text.
+  expect(screen.getByText(notice)).toHaveAttribute("role", "status");
+  await userEvent.click(screen.getByRole("button", { name: strings.workspace.dismissNotice }));
+  expect(screen.queryByText(notice)).toBeNull();
+  expect(useWorkspaces.getState().workspaces[0].notice).toBeNull();
 });

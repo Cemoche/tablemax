@@ -1,6 +1,7 @@
 //! Saved queries: one `.sql` file per query in `<queries dir>/<connection id>/`.
 //! Names come from the user, so they are validated hard: a name can never address a
-//! path outside its connection's folder.
+//! path outside its connection's folder. Folders and files are owner-only on Unix
+//! (0700 / 0600).
 
 use std::fs;
 use std::io::Write;
@@ -10,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::store::create_private_dir_all;
 
 const EXT: &str = "sql";
 const MAX_NAME_CHARS: usize = 120;
@@ -169,14 +171,21 @@ pub fn write(base: &Path, connection_id: &str, name: &str, sql: &str) -> AppResu
         return Err(invalid_name());
     }
     let dir = conn_dir(base, connection_id)?;
-    fs::create_dir_all(&dir).map_err(io_err)?;
+    create_private_dir_all(&dir).map_err(io_err)?;
     let tmp = dir.join(format!(
         ".tmp-{}-{}",
         std::process::id(),
         TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     let result = (|| {
-        let mut f = fs::File::create(&tmp)?;
+        let mut o = fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600);
+        }
+        let mut f = o.open(&tmp)?;
         f.write_all(sql.as_bytes())?;
         f.sync_all()?;
         fs::rename(&tmp, &path)

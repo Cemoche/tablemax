@@ -397,6 +397,41 @@ async fn assert_sleep_is_cancelled(s: &Arc<dyn Session>) {
     assert!(s.execute("select 1").await.is_ok());
 }
 
+/// The server can send an interrupted `SLEEP()`'s row (MySQL answers it with a normal
+/// result, not error 1317) before the `KILL QUERY` reply reaches the canceller: the
+/// statement must still report `Cancelled`. Several sessions at once widen that window.
+#[tokio::test]
+async fn mysql_cancel_reported_even_when_the_result_beats_the_kill_reply() {
+    for (url, kind) in targets() {
+        let mut rounds = Vec::new();
+        for _ in 0..6 {
+            let url = url.clone();
+            rounds.push(tokio::spawn(async move {
+                let (s, _g) = open(&url, kind).await;
+                for round in 0..5 {
+                    let canceller = s.canceller();
+                    let s2 = s.clone();
+                    let task = tokio::spawn(async move { s2.execute("select sleep(30)").await });
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    canceller.cancel().await.unwrap();
+                    let res = tokio::time::timeout(Duration::from_secs(4), task)
+                        .await
+                        .expect("cancel timed out")
+                        .unwrap();
+                    match res {
+                        Err(e) => assert_eq!(e.kind, ErrorKind::Cancelled, "{url} round {round}"),
+                        Ok(out) => panic!("{url} round {round}: cancelled sleep returned {:?}", out.result),
+                    }
+                    assert!(s.execute("select 1").await.is_ok());
+                }
+            }));
+        }
+        for r in rounds {
+            r.await.unwrap();
+        }
+    }
+}
+
 #[tokio::test]
 async fn mysql_cancel_long_query() {
     for (url, kind) in targets() {
@@ -687,6 +722,235 @@ async fn mysql_lexer_follows_session_sql_mode() {
             .err()
             .unwrap();
         assert_eq!(e.kind, ErrorKind::Invalid);
+    }
+}
+
+/// After `SET NAMES gbk` (and the other client charsets whose multi-byte characters can
+/// end with a 0x5C byte) the server reads `\'` after such a character as the end of the
+/// string, so the lexer would miss a second statement: every statement is refused until
+/// the charset is back to a safe one (an ASCII SET is still accepted to get there).
+#[tokio::test]
+async fn mysql_refuses_multibyte_unsafe_client_charsets() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!("create table `{n}`.t(a int)"))
+            .await
+            .unwrap();
+        // UTF-8 `中` is E4 B8 AD: read as gbk, `AD 5C` is one character and eats the `\`.
+        let payload = format!("select '中\\'; drop table `{n}`.t; -- '");
+        for set in [
+            "SET NAMES gbk",
+            "set character set big5",
+            "SET character_set_client = sjis",
+            "SET NAMES cp932",
+            "SET NAMES gb18030",
+        ] {
+            if set.contains("gb18030") && kind == DriverKind::MariaDb {
+                continue; // MariaDB has no gb18030.
+            }
+            s.execute(set).await.unwrap();
+            for sql in [payload.as_str(), "select 1"] {
+                let e = s.execute(sql).await.err().unwrap();
+                assert_eq!(e.kind, ErrorKind::Invalid, "{set}: {sql}");
+                assert!(
+                    e.message.contains("client character set")
+                        && e.message.contains("SET NAMES utf8mb4"),
+                    "{set}: {}",
+                    e.message
+                );
+            }
+            s.execute("SET NAMES utf8mb4").await.unwrap();
+            assert_eq!(s.list_objects(Some(n)).await.unwrap().len(), 1, "{set}");
+            // Back to normal: the same text is one statement (a string literal).
+            assert!(s.execute(&payload).await.is_ok(), "{set}");
+        }
+        // A failing statement that changes nothing is followed by a re-read too.
+        s.execute("SET NAMES gbk").await.unwrap();
+        assert!(s.execute("SET NAMES no_such_charset").await.is_err());
+        assert_eq!(
+            s.execute("select 1").await.err().unwrap().kind,
+            ErrorKind::Invalid
+        );
+        s.execute("SET NAMES utf8mb4").await.unwrap();
+        assert!(s.execute("select 1").await.is_ok());
+    }
+}
+
+/// Grid commits (`apply`) go through the same session guard as `execute`: refused while
+/// the client charset is unsafe, accepted again once it is back.
+#[tokio::test]
+async fn mysql_apply_refused_under_an_unsafe_client_charset() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!("create table `{n}`.t(a int)"))
+            .await
+            .unwrap();
+        let insert = [tablemax_lib::driver::query::Statement {
+            sql: format!("insert into `{n}`.t values (1)"),
+            params: vec![],
+        }];
+        s.execute("SET NAMES gbk").await.unwrap();
+        let e = s.apply(&insert, &[false]).await.expect_err("refused");
+        assert_eq!(e.kind, ErrorKind::Invalid, "{url}");
+        assert!(e.message.contains("client character set"), "{}", e.message);
+        s.execute("SET NAMES utf8mb4").await.unwrap();
+        assert!(s.apply(&insert, &[false]).await.unwrap().applied);
+        let rs = s
+            .execute(&format!("select count(*) from `{n}`.t"))
+            .await
+            .unwrap();
+        assert_eq!(only(rs.result.as_ref().unwrap())[0], CellValue::Int(1), "{url}");
+    }
+}
+
+/// MySQL 9 JavaScript routines (`AS $$ … $$`) hide their body from the lexer: refused.
+#[tokio::test]
+async fn mysql_refuses_dollar_quoted_bodies() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        for sql in [
+            format!("create function `{n}`.f() returns int language javascript as $$ return 1; $$"),
+            format!(
+                "create function `{n}`.f() returns int language javascript as $js$ return 1 $js$"
+            ),
+            format!(
+                "create function `{n}`.f() returns int language javascript as $$ ' $$; drop database `{n}`; -- '"
+            ),
+        ] {
+            let e = s.execute(&sql).await.err().unwrap();
+            assert_eq!(e.kind, ErrorKind::Invalid, "{sql}");
+            assert!(e.message.contains("dollar-quoted"), "{}", e.message);
+        }
+        // `$` inside identifiers is not a dollar quote.
+        assert!(s.execute("select 1 as a$b, 2 as `$$`").await.is_ok());
+    }
+}
+
+/// The modes are re-read after a failing statement as well: a MariaDB anonymous block
+/// keeps a `SET NAMES` it ran before failing. (Stored routines, and these blocks for
+/// sql_mode, restore the caller's values when they return.)
+#[tokio::test]
+async fn mysql_modes_are_reread_after_an_error() {
+    for (url, kind) in targets() {
+        if kind != DriverKind::MariaDb {
+            continue;
+        }
+        let (s, _g) = open(&url, kind).await;
+        let e = s
+            .execute("BEGIN NOT ATOMIC SET NAMES gbk; SIGNAL SQLSTATE '45000'; END")
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Query);
+        let e = s.execute("select 1").await.err().unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+        assert!(
+            e.message.contains("client character set gbk"),
+            "{}",
+            e.message
+        );
+        s.execute("SET NAMES utf8mb4").await.unwrap();
+        assert!(s.execute("select 1").await.is_ok());
+    }
+}
+
+/// The session modes are re-read after EVERY statement: a comment-prefixed or
+/// executable-comment EXECUTE (or MariaDB EXECUTE IMMEDIATE on a built string) changes
+/// the charset / sql_mode without any keyword the driver could spot.
+#[tokio::test]
+async fn mysql_modes_changed_by_disguised_statements_are_seen() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!("create table `{n}`.t(a int)"))
+            .await
+            .unwrap();
+        let payload = format!("select '中\\'; drop table `{n}`.t; -- '");
+        s.execute("PREPARE cs FROM 'SET NAMES gbk'").await.unwrap();
+        let mut switches = vec![
+            "/* x */ EXECUTE cs",
+            "/*! EXECUTE cs */",
+            "-- c\nEXECUTE cs",
+        ];
+        if kind == DriverKind::MariaDb {
+            switches.push("-- c\nEXECUTE IMMEDIATE CONCAT('SET NA','MES gbk')");
+        }
+        for switch in switches {
+            s.execute(switch).await.unwrap();
+            let e = s.execute(&payload).await.err().unwrap();
+            assert_eq!(e.kind, ErrorKind::Invalid, "{switch}");
+            assert!(
+                e.message.contains("client character set gbk"),
+                "{switch}: {}",
+                e.message
+            );
+            s.execute("SET NAMES utf8mb4").await.unwrap();
+            assert_eq!(s.list_objects(Some(n)).await.unwrap().len(), 1, "{switch}");
+        }
+        // Same for NO_BACKSLASH_ESCAPES.
+        s.execute(
+            "PREPARE nb FROM 'SET SESSION sql_mode = CONCAT(@@sql_mode, '',NO_BACKSLASH_ESCAPES'')'",
+        )
+        .await
+        .unwrap();
+        s.execute("/* x */ EXECUTE nb").await.unwrap();
+        let e = s
+            .execute(&format!(r"select 'a\'; drop table `{n}`.t; -- '"))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+        assert_eq!(s.list_objects(Some(n)).await.unwrap().len(), 1);
+    }
+}
+
+/// Objects of the test database, counted from a fresh session (the test session's
+/// sql_select_limit would also limit this metadata read).
+async fn table_count_elsewhere(g: &TestDb) -> usize {
+    let admin = connect_mysql(&g.params).await.unwrap();
+    let count = admin.list_objects(Some(&g.name)).await.unwrap().len();
+    admin.close().await.unwrap();
+    count
+}
+
+/// `sql_select_limit = 0` must not blind the session-state re-read (an empty answer was
+/// once taken as "default modes, safe charset").
+#[tokio::test]
+async fn mysql_sql_select_limit_does_not_hide_the_session_state() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!("create table `{n}`.t(a int)"))
+            .await
+            .unwrap();
+        s.execute("SET SESSION sql_select_limit = 0").await.unwrap();
+        s.execute("SET NAMES gbk").await.unwrap();
+        let e = s
+            .execute(&format!("select '中\\'; drop table `{n}`.t; -- '"))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid, "{}", e.message);
+        assert!(
+            e.message.contains("client character set gbk"),
+            "{}",
+            e.message
+        );
+        assert_eq!(table_count_elsewhere(&g).await, 1);
+        s.execute("SET NAMES utf8mb4").await.unwrap();
+        s.execute("SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')")
+            .await
+            .unwrap();
+        let e = s
+            .execute(&format!(r"select 'a\'; drop table `{n}`.t; -- '"))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid, "{}", e.message);
+        assert_eq!(table_count_elsewhere(&g).await, 1);
     }
 }
 

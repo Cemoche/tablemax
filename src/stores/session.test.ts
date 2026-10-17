@@ -113,9 +113,6 @@ test("parseSnapshot rejects invalid JSON, unknown versions and missing fields", 
     parseSnapshot(without((s) => delete ((s.workspaces as { tabs: Record<string, unknown>[] }[])[0].tabs[1].sql))),
   ).toBeNull();
   expect(
-    parseSnapshot(without((s) => (((s.workspaces as { tabs: Record<string, unknown>[] }[])[0].tabs[0].kind = "chart")))),
-  ).toBeNull();
-  expect(
     parseSnapshot(without((s) => delete ((s.workspaces as { tabs: { object: Record<string, unknown> }[] }[])[0].tabs[0].object.name))),
   ).toBeNull();
   expect(parseSnapshot(without((s) => (s.activeWorkspaceIndex = 5)))).toBeNull();
@@ -349,4 +346,48 @@ test("a restored linked tab compares with the file content, read lazily", async 
   });
   expect(ipc.savedQueryRead).toHaveBeenCalledWith("c1", "report");
   expect(ipc.workspaceOpen).not.toHaveBeenCalled();
+});
+
+test("parseSnapshot skips tabs of an unknown kind instead of dropping the session", () => {
+  const future = JSON.parse(JSON.stringify(snap));
+  // Kinds from a later version, before the active tab and after it.
+  future.workspaces[0].tabs.splice(0, 0, { kind: "chart", spec: {} });
+  future.workspaces[0].tabs.push({ kind: "structure", object: { schema: null, name: "x" } });
+  future.workspaces[0].activeTabIndex = 2; // the query tab
+  expect(parseSnapshot(JSON.stringify(future))).toEqual(snap);
+  // The active tab itself unknown: no active tab.
+  future.workspaces[0].activeTabIndex = 0;
+  const parsed = parseSnapshot(JSON.stringify(future));
+  expect(parsed?.workspaces[0].tabs).toEqual(snap.workspaces[0].tabs);
+  expect(parsed?.workspaces[0].activeTabIndex).toBeNull();
+  // A tab without a kind, a known kind with a bad shape and an out-of-range index are
+  // still invalid.
+  const kindless = JSON.parse(JSON.stringify(future));
+  kindless.workspaces[0].tabs.push({ title: "?" });
+  expect(parseSnapshot(JSON.stringify(kindless))).toBeNull();
+  future.workspaces[0].tabs[1].preview = "yes";
+  expect(parseSnapshot(JSON.stringify(future))).toBeNull();
+  future.workspaces[0].tabs[1].preview = true;
+  future.workspaces[0].activeTabIndex = 5;
+  expect(parseSnapshot(JSON.stringify(future))).toBeNull();
+});
+
+test("a query tab keeps the database its session was opened on through the snapshot", async () => {
+  const w = workspace({
+    tabs: [{ id: "t2", kind: "query", title: "Query 3", sql: "select 1", sqlSessionId: "s1", database: "old" }],
+    mru: ["t2"],
+  });
+  const s = snapshot({ workspaces: [w], activeWorkspaceId: "w1" });
+  expect(s.workspaces[0].tabs[0]).toEqual({ kind: "query", title: "Query 3", sql: "select 1", database: "old" });
+  expect(parseSnapshot(JSON.stringify(s))).toEqual(s);
+  // Absent (never ran) stays absent; a non-string is invalid.
+  expect(snapshot({ workspaces: [workspace()], activeWorkspaceId: "w1" }).workspaces[0].tabs[1]).not.toHaveProperty(
+    "database",
+  );
+  const bad = JSON.parse(JSON.stringify(s));
+  bad.workspaces[0].tabs[0].database = 3;
+  expect(parseSnapshot(JSON.stringify(bad))).toBeNull();
+  vi.mocked(ipc.sessionLoad).mockResolvedValue(JSON.stringify(s));
+  await restoreSession();
+  expect(state().workspaces[0].tabs[0]).toMatchObject({ kind: "query", database: "old", sqlSessionId: null });
 });

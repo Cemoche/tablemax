@@ -118,8 +118,7 @@ async fn batch(mgr: &SessionManager, sid: &str, statements: &[&str]) -> Vec<Got>
     };
     let owned: Vec<String> = statements.iter().map(|s| s.to_string()).collect();
     mgr.execute_batch(sid, owned, true, sink).await.unwrap();
-    let out = std::mem::take(&mut *events.lock().unwrap());
-    out
+    std::mem::take(&mut *events.lock().unwrap())
 }
 
 #[tokio::test]

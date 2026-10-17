@@ -210,6 +210,9 @@ export const strings = {
     tabKind: { table: "Table", query: "Query" },
     switchDatabasePending: (n: number) =>
       `Commit or discard the ${n} pending change${n === 1 ? "" : "s"} first: switching the database closes the table tabs`,
+    // Plan 4 review fixes: a query tab keeps the database of its session.
+    tabDatabase: (database: string) => `Runs on database ${database}`,
+    dismissNotice: "Dismiss",
   },
   query: {
     editorLabel: "SQL editor",
@@ -235,6 +238,8 @@ export const strings = {
     autoLimit: (rows: number) => `Auto LIMIT ${rows}`,
     autoLimitHint: (rows: number) => `Run adds LIMIT ${rows} to SELECT statements that have none`,
     formatFailed: "Could not format: the SQL could not be parsed",
+    // Plan 4 review fixes.
+    formatDelimiter: "Formatting is not available for scripts with DELIMITER lines",
   },
   sidebar: {
     label: "Objects",
@@ -558,6 +563,9 @@ export const strings = {
     disconnectedHint: "Select a tab or reconnect to load its data.",
     reconnect: "Reconnect",
     connecting: "Connecting…",
+    // Plan 4 review fixes: the restored database could not be selected again.
+    databaseFallback: (wanted: string, actual: string | null) =>
+      `Database ${wanted} is unavailable: connected to ${actual ?? "the default database"} instead, and its table tabs were closed.`,
   },
   palette: {
     label: "Command palette",

@@ -1,6 +1,7 @@
 //! Per-connection query history, kept in `app.db`. The SQL text is stored as executed
 //! (it may contain values the user typed), so it is capped per connection, can be
-//! cleared, and is deleted with its connection.
+//! cleared (app.db runs with `secure_delete`, so cleared rows are overwritten), and is
+//! deleted with its connection. Statements that may carry a password are not recorded.
 
 use rusqlite::params;
 use serde::Serialize;
@@ -47,6 +48,14 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// True when `sql` may carry a password: it holds the word IDENTIFIED or PASSWORD (any
+/// case, as a whole word: `CREATE/ALTER USER … IDENTIFIED BY`, `SET PASSWORD`,
+/// PostgreSQL `… PASSWORD '…'`). Such statements are never recorded.
+pub fn has_credentials(sql: &str) -> bool {
+    sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|w| w.eq_ignore_ascii_case("identified") || w.eq_ignore_ascii_case("password"))
+}
+
 pub fn record(store: &ConnectionStore, e: NewHistoryEntry) -> AppResult<()> {
     record_many(store, vec![e], false)
 }
@@ -54,12 +63,17 @@ pub fn record(store: &ConnectionStore, e: NewHistoryEntry) -> AppResult<()> {
 /// Inserts `entries` in order, then prunes each touched connection once, all in ONE
 /// transaction. With `only_existing`, entries of a connection that is no longer saved
 /// are skipped (a batch finishing after its connection was deleted must not leave
-/// orphaned rows behind).
+/// orphaned rows behind). Entries whose SQL may carry a password ([`has_credentials`])
+/// are dropped.
 pub fn record_many(
     store: &ConnectionStore,
     entries: Vec<NewHistoryEntry>,
     only_existing: bool,
 ) -> AppResult<()> {
+    let entries: Vec<NewHistoryEntry> = entries
+        .into_iter()
+        .filter(|e| !has_credentials(&e.sql))
+        .collect();
     if entries.is_empty() {
         return Ok(());
     }

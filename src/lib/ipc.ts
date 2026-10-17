@@ -137,8 +137,9 @@ export const changesCancel = (workspaceId: string) =>
 export const cellValue = (workspaceId: string, object: ObjectRef, key: RowKey, column: string) =>
   invoke<CellValue>("cell_value", { workspaceId, object, key, column });
 
-export const sqlSessionOpen = (workspaceId: string) =>
-  invoke<string>("sql_session_open", { workspaceId });
+/** `database` (PostgreSQL): open on that database instead of the workspace's current one. */
+export const sqlSessionOpen = (workspaceId: string, database: string | null = null) =>
+  invoke<string>("sql_session_open", { workspaceId, database });
 
 export const sqlSessionClose = (sessionId: string) =>
   invoke<void>("sql_session_close", { sessionId });

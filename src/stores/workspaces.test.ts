@@ -534,12 +534,30 @@ test("postgres switches back to the restored database", async () => {
   expect(ws()).toMatchObject({ status: "connected", database: "other" });
 });
 
-test("a failed database switch keeps the workspace connected on its default database", async () => {
+test("a failed database switch connects on the default database, closes the table tabs and says so", async () => {
   restore({ database: "dropped" });
   vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ database: "app" }));
   vi.mocked(ipc.workspaceSwitchDatabase).mockRejectedValue({ kind: "notFound", message: "no db" });
   await useWorkspaces.getState().openWorkspace("c1");
   expect(ws()).toMatchObject({ status: "connected", database: "app", currentSchema: "audit" });
+  // The table tabs would show the default database's tables under the old titles.
+  expect(ws().tabs.map((t) => t.id)).toEqual(["t2"]);
+  expect(ws()).toMatchObject({ activeTabId: "t2", mru: ["t2"] });
+  expect(ws().notice).toBe(strings.session.databaseFallback("dropped", "app"));
+  useWorkspaces.getState().dismissNotice("w1");
+  expect(ws().notice).toBeNull();
+});
+
+test("query tabs record the database their session was opened on, and keep it across a switch", async () => {
+  vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ database: "app" }));
+  vi.mocked(ipc.workspaceSwitchDatabase).mockResolvedValue(info({ database: "other" }));
+  const id = await open();
+  useWorkspaces.getState().openQueryTab(id);
+  const tabId = ws().tabs[0].id;
+  useWorkspaces.getState().updateTab(id, tabId, { sqlSessionId: "s1", database: "app" });
+  await useWorkspaces.getState().switchDatabase(id, "other");
+  expect(ws().database).toBe("other");
+  expect(ws().tabs[0]).toMatchObject({ kind: "query", sqlSessionId: "s1", database: "app" });
 });
 
 test("the same database or a mysql workspace does not switch", async () => {
