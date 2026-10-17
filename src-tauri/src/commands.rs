@@ -376,7 +376,8 @@ pub async fn settings_get(app: AppHandle) -> AppResult<Settings> {
 }
 
 /// Saves the settings and returns the stored value (out-of-range numbers clamped, an
-/// unsafe editor font family reset to "": see `Settings::clamped`).
+/// unsafe editor font family reset to "", keymap entries with an unknown action id or an
+/// invalid shortcut dropped: see `Settings::clamped`).
 #[tauri::command]
 pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Settings> {
     let path = settings_path(&app)?;

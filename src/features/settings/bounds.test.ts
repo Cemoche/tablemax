@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { KEYMAP_ACTIONS } from "../../lib/keymap";
+import { KEYMAP_ACTIONS } from "../../lib/keymapRegistry";
 import { KEYMAP_MAX_ENTRIES, cleanKeymap, isValidFontFamily } from "./bounds";
 
 test("font family accepts plain and quoted comma-separated names", () => {

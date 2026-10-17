@@ -1,4 +1,4 @@
-import { KEYMAP_ACTIONS, isValidShortcut } from "../../lib/keymap";
+import { KEYMAP_ACTIONS, isValidShortcut } from "../../lib/keymapRegistry";
 
 /** Inclusive bounds of the numeric settings. They mirror the constants of src-tauri/src/settings.rs. */
 export const SETTINGS_BOUNDS = {
