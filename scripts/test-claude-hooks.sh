@@ -54,7 +54,7 @@ run_hook() {
 # ---------------------------------------------------------------- block-main-edits.sh
 
 run_hook "$BLOCK" "$(edit_input "$REPO/file.txt" "$REPO")"
-if [[ $code -eq 2 && $err == *"edits on 'main' are blocked"* && $err == *"worktree"* ]]; then
+if [[ $code -eq 2 && $err == *"editing files on 'main' is blocked"* && $err == *"worktree"* ]]; then
   ok "block: edit on main is refused with a how-to message"
 else fail "block: edit on main (code=$code err=$err)"; fi
 
@@ -105,6 +105,36 @@ else fail "block: without jq (code=$code err=$err)"; fi
 run_hook "$BLOCK" "not json"
 if [[ $code -eq 0 ]]; then ok "block: invalid input is allowed"
 else fail "block: invalid input (code=$code err=$err)"; fi
+
+OTHER="$TMP/other-repo"
+git init -q -b main "$OTHER"
+run_hook "$BLOCK" "$(edit_input "$OTHER/notes.md" "$TMP/wt-issue")"
+if [[ $code -eq 0 ]]; then ok "block: another repository on main is not this session's business"
+else fail "block: other repo on main (code=$code err=$err)"; fi
+
+run_hook "$BLOCK" "$(edit_input "$REPO/file.txt" "$TMP/wt-issue")"
+if [[ $code -eq 2 ]]; then ok "block: this repo's main checkout is refused from an issue worktree session"
+else fail "block: main checkout from worktree session (code=$code err=$err)"; fi
+
+bash_input() { # $1 = command, $2 = cwd
+  jq -n --arg c "$1" --arg d "$2" '{hook_event_name:"PreToolUse",tool_name:"Bash",cwd:$d,tool_input:{command:$c}}'
+}
+
+run_hook "$BLOCK" "$(bash_input 'git add file.txt && git commit -m "x"' "$REPO")"
+if [[ $code -eq 2 && $err == *"committing on 'main' is blocked"* ]]; then ok "block: git commit on main is refused"
+else fail "block: git commit on main (code=$code err=$err)"; fi
+
+run_hook "$BLOCK" "$(bash_input "git -C '$REPO' cherry-pick abc123" "$TMP/wt-issue")"
+if [[ $code -eq 2 ]]; then ok "block: git -C <main checkout> cherry-pick is refused"
+else fail "block: git -C main cherry-pick (code=$code err=$err)"; fi
+
+run_hook "$BLOCK" "$(bash_input 'git commit -m "feat: x"' "$TMP/wt-issue")"
+if [[ $code -eq 0 ]]; then ok "block: git commit on an issue branch is allowed"
+else fail "block: git commit on issue branch (code=$code err=$err)"; fi
+
+run_hook "$BLOCK" "$(bash_input 'git status && git log --oneline -3 && git pull' "$REPO")"
+if [[ $code -eq 0 ]]; then ok "block: read-only git and pull on main are allowed"
+else fail "block: git status on main (code=$code err=$err)"; fi
 
 # ---------------------------------------------------------------- session-context.sh
 

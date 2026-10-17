@@ -29,16 +29,12 @@
       "Bash(gh issue list*)",
       "Bash(gh issue view*)",
       "Bash(gh issue status*)",
-      "Bash(gh issue create *)",
-      "Bash(gh issue edit *)",
       "Bash(gh issue comment *)",
       "Bash(gh pr list*)",
       "Bash(gh pr view*)",
       "Bash(gh pr status*)",
       "Bash(gh pr diff*)",
       "Bash(gh pr checks*)",
-      "Bash(gh pr create *)",
-      "Bash(gh pr edit *)",
       "Bash(gh pr comment *)",
       "Bash(gh label list*)",
       "Bash(gh run list*)",
@@ -70,7 +66,11 @@
       "Bash(gh pr merge*)",
       "Bash(gh issue close*)",
       "Bash(gh pr close*)",
-      "Bash(git worktree remove*)"
+      "Bash(git worktree remove*)",
+      "Bash(gh issue create *)",
+      "Bash(gh issue edit *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr edit *)"
     ],
     "deny": [
       "Bash(git push --force*)",
@@ -100,7 +100,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|NotebookEdit",
+        "matcher": "Edit|Write|NotebookEdit|Bash",
         "hooks": [
           {
             "type": "command",
