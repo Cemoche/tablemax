@@ -118,3 +118,38 @@ describe("applyAutoLimit leaves other statements unchanged", () => {
     same("select 'unterminated");
   });
 });
+
+describe("applyAutoLimit never mistakes an identifier for a clause", () => {
+  const al = (sql: string, dialect: Dialect) => applyAutoLimit(sql, dialect, 1000);
+
+  test("offset used as a column is left alone (fail safe) or limited at the end", () => {
+    expect(al("select offset, id from t", "mySql")).toBe("select offset, id from t");
+    expect(al("select offset from t", "sqlite")).toBe("select offset from t");
+    expect(al("select * from t order by offset", "mySql")).toBe("select * from t order by offset");
+    expect(al("select * from t where offset = 1", "sqlite")).toBe("select * from t where offset = 1");
+    for (const d of ["postgres", "mySql", "sqlite"] as Dialect[]) {
+      expect(al("select t.offset from t", d)).toBe("select t.offset from t LIMIT 1000");
+      expect(al("select t.limit, t.fetch, t.into from t", d)).toBe("select t.limit, t.fetch, t.into from t LIMIT 1000");
+    }
+  });
+
+  test("OFFSET with a value is still a clause", () => {
+    expect(al("select * from t offset $1", "postgres")).toBe("select * from t LIMIT 1000 offset $1");
+    expect(al("select * from t offset (2 * 5)", "postgres")).toBe("select * from t LIMIT 1000 offset (2 * 5)");
+    expect(al("select * from t offset :n", "sqlite")).toBe("select * from t LIMIT 1000 offset :n");
+    expect(al("select * from t offset ?", "sqlite")).toBe("select * from t LIMIT 1000 offset ?");
+  });
+
+  test("lock and for used as identifiers", () => {
+    expect(al("select * from t where lock in (1,2)", "postgres")).toBe("select * from t where lock in (1,2) LIMIT 1000");
+    expect(al("select * from t where lock in (1,2)", "sqlite")).toBe("select * from t where lock in (1,2) LIMIT 1000");
+    expect(al("select * from t where lock in (1,2)", "mySql")).toBe("select * from t where lock in (1,2) LIMIT 1000");
+    expect(al("select t.lock, t.for from t", "mySql")).toBe("select t.lock, t.for from t LIMIT 1000");
+    expect(al("select * from t for key share", "postgres")).toBe("select * from t LIMIT 1000 for key share");
+  });
+
+  test("a locking clause before OFFSET leaves the statement alone", () => {
+    expect(al("select * from t for update offset 5", "postgres")).toBe("select * from t for update offset 5");
+    expect(al("select * from t offset 5 for update", "postgres")).toBe("select * from t LIMIT 1000 offset 5 for update");
+  });
+});
