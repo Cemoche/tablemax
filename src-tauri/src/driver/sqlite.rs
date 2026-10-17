@@ -7,6 +7,7 @@
 //! `apply` runs `BEGIN IMMEDIATE` … `COMMIT` inside one `with_conn` call: the mutex keeps
 //! every other call out of the transaction. An interrupt cancels the running statement
 //! (SQLite may then roll the transaction back itself; the explicit ROLLBACK is best effort).
+//! A transaction still open after it closes the connection: the session is then lost.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -91,6 +92,20 @@ pub async fn connect_sqlite(path: &Path) -> AppResult<Arc<dyn Session>> {
 }
 
 impl SqliteSession {
+    /// `query` / `query_full`; `full` keeps text whole.
+    async fn query_with(&self, stmt: &Statement, full: bool) -> AppResult<ResultSet> {
+        let stmt = stmt.clone();
+        self.with_conn(move |c| {
+            let mut prepared = c.prepare(&stmt.sql).map_err(map_err)?;
+            read_rows(
+                &mut prepared,
+                rusqlite::params_from_iter(stmt.params.iter()),
+                full,
+            )
+        })
+        .await
+    }
+
     async fn with_conn<T, F>(&self, f: F) -> AppResult<T>
     where
         T: Send + 'static,
@@ -520,36 +535,34 @@ impl Session for SqliteSession {
     }
 
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
-        let stmt = stmt.clone();
-        self.with_conn(move |c| {
-            let mut prepared = c.prepare(&stmt.sql).map_err(map_err)?;
-            read_rows(
-                &mut prepared,
-                rusqlite::params_from_iter(stmt.params.iter()),
-                false,
-            )
-        })
-        .await
+        self.query_with(stmt, false).await
     }
 
     async fn query_full(&self, stmt: &Statement) -> AppResult<ResultSet> {
-        let stmt = stmt.clone();
-        self.with_conn(move |c| {
-            let mut prepared = c.prepare(&stmt.sql).map_err(map_err)?;
-            read_rows(
-                &mut prepared,
-                rusqlite::params_from_iter(stmt.params.iter()),
-                true,
-            )
-        })
-        .await
+        self.query_with(stmt, true).await
     }
 
     async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome> {
         dml::check_apply_args(stmts, expect_one)?;
         let (stmts, expect_one) = (stmts.to_vec(), expect_one.to_vec());
-        self.with_conn(move |c| apply_tx(c, &stmts, &expect_one))
-            .await
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut guard = conn
+                .lock()
+                .map_err(|_| AppError::new(ErrorKind::ConnectionLost, "connection poisoned"))?;
+            let Some(c) = guard.as_ref() else {
+                return Err(AppError::new(ErrorKind::ConnectionLost, "session closed"));
+            };
+            let out = apply_tx(c, &stmts, &expect_one);
+            // Still inside the transaction (the ROLLBACK failed): close the connection,
+            // which rolls it back, rather than leave it open on the session.
+            if !c.is_autocommit() {
+                drop(guard.take());
+            }
+            out
+        })
+        .await
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
     }
 
     async fn count_rows(&self, obj: &ObjectRef, _exact_threshold: u64) -> AppResult<RowCount> {

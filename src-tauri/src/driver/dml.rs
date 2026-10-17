@@ -16,7 +16,7 @@ use super::query::{Builder, SqlParam, Statement, is_binary};
 use super::sql::{qualified, quote_ident};
 use super::{Dialect, ObjectKind};
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::value::{BYTES_PREVIEW, CellValue};
+use crate::value::{BYTES_PREVIEW, CellValue, decode_hex};
 
 /// `ApplyOutcome.error` message when an UPDATE / DELETE did not touch exactly one row.
 pub const STALE_ROW: &str = "the row changed or was deleted since it was loaded";
@@ -146,22 +146,25 @@ pub fn build_change(d: Dialect, info: &TableInfo, c: &RowChange) -> AppResult<St
 }
 
 /// `SELECT <size in bytes of column> FROM t WHERE <row key>`: checked before loading a
-/// full value (`value::MAX_EDIT_BYTES`).
+/// full value (`value::MAX_EDIT_BYTES`). `None` for a binary column: bytes always come back
+/// as a preview, so there is nothing to cap.
 pub fn build_cell_size(
     d: Dialect,
     info: &TableInfo,
     key: &RowKey,
     column: &str,
-) -> AppResult<Statement> {
+) -> AppResult<Option<Statement>> {
     let c = known(info, column)?;
+    if is_binary(d, &c.type_name) {
+        return Ok(None);
+    }
     let q = quote_ident(d, column);
     let size = match d {
-        Dialect::Postgres if is_binary(d, &c.type_name) => format!("octet_length({q})"),
         Dialect::Postgres => format!("octet_length(CAST({q} AS text))"),
         Dialect::MySql => format!("OCTET_LENGTH({q})"),
         Dialect::Sqlite => format!("length(CAST({q} AS BLOB))"),
     };
-    cell_select(d, info, key, &size)
+    cell_select(d, info, key, &size).map(Some)
 }
 
 /// `SELECT <column> FROM t WHERE <row key>` (run with `Session::query_full`).
@@ -187,10 +190,16 @@ fn cell_select(d: Dialect, info: &TableInfo, key: &RowKey, expr: &str) -> AppRes
 }
 
 /// The statement with each parameter replaced by an escaped literal (`'…'`, `'` doubled;
-/// bytes as `'\x…'` on PostgreSQL, `X'…'` elsewhere). For display only: never executed,
-/// and MySQL's backslash escapes are not rendered.
+/// MySQL also doubles `\`; bytes as `'\x…'` on PostgreSQL, `X'…'` elsewhere). For display
+/// only: never executed.
 pub fn render_preview(d: Dialect, stmt: &Statement) -> String {
     let literal = |p: &SqlParam| match p {
+        // MySQL treats `\` as an escape under its default sql_mode: doubled, so the preview
+        // never shows another value (or a quote that closes the literal). Under
+        // NO_BACKSLASH_ESCAPES the preview shows the backslashes doubled.
+        SqlParam::Text(t) if d == Dialect::MySql => {
+            format!("'{}'", t.replace('\\', "\\\\").replace('\'', "''"))
+        }
         SqlParam::Text(t) => format!("'{}'", t.replace('\'', "''")),
         SqlParam::Bytes(b) => {
             let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
@@ -370,16 +379,6 @@ fn key_param(d: Dialect, col: &str, v: &CellValue) -> AppResult<SqlParam> {
         | CellValue::Json(s)
         | CellValue::Temporal(s) => s.clone(),
     }))
-}
-
-fn decode_hex(h: &str) -> Option<Vec<u8>> {
-    if !h.len().is_multiple_of(2) || !h.is_ascii() {
-        return None;
-    }
-    (0..h.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok())
-        .collect()
 }
 
 /// Why `Session::apply` stops: `Abort` is returned as `Err` (lost connection, cancel),
@@ -809,6 +808,20 @@ mod tests {
             render_preview(Dialect::Sqlite, &bytes),
             "DELETE FROM t WHERE b = X'00ff'"
         );
+        // MySQL: backslashes are escapes under the default sql_mode, so they are doubled
+        // (a quote after a backslash must not close the literal).
+        let tricky = Statement {
+            sql: "DELETE FROM t WHERE a = ? AND b = ?".into(),
+            params: texts(&[r"C:\new", r"\'; DROP TABLE users; -- "]),
+        };
+        assert_eq!(
+            render_preview(Dialect::MySql, &tricky),
+            r"DELETE FROM t WHERE a = 'C:\\new' AND b = '\\''; DROP TABLE users; -- '"
+        );
+        assert_eq!(
+            render_preview(Dialect::Sqlite, &tricky),
+            r"DELETE FROM t WHERE a = 'C:\new' AND b = '\''; DROP TABLE users; -- '"
+        );
         // $10 is the tenth parameter, not $1 followed by 0.
         let many = Statement {
             sql: (1..=10)
@@ -1001,7 +1014,9 @@ mod tests {
             r#"SELECT "note" FROM "public"."order" WHERE "id" = CAST($1::text AS integer) AND "code" = CAST($2::text AS text)"#
         );
         assert_eq!(s.params, texts(&["7", "a'b"]));
-        let s = build_cell_size(Dialect::Postgres, &t, &k, "note").unwrap();
+        let s = build_cell_size(Dialect::Postgres, &t, &k, "note")
+            .unwrap()
+            .unwrap();
         assert!(
             s.sql.starts_with(
                 r#"SELECT octet_length(CAST("note" AS text)) FROM "public"."order" WHERE"#
@@ -1009,19 +1024,37 @@ mod tests {
             "{}",
             s.sql
         );
-        let s = build_cell_size(Dialect::Postgres, &t, &k, "data").unwrap();
+        // Bytes are always a preview: no size to check (any dialect's binary type).
         assert!(
-            s.sql.starts_with(r#"SELECT octet_length("data") FROM"#),
-            "{}",
-            s.sql
+            build_cell_size(Dialect::Postgres, &t, &k, "data")
+                .unwrap()
+                .is_none()
         );
-        let s = build_cell_size(Dialect::MySql, &info("shop"), &k, "note").unwrap();
+        let mut my = info("shop");
+        my.columns[5].type_name = "varbinary(16)".into();
+        assert!(
+            build_cell_size(Dialect::MySql, &my, &k, "data")
+                .unwrap()
+                .is_none()
+        );
+        let mut lite = info("main");
+        lite.columns[5].type_name = "BLOB".into();
+        assert!(
+            build_cell_size(Dialect::Sqlite, &lite, &k, "data")
+                .unwrap()
+                .is_none()
+        );
+        let s = build_cell_size(Dialect::MySql, &info("shop"), &k, "note")
+            .unwrap()
+            .unwrap();
         assert!(
             s.sql.starts_with("SELECT OCTET_LENGTH(`note`) FROM"),
             "{}",
             s.sql
         );
-        let s = build_cell_size(Dialect::Sqlite, &info("main"), &k, "note").unwrap();
+        let s = build_cell_size(Dialect::Sqlite, &info("main"), &k, "note")
+            .unwrap()
+            .unwrap();
         assert!(
             s.sql
                 .starts_with(r#"SELECT length(CAST("note" AS BLOB)) FROM"#),

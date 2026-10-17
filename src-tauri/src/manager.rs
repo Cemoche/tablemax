@@ -953,15 +953,22 @@ impl SessionManager {
         let browse = self.browse(workspace_id).await?;
         let d = browse.dialect();
         let gone = || AppError::new(ErrorKind::NotFound, STALE_ROW);
-        let size = browse
-            .query(&build_cell_size(d, &info, key, column)?)
-            .await?;
-        let bytes = match size.rows.first().and_then(|r| r.first()) {
-            None => return Err(gone()),
-            Some(CellValue::Int(n)) => (*n).max(0) as u64,
-            Some(CellValue::BigInt(s) | CellValue::Decimal(s)) => s.parse().unwrap_or(u64::MAX),
-            // NULL: nothing to load.
-            Some(_) => 0,
+        // Binary columns: no size check (always a preview).
+        let bytes = match build_cell_size(d, &info, key, column)? {
+            None => 0,
+            Some(stmt) => match browse
+                .query(&stmt)
+                .await?
+                .rows
+                .first()
+                .and_then(|r| r.first())
+            {
+                None => return Err(gone()),
+                Some(CellValue::Int(n)) => (*n).max(0) as u64,
+                Some(CellValue::BigInt(s) | CellValue::Decimal(s)) => s.parse().unwrap_or(u64::MAX),
+                // NULL: nothing to load.
+                Some(_) => 0,
+            },
         };
         if bytes > MAX_EDIT_BYTES {
             return Err(AppError::new(

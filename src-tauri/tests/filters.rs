@@ -703,14 +703,17 @@ async fn check_query_cancel(fx: &Fx, slow: &str) {
     let res = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             tokio::time::sleep(Duration::from_millis(200)).await;
-            canceller.cancel().await.unwrap();
+            // Never re-send once the query ended: the cancel would hit the next one.
             if run.is_finished() {
                 return run.await.unwrap();
             }
+            canceller.cancel().await.unwrap();
         }
     })
     .await
     .expect("cancel timed out");
+    // A cancel sent just before the query failed may still be on its way to the server.
+    tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(res.unwrap_err().kind, ErrorKind::Cancelled, "{:?}", fx.d());
     assert!(started.elapsed() < Duration::from_secs(8));
     assert_eq!(

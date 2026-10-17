@@ -15,7 +15,9 @@ pub struct ColumnInfo {
     /// The type without its modifier, for casting a value compared with or written to the
     /// column (a cast to `varchar(5)` / `numeric(12,2)` would truncate or round it first;
     /// the column itself enforces the modifier on write). PostgreSQL:
-    /// `format_type(atttypid, NULL)`; MySQL/MariaDB and SQLite: same as `type_name`.
+    /// `format_type(atttypid, -1)`, which names the type itself (`bpchar`, `"bit"`,
+    /// `bpchar[]`): with NULL it prints `character` / `bit`, which parse back as `char(1)`
+    /// / `bit(1)` and would cut the value. MySQL/MariaDB and SQLite: same as `type_name`.
     pub base_type: String,
     pub nullable: bool,
     /// The default as an SQL expression (string literals quoted, e.g. `'abc'`, `0`,

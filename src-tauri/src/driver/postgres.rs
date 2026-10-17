@@ -60,7 +60,8 @@ use super::{
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{
-    CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, json_cell, text_cell,
+    CellValue, MAX_RESULT_ROWS, bytes_value, decode_hex, float_value, int_value, json_cell,
+    text_cell,
 };
 
 struct PgSession {
@@ -236,7 +237,8 @@ impl PgSession {
         Ok(())
     }
 
-    async fn run(&self, sql: &str) -> AppResult<(Option<ResultSet>, u64)> {
+    /// `full` keeps text and JSON values whole.
+    async fn run(&self, sql: &str, full: bool) -> AppResult<(Option<ResultSet>, u64)> {
         self.check()?;
         let types: Option<Vec<(String, Type)>> = match self.client.prepare(sql).await {
             Ok(stmt) => Some(
@@ -287,7 +289,7 @@ impl PgSession {
                         let ty = types.as_ref().and_then(|t| t.get(i)).map(|(_, t)| t);
                         out.push(match text {
                             None => CellValue::Null,
-                            Some(s) => cell_from_text(ty, s, false),
+                            Some(s) => cell_from_text(ty, s, full),
                         });
                     }
                     rows.push(out);
@@ -395,6 +397,21 @@ impl PgSession {
         })
     }
 
+    /// `query` / `query_full`: a statement without parameters takes the simple-query path
+    /// (no text wrapper).
+    async fn query_with(&self, stmt: &Statement, full: bool) -> AppResult<ResultSet> {
+        let _gate = self.gate.read().await;
+        if !stmt.params.is_empty() {
+            return self.query_bound(stmt, full).await;
+        }
+        let (rs, _) = self.run(&stmt.sql, full).await?;
+        Ok(rs.unwrap_or(ResultSet {
+            columns: vec![],
+            rows: vec![],
+            truncated: false,
+        }))
+    }
+
     /// One statement of `apply`: the rows it touched.
     async fn apply_one(&self, stmt: &Statement) -> AppResult<u64> {
         self.client
@@ -403,13 +420,23 @@ impl PgSession {
             .map_err(|e| self.map_live_err(e))
     }
 
-    /// Best effort, retried once: a late cancel may interrupt the first attempt, and an
-    /// open transaction must never outlive `apply` (a lost connection ends it anyway).
+    /// Retried once (a late cancel may interrupt the first attempt). An open transaction
+    /// must never outlive `apply`: if both attempts fail, the connection is dropped (the
+    /// server aborts the transaction) and the session reports `ConnectionLost` from then on.
     async fn rollback(&self) {
         for _ in 0..2 {
             if self.client.batch_execute("ROLLBACK").await.is_ok() || self.client.is_closed() {
                 return;
             }
+        }
+        self.drop_connection();
+    }
+
+    /// Ends the connection task (the server sees the socket close); later calls fail fast.
+    fn drop_connection(&self) {
+        self.lost.store(true, Ordering::SeqCst);
+        if let Some(h) = self.conn_task.lock().ok().and_then(|mut g| g.take()) {
+            h.abort();
         }
     }
 }
@@ -450,17 +477,6 @@ fn column_metas(types: &[(String, Type)]) -> Vec<ColumnMeta> {
         .collect()
 }
 
-fn decode_hex(s: &str) -> Option<Vec<u8>> {
-    let h = s.strip_prefix("\\x")?;
-    if h.len() % 2 != 0 || !h.is_ascii() {
-        return None;
-    }
-    (0..h.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok())
-        .collect()
-}
-
 /// Re-types a PostgreSQL text-format value from its column type; `full` keeps text and
 /// JSON whole.
 fn cell_from_text(ty: Option<&Type>, s: &str, full: bool) -> CellValue {
@@ -479,7 +495,8 @@ fn cell_from_text(ty: Option<&Type>, s: &str, full: bool) -> CellValue {
         }
         Type::FLOAT4 | Type::FLOAT8 => s.parse::<f64>().map(float_value).unwrap_or_else(|_| text()),
         Type::NUMERIC => CellValue::Decimal(s.to_string()),
-        Type::BYTEA => match decode_hex(s) {
+        // hex output (`bytea_output = 'hex'`): `\x` then the digits.
+        Type::BYTEA => match s.strip_prefix("\\x").and_then(decode_hex) {
             Some(b) => bytes_value(&b),
             None => bytes_value(s.as_bytes()),
         },
@@ -574,7 +591,7 @@ impl PgSession {
                  pg_get_expr(d.adbin, d.adrelid), a.attidentity::text, a.attgenerated::text, \
                  col_description(a.attrelid, a.attnum), \
                  quote_literal(col_description(a.attrelid, a.attnum)), \
-                 format_type(a.atttypid, NULL) \
+                 format_type(a.atttypid, -1) \
                  FROM pg_attribute a \
                  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
                  WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped \
@@ -864,22 +881,11 @@ impl Session for PgSession {
     }
 
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
-        let _gate = self.gate.read().await;
-        if stmt.params.is_empty() {
-            // Nothing to bind: the simple-query path, no text wrapper.
-            let (rs, _) = self.run(&stmt.sql).await?;
-            return Ok(rs.unwrap_or(ResultSet {
-                columns: vec![],
-                rows: vec![],
-                truncated: false,
-            }));
-        }
-        self.query_bound(stmt, false).await
+        self.query_with(stmt, false).await
     }
 
     async fn query_full(&self, stmt: &Statement) -> AppResult<ResultSet> {
-        let _gate = self.gate.read().await;
-        self.query_bound(stmt, true).await
+        self.query_with(stmt, true).await
     }
 
     async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome> {
@@ -988,7 +994,7 @@ impl Session for PgSession {
     async fn execute(&self, sql: &str) -> AppResult<StatementOutcome> {
         let _gate = self.gate.read().await;
         let start = Instant::now();
-        let (result, affected) = self.run(sql).await?;
+        let (result, affected) = self.run(sql, false).await?;
         Ok(StatementOutcome {
             rows_affected: if result.is_none() {
                 Some(affected)
@@ -1008,10 +1014,7 @@ impl Session for PgSession {
     }
 
     async fn close(&self) -> AppResult<()> {
-        self.lost.store(true, Ordering::SeqCst);
-        if let Some(h) = self.conn_task.lock().ok().and_then(|mut g| g.take()) {
-            h.abort();
-        }
+        self.drop_connection();
         Ok(())
     }
 }
@@ -1075,10 +1078,12 @@ mod tests {
 
     #[test]
     fn hex_bytea_decodes() {
-        assert_eq!(decode_hex("\\x00ff"), Some(vec![0, 255]));
-        assert_eq!(decode_hex("\\x"), Some(vec![]));
-        assert_eq!(decode_hex("00ff"), None);
-        assert_eq!(decode_hex("\\x0"), None);
+        let bytea = |s| cell_from_text(Some(&Type::BYTEA), s, false);
+        assert_eq!(bytea("\\x00ff"), bytes_value(&[0, 255]));
+        assert_eq!(bytea("\\x"), bytes_value(&[]));
+        // Not hex output: the raw text bytes.
+        assert_eq!(bytea("00ff"), bytes_value(b"00ff"));
+        assert_eq!(bytea("\\x0"), bytes_value(b"\\x0"));
     }
 
     #[test]

@@ -454,7 +454,7 @@ mod tests {
     use crate::driver::{ObjectKind, ObjectRef};
 
     /// `base_type` = `type_name` without its modifier, like PostgreSQL's
-    /// `format_type(atttypid, NULL)` for these simple types.
+    /// `format_type(atttypid, -1)` for these simple types.
     fn column(name: &str, type_name: &str) -> ColumnInfo {
         ColumnInfo {
             name: name.into(),

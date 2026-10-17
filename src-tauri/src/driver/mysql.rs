@@ -856,6 +856,16 @@ impl MySession {
         ))
     }
 
+    /// `query` / `query_full`; `full` keeps text and JSON values whole.
+    async fn query_with(&self, stmt: &Statement, full: bool) -> AppResult<ResultSet> {
+        let (rs, _) = self.run_bound(&stmt.sql, &stmt.params, full).await?;
+        Ok(rs.unwrap_or(ResultSet {
+            columns: vec![],
+            rows: vec![],
+            truncated: false,
+        }))
+    }
+
     /// The transaction of `apply`, on the locked connection. `my_seq` is the canceller
     /// sequence of this call: a cancel requested for it rolls the whole transaction back,
     /// even if its `KILL QUERY` is not (yet) delivered (an interrupted `SLEEP()` returns
@@ -890,7 +900,7 @@ impl MySession {
                 result = Err(AppError::new(ErrorKind::Cancelled, "query cancelled"));
             }
             if let Err(halt) = dml::record(i, expect_one[i], result, &mut affected) {
-                Self::rollback(conn).await;
+                self.rollback(conn).await;
                 return halt.into_result();
             }
         }
@@ -898,22 +908,25 @@ impl MySession {
             Ok(()) => Ok(dml::applied(affected)),
             Err(e) => {
                 let err = live(e);
-                Self::rollback(conn).await;
+                self.rollback(conn).await;
                 dml::commit_failed(affected, err)
             }
         }
     }
 
-    /// Best effort, retried once: a `KILL QUERY` that arrived late may interrupt the first
-    /// attempt, and an open transaction must never outlive `apply`.
-    async fn rollback(conn: &mut Conn) {
+    /// Retried once (a `KILL QUERY` that arrived late may interrupt the first attempt). An
+    /// open transaction must never outlive `apply`: if both attempts fail the session is
+    /// flagged lost, and `apply` then drops the connection (the server aborts the
+    /// transaction).
+    async fn rollback(&self, conn: &mut Conn) {
         for _ in 0..2 {
             match conn.query_drop("ROLLBACK").await {
                 Ok(()) => return,
-                Err(e) if map_err(&e, true).kind == ErrorKind::ConnectionLost => return,
+                Err(e) if map_err(&e, true).kind == ErrorKind::ConnectionLost => break,
                 Err(_) => {}
             }
         }
+        self.lost.store(true, Ordering::SeqCst);
     }
 
     /// Bound-parameter metadata query under the connection lock.
@@ -1239,21 +1252,11 @@ impl Session for MySession {
     }
 
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
-        let (rs, _) = self.run_bound(&stmt.sql, &stmt.params, false).await?;
-        Ok(rs.unwrap_or(ResultSet {
-            columns: vec![],
-            rows: vec![],
-            truncated: false,
-        }))
+        self.query_with(stmt, false).await
     }
 
     async fn query_full(&self, stmt: &Statement) -> AppResult<ResultSet> {
-        let (rs, _) = self.run_bound(&stmt.sql, &stmt.params, true).await?;
-        Ok(rs.unwrap_or(ResultSet {
-            columns: vec![],
-            rows: vec![],
-            truncated: false,
-        }))
+        self.query_with(stmt, true).await
     }
 
     async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome> {
@@ -1283,6 +1286,11 @@ impl Session for MySession {
         self.canceller.running.store(false, Ordering::SeqCst);
         if let Err(e) = &out {
             self.note_loss(e);
+        }
+        if self.lost.load(Ordering::SeqCst)
+            && let Some(c) = inner.conn.take()
+        {
+            let _ = c.disconnect().await;
         }
         out
     }

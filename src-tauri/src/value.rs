@@ -83,6 +83,18 @@ pub fn json_cell(s: String, full: bool) -> CellValue {
     }
 }
 
+/// Bytes from lowercase or uppercase hex digits (`None` for an odd length or a non-hex
+/// digit).
+pub fn decode_hex(h: &str) -> Option<Vec<u8>> {
+    if !h.len().is_multiple_of(2) || !h.is_ascii() {
+        return None;
+    }
+    (0..h.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok())
+        .collect()
+}
+
 pub fn bytes_value(b: &[u8]) -> CellValue {
     use std::fmt::Write;
     let mut hex_preview = String::with_capacity(BYTES_PREVIEW * 2);
@@ -165,6 +177,14 @@ mod tests {
         assert!(
             matches!(json_value(big), CellValue::LongText { ref preview, len } if preview.chars().count() == TEXT_PREVIEW_CHARS && len == n)
         );
+    }
+    #[test]
+    fn hex_decodes() {
+        assert_eq!(decode_hex("00ffAb"), Some(vec![0, 255, 0xab]));
+        assert_eq!(decode_hex(""), Some(vec![]));
+        assert_eq!(decode_hex("0"), None);
+        assert_eq!(decode_hex("zz"), None);
+        assert_eq!(decode_hex("é0"), None);
     }
     #[test]
     fn full_cells_are_never_cut() {

@@ -17,7 +17,7 @@ use tablemax_lib::driver::dml::{
 };
 use tablemax_lib::driver::mysql::connect_mysql;
 use tablemax_lib::driver::postgres::connect_postgres;
-use tablemax_lib::driver::query::{SqlParam, Statement};
+use tablemax_lib::driver::query::{Filter, FilterOp, SqlParam, Statement};
 use tablemax_lib::driver::sqlite::connect_sqlite;
 use tablemax_lib::driver::tls::SslConfig;
 use tablemax_lib::driver::{
@@ -1000,6 +1000,18 @@ async fn bytes_key_finds_its_row() {
             Some(&SqlParam::Bytes(vec![0xde, 0xad, 0x00])),
             "{k:?}"
         );
+        // Bytes: no size check, always a preview.
+        assert_eq!(
+            fx.mgr
+                .cell_value(&fx.ws, &fx.obj("bk"), &key(&rs, 0, &["k"]), "k")
+                .await
+                .unwrap(),
+            CellValue::Bytes {
+                len: 3,
+                hex_preview: "dead00".into()
+            },
+            "{k:?}"
+        );
         fx.apply_ok("bk", vec![update(key(&rs, 0, &["k"]), &[("v", text("2"))])])
             .await;
         assert_eq!(
@@ -1007,5 +1019,210 @@ async fn bytes_key_finds_its_row() {
             CellValue::Int(2),
             "{k:?}"
         );
+    }
+}
+
+#[tokio::test]
+async fn pg_char_and_bit_casts_keep_the_whole_value() {
+    for url in pg_urls() {
+        let fx = pg_fixture(&url).await;
+        let t = fx.q("ch");
+        fx.run(&format!(
+            "CREATE TABLE {t} (k char(3) PRIMARY KEY, c char(5), b bit(3), v int, arr char(3)[])"
+        ))
+        .await;
+        // 'a' would match a key cast to `character` (= char(1)) from 'abc'.
+        fx.run(&format!(
+            "INSERT INTO {t} VALUES ('a', 'x', B'000', 1), ('abc', 'y', B'000', 2), \
+             ('abd', 'z', B'000', 3)"
+        ))
+        .await;
+        let rs = fx.page("ch").await;
+        let row = |rs: &ResultSet, k: &str| {
+            (0..rs.rows.len())
+                .find(|&i| as_str(&cell(rs, i, "k")) == k)
+                .unwrap_or_else(|| panic!("no row {k}"))
+        };
+        let abc = key(&rs, row(&rs, "abc"), &["k"]);
+        let o = fx
+            .apply("ch", vec![update(abc.clone(), &[("c", text("hello"))])])
+            .await;
+        assert!(o.applied, "{o:?}");
+        assert_eq!(o.affected, vec![1]);
+        fx.apply_ok("ch", vec![update(abc.clone(), &[("b", text("101"))])])
+            .await;
+        // Arrays of char(n): `bpchar[]`, not `character[]` (= char(1)[]).
+        fx.apply_ok(
+            "ch",
+            vec![update(abc.clone(), &[("arr", text("{abc,de}"))])],
+        )
+        .await;
+        let rs = fx.page("ch").await;
+        let (a, abc_row) = (row(&rs, "a  "), row(&rs, "abc"));
+        assert_eq!(cell(&rs, abc_row, "c"), CellValue::Text("hello".into()));
+        assert_eq!(cell(&rs, abc_row, "b"), CellValue::Text("101".into()));
+        assert_eq!(
+            cell(&rs, abc_row, "arr"),
+            CellValue::Text(r#"{abc,"de "}"#.into())
+        );
+        assert_eq!(cell(&rs, a, "c"), CellValue::Text("x    ".into()));
+        assert_eq!(cell(&rs, a, "b"), CellValue::Text("000".into()));
+
+        // Too long for char(5): an error, never a truncation.
+        let o = fx
+            .apply("ch", vec![update(abc.clone(), &[("c", text("toolong"))])])
+            .await;
+        assert!(!o.applied);
+        assert_eq!(o.error.expect("error").kind, ErrorKind::Query);
+        let rs = fx.page("ch").await;
+        assert_eq!(
+            cell(&rs, row(&rs, "abc"), "c"),
+            CellValue::Text("hello".into())
+        );
+
+        // Filters share the cast: char(3) = 'abc' finds 'abc' only.
+        let rs = fx
+            .mgr
+            .table_page(
+                &fx.ws,
+                &PageRequest {
+                    object: fx.obj("ch"),
+                    limit: 300,
+                    offset: 0,
+                    sort: None,
+                    filters: vec![Filter {
+                        column: Some("k".into()),
+                        op: FilterOp::Eq,
+                        values: vec!["abc".into()],
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(rs.rows.len(), 1);
+        assert_eq!(cell(&rs, 0, "k"), CellValue::Text("abc".into()));
+    }
+}
+
+/// `CREATE TABLE <name> (k <ty> PRIMARY KEY, v varchar(10))` with one row per literal
+/// (`v` = `r<i>`); updates then deletes the row `r<target>` by the key loaded from the
+/// page, checking no neighbour is touched.
+async fn key_hits_one_row(fx: &Fx, name: &str, ty: &str, literals: &[&str], target: usize) {
+    let t = fx.q(name);
+    let k = fx.kind;
+    fx.run(&format!(
+        "CREATE TABLE {t} (k {ty} PRIMARY KEY, v varchar(10))"
+    ))
+    .await;
+    for (i, lit) in literals.iter().enumerate() {
+        fx.run(&format!("INSERT INTO {t} VALUES ({lit}, 'r{i}')"))
+            .await;
+    }
+    let tag = |i: usize| CellValue::Text(format!("r{i}"));
+    let rs = fx.page(name).await;
+    assert_eq!(rs.rows.len(), literals.len(), "{k:?} {ty}");
+    let at = (0..rs.rows.len())
+        .find(|&i| cell(&rs, i, "v") == tag(target))
+        .unwrap();
+    let loaded = key(&rs, at, &["k"]);
+    let o = fx
+        .apply(name, vec![update(loaded.clone(), &[("v", text("hit"))])])
+        .await;
+    assert!(o.applied, "{k:?} {ty}: {o:?} key {loaded:?}");
+    assert_eq!(o.affected, vec![1], "{k:?} {ty}");
+    let rs = fx.page(name).await;
+    let mut seen: Vec<CellValue> = (0..rs.rows.len()).map(|i| cell(&rs, i, "v")).collect();
+    seen.sort_by_key(|c| format!("{c:?}"));
+    let mut want: Vec<CellValue> = (0..literals.len())
+        .map(|i| {
+            if i == target {
+                CellValue::Text("hit".into())
+            } else {
+                tag(i)
+            }
+        })
+        .collect();
+    want.sort_by_key(|c| format!("{c:?}"));
+    assert_eq!(seen, want, "{k:?} {ty}");
+
+    let o = fx
+        .apply(name, vec![RowChange::Delete { key: loaded }])
+        .await;
+    assert!(o.applied, "{k:?} {ty}: {o:?}");
+    let rs = fx.page(name).await;
+    assert_eq!(rs.rows.len(), literals.len() - 1, "{k:?} {ty}");
+    assert!(
+        (0..rs.rows.len()).all(|i| cell(&rs, i, "v") != CellValue::Text("hit".into())),
+        "{k:?} {ty}"
+    );
+}
+
+#[tokio::test]
+async fn key_types_hit_exactly_the_intended_row() {
+    for fx in all_fixtures().await {
+        let big = ["9007199254740992", "9007199254740993", "9007199254740994"];
+        key_hits_one_row(
+            &fx,
+            "k_big",
+            fx.pick("bigint", "bigint", "INTEGER"),
+            &big,
+            1,
+        )
+        .await;
+        let dec = ["12.29", "12.30", "12.31"];
+        let dec_ty = fx.pick("numeric(12,2)", "decimal(12,2)", "NUMERIC");
+        key_hits_one_row(&fx, "k_dec", dec_ty, &dec, 1).await;
+        // 0.1 + 0.2 as doubles is 0.30000000000000004, between its two neighbours.
+        let sum = fx.pick(
+            "CAST(0.1 AS double precision) + CAST(0.2 AS double precision)",
+            "0.1e0 + 0.2e0",
+            "0.1 + 0.2",
+        );
+        let dbl = ["0.3", sum, "0.30000000000000010"];
+        let dbl_ty = fx.pick("double precision", "double", "REAL");
+        key_hits_one_row(&fx, "k_dbl", dbl_ty, &dbl, 1).await;
+        let bools = fx.pick("false|true", "0|1", "0|1");
+        let bools: Vec<&str> = bools.split('|').collect();
+        key_hits_one_row(
+            &fx,
+            "k_bool",
+            fx.pick("boolean", "bool", "BOOLEAN"),
+            &bools,
+            1,
+        )
+        .await;
+        match fx.d() {
+            Dialect::Postgres => {
+                let ts = [
+                    "'2024-01-02 03:04:05.123456+00'",
+                    "'2024-01-02 03:04:05.123457+00'",
+                    "'2024-01-02 05:04:05.123457+02'",
+                ];
+                // The last two are the same instant: a unique key cannot hold both.
+                key_hits_one_row(&fx, "k_tstz", "timestamptz", &ts[..2], 1).await;
+                let ch = ["'a'", "'ab'", "'abc'", "'abd'"];
+                key_hits_one_row(&fx, "k_char", "char(3)", &ch, 2).await;
+                let uuids = [
+                    "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10'",
+                    "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'",
+                ];
+                key_hits_one_row(&fx, "k_uuid", "uuid", &uuids, 1).await;
+            }
+            Dialect::MySql => {
+                let ts = [
+                    "'2024-01-02 03:04:05.123456'",
+                    "'2024-01-02 03:04:05.123457'",
+                    "'2024-01-02 03:04:06'",
+                ];
+                key_hits_one_row(&fx, "k_ts", "timestamp(6)", &ts, 1).await;
+                key_hits_one_row(&fx, "k_dt", "datetime(6)", &ts, 1).await;
+                let ch = ["'a'", "'ab'", "'abc'"];
+                key_hits_one_row(&fx, "k_char", "char(3)", &ch, 2).await;
+            }
+            Dialect::Sqlite => {
+                let ts = ["'2024-01-02 03:04:05'", "'2024-01-02 03:04:06'"];
+                key_hits_one_row(&fx, "k_ts", "DATETIME", &ts, 1).await;
+            }
+        }
     }
 }
