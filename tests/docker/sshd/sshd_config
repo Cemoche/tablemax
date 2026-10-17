@@ -1,6 +1,9 @@
 # Test-only sshd: password and public key logins for `tunnel`, local forwarding only.
 Port 22
+# Ed25519 is presented by default; ECDSA when the client asks for it first (a client
+# whose known_hosts records the ECDSA key does).
 HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
 AllowUsers tunnel
 PermitRootLogin no
 PasswordAuthentication yes

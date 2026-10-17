@@ -1,6 +1,9 @@
+# Project name and host ports are overridable (TABLEMAX_TEST_PROJECT, TABLEMAX_TEST_*_PORT,
+# see scripts/test-dbs.sh), e.g. to run the tests of two worktrees side by side.
 name: tablemax-test
 
 # TLS material and SSH keys come from scripts/test-secrets.sh (run by scripts/test-dbs.sh up).
+# Bind mounts carry `z` so SELinux hosts let the containers read them.
 services:
   pg16:
     image: postgres:16-alpine
@@ -21,10 +24,10 @@ services:
       - -c
       - hba_file=/var/lib/postgresql/tls/pg_hba.conf
     volumes:
-      - ./.test-secrets/tls:/tls:ro
-      - ./tests/docker/pg-ssl.sh:/usr/local/bin/pg-ssl.sh:ro
+      - ./.test-secrets/tls:/tls:ro,z
+      - ./tests/docker/pg-ssl.sh:/usr/local/bin/pg-ssl.sh:ro,z
     ports:
-      - "127.0.0.1:54321:5432"
+      - "127.0.0.1:${TABLEMAX_TEST_PG_PORT:-54321}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d tablemax_test"]
       interval: 2s
@@ -38,9 +41,9 @@ services:
       MYSQL_DATABASE: tablemax_test
     command: ["--ssl-ca=/tls/ca.pem", "--ssl-cert=/tls/server.pem", "--ssl-key=/tls/server.key"]
     volumes:
-      - ./.test-secrets/tls:/tls:ro
+      - ./.test-secrets/tls:/tls:ro,z
     ports:
-      - "127.0.0.1:33061:3306"
+      - "127.0.0.1:${TABLEMAX_TEST_MYSQL_PORT:-33061}:3306"
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -ptablemax --silent"]
       interval: 3s
@@ -54,9 +57,9 @@ services:
       MARIADB_DATABASE: tablemax_test
     command: ["--ssl-ca=/tls/ca.pem", "--ssl-cert=/tls/server.pem", "--ssl-key=/tls/server.key"]
     volumes:
-      - ./.test-secrets/tls:/tls:ro
+      - ./.test-secrets/tls:/tls:ro,z
     ports:
-      - "127.0.0.1:33062:3306"
+      - "127.0.0.1:${TABLEMAX_TEST_MARIADB_PORT:-33062}:3306"
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 3s
@@ -68,9 +71,9 @@ services:
   sshd:
     build: tests/docker/sshd
     volumes:
-      - ./.test-secrets/ssh:/keys:ro
+      - ./.test-secrets/ssh:/keys:ro,z
     ports:
-      - "127.0.0.1:2222:22"
+      - "127.0.0.1:${TABLEMAX_TEST_SSH_PORT:-2222}:22"
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
       interval: 2s

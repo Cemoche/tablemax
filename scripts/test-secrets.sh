@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Generate the throwaway TLS and SSH material used by the test containers, into
-# .test-secrets/. Each part does nothing when its directory already holds a full set.
+# .test-secrets/. Idempotent: the TLS set is generated when incomplete, each SSH key only
+# when missing (so adding a key never changes the existing ones, nor the sshd host key
+# fingerprint), and authorized_keys is rebuilt from the client keys on every run.
 # Usage: test-secrets.sh
+# Needs openssl and ssh-keygen.
 #
 # .test-secrets/tls/
 #   ca.pem / ca.key                 test CA
@@ -16,10 +19,13 @@
 #   id_ed25519        ed25519, no passphrase
 #   id_ed25519_enc    ed25519, passphrase `key-pass`
 #   id_rsa_pem        RSA 2048 in the legacy PEM (PKCS#1) format, no passphrase
-#   authorized_keys   the three public keys (mounted into the sshd container)
-#   host/ssh_host_ed25519_key[.pub]
-#                     host key of the test sshd, generated once so its fingerprint survives
-#                     image rebuilds (the app's known_hosts entry stays valid)
+#   id_rsa_pem_enc    RSA 2048 in the legacy encrypted PEM format (Proc-Type: 4,ENCRYPTED,
+#                     DEK-Info: AES-128-CBC), passphrase `key-pass`
+#   id_ecdsa          ECDSA P-256, no passphrase
+#   authorized_keys   the client public keys (mounted into the sshd container)
+#   host/ssh_host_ed25519_key[.pub], host/ssh_host_ecdsa_key[.pub]
+#                     host keys of the test sshd, generated once so their fingerprints
+#                     survive image rebuilds (the app's known_hosts entry stays valid)
 #
 # These files are test-only and gitignored; never reuse them anywhere else.
 set -euo pipefail
@@ -28,9 +34,8 @@ cd "$(dirname "$0")/.."
 TLS_DIR=.test-secrets/tls
 TLS_FILES=(ca.pem ca.key server.pem server.key foreign-ca.pem foreign-ca.key client.pem client.key)
 SSH_DIR=.test-secrets/ssh
-SSH_FILES=(id_ed25519 id_ed25519_enc id_rsa_pem authorized_keys)
 HOST_DIR=$SSH_DIR/host
-HOST_FILES=(ssh_host_ed25519_key ssh_host_ed25519_key.pub)
+CLIENT_KEYS=(id_ed25519 id_ed25519_enc id_rsa_pem id_rsa_pem_enc id_ecdsa)
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -86,31 +91,30 @@ EOF
   echo "test TLS material written to $TLS_DIR"
 }
 
-ssh_material() {
-  local d="$TMP/ssh" f
-  mkdir -p "$d"
-  ssh-keygen -q -t ed25519 -N '' -C tablemax-test -f "$d/id_ed25519"
-  ssh-keygen -q -t ed25519 -N 'key-pass' -C tablemax-test-enc -f "$d/id_ed25519_enc"
-  ssh-keygen -q -t rsa -b 2048 -m PEM -N '' -C tablemax-test-pem -f "$d/id_rsa_pem"
-  cat "$d/id_ed25519.pub" "$d/id_ed25519_enc.pub" "$d/id_rsa_pem.pub" > "$d/authorized_keys"
-
-  install -d -m 0700 "$SSH_DIR"
-  for f in id_ed25519 id_ed25519_enc id_rsa_pem; do
-    install -m 0600 "$d/$f" "$SSH_DIR/$f"
-    install -m 0644 "$d/$f.pub" "$SSH_DIR/$f.pub"
-  done
-  install -m 0644 "$d/authorized_keys" "$SSH_DIR/authorized_keys"
-  echo "test SSH keys written to $SSH_DIR"
+ssh_key() { # dir name passphrase ssh-keygen-options...: generates the pair when missing
+  local dir=$1 name=$2 pass=$3
+  shift 3
+  [[ -f "$dir/$name" && -f "$dir/$name.pub" ]] && return 0
+  rm -f "$TMP/$name" "$TMP/$name.pub"
+  ssh-keygen -q "$@" -N "$pass" -C "tablemax-test-$name" -f "$TMP/$name"
+  install -d -m 0700 "$dir"
+  install -m 0600 "$TMP/$name" "$dir/$name"
+  install -m 0644 "$TMP/$name.pub" "$dir/$name.pub"
+  echo "test SSH key written to $dir/$name"
 }
 
-host_key() {
-  ssh-keygen -q -t ed25519 -N '' -C tablemax-test-sshd -f "$TMP/ssh_host_ed25519_key"
-  install -d -m 0700 "$SSH_DIR" "$HOST_DIR"
-  install -m 0600 "$TMP/ssh_host_ed25519_key" "$HOST_DIR/ssh_host_ed25519_key"
-  install -m 0644 "$TMP/ssh_host_ed25519_key.pub" "$HOST_DIR/ssh_host_ed25519_key.pub"
-  echo "test sshd host key written to $HOST_DIR"
+ssh_material() {
+  local k
+  ssh_key "$SSH_DIR" id_ed25519 '' -t ed25519
+  ssh_key "$SSH_DIR" id_ed25519_enc key-pass -t ed25519
+  ssh_key "$SSH_DIR" id_rsa_pem '' -t rsa -b 2048 -m PEM
+  ssh_key "$SSH_DIR" id_rsa_pem_enc key-pass -t rsa -b 2048 -m PEM
+  ssh_key "$SSH_DIR" id_ecdsa '' -t ecdsa -b 256
+  ssh_key "$HOST_DIR" ssh_host_ed25519_key '' -t ed25519
+  ssh_key "$HOST_DIR" ssh_host_ecdsa_key '' -t ecdsa -b 256
+  for k in "${CLIENT_KEYS[@]}"; do cat "$SSH_DIR/$k.pub"; done > "$TMP/authorized_keys"
+  install -m 0644 "$TMP/authorized_keys" "$SSH_DIR/authorized_keys"
 }
 
 complete "$TLS_DIR" "${TLS_FILES[@]}" || tls_material
-complete "$SSH_DIR" "${SSH_FILES[@]}" || ssh_material
-complete "$HOST_DIR" "${HOST_FILES[@]}" || host_key
+ssh_material

@@ -8,17 +8,22 @@ cd "$(dirname "$0")/.."
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dev.tablemax.app"
 SQLITE_FILE="$DATA_DIR/demo/shop.sqlite"
 APP_DB="$DATA_DIR/app.db"
+# Same overrides as scripts/test-dbs.sh.
+PROJECT="${TABLEMAX_TEST_PROJECT:-tablemax-test}"
+PG_PORT="${TABLEMAX_TEST_PG_PORT:-54321}"
+MYSQL_PORT="${TABLEMAX_TEST_MYSQL_PORT:-33061}"
+MARIADB_PORT="${TABLEMAX_TEST_MARIADB_PORT:-33062}"
 
 bash scripts/test-dbs.sh up
 
 echo "seeding postgres 16…"
-docker exec tablemax-test-pg16-1 psql -U postgres -q \
+docker exec "$PROJECT-pg16-1" psql -U postgres -q \
   -c "DROP DATABASE IF EXISTS tablemax_demo" -c "CREATE DATABASE tablemax_demo" 2>&1 | grep -v NOTICE || true
-docker exec -i tablemax-test-pg16-1 psql -U postgres -d tablemax_demo -q -v ON_ERROR_STOP=1 \
+docker exec -i "$PROJECT-pg16-1" psql -U postgres -d tablemax_demo -q -v ON_ERROR_STOP=1 \
   < scripts/demo/postgres.sql
 
 for svc in mysql8:mysql mariadb11:mariadb; do
-  container="tablemax-test-${svc%%:*}-1"
+  container="$PROJECT-${svc%%:*}-1"
   cli="${svc##*:}"
   echo "seeding ${svc%%:*}…"
   docker exec "$container" "$cli" -uroot -ptablemax \
@@ -55,7 +60,7 @@ conn() { # id name color env kind port user database sqlite_path password_mode
   sqlite3 "$APP_DB" "INSERT OR REPLACE INTO connections (id, name, config_json) VALUES ('$1', '$2', '$json')"
 }
 conn demo-sqlite  "Demo · SQLite"      swatch-2 local   sqlite  0     ""       ""              "$SQLITE_FILE" none
-conn demo-pg      "Demo · Postgres 16" swatch-1 dev     postgres 54321 postgres tablemax_demo ""             ask
-conn demo-mysql   "Demo · MySQL 8"     swatch-3 staging mySql   33061 root     tablemax_demo   ""             ask
-conn demo-mariadb "Demo · MariaDB 11"  swatch-5 prod    mariaDb 33062 root     tablemax_demo   ""             ask
+conn demo-pg      "Demo · Postgres 16" swatch-1 dev     postgres "$PG_PORT" postgres tablemax_demo ""             ask
+conn demo-mysql   "Demo · MySQL 8"     swatch-3 staging mySql   "$MYSQL_PORT" root     tablemax_demo   ""             ask
+conn demo-mariadb "Demo · MariaDB 11"  swatch-5 prod    mariaDb "$MARIADB_PORT" root     tablemax_demo   ""             ask
 echo "registered 4 demo connections (server password: tablemax)"

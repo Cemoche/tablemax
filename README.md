@@ -38,12 +38,32 @@ asked at each connect), never in `app.db`.
 
 ## Test databases
 
+Host tools needed by `pnpm test:rust`: `docker compose` (v2), `openssl` and `ssh-keygen`
+(test certificates and keys), `ssh-agent` and `ssh-add` (agent authentication test);
+`pnpm demo:db` also needs `sqlite3`. Bind mounts carry the SELinux `z` option, so
+Fedora/RHEL hosts work as is.
+
 `scripts/test-dbs.sh up|down|env` manages PostgreSQL 16 (port 54321), MySQL 8.4 (33061),
 MariaDB 11.4 (33062) and a test sshd (2222, user `tunnel`) via `docker-compose.test.yml`
 (project `tablemax-test`). `up` first runs `scripts/test-secrets.sh`, which generates the
-throwaway TLS certificates and SSH keys into `.test-secrets/` (gitignored).
-`scripts/test-dbs.sh env` prints the `TABLEMAX_TEST_*` exports, and
-`scripts/test-dbs.sh down` stops the containers and deletes their volumes.
-The test sshd host key is generated once in `.test-secrets/ssh/host/`, so its
-fingerprint survives image rebuilds. `pnpm demo:db` seeds a demo database and registers
-demo connections.
+throwaway TLS certificates and SSH keys into `.test-secrets/` (gitignored; existing keys
+are kept, missing ones are added). `scripts/test-dbs.sh env` prints the `TABLEMAX_TEST_*`
+exports, and `scripts/test-dbs.sh down` stops the containers and deletes their volumes.
+The test sshd host keys (Ed25519 and ECDSA) are generated once in `.test-secrets/ssh/host/`,
+so their fingerprints survive image rebuilds. `pnpm demo:db` seeds a demo database and
+registers demo connections.
+
+### Two worktrees side by side
+
+Each checkout has its own `.test-secrets/`. To run the tests of two worktrees at the same
+time, give the second one its own compose project and host ports (the defaults are
+`tablemax-test`, 54321, 33061, 33062 and 2222), and keep them set for every command:
+
+```bash
+export TABLEMAX_TEST_PROJECT=tablemax-test-b TABLEMAX_TEST_PG_PORT=55321 \
+  TABLEMAX_TEST_MYSQL_PORT=34061 TABLEMAX_TEST_MARIADB_PORT=34062 TABLEMAX_TEST_SSH_PORT=3222
+pnpm test:rust               # `env` then exports URLs with these ports
+scripts/test-dbs.sh down     # stops this project only
+```
+
+`pnpm demo:db` follows the same variables.

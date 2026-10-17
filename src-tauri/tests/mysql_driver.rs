@@ -616,7 +616,7 @@ async fn mysql_execute_rejects_multiple_statements() {
         for sql in [
             format!("select 1 /*!; create table `{n}`.y(a int) */"),
             format!("select 1 ;\n -- c\n create table `{n}`.y(a int)"),
-            format!("select 1;;"),
+            "select 1;;".to_string(),
         ] {
             let e = s.execute(&sql).await.err().unwrap();
             assert_eq!(e.kind, ErrorKind::Invalid, "{sql}");
