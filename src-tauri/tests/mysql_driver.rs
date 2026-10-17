@@ -784,6 +784,56 @@ async fn mysql_modes_are_reread_after_an_error() {
     }
 }
 
+/// The session modes are re-read after EVERY statement: a comment-prefixed or
+/// executable-comment EXECUTE (or MariaDB EXECUTE IMMEDIATE on a built string) changes
+/// the charset / sql_mode without any keyword the driver could spot.
+#[tokio::test]
+async fn mysql_modes_changed_by_disguised_statements_are_seen() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!("create table `{n}`.t(a int)"))
+            .await
+            .unwrap();
+        let payload = format!("select '中\\'; drop table `{n}`.t; -- '");
+        s.execute("PREPARE cs FROM 'SET NAMES gbk'").await.unwrap();
+        let mut switches = vec![
+            "/* x */ EXECUTE cs",
+            "/*! EXECUTE cs */",
+            "-- c\nEXECUTE cs",
+        ];
+        if kind == DriverKind::MariaDb {
+            switches.push("-- c\nEXECUTE IMMEDIATE CONCAT('SET NA','MES gbk')");
+        }
+        for switch in switches {
+            s.execute(switch).await.unwrap();
+            let e = s.execute(&payload).await.err().unwrap();
+            assert_eq!(e.kind, ErrorKind::Invalid, "{switch}");
+            assert!(
+                e.message.contains("client character set gbk"),
+                "{switch}: {}",
+                e.message
+            );
+            s.execute("SET NAMES utf8mb4").await.unwrap();
+            assert_eq!(s.list_objects(Some(n)).await.unwrap().len(), 1, "{switch}");
+        }
+        // Same for NO_BACKSLASH_ESCAPES.
+        s.execute(
+            "PREPARE nb FROM 'SET SESSION sql_mode = CONCAT(@@sql_mode, '',NO_BACKSLASH_ESCAPES'')'",
+        )
+        .await
+        .unwrap();
+        s.execute("/* x */ EXECUTE nb").await.unwrap();
+        let e = s
+            .execute(&format!(r"select 'a\'; drop table `{n}`.t; -- '"))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+        assert_eq!(s.list_objects(Some(n)).await.unwrap().len(), 1);
+    }
+}
+
 #[tokio::test]
 async fn mysql_failed_cancel_does_not_report_cancelled() {
     for (url, kind) in targets() {

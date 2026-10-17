@@ -28,14 +28,17 @@
 //! input with more than one statement as `Invalid` BEFORE anything reaches the server.
 //! Executable comments (`/*! ... */`, `/*M! ... */`) are scanned as code since the server
 //! runs their content. The lexer follows the session's `sql_mode` (NO_BACKSLASH_ESCAPES,
-//! ANSI_QUOTES): it is read at connect and re-read after any statement that may change it
-//! (whether that statement succeeded or failed). The lexer reads the text as UTF-8 (what
-//! the driver sends): when the session's client character set is one whose multi-byte
-//! characters can end with an ASCII byte such as `\` (big5, cp932, gb18030, gbk, sjis),
-//! the server would tokenize differently, so every statement is refused until the user
-//! switches back (an ASCII-only `SET …` is still accepted for that). The client charset
-//! is read and re-read with sql_mode. Dollar-quoted bodies (`AS $$ … $$`, MySQL 9
-//! JavaScript routines) are refused too: the lexer does not see through them.
+//! ANSI_QUOTES): it is read at connect and re-read after EVERY statement (success or
+//! error), since a prepared or comment-wrapped statement can change it without any
+//! visible keyword; if that re-read fails while the link is up, the session state is
+//! unknown and every statement is refused until a re-read succeeds. The lexer reads the
+//! text as UTF-8 (what the driver sends): when the session's client character set is one
+//! whose multi-byte characters can end with an ASCII byte such as `\` (big5, cp932,
+//! gb18030, gbk, sjis), the server would tokenize differently, so every statement is
+//! refused until the user switches back (an ASCII-only `SET …` is still accepted for
+//! that). The client charset is read and re-read with sql_mode, in the same query.
+//! Dollar-quoted bodies (`AS $$ … $$`, MySQL 9 JavaScript routines) are refused too: the
+//! lexer does not see through them.
 //! Compound statements (`CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT … BEGIN … END`, MariaDB
 //! `BEGIN NOT ATOMIC … END`) are one statement: the `;` inside their body do not count.
 //! The body tracker is conservative (see `Compound`): when in doubt it refuses, and an
@@ -107,6 +110,9 @@ struct Inner {
     /// The session's client character set when it is unsafe for the lexer (see
     /// [`UNSAFE_CLIENT_CHARSETS`]); `None` when it is safe.
     unsafe_charset: Option<String>,
+    /// The last re-read of the modes failed (link still up): `modes` and
+    /// `unsafe_charset` may be stale, so statements are refused until a re-read works.
+    modes_unknown: bool,
     /// MariaDB only: (database, table) -> columns constrained by `json_valid(...)`.
     json_cache: HashMap<(String, String), HashSet<String>>,
 }
@@ -336,6 +342,7 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
             json_cache: HashMap::new(),
             modes,
             unsafe_charset,
+            modes_unknown: false,
         }),
         lost: AtomicBool::new(false),
         canceller: Arc::new(MyCanceller {
@@ -1169,7 +1176,18 @@ fn has_dollar_quote(sql: &str, modes: Modes) -> bool {
 /// Why `sql` must not be sent, checked before anything reaches the server: an unsafe
 /// client character set (only an ASCII-only `SET …` passes, to switch back), a
 /// dollar-quoted body, or more than one statement.
-fn refusal(sql: &str, modes: Modes, unsafe_charset: Option<&str>) -> Option<AppError> {
+fn refusal(
+    sql: &str,
+    modes: Modes,
+    unsafe_charset: Option<&str>,
+    modes_unknown: bool,
+) -> Option<AppError> {
+    if modes_unknown {
+        return Some(AppError::new(
+            ErrorKind::Invalid,
+            "session state could not be verified: reconnect",
+        ));
+    }
     if let Some(cs) = unsafe_charset
         && !(sql.is_ascii() && first_word(sql) == "set")
     {
@@ -1355,20 +1373,26 @@ fn first_word(sql: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Statements after which `@@SESSION.sql_mode` and the client character set must be
-/// re-read.
-fn may_change_session_modes(sql: &str) -> bool {
-    let lower = sql.to_ascii_lowercase();
-    if ["sql_mode", "names", "character", "charset"]
-        .iter()
-        .any(|k| lower.contains(k))
-    {
-        return true;
+/// Applies the result of a re-read of the session modes to the session state. A failed
+/// re-read leaves the state unknown (fail closed); only a lost link is returned, for the
+/// caller to report.
+fn absorb_reread(
+    inner: &mut Inner,
+    reread: Result<(Modes, Option<String>), AppError>,
+) -> AppResult<()> {
+    match reread {
+        Ok((modes, charset)) => {
+            inner.modes = modes;
+            inner.unsafe_charset = charset;
+            inner.modes_unknown = false;
+            Ok(())
+        }
+        Err(e) if e.kind == ErrorKind::ConnectionLost => Err(e),
+        Err(_) => {
+            inner.modes_unknown = true;
+            Ok(())
+        }
     }
-    matches!(
-        first_word(sql).as_str(),
-        "set" | "execute" | "call" | "begin"
-    )
 }
 
 fn is_ddl(sql: &str) -> bool {
@@ -1408,8 +1432,23 @@ impl MySession {
         }
         let mut guard = self.inner.lock().await;
         let inner = &mut *guard;
+        // An earlier re-read failed: try again before deciding anything.
+        if inner.modes_unknown
+            && let Some(conn) = inner.conn.as_mut()
+        {
+            let reread = read_session_modes(conn).await;
+            if let Err(e) = absorb_reread(inner, reread) {
+                self.note_loss(&e);
+                return Err(e);
+            }
+        }
         // Checked under the lock: `modes` and the charset reflect every earlier statement.
-        if let Some(e) = refusal(sql, inner.modes, inner.unsafe_charset.as_deref()) {
+        if let Some(e) = refusal(
+            sql,
+            inner.modes,
+            inner.unsafe_charset.as_deref(),
+            inner.modes_unknown,
+        ) {
             return Err(e);
         }
         let Some(conn) = inner.conn.as_mut() else {
@@ -1423,20 +1462,15 @@ impl MySession {
         let out = Self::run_on(conn, &mut inner.json_cache, self.mariadb, sql).await;
         self.canceller.running.store(false, Ordering::SeqCst);
         let was_cancelled = self.canceller.cancelled_seq.load(Ordering::SeqCst) == my_seq;
-        // Also after an error: a CALL / EXECUTE may change the modes and then fail.
+        // After EVERY statement, success or error: a prepared, comment-wrapped or
+        // dynamically built statement can change sql_mode or the client charset without
+        // any keyword to spot. One cheap round trip.
         let link_lost = matches!(&out, Err(e) if e.kind == ErrorKind::ConnectionLost);
-        if !link_lost && may_change_session_modes(sql) {
-            match read_session_modes(conn).await {
-                Ok((modes, charset)) => {
-                    inner.modes = modes;
-                    inner.unsafe_charset = charset;
-                }
-                Err(err) => {
-                    self.note_loss(&err);
-                    if err.kind == ErrorKind::ConnectionLost {
-                        return Err(err);
-                    }
-                }
+        if !link_lost {
+            let reread = read_session_modes(conn).await;
+            if let Err(err) = absorb_reread(inner, reread) {
+                self.note_loss(&err);
+                return Err(err);
             }
         }
         match out {
@@ -1864,26 +1898,45 @@ mod tests {
             }
         );
         assert_eq!(Modes::from_sql_mode(""), DEFAULT);
-        assert!(may_change_session_modes("SET SESSION SQL_MODE = ''"));
-        assert!(may_change_session_modes("set @@sql_mode=1"));
-        assert!(!may_change_session_modes("select 1"));
+    }
+
+    fn inner() -> Inner {
+        Inner {
+            conn: None,
+            modes: DEFAULT,
+            unsafe_charset: None,
+            modes_unknown: false,
+            json_cache: HashMap::new(),
+        }
     }
 
     #[test]
-    fn client_charset_triggers_a_reread() {
-        for sql in [
-            "SET NAMES gbk",
-            "/*!40101 SET NAMES gbk */",
-            "set character set big5",
-            "SET @@character_set_client = sjis",
-            "select 1 /*!40101 , @@charset */",
-            "begin not atomic set names gbk; end",
-            "execute s",
-            "call p()",
-        ] {
-            assert!(may_change_session_modes(sql), "{sql}");
+    fn a_failed_reread_fails_closed_until_one_succeeds() {
+        let mut st = inner();
+        // A re-read that fails with the link up: state unknown, every statement refused.
+        absorb_reread(&mut st, Err(AppError::new(ErrorKind::Query, "boom"))).unwrap();
+        assert!(st.modes_unknown);
+        for sql in ["select 1", "SET NAMES utf8mb4"] {
+            let e = refusal(
+                sql,
+                st.modes,
+                st.unsafe_charset.as_deref(),
+                st.modes_unknown,
+            )
+            .expect(sql);
+            assert_eq!(e.kind, ErrorKind::Invalid);
+            assert_eq!(e.message, "session state could not be verified: reconnect");
         }
-        assert!(!may_change_session_modes("select a from t"));
+        // A lost link is reported, not swallowed.
+        let lost = absorb_reread(&mut st, Err(AppError::new(ErrorKind::ConnectionLost, "x")));
+        assert_eq!(lost.unwrap_err().kind, ErrorKind::ConnectionLost);
+        // A successful re-read restores the state it read.
+        absorb_reread(&mut st, Ok((NBE, Some("gbk".into())))).unwrap();
+        assert!(!st.modes_unknown);
+        assert_eq!(st.modes, NBE);
+        assert_eq!(st.unsafe_charset.as_deref(), Some("gbk"));
+        absorb_reread(&mut st, Ok((DEFAULT, None))).unwrap();
+        assert!(refusal("select 1", st.modes, None, st.modes_unknown).is_none());
     }
 
     #[test]
@@ -1901,7 +1954,7 @@ mod tests {
 
     #[test]
     fn unsafe_client_charset_refuses_everything_but_an_ascii_set() {
-        let refused = |sql: &str| refusal(sql, DEFAULT, Some("gbk"));
+        let refused = |sql: &str| refusal(sql, DEFAULT, Some("gbk"), false);
         for sql in [
             "select '中\\'; drop table t; -- '",
             "select 1",
@@ -1928,7 +1981,7 @@ mod tests {
             "execute accepts exactly one statement"
         );
         // A safe charset changes nothing.
-        assert!(refusal("select '中\\'; x'", DEFAULT, None).is_none());
+        assert!(refusal("select '中\\'; x'", DEFAULT, None, false).is_none());
     }
 
     #[test]
@@ -1939,11 +1992,11 @@ mod tests {
             "create function f() returns int language javascript as $$ ' $$; drop table t; -- '",
             "select $$x$$",
         ] {
-            let e = refusal(sql, DEFAULT, None).expect(sql);
+            let e = refusal(sql, DEFAULT, None, false).expect(sql);
             assert_eq!(e.message, "dollar-quoted bodies are not supported", "{sql}");
         }
         for sql in ["select 1 as a$b", "select `$$`", "select '$$'", "select $a"] {
-            assert!(refusal(sql, DEFAULT, None).is_none(), "{sql}");
+            assert!(refusal(sql, DEFAULT, None, false).is_none(), "{sql}");
         }
     }
 
