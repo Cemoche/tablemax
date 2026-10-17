@@ -166,13 +166,13 @@ plan_epic() { # number title plan-file branch labels ; scope on stdin
   scope="$(cat)"
   ensure_issue "[Epic] Plan $1 — $2" "type:epic,plan:$1,$5" "Plan $1 — $2" "$OWNER" closed <<EOF
 Plan: \`$PLANS_URL/$3\`.
-Implemented in branch \`$4\`, see its PR (\`gh pr list --head $4 --state all\`).
+Integrated in branch \`$4\`, see its PR (\`gh pr list --head $4 --state all\`).
 
 $scope
 EOF
 }
 
-plan_epic 3 "Data" "2026-10-17-tablemax-03-data.md" "feat/plan-03-data" "area:frontend,area:backend" <<'EOF'
+plan_epic 3 "Data" "2026-10-17-tablemax-03-data.md" "integration/v1" "area:frontend,area:backend" <<'EOF'
 Scope (spec §2 "Données (grille)" and "Structure"): inline editing (cell, insert, delete,
 duplicate) with a pending-changes panel and its SQL, commit in one transaction (Ctrl+S) or
 discard; read-only tables without a primary key or unique index; foreign-key navigation with a
@@ -180,7 +180,7 @@ breadcrumb; filter builder and quick filter bar; row detail panel; copy as TSV/C
 read-only Structure view (columns, indexes, foreign keys, DDL).
 EOF
 
-plan_epic 4 "Tabs & editor" "2026-10-17-tablemax-04-navigation.md" "feat/plan-04-navigation" "area:frontend,area:backend" <<'EOF'
+plan_epic 4 "Tabs & editor" "2026-10-17-tablemax-04-navigation.md" "integration/v1" "area:frontend,area:backend" <<'EOF'
 Scope (spec §2 "Navigation" and "Éditeur SQL"): preview tab, Ctrl+Tab in MRU order, search
 among open tabs, session restore, object sidebar with routines and database switch, command
 palette (Ctrl+K / Ctrl+P), SQL completion, formatting, comment toggle, auto LIMIT, history,
@@ -190,7 +190,7 @@ on `e.key`, tablist a11y, splitter edge cases — check the plan's own follow-up
 is left.
 EOF
 
-plan_epic 5 "Safety & packaging" "2026-10-17-tablemax-05-safety.md" "feat/plan-05-safety" "area:frontend,area:backend,area:security" <<'EOF'
+plan_epic 5 "Safety & packaging" "2026-10-17-tablemax-05-safety.md" "integration/v1" "area:frontend,area:backend,area:security" <<'EOF'
 Scope (spec §2 "Sécurité par environnement / Safe mode" and "Réglages"): safe mode levels per
 connection (prod defaults to confirming writes), also on grid Commit with the SQL shown;
 environment colour on the workspace border and title bar; settings (theme, editor font, page

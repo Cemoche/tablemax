@@ -2,6 +2,8 @@
 
 A free, fast desktop database client. Tauri 2 + React + TypeScript + Rust.
 
+**New here? Take the 10-minute tour: [docs/DEMO.md](docs/DEMO.md).**
+
 ## Installation (Linux)
 
 `pnpm build:app` (`tauri build`) produces two packages under
