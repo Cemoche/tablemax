@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
+import { useAction } from "./lib/keymap";
 import { strings } from "./lib/strings";
 import { ConnectPrompt } from "./features/connections/ConnectPrompt";
 import { ConnectionForm } from "./features/connections/ConnectionForm";
@@ -59,17 +60,8 @@ function App() {
     return true;
   });
 
-  // Mod+, opens the settings (a modifier combo, so it is fine while typing).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === ",") {
-        e.preventDefault();
-        setSettingsOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  // Mod+, opens the settings (a modifier combo, so it is fine while typing; not over a modal).
+  useAction("settings.open", () => setSettingsOpen(true));
 
   // Connections first (a restored workspace takes its name and color from its
   // connection), then the last session, disconnected: nothing connects at startup.

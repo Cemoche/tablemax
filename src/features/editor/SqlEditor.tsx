@@ -7,7 +7,8 @@ import { EditorView, keymap } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import CodeMirror from "@uiw/react-codemirror";
 import { type CSSProperties, useEffect, useMemo, useRef } from "react";
-import { isModalOpen, matchShortcut } from "../../lib/shortcuts";
+import { useEffectiveShortcut } from "../../lib/keymap";
+import { isModalOpen, matchCombination, matchShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { useResolvedDark } from "../../lib/theme";
 import { registerEditorCommands } from "./editorCommands";
@@ -26,7 +27,7 @@ interface Props {
   value: string;
   onChange: (value: string) => void;
   dialect: Dialect;
-  /** Ctrl+Enter ("current") / Ctrl+Shift+Enter ("all"), bound while the editor has focus. */
+  /** editor.run ("current") / editor.runAll ("all"), bound while the editor has focus. */
   onRun: (mode: RunMode) => void;
   onSelectionChange?: (sel: EditorSelection) => void;
   /** Registers this editor's commands (toggle comment…) for the command palette. */
@@ -38,6 +39,10 @@ interface Props {
   /** The CodeMirror view once created (null on unmount), for insert/replace from panels. */
   onView?: (view: EditorView | null) => void;
 }
+
+// Mod-Enter (insertBlankLine) and Mod-/ (toggleComment) are editor.run / editor.comment's
+// keys: dropped, so a rebound action leaves its old keys inert.
+const CM_DEFAULT_KEYMAP = defaultKeymap.filter((b) => b.key !== "Mod-Enter" && b.key !== "Mod-/");
 
 export const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
 const FORMAT_LANGUAGE = { postgres: "postgresql", mySql: "mysql", sqlite: "sqlite" } as const;
@@ -197,6 +202,16 @@ export function SqlEditor({
   useEffect(() => () => viewCbRef.current?.(null), []);
   const dialectRef = useRef(dialect);
   dialectRef.current = dialect;
+  // The effective combinations, read by the keymap below through a ref: a keymap change
+  // in the settings applies at once without rebuilding the extensions.
+  const keys = {
+    run: useEffectiveShortcut("editor.run"),
+    runAll: useEffectiveShortcut("editor.runAll"),
+    format: useEffectiveShortcut("editor.format"),
+    comment: useEffectiveShortcut("editor.comment"),
+  };
+  const keysRef = useRef(keys);
+  keysRef.current = keys;
 
   const viewRef = useRef<EditorView | null>(null);
   const formatRef = useRef(() => {
@@ -239,31 +254,28 @@ export function SqlEditor({
             // Matched on e.code (layout independent), like the app shortcuts.
             any: (view, e) => {
               if (isModalOpen()) return false;
-              if (matchShortcut(e, "Mod+Shift+F")) {
+              const k = keysRef.current;
+              // Holding a combination acts once: its repeats are swallowed, not passed on.
+              if (e.repeat) return [k.run, k.runAll, k.format, k.comment].some((s) => matchCombination(e, s));
+              if (matchShortcut(e, k.run)) {
+                runRef.current("current");
+                return true;
+              }
+              if (matchShortcut(e, k.runAll)) {
+                runRef.current("all");
+                return true;
+              }
+              if (matchShortcut(e, k.format)) {
                 formatRef.current();
                 return true;
               }
-              if (matchShortcut(e, "Mod+/")) return toggleLineComment(view);
+              if (matchShortcut(e, k.comment)) return toggleLineComment(view);
               return false;
-            },
-          },
-          {
-            key: "Mod-Enter",
-            run: () => {
-              runRef.current("current");
-              return true;
-            },
-          },
-          {
-            key: "Mod-Shift-Enter",
-            run: () => {
-              runRef.current("all");
-              return true;
             },
           },
         ]),
       ),
-      keymap.of(defaultKeymap),
+      keymap.of(CM_DEFAULT_KEYMAP),
     ],
     [dialect, dark],
   );
@@ -276,7 +288,7 @@ export function SqlEditor({
       aria-label={strings.query.editorLabel}
       theme="none"
       extensions={extensions}
-      basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true, autocompletion: false }}
+      basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true, autocompletion: false, defaultKeymap: false }}
       onChange={onChange}
       onCreateEditor={(view) => {
         viewRef.current = view;

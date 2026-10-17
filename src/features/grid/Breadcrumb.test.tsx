@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import { strings } from "../../lib/strings";
@@ -107,6 +107,37 @@ test("Alt+← goes back one step", async () => {
   expect(tab()).toMatchObject({ object: lines, title: "order_lines" });
   expect(useGridViews.getState().getView("t1")).toEqual(linesView);
   expect(useGridViews.getState().getTrail("t1")).toEqual([{ object: orders, view: ordersView }]);
+});
+
+test("a custom Back combination goes back and Alt+← no longer does", async () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "grid.back": "Alt+Backspace" } } });
+  render(<Harness />);
+  await userEvent.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+  expect(tab()).toMatchObject({ object: customers });
+  await userEvent.keyboard("{Alt>}{Backspace}{/Alt}");
+  expect(tab()).toMatchObject({ object: lines });
+});
+
+test("Alt+← in a text field moves the caret, it does not go back", async () => {
+  render(
+    <>
+      <input aria-label="field" />
+      <Harness />
+    </>,
+  );
+  await userEvent.click(screen.getByRole("textbox", { name: "field" }));
+  await userEvent.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+  expect(tab()).toMatchObject({ object: customers });
+});
+
+test("with an empty trail Alt+← is left to the page (not prevented)", () => {
+  useGridViews.setState({ trails: {} });
+  render(<Harness />);
+  const e = new KeyboardEvent("keydown", { code: "ArrowLeft", key: "ArrowLeft", altKey: true, cancelable: true });
+  act(() => {
+    window.dispatchEvent(e);
+  });
+  expect(e.defaultPrevented).toBe(false);
 });
 
 test("going back is blocked while changes are pending", async () => {

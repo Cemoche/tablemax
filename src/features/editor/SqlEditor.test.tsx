@@ -1,8 +1,8 @@
 import { history, undo } from "@codemirror/commands";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { render } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
+import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { act } from "react";
 import { useSettings, DEFAULT_SETTINGS } from "../../stores/settings";
 import { applyTheme } from "../../lib/theme";
@@ -104,4 +104,44 @@ test("insertAtCursor and replaceDocument are one undo step each", () => {
   insertAtCursor(view, "SELECT");
   expect(view.state.doc.toString()).toBe("SELECT 1;\n");
   view.destroy();
+});
+
+test("run, run all, format and comment follow the keymap: a custom run combination replaces Mod+Enter", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  const onRun = vi.fn();
+  const { container } = render(<SqlEditor value="select 1" onChange={() => {}} dialect="postgres" onRun={onRun} />);
+  const content = container.querySelector(".cm-content") as HTMLElement;
+  const view = EditorView.findFromDOM(content);
+  if (!view) throw new Error("no editor");
+  const press = (init: KeyboardEventInit & { keyCode: number }) =>
+    act(() => {
+      fireEvent.keyDown(view.contentDOM, init);
+    });
+  const ENTER = { key: "Enter", code: "Enter", keyCode: 13 };
+
+  press({ ...ENTER, ctrlKey: true });
+  expect(onRun).toHaveBeenLastCalledWith("current");
+  press({ ...ENTER, ctrlKey: true, shiftKey: true });
+  expect(onRun).toHaveBeenLastCalledWith("all");
+  // Holding the combination runs once.
+  press({ ...ENTER, ctrlKey: true, repeat: true });
+  expect(onRun).toHaveBeenCalledTimes(2);
+  expect(view.state.doc.toString()).toBe("select 1");
+
+  await act(async () =>
+    useSettings.setState({
+      settings: { ...DEFAULT_SETTINGS, keymap: { "editor.run": "Alt+Enter", "editor.comment": "Mod+Shift+7" } },
+    }),
+  );
+  onRun.mockClear();
+  press({ ...ENTER, metaKey: true });
+  press({ ...ENTER, ctrlKey: true });
+  expect(onRun).not.toHaveBeenCalled();
+  press({ ...ENTER, altKey: true });
+  expect(onRun).toHaveBeenCalledWith("current");
+  press({ key: "/", code: "Slash", keyCode: 191, ctrlKey: true });
+  expect(view.state.doc.toString()).not.toMatch(/^-- select 1/);
+  press({ key: "&", code: "Digit7", keyCode: 55, ctrlKey: true, shiftKey: true });
+  expect(view.state.doc.toString()).toMatch(/^-- select 1/);
 });

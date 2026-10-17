@@ -113,6 +113,21 @@ test("Escape closes and Mod+K toggles", async () => {
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
+test("a custom palette combination opens and closes it; Mod+K no longer does", async () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Alt+K", "palette.objects": "Alt+O" } } });
+  const user = await open(MOD_K);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.keyboard(MOD_P);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.keyboard("{Alt>}k{/Alt}");
+  await screen.findByRole("dialog");
+  // Over its own modal: the custom combination still toggles it.
+  await user.keyboard("{Alt>}k{/Alt}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await user.keyboard("{Alt>}o{/Alt}");
+  await screen.findByRole("dialog");
+});
+
 test("it does not open over another modal dialog", async () => {
   render(
     <>

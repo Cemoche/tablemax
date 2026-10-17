@@ -1,8 +1,10 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { SettingsDialog } from "../settings/SettingsDialog";
 import { WorkspaceView } from "./WorkspaceView";
 
 vi.mock("../../lib/ipc");
@@ -71,4 +73,30 @@ test("neither fires while a modal is open", () => {
   press({ code: "KeyW" });
   expect(tabs()).toHaveLength(1);
   expect(useWorkspaces.getState().workspaces[0].activeTabId).toBe("a");
+});
+
+test("Ctrl+W with the Settings dialog open does not close the tab", () => {
+  vi.mocked(ipc.appVersion).mockResolvedValue("1.2.3");
+  render(<SettingsDialog onClose={() => {}} />);
+  press({ code: "KeyW" });
+  press({ code: "KeyT" });
+  expect(tabs()).toHaveLength(1);
+});
+
+test("a custom new-tab combination opens a tab and the default no longer does", () => {
+  act(() =>
+    useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+Shift+N" } } }),
+  );
+  press({ code: "KeyT" });
+  expect(tabs()).toHaveLength(1);
+  press({ code: "KeyN", shiftKey: true });
+  expect(tabs()).toHaveLength(2);
+});
+
+test("a custom close-tab combination closes the tab; Mod+W no longer does", () => {
+  act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "tab.close": "Mod+F4" } } }));
+  press({ code: "KeyW" });
+  expect(tabs()).toHaveLength(1);
+  press({ code: "F4" });
+  expect(tabs()).toHaveLength(0);
 });

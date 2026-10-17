@@ -2,9 +2,9 @@ import { Command } from "cmdk";
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
-import { effectiveShortcut, isKeymapActionId } from "../../lib/keymap";
+import { effectiveShortcut, isKeymapActionId, useAction } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
-import { isModalOpen, useShortcut } from "../../lib/shortcuts";
+import { isModalOpen } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import type { ConnectionConfig } from "../../lib/types";
 import { catalogKey, useCatalog } from "../../stores/catalog";
@@ -109,8 +109,8 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
     }
   };
   // The palette is itself aria-modal, so its own chords must work while it is open.
-  useShortcut("Mod+K", () => toggle("all"), { allowInModal: true });
-  useShortcut("Mod+P", () => toggle("objects"), { allowInModal: true });
+  useAction("palette.all", () => toggle("all"), { allowInModal: true });
+  useAction("palette.objects", () => toggle("objects"), { allowInModal: true });
 
   // The catalog loads once per (workspace, schema); only a connected workspace has one.
   useEffect(() => {

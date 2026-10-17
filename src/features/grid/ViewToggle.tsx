@@ -1,43 +1,26 @@
-import { useEffect, useState } from "react";
-import { useEffectiveShortcut } from "../../lib/keymap";
+import { useState } from "react";
+import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
+import type { ShortcutOptions } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 
 export type TableView = "data" | "structure";
 
-const VIEWS: { view: TableView; digit: string }[] = [
-  { view: "data", digit: "1" },
-  { view: "structure", digit: "2" },
-];
+const VIEWS: TableView[] = ["data", "structure"];
 
-const EDITABLE = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+// Capture + stop: the grid would take the digit as the start of a cell edit.
+const VIEW_KEYS: ShortcutOptions = { capture: true, stopPropagation: true, skipInEditable: true };
 
 /**
- * Which view of a table tab is shown. Alt+1 shows the rows, Alt+2 the structure (Option on
- * macOS, matched by physical key since Option+digit types a character there); not while
- * typing in a field or with a modal open. Only the active tab is mounted, so the shortcut
- * acts on it.
+ * Which view of a table tab is shown. `grid.viewData` (Alt+1) shows the rows,
+ * `grid.viewStructure` (Alt+2) the structure (Option on macOS, matched by physical key since
+ * Option+digit types a character there); not while typing in a field or with a modal open.
+ * Only the active tab is mounted, so the shortcut acts on it.
  */
 export function useTableView() {
   const [view, setView] = useState<TableView>("data");
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-      const hit = VIEWS.find(({ digit }) => e.code === `Digit${digit}` || e.key === digit);
-      if (!hit) return;
-      const t = e.target;
-      if (t instanceof HTMLElement && (EDITABLE.has(t.tagName) || t.isContentEditable)) return;
-      if (document.querySelector('[aria-modal="true"]')) return;
-      e.preventDefault();
-      // Capture + stop: the grid would take the digit as the start of a cell edit.
-      e.stopPropagation();
-      setView(hit.view);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
-
+  useAction("grid.viewData", () => setView("data"), VIEW_KEYS);
+  useAction("grid.viewStructure", () => setView("structure"), VIEW_KEYS);
   return { view, setView };
 }
 
@@ -50,7 +33,7 @@ export function ViewToggle({ view, onChange }: { view: TableView; onChange: (v: 
   };
   return (
     <div role="tablist" aria-label={v.label} className="flex border-b border-border bg-surface px-2 text-sm">
-      {VIEWS.map(({ view: k }) => (
+      {VIEWS.map((k) => (
         <button
           key={k}
           type="button"

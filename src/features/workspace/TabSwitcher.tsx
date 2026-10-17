@@ -1,21 +1,44 @@
 import { useEffect, useRef, useState } from "react";
+import { useEffectiveShortcut } from "../../lib/keymap";
+import { isMac } from "../../lib/platform";
 import { isModalOpen, matchShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { tabKindLabel, tabsByMru } from "./tabInfo";
 
 /**
- * Ctrl+Tab (held) opens the tabs in MRU order, selection on the 2nd entry; each extra
- * Tab advances, Shift+Tab goes back; releasing Control activates; Escape cancels.
- * Literally Ctrl on every platform (not `Mod`), as in the plan's defaults.
+ * The keys (`KeyboardEvent.key`) of the modifiers a spec holds down while its key is
+ * pressed again: Ctrl, Cmd (Meta) or Alt — Shift only selects the direction. `Mod` is Cmd
+ * on macOS and Ctrl elsewhere.
+ */
+export function heldModifiers(spec: string, mac: boolean = isMac()): string[] {
+  const held = new Set<string>();
+  for (const m of spec.split("+").slice(0, -1)) {
+    if (m === "Ctrl" || (m === "Mod" && !mac)) held.add("Control");
+    else if (m === "Meta" || (m === "Mod" && mac)) held.add("Meta");
+    else if (m === "Alt") held.add("Alt");
+  }
+  return [...held];
+}
+
+/**
+ * `tab.next` (Ctrl+Tab by default) held opens the tabs in MRU order, selection on the 2nd
+ * entry; each extra press advances, `tab.previous` (Ctrl+Shift+Tab) goes back; releasing
+ * the held modifier activates; Escape cancels. Literally Ctrl on every platform (not
+ * `Mod`), as in the plan's defaults. A combination with no modifier to hold (F6) switches
+ * once per press, to the tab the list would have selected. Not while a modal is open.
  */
 export function TabSwitcher({ workspace }: { workspace: Workspace }) {
   const activateTab = useWorkspaces((s) => s.activateTab);
+  const nextSpec = useEffectiveShortcut("tab.next");
+  const prevSpec = useEffectiveShortcut("tab.previous");
   const [index, setIndex] = useState<number | null>(null);
   const indexRef = useRef<number | null>(null);
   const wsRef = useRef(workspace);
   wsRef.current = workspace;
   const { id } = workspace;
+  /** The modifier keys whose release activates the selection (those of the opening spec). */
+  const heldRef = useRef<string[]>([]);
 
   useEffect(() => {
     const set = (i: number | null) => {
@@ -23,8 +46,8 @@ export function TabSwitcher({ workspace }: { workspace: Workspace }) {
       setIndex(i);
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      const fwd = matchShortcut(e, "Ctrl+Tab");
-      const back = matchShortcut(e, "Ctrl+Shift+Tab");
+      const fwd = matchShortcut(e, nextSpec);
+      const back = !fwd && matchShortcut(e, prevSpec);
       const cur = indexRef.current;
       if (cur !== null) {
         if (fwd || back) {
@@ -40,13 +63,18 @@ export function TabSwitcher({ workspace }: { workspace: Workspace }) {
       if (!fwd && !back) return;
       if (isModalOpen()) return;
       e.preventDefault();
-      const n = tabsByMru(wsRef.current).length;
+      const tabs = tabsByMru(wsRef.current);
+      const n = tabs.length;
       if (n < 2) return;
-      set(fwd ? 1 : n - 1);
+      const target = fwd ? 1 : n - 1;
+      heldRef.current = heldModifiers(fwd ? nextSpec : prevSpec);
+      // Nothing held to release: no list to cycle, switch now.
+      if (heldRef.current.length === 0) activateTab(id, tabs[target].id);
+      else set(target);
     };
     const onKeyUp = (e: KeyboardEvent) => {
       const cur = indexRef.current;
-      if (cur === null || e.key !== "Control") return;
+      if (cur === null || !heldRef.current.includes(e.key)) return;
       const tab = tabsByMru(wsRef.current)[cur];
       set(null);
       if (tab) activateTab(id, tab.id);
@@ -60,7 +88,7 @@ export function TabSwitcher({ workspace }: { workspace: Workspace }) {
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", cancel);
     };
-  }, [id, activateTab]);
+  }, [id, activateTab, nextSpec, prevSpec]);
 
   if (index === null) return null;
   const tabs = tabsByMru(workspace);

@@ -1,5 +1,5 @@
-import { Fragment, useEffect } from "react";
-import { useEffectiveShortcut } from "../../lib/keymap";
+import { Fragment } from "react";
+import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { formatQuickFilter } from "../../lib/quickFilter";
 import { strings } from "../../lib/strings";
@@ -17,32 +17,22 @@ interface Props {
   shortcut?: boolean;
 }
 
-const EDITABLE = new Set(["INPUT", "TEXTAREA", "SELECT"]);
-
 /**
  * The foreign keys followed in a table tab, `orders › customers (id = 42)`: an earlier item
- * goes back to that table exactly as it was; Alt+← goes back one step (not while typing in
- * a field, where it moves the caret on macOS). Nothing is shown with an empty trail.
+ * goes back to that table exactly as it was; `grid.back` (Alt+←) goes back one step (not
+ * while typing in a field, where it moves the caret on macOS). Nothing is shown with an
+ * empty trail.
  */
 export function Breadcrumb({ workspaceId, tabId, object, filters, shortcut = true }: Props) {
   const trail = useGridViews((s) => s.trails[tabId]) ?? [];
   const backShortcut = useEffectiveShortcut("grid.back");
 
-  useEffect(() => {
-    if (!shortcut) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.key !== "ArrowLeft") return;
-      const t = e.target;
-      if (t instanceof HTMLElement && (EDITABLE.has(t.tagName) || t.isContentEditable)) return;
-      if (document.querySelector('[aria-modal="true"]')) return;
-      if (useGridViews.getState().getTrail(tabId).length === 0) return;
-      e.preventDefault();
-      back(workspaceId, tabId);
-    };
-    // Capture: the grid handles arrow keys itself.
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [workspaceId, tabId, shortcut]);
+  // Capture: the grid handles arrow keys itself. Without a trail the keys are left alone.
+  useAction("grid.back", () => back(workspaceId, tabId), {
+    capture: true,
+    skipInEditable: true,
+    enabled: shortcut && trail.length > 0,
+  });
 
   if (trail.length === 0) return null;
   const crumb = (o: ObjectRef, f: Filter[]) => strings.grid.trail.crumb(o.name, formatQuickFilter(f));

@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { DEFAULT_SETTINGS, useSettings } from "../stores/settings";
 import fixture from "./keymap-actions.json";
 import {
@@ -10,6 +10,7 @@ import {
   effectiveShortcut,
   isKeymapActionId,
   isValidShortcut,
+  useAction,
   useEffectiveShortcut,
 } from "./keymap";
 import { matchShortcut } from "./shortcuts";
@@ -226,4 +227,24 @@ test("useEffectiveShortcut follows the settings' keymap", () => {
     useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "grid.commit": "Mod+Enter" } } }),
   );
   expect(result.current).toBe("Mod+Enter");
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+test("useAction binds the effective combination: a custom one replaces the default", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  const handler = vi.fn();
+  renderHook(() => useAction("palette.all", handler));
+  const press = (init: KeyboardEventInit) => window.dispatchEvent(new KeyboardEvent("keydown", init));
+  press({ code: "KeyK", ctrlKey: true });
+  expect(handler).toHaveBeenCalledTimes(1);
+  act(() =>
+    useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Alt+Space" } } }),
+  );
+  press({ code: "KeyK", ctrlKey: true });
+  expect(handler).toHaveBeenCalledTimes(1);
+  press({ code: "Space", altKey: true });
+  expect(handler).toHaveBeenCalledTimes(2);
 });

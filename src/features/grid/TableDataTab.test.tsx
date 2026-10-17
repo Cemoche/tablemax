@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { CellValue, ForeignKeyInfo, ResultSet, RowKey } from "../../lib/types";
@@ -852,6 +852,70 @@ test("Alt+2 shows the structure and Alt+1 the data, not while typing or with a m
   modal.remove();
   await user.keyboard("{Alt>}2{/Alt}");
   expect(selected(v.structure)).toBe("true");
+});
+
+test("Alt+1 / Alt+2 never reach the focused grid (it would start a cell edit)", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  const el = await screen.findByTestId("grid");
+  el.tabIndex = 0;
+  el.focus();
+  const gridKey = vi.fn();
+  el.addEventListener("keydown", gridKey);
+  await user.keyboard("{Alt>}2{/Alt}");
+  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Alt>}1{/Alt}");
+  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("aria-selected", "true");
+  // Only the Alt presses themselves reached the grid, never the digits.
+  expect(gridKey.mock.calls.map(([e]) => (e as KeyboardEvent).code)).not.toContain("Digit1");
+  expect(gridKey.mock.calls.map(([e]) => (e as KeyboardEvent).code)).not.toContain("Digit2");
+});
+
+test("Mod+I toggles row details on the physical I key, strictly Ctrl off macOS", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await screen.findByTestId("grid");
+  const details = screen.getByRole("button", { name: strings.grid.rowDetails });
+  const press = (init: KeyboardEventInit) =>
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+    });
+  press({ code: "KeyI", key: "i", metaKey: true });
+  expect(details).toHaveAttribute("aria-pressed", "false");
+  // Another layout: the physical I key types another character.
+  press({ code: "KeyI", key: "ı", ctrlKey: true });
+  expect(details).toHaveAttribute("aria-pressed", "true");
+});
+
+test("custom view and row details combinations work and the defaults no longer do", async () => {
+  const user = userEvent.setup();
+  useSettings.setState({
+    settings: {
+      ...DEFAULT_SETTINGS,
+      keymap: { "grid.viewStructure": "Alt+S", "grid.viewData": "Alt+D", "grid.rowDetails": "Mod+Shift+I" },
+    },
+  });
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await screen.findByTestId("grid");
+  const details = screen.getByRole("button", { name: strings.grid.rowDetails });
+  await user.keyboard("{Control>}i{/Control}");
+  expect(details).toHaveAttribute("aria-pressed", "false");
+  await user.keyboard("{Control>}{Shift>}i{/Shift}{/Control}");
+  expect(details).toHaveAttribute("aria-pressed", "true");
+  const selected = (name: string) => screen.getByRole("tab", { name }).getAttribute("aria-selected");
+  await user.keyboard("{Alt>}2{/Alt}");
+  expect(selected(strings.grid.view.data)).toBe("true");
+  await user.keyboard("{Alt>}s{/Alt}");
+  expect(selected(strings.grid.view.structure)).toBe("true");
+  await user.keyboard("{Alt>}d{/Alt}");
+  expect(selected(strings.grid.view.data)).toBe("true");
 });
 
 test("the structure follows the table shown after a foreign key jump", async () => {

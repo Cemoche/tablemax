@@ -1,6 +1,6 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { isModalOpen, matchShortcut, useShortcut } from "./shortcuts";
+import { isModalOpen, matchCombination, matchShortcut, useShortcut } from "./shortcuts";
 
 // Tests simulate the platform by spying on `navigator.platform` (lib/platform's isMac reads
 // it, unless `navigator.userAgentData.platform` is present, which jsdom lacks).
@@ -88,4 +88,87 @@ test("useShortcut allowInModal lets a handler run over a modal", () => {
   document.body.innerHTML = '<div aria-modal="true"></div>';
   window.dispatchEvent(key({ code: "KeyK", ctrlKey: true }));
   expect(handler).toHaveBeenCalledTimes(1);
+});
+
+test("useShortcut capture + stopPropagation runs before, and hides the key from, a child's listener", () => {
+  platform("Linux x86_64");
+  const child = document.createElement("div");
+  document.body.appendChild(child);
+  const childKey = vi.fn();
+  child.addEventListener("keydown", childKey);
+  const handler = vi.fn();
+  renderHook(() => useShortcut("Alt+1", handler, { capture: true, stopPropagation: true }));
+  child.dispatchEvent(key({ code: "Digit1", altKey: true, bubbles: true, cancelable: true }));
+  expect(handler).toHaveBeenCalledTimes(1);
+  expect(childKey).not.toHaveBeenCalled();
+  // Other keys still reach the child.
+  child.dispatchEvent(key({ code: "Digit3", altKey: true, bubbles: true, cancelable: true }));
+  expect(childKey).toHaveBeenCalledTimes(1);
+});
+
+test("without stopPropagation the event still reaches the child after a capture handler", () => {
+  platform("Linux x86_64");
+  const child = document.createElement("div");
+  document.body.appendChild(child);
+  const order: string[] = [];
+  child.addEventListener("keydown", () => order.push("child"));
+  renderHook(() => useShortcut("Alt+ArrowLeft", () => order.push("shortcut"), { capture: true }));
+  child.dispatchEvent(key({ code: "ArrowLeft", altKey: true, bubbles: true, cancelable: true }));
+  expect(order).toEqual(["shortcut", "child"]);
+});
+
+test("useShortcut skipInEditable ignores keys typed in a field", () => {
+  platform("Linux x86_64");
+  const handler = vi.fn();
+  renderHook(() => useShortcut("Alt+1", handler, { skipInEditable: true }));
+  const fire = (target: Element) =>
+    target.dispatchEvent(key({ code: "Digit1", altKey: true, bubbles: true, cancelable: true }));
+  for (const tag of ["input", "textarea", "select"]) {
+    const el = document.createElement(tag);
+    document.body.appendChild(el);
+    fire(el);
+  }
+  const editable = document.createElement("div");
+  editable.contentEditable = "true";
+  // jsdom does not compute isContentEditable from the attribute.
+  Object.defineProperty(editable, "isContentEditable", { value: true });
+  document.body.appendChild(editable);
+  fire(editable);
+  expect(handler).not.toHaveBeenCalled();
+  fire(document.body);
+  expect(handler).toHaveBeenCalledTimes(1);
+});
+
+test("useShortcut enabled: false registers nothing", () => {
+  platform("Linux x86_64");
+  const handler = vi.fn();
+  const { rerender } = renderHook(({ on }) => useShortcut("Mod+I", handler, { enabled: on }), {
+    initialProps: { on: false },
+  });
+  const ev = () => key({ code: "KeyI", ctrlKey: true, cancelable: true });
+  const e1 = ev();
+  window.dispatchEvent(e1);
+  expect(handler).not.toHaveBeenCalled();
+  expect(e1.defaultPrevented).toBe(false);
+  rerender({ on: true });
+  window.dispatchEvent(ev());
+  expect(handler).toHaveBeenCalledTimes(1);
+});
+
+test("useShortcut follows a new spec without remounting", () => {
+  platform("Linux x86_64");
+  const handler = vi.fn();
+  const { rerender } = renderHook(({ spec }) => useShortcut(spec, handler), { initialProps: { spec: "Mod+K" } });
+  rerender({ spec: "Mod+Shift+K" });
+  window.dispatchEvent(key({ code: "KeyK", ctrlKey: true }));
+  expect(handler).not.toHaveBeenCalled();
+  window.dispatchEvent(key({ code: "KeyK", ctrlKey: true, shiftKey: true }));
+  expect(handler).toHaveBeenCalledTimes(1);
+});
+
+test("matchCombination is matchShortcut without the auto-repeat rule", () => {
+  platform("Linux x86_64");
+  expect(matchCombination(key({ code: "Enter", ctrlKey: true, repeat: true }), "Mod+Enter")).toBe(true);
+  expect(matchCombination(key({ code: "Enter", ctrlKey: true }), "Mod+Enter")).toBe(true);
+  expect(matchCombination(key({ code: "Enter", metaKey: true, repeat: true }), "Mod+Enter")).toBe(false);
 });

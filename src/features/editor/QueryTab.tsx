@@ -2,10 +2,9 @@ import type { EditorView } from "@codemirror/view";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { isConfirmationRequired, parseConfirmationIndices, toAppError } from "../../lib/errors";
-import { useEffectiveShortcut } from "../../lib/keymap";
+import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { registerPendingFlush } from "../../lib/pendingFlush";
 import { formatShortcut } from "../../lib/platform";
-import { useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { useAutoLimit } from "../../stores/autoLimit";
 import { useCatalog } from "../../stores/catalog";
@@ -289,8 +288,8 @@ export function QueryTab({ workspace, tab }: Props) {
   };
 
   // Mounted only for the active SQL tab: in a table tab Mod+S stays the grid's commit.
-  useShortcut("Mod+S", () => void save());
-  useShortcut("Mod+Shift+H", () => useQueryPanels.getState().toggleHistory(tabId));
+  useAction("query.save", () => void save());
+  useAction("history.toggle", () => useQueryPanels.getState().toggleHistory(tabId));
   const saveShortcut = useEffectiveShortcut("query.save");
   const historyShortcut = useEffectiveShortcut("history.toggle");
 

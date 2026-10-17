@@ -1,5 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { beforeEach, expect, test } from "vitest";
+import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { TabSwitcher } from "./TabSwitcher";
 
@@ -35,6 +36,7 @@ const selected = () =>
 
 beforeEach(() => {
   useWorkspaces.setState({ workspaces: [workspace], activeWorkspaceId: "w1" });
+  useSettings.setState({ settings: DEFAULT_SETTINGS });
 });
 
 test("Ctrl+Tab lists tabs in mru order with the 2nd selected; releasing Ctrl activates it", () => {
@@ -91,4 +93,41 @@ test("does nothing with a single tab or while a modal is open", () => {
   ctrlTab();
   expect(screen.queryByRole("listbox")).toBeNull();
   modal.remove();
+});
+
+test("custom next/previous combinations cycle while their modifier is held; Ctrl+Tab no longer does", () => {
+  useSettings.setState({
+    settings: { ...DEFAULT_SETTINGS, keymap: { "tab.next": "Alt+Q", "tab.previous": "Alt+Shift+Q" } },
+  });
+  render(<TabSwitcher workspace={workspace} />);
+  ctrlTab();
+  expect(screen.queryByRole("listbox")).toBeNull();
+  releaseCtrl();
+  expect(active()).toBe("c");
+
+  const altQ = (extra: KeyboardEventInit = {}) => press({ code: "KeyQ", key: "q", altKey: true, ...extra });
+  altQ();
+  expect(selected()).toHaveTextContent("Alpha");
+  altQ();
+  expect(selected()).toHaveTextContent("Beta");
+  altQ({ shiftKey: true });
+  expect(selected()).toHaveTextContent("Alpha");
+  // Releasing another modifier does not commit; releasing Alt does.
+  releaseCtrl();
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  press({ code: "AltLeft", key: "Alt" }, "keyup");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(active()).toBe("a");
+});
+
+test("a combination with no modifier to hold switches once per press, without the list", () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "tab.next": "F6", "tab.previous": "Shift+F6" } } });
+  render(<TabSwitcher workspace={workspace} />);
+  press({ code: "F6", key: "F6" });
+  expect(screen.queryByRole("listbox")).toBeNull();
+  // The most recently used other tab, as Ctrl+Tab then release would pick.
+  expect(active()).toBe("a");
+  press({ code: "F6", key: "F6", shiftKey: true });
+  // The least recently used tab (mru is now a, c, b).
+  expect(active()).toBe("b");
 });

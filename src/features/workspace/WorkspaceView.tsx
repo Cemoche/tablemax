@@ -1,6 +1,5 @@
-import { useEffectiveShortcut } from "../../lib/keymap";
+import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
-import { useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
@@ -68,14 +67,14 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   // reach the backend with it.
   const connected = workspace.status === "connected";
 
-  useShortcut("Mod+T", () => openQueryTab(id));
-  useShortcut("Mod+W", () => {
+  useAction("query.new", () => openQueryTab(id));
+  useAction("tab.close", () => {
     if (activeTabId) closeTab(id, activeTabId);
   });
   // Mod+S commits the active table tab (a SQL tab binds Mod+S to save the query), unless
-  // a modal (useShortcut) or the grid's cell editor is open: the edit being typed is not
+  // a modal (useAction) or the grid's cell editor is open: the edit being typed is not
   // pending yet. A restored workspace's placeholder id must not reach the backend.
-  useShortcut("Mod+S", () => {
+  useAction("grid.commit", () => {
     if (!connected || active?.kind !== "table") return;
     if (usePendingChanges.getState().editorOpen[active.id]) return;
     void usePendingChanges.getState().commit(active.id, id, active.object);

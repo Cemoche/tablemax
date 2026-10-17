@@ -42,7 +42,15 @@ function codeFor(key: string): string {
  * (layout independent) and the modifiers must match exactly. Auto-repeat never matches.
  */
 export function matchShortcut(e: KeyboardEvent, spec: string): boolean {
-  if (e.repeat) return false;
+  return !e.repeat && matchCombination(e, spec);
+}
+
+/**
+ * `matchShortcut` without the auto-repeat rule: are these the keys of `spec`? For a handler
+ * that must swallow the repeats of its own combination (so a default binding of the same
+ * keys does not act on them) without running the action again.
+ */
+export function matchCombination(e: KeyboardEvent, spec: string): boolean {
   const parts = spec.split("+");
   const key = parts.pop() as string;
   let ctrl = false;
@@ -81,12 +89,28 @@ export function matchShortcut(e: KeyboardEvent, spec: string): boolean {
 export interface ShortcutOptions {
   /** Fire even while a modal dialog is open (for a handler that manages modals itself). */
   allowInModal?: boolean;
+  /** Listen in the capture phase, before the focused element's own handlers (the grid). */
+  capture?: boolean;
+  /** Stop a matching event there, so the focused element never sees it. */
+  stopPropagation?: boolean;
+  /** Ignore the keys typed in an input, textarea, select or contentEditable element. */
+  skipInEditable?: boolean;
+  /** Registers nothing while false (hooks cannot be called conditionally). Default true. */
+  enabled?: boolean;
+}
+
+const EDITABLE = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+
+/** Is `target` a field the user types in? */
+export function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (EDITABLE.has(target.tagName) || target.isContentEditable);
 }
 
 /**
  * Registers a window `keydown` shortcut for the lifetime of the component. A matching
- * event is `preventDefault`ed before `handler` runs. Skipped on auto-repeat and while a
- * modal is open (unless `allowInModal`).
+ * event is `preventDefault`ed (and stopped with `stopPropagation`) before `handler` runs.
+ * Skipped on auto-repeat, while a modal is open (unless `allowInModal`) and, with
+ * `skipInEditable`, in a field.
  */
 export function useShortcut(
   spec: string,
@@ -95,15 +119,24 @@ export function useShortcut(
 ): void {
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
-  const { allowInModal = false } = opts;
+  const {
+    allowInModal = false,
+    capture = false,
+    stopPropagation = false,
+    skipInEditable = false,
+    enabled = true,
+  } = opts;
   useEffect(() => {
+    if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
       if (!matchShortcut(e, spec)) return;
+      if (skipInEditable && isEditableTarget(e.target)) return;
       if (!allowInModal && isModalOpen()) return;
       e.preventDefault();
+      if (stopPropagation) e.stopPropagation();
       handlerRef.current(e);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [spec, allowInModal]);
+    window.addEventListener("keydown", onKey, capture);
+    return () => window.removeEventListener("keydown", onKey, capture);
+  }, [spec, allowInModal, capture, stopPropagation, skipInEditable, enabled]);
 }
