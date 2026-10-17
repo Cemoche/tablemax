@@ -261,41 +261,47 @@ impl Session for SqliteSession {
 
     async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
         let schema = schema.unwrap_or("main").to_string();
-        // One blocking call: sqlite_schema joined with the table-valued pragma_table_info.
+        // One blocking call. Columns are read per object so that a broken view (its base
+        // table dropped) is listed without columns instead of failing the whole catalog.
         self.with_conn(move |c| {
             let sql = format!(
-                "SELECT m.name, m.type, p.name, p.type \
-                 FROM {}.sqlite_schema m LEFT JOIN pragma_table_info(m.name, ?1) p ON 1 \
-                 WHERE m.type IN ('table','view') AND substr(m.name,1,7) <> 'sqlite_' \
-                 ORDER BY m.name, p.cid",
+                "SELECT name, type FROM {}.sqlite_schema \
+                 WHERE type IN ('table','view') AND substr(name,1,7) <> 'sqlite_' \
+                 ORDER BY name",
                 super::sql::quote_ident(Dialect::Sqlite, &schema)
             );
             let mut stmt = c.prepare(&sql).map_err(map_err)?;
-            let rows = stmt
-                .query_map([&schema], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, Option<String>>(2)?,
-                        r.get::<_, Option<String>>(3)?,
-                    ))
-                })
+            let objects = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
                 .map_err(map_err)?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(map_err)?;
+            let columns_of = |name: &str| -> rusqlite::Result<Vec<CatalogColumn>> {
+                let mut st =
+                    c.prepare("SELECT name, type FROM pragma_table_info(?1, ?2) ORDER BY cid")?;
+                st.query_map([name, schema.as_str()], |r| {
+                    Ok(CatalogColumn {
+                        name: r.get(0)?,
+                        type_name: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    })
+                })?
+                .collect()
+            };
             Ok(group_rows(
                 Some(schema.clone()),
-                rows.into_iter().map(|(table, ty, name, col_type)| {
+                objects.into_iter().flat_map(|(name, ty)| {
                     let kind = if ty == "view" {
                         ObjectKind::View
                     } else {
                         ObjectKind::Table
                     };
-                    let col = name.map(|name| CatalogColumn {
-                        name,
-                        type_name: col_type.unwrap_or_default(),
-                    });
-                    (table, kind, col)
+                    match columns_of(&name) {
+                        Ok(cols) if !cols.is_empty() => cols
+                            .into_iter()
+                            .map(|col| (name.clone(), kind, Some(col)))
+                            .collect::<Vec<_>>(),
+                        _ => vec![(name, kind, None)],
+                    }
                 }),
             ))
         })

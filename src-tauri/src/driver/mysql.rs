@@ -929,9 +929,12 @@ impl Session for MySession {
                  FROM information_schema.TABLES t \
                  LEFT JOIN information_schema.COLUMNS c \
                  ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME \
-                 WHERE t.TABLE_SCHEMA = ? AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
-                 ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION",
-                (db.clone(),),
+                 AND BINARY c.TABLE_NAME = BINARY t.TABLE_NAME \
+                 AND BINARY c.TABLE_SCHEMA = BINARY t.TABLE_SCHEMA \
+                 WHERE t.TABLE_SCHEMA = ? AND BINARY t.TABLE_SCHEMA = BINARY ? \
+                 AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
+                 ORDER BY BINARY t.TABLE_NAME, c.ORDINAL_POSITION",
+                (db.clone(), db.clone()),
             )
             .await?;
         Ok(group_rows(

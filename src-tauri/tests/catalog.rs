@@ -586,3 +586,63 @@ async fn mysql_and_sqlite_do_not_switch_database() {
         m.mgr.close_workspace(&ws.workspace_id).await.unwrap();
     }
 }
+
+/// MariaDB's information_schema compares names case/accent-insensitively: tables that
+/// differ only by case or accent must keep their own columns.
+#[tokio::test]
+async fn catalog_keeps_case_and_accent_variants_apart() {
+    let defs: [(&str, [&str; 2]); 4] = [
+        ("Tt", ["a", "b"]),
+        ("tt", ["x", "y"]),
+        ("cafe", ["c1", "c2"]),
+        ("café", ["d1", "d2"]),
+    ];
+    let create = |kind: DriverKind, name: &str, cols: &[&str; 2]| {
+        let c: Vec<String> = cols.iter().map(|c| format!("{} int", q(kind, c))).collect();
+        format!("CREATE TABLE {} ({})", q(kind, name), c.join(", "))
+    };
+    for t in server_targets().await {
+        for (name, cols) in &defs {
+            t.session
+                .execute(&create(t.kind, name, cols))
+                .await
+                .unwrap_or_else(|e| panic!("{} {name}: {e:?}", t.label));
+        }
+        let c = t.session.catalog(Some(&t.schema)).await.unwrap();
+        assert_eq!(c.tables.len(), 4, "{}: {:?}", t.label, c.tables);
+        for (name, cols) in &defs {
+            assert_eq!(col_names(table(&c, name)), cols, "{} {name}", t.label);
+        }
+    }
+    // SQLite table names are case-insensitive: only the accent pair can coexist.
+    let (_d, s) = sqlite_session().await;
+    let lite = &defs[2..];
+    for (name, cols) in lite {
+        s.execute(&create(DriverKind::Sqlite, name, cols))
+            .await
+            .unwrap();
+    }
+    let c = s.catalog(None).await.unwrap();
+    assert_eq!(c.tables.len(), 2);
+    for (name, cols) in lite {
+        assert_eq!(col_names(table(&c, name)), cols, "sqlite {name}");
+    }
+}
+
+#[tokio::test]
+async fn sqlite_catalog_survives_a_dangling_view() {
+    let (_d, s) = sqlite_session().await;
+    s.execute("CREATE TABLE a (id INTEGER, v TEXT)")
+        .await
+        .unwrap();
+    s.execute("CREATE TABLE b (k INTEGER)").await.unwrap();
+    s.execute("CREATE VIEW dangling AS SELECT id FROM a")
+        .await
+        .unwrap();
+    s.execute("DROP TABLE a").await.unwrap();
+    let c = s.catalog(None).await.unwrap();
+    let d = table(&c, "dangling");
+    assert_eq!(d.kind, ObjectKind::View);
+    assert!(d.columns.is_empty());
+    assert_eq!(col_names(table(&c, "b")), ["k"]);
+}
