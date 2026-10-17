@@ -1,4 +1,3 @@
-import { cellContent } from "../features/grid/cellContent";
 import { bytesLiteral, qualifiedName, quoteIdent, quoteString } from "./sqlQuote";
 import type { CellValue, Dialect, ObjectRef } from "./types";
 
@@ -11,9 +10,22 @@ const bytesComplete = (v: { len: number; hexPreview: string }) => v.hexPreview.l
 const isTruncated = (c: CellValue) =>
   c.t === "longText" || (c.t === "bytes" && !bytesComplete(c.v));
 
-/** Text of a cell for TSV/CSV: the grid's copy text (NULL empty), bytes as `0x<hex>`. */
-function cellText(c: CellValue): string {
-  return c.t === "bytes" ? `0x${c.v.hexPreview}` : cellContent(c).copyText;
+/** Text of a cell for TSV/CSV/JSON: NULL empty, truncated values as their preview, bytes as `0x<hex>`. */
+function cellCopyText(c: CellValue): string {
+  switch (c.t) {
+    case "null":
+      return "";
+    case "bool":
+    case "int":
+    case "float":
+      return String(c.v);
+    case "longText":
+      return c.v.preview;
+    case "bytes":
+      return `0x${c.v.hexPreview}`;
+    default:
+      return c.v;
+  }
 }
 
 function delimited(
@@ -25,13 +37,18 @@ function delimited(
 ): string {
   const field = (s: string) => (needsQuote.test(s) ? `"${s.split('"').join('""')}"` : s);
   const lines = [columns.map(field).join(sep)];
-  for (const row of rows) lines.push(row.map((c) => field(cellText(c))).join(sep));
+  for (const row of rows) {
+    // Iterate over the columns: a short row pads with empty fields.
+    lines.push(columns.map((_, i) => field(row[i] ? cellCopyText(row[i]) : "")).join(sep));
+  }
   return lines.join(eol);
 }
 
 /**
  * Header row then one line per row, tab-separated, LF line endings, no trailing newline.
  * Fields with a tab, CR, LF or `"` are quoted with doubled quotes (spreadsheet convention).
+ * This is a raw data copy, not a spreadsheet-safe export: values starting with `= + - @` are
+ * NOT neutralised, because a database client must copy the data exactly as stored.
  */
 export function toTsv(columns: string[], rows: CellValue[][]): string {
   return delimited(columns, rows, "\t", "\n", /[\t\r\n"]/);
@@ -40,49 +57,77 @@ export function toTsv(columns: string[], rows: CellValue[][]): string {
 /**
  * RFC 4180: header row, CRLF line endings, no trailing line break; fields with `,`, `"`, CR
  * or LF are quoted with doubled quotes; NULL and the empty string are both an empty field.
+ * Raw data copy, not a spreadsheet-safe export: values starting with `= + - @` are NOT
+ * neutralised (formula injection), because a database client must copy data exactly.
  */
 export function toCsv(columns: string[], rows: CellValue[][]): string {
   return delimited(columns, rows, ",", "\r\n", /[,"\r\n]/);
 }
 
-function jsonValue(c: CellValue): unknown {
+/** Drops the whitespace outside strings of valid JSON text (keeps number text untouched). */
+function compactJson(t: string): string {
+  let out = "";
+  let inStr = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (inStr) {
+      out += c;
+      if (c === "\\") out += t[++i];
+      else if (c === '"') inStr = false;
+    } else if (c === '"') {
+      inStr = true;
+      out += c;
+    } else if (!/\s/.test(c)) out += c;
+  }
+  return out;
+}
+
+/** JSON text of one cell. A json cell's own text is spliced in (after validation) so big
+ * integers and trailing zeros survive; invalid json falls back to a JSON string. */
+function jsonText(c: CellValue): string {
   switch (c.t) {
     case "null":
-      return null;
+      return "null";
     case "bool":
-      return c.v;
+      return String(c.v);
     case "int":
     case "float":
       // JSON has no NaN/Infinity: keep them as text rather than a silent null.
-      return Number.isFinite(c.v) ? c.v : String(c.v);
+      return Number.isFinite(c.v) ? String(c.v) : JSON.stringify(String(c.v));
     case "json":
       try {
-        return JSON.parse(c.v);
+        JSON.parse(c.v);
+        return compactJson(c.v);
       } catch {
-        return c.v; // not valid JSON (e.g. truncated by the server): keep the text
+        return JSON.stringify(c.v);
       }
     default:
-      return cellText(c); // bigInt/decimal/text/temporal as strings; truncated ones as preview
+      return JSON.stringify(cellCopyText(c)); // bigInt/decimal/text/temporal as strings; truncated as preview
   }
 }
 
 /**
- * Array of objects keyed by column name, pretty-printed with 2 spaces. bigInt/decimal stay
- * strings (no precision loss), json is parsed, NULL is null. With duplicate column names the
- * last one wins.
+ * Array of objects keyed by column name, 2-space indent (a json cell is spliced in compact).
+ * bigInt/decimal stay strings, json keeps its exact text (no number rounding), NULL is null.
+ * Built by hand, so a column named `__proto__` is a normal key. With duplicate column names
+ * the last value wins, at the first one's position.
  */
 export function toJson(columns: string[], rows: CellValue[][]): string {
-  const out = rows.map((row) => {
-    const o: Record<string, unknown> = {};
-    columns.forEach((name, i) => {
-      o[name] = jsonValue(row[i] ?? { t: "null" });
-    });
-    return o;
+  if (rows.length === 0) return "[]";
+  const items = rows.map((row) => {
+    const entries = new Map<string, string>();
+    columns.forEach((name, i) => entries.set(name, jsonText(row[i] ?? { t: "null" })));
+    if (entries.size === 0) return "  {}";
+    const body = [...entries].map(([k, v]) => `    ${JSON.stringify(k)}: ${v}`);
+    return `  {\n${body.join(",\n")}\n  }`;
   });
-  return JSON.stringify(out, null, 2);
+  return `[\n${items.join(",\n")}\n]`;
 }
 
-/** SQL literal of a complete cell. Booleans: TRUE/FALSE, but 1/0 on SQLite (portable to old versions). */
+/**
+ * SQL literal of a complete cell. Booleans: TRUE/FALSE, but 1/0 on SQLite (portable to old
+ * versions). Strings: see quoteString (MySQL NO_BACKSLASH_ESCAPES caveat applies to the script).
+ */
 function sqlLiteral(d: Dialect, c: CellValue): string {
   switch (c.t) {
     case "null":

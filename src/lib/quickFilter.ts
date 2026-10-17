@@ -106,7 +106,10 @@ class Parser {
     return false;
   }
   private describe(t: Token): string {
-    return t.k === "end" ? "end of input" : "s" in t ? `"${t.s}"` : `"${t.k}"`;
+    if (t.k === "end") return "end of input";
+    if (t.k === "sq") return `'${t.s}'`;
+    if (t.k === "bt") return `\`${t.s}\``;
+    return "s" in t ? `"${t.s}"` : `"${t.k}"`;
   }
 
   parseAll(): Filter[] {
@@ -137,6 +140,7 @@ class Parser {
     const t = this.next();
     if (t.k === "sq" || t.k === "dq") return t.s;
     if (t.k === "word") {
+      if (t.s.toLowerCase() === "null") return fail("use IS NULL / IS NOT NULL to test for NULL");
       if (RESERVED.has(t.s.toLowerCase())) {
         return fail(`"${t.s}" is a keyword: quote it ('${t.s}') to use it as a value`);
       }
@@ -204,7 +208,7 @@ class Parser {
         }
       }
       default:
-        return fail(`expected an operator, found "${t.k === "word" ? t.s : w}"`);
+        return fail(`expected an operator, found ${this.describe(t)}`);
     }
   }
 

@@ -29,13 +29,15 @@ describe("quoteString", () => {
   });
   test("MySQL also doubles backslashes", () => {
     expect(quoteString("mySql", "a\\b'c")).toBe("'a\\\\b''c'");
-    expect(quoteString("postgres", "a\\b")).toBe("'a\\b'");
+    expect(quoteString("postgres", "a\\b'c")).toBe("E'a\\\\b''c'");
+    expect(quoteString("postgres", "plain")).toBe("'plain'");
+    expect(quoteString("sqlite", "a\\b")).toBe("'a\\b'");
   });
 });
 
 describe("bytesLiteral", () => {
   test("per dialect", () => {
-    expect(bytesLiteral("postgres", "00ff")).toBe("'\\x00ff'");
+    expect(bytesLiteral("postgres", "00ff")).toBe("E'\\\\x00ff'");
     expect(bytesLiteral("mySql", "00ff")).toBe("X'00ff'");
     expect(bytesLiteral("sqlite", "00ff")).toBe("X'00ff'");
   });

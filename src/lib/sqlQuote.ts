@@ -17,13 +17,20 @@ export function qualifiedName(d: Dialect, obj: ObjectRef): string {
     : `${quoteIdent(d, obj.schema)}.${quoteIdent(d, obj.name)}`;
 }
 
-/** A text literal: `'` doubled everywhere; MySQL also doubles `\` (its default escape). */
+/**
+ * A text literal. `'` is doubled everywhere. PostgreSQL: a string with a backslash is
+ * written `E'…'` with `\` doubled, so it reads the same whatever standard_conforming_strings
+ * is; other strings stay `'…'`. MySQL doubles `\` (correct in the default sql_mode; under
+ * NO_BACKSLASH_ESCAPES the doubled backslashes would be read literally). SQLite has no escapes.
+ */
 export function quoteString(d: Dialect, s: string): string {
-  const body = d === "mySql" ? s.split("\\").join("\\\\") : s;
-  return `'${body.split("'").join("''")}'`;
+  const q = s.split("'").join("''");
+  if (d === "mySql") return `'${q.split("\\").join("\\\\")}'`;
+  if (d === "postgres" && s.includes("\\")) return `E'${q.split("\\").join("\\\\")}'`;
+  return `'${q}'`;
 }
 
-/** A binary literal from lowercase/uppercase hex digits: `'\x…'` on PostgreSQL, `X'…'` elsewhere. */
+/** A binary literal from hex digits: `E'\\x…'` on PostgreSQL (mode-independent), `X'…'` elsewhere. */
 export function bytesLiteral(d: Dialect, hex: string): string {
-  return d === "postgres" ? `'\\x${hex}'` : `X'${hex}'`;
+  return d === "postgres" ? `E'\\\\x${hex}'` : `X'${hex}'`;
 }

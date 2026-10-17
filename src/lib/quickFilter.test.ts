@@ -130,12 +130,14 @@ describe("parseQuickFilter", () => {
   });
   test("bare keywords are not values; quote them", () => {
     bad("status = and");
-    bad("status = null");
+    expect(bad("status = null")).toMatch(/IS NULL/);
+    expect(bad("status = in")).toMatch(/quote it/);
     expect(ok("status = 'and'")).toEqual([{ column: "status", op: "eq", values: ["and"] }]);
     expect(ok("status = 'null'")).toEqual([{ column: "status", op: "eq", values: ["null"] }]);
   });
   test("a quoted 'and' is not the AND keyword", () => {
-    bad("total > 1 'and' id = 2");
+    expect(bad("total > 1 'and' id = 2")).toBe("expected AND, found 'and'");
+    expect(bad("status 't'")).toBe("expected an operator, found 't'");
   });
   test("malformed lists and ranges", () => {
     bad("id in ()");

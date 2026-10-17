@@ -61,6 +61,13 @@ describe("toTsv", () => {
       'a\n"a\tb"\n"l1\nl2"\n"q"""',
     );
   });
+  test("short rows pad with empty fields", () => {
+    expect(toTsv(["a", "b", "c"], [[T("1")]])).toBe("a\tb\tc\n1\t\t");
+    expect(toCsv(["a", "b"], [[T("1")]])).toBe("a,b\r\n1,");
+  });
+  test("formula-looking values are copied as is", () => {
+    expect(toCsv(["a"], [[T("=1+1")], [T("@x")]])).toBe("a\r\n=1+1\r\n@x");
+  });
   test("commas are not special", () => {
     expect(toTsv(["a"], [[T("a,b")]])).toBe("a\na,b");
   });
@@ -101,6 +108,18 @@ describe("toJson", () => {
       },
     ]);
     expect(out).toContain('\n  {\n    "i": 1');
+  });
+  test("json cells keep their exact number text", () => {
+    const out = toJson(["j"], [[{ t: "json", v: '{ "id": 9007199254740993,\n "d": 1.10, "s": "a b" }' }]]);
+    expect(out).toBe('[\n  {\n    "j": {"id":9007199254740993,"d":1.10,"s":"a b"}\n  }\n]');
+    expect(JSON.parse(out)).toHaveLength(1);
+  });
+  test("a __proto__ column is a normal key", () => {
+    const out = toJson(["__proto__", "x"], [[T("p"), { t: "int", v: 1 }]]);
+    expect(out).toBe('[\n  {\n    "__proto__": "p",\n    "x": 1\n  }\n]');
+  });
+  test("duplicate column names: last value wins", () => {
+    expect(JSON.parse(toJson(["a", "a"], [[T("1"), T("2")]]))).toEqual([{ a: "2" }]);
   });
   test("empty rows give []", () => {
     expect(toJson(cols, [])).toBe("[]");
@@ -144,7 +163,7 @@ describe("toInsert", () => {
   });
   test("PostgreSQL bytes use the \\x form", () => {
     expect(toInsert("postgres", { schema: null, name: "t" }, ["b"], [[{ t: "bytes", v: { len: 1, hexPreview: "ab" } }]])).toBe(
-      `INSERT INTO "t" ("b") VALUES ('\\xab');`,
+      `INSERT INTO "t" ("b") VALUES (E'\\\\xab');`,
     );
   });
   test("bigInt, decimal, json and temporal are quoted strings", () => {
@@ -163,7 +182,7 @@ describe("toInsert", () => {
     const lines = out.split("\n");
     expect(lines[0]).toBe('-- truncated value in column "big": row 1 skipped');
     expect(lines[1]).toBe('-- truncated value in column "big": row 2 skipped');
-    expect(lines[2]).toBe(`INSERT INTO "t" ("a", "big") VALUES ('3', '\\xdead');`);
+    expect(lines[2]).toBe(`INSERT INTO "t" ("a", "big") VALUES ('3', E'\\\\xdead');`);
     expect(out).not.toContain("abc");
   });
   test("newlines in a column name cannot escape the comment", () => {
