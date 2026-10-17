@@ -194,6 +194,28 @@ async fn mysql_compound_procedure_runs_through_execute_batch() {
             }
             other => panic!("{url} sneaky: {other:?}"),
         }
+        // Review round 1: these ran `DROP TABLE` on both servers when the lexer took a
+        // BEGIN / CASE outside a statement start for a block. Each must be refused and the
+        // table must survive.
+        let got = batch(&m.mgr, &sid, &["CREATE TABLE guard_x (a INT)"]).await;
+        assert!(matches!(&got[..], [Got::Finished(_)]), "{url}: {got:?}");
+        for sneaky in [
+            "create procedure p4_case() begin set @case = 1; end; drop table guard_x; end",
+            "create procedure p4_sel() select begin from guard_x; drop table guard_x; end",
+            "create procedure p4_h() begin declare continue handler for sqlexception \
+             select begin from guard_x; end; drop table guard_x; end",
+        ] {
+            let got = batch(&m.mgr, &sid, &[sneaky]).await;
+            assert!(
+                matches!(&got[..], [Got::Failed(ErrorKind::Invalid, _)]),
+                "{url} {sneaky}: {got:?}"
+            );
+            let got = batch(&m.mgr, &sid, &["SELECT COUNT(*) FROM guard_x"]).await;
+            assert!(
+                matches!(&got[..], [Got::Finished(Some(_))]),
+                "{url}: guard_x must still exist after {sneaky}: {got:?}"
+            );
+        }
         m.mgr.close_sql_session(&sid).await.unwrap();
         m.mgr.close_workspace(&ws.workspace_id).await.unwrap();
     }

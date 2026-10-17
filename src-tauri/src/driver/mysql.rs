@@ -420,29 +420,101 @@ fn lex(sql: &str, modes: Modes) -> (Vec<Tok<'_>>, bool) {
     (out, saw_exec_comment)
 }
 
+/// Open compound constructs of a stored-program body.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Frame {
     Block,
+    If,
     CaseStmt,
-    CaseExpr,
+    Loop,
+    While,
+    Repeat,
 }
 
+/// What ends the expression being skipped.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Kind {
-    Routine,
-    Trigger,
-    Event,
+enum Until {
+    Then,
+    Do,
+    When,
+    EndRepeat,
+}
+
+/// Position inside a compound body.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Mode {
+    /// The next token starts a statement.
+    StmtStart,
+    /// Right after a block's BEGIN (MariaDB may add NOT ATOMIC).
+    AfterBegin,
+    ExpectAtomic,
+    /// A plain word at a statement start: a label if `:` follows, else a statement.
+    PendingWord,
+    /// After `label:`: BEGIN, LOOP, WHILE or REPEAT must follow.
+    Label,
+    /// Inside a non-compound statement: everything up to its `;` is ignored.
+    Ordinary,
+    /// Skipping a condition / operand up to THEN, DO, WHEN or END REPEAT; CASE … END
+    /// expressions inside are counted.
+    Expr {
+        until: Until,
+        case_depth: u32,
+    },
+    /// END at a statement start: the next token says what it closes.
+    EndPending,
+    /// END inside UNTIL …: must be END REPEAT.
+    EndRepeatPending,
+    /// After the END of a construct: an optional label, then `;` (or the end of input).
+    AfterClose {
+        label_allowed: bool,
+    },
+    DeclareStart,
+    DeclareKind,
+    DeclareFor,
+    Cond,
+    CondSqlstate {
+        value_seen: bool,
+    },
+    CondNot,
+    CondDone,
+}
+
+/// Routine header (after CREATE … PROCEDURE/FUNCTION), up to the first body token.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Hdr {
+    Name,
+    Params(u32),
+    Chars,
+    Returns,
+    TypeAfterName,
+    TypeParen(u32),
+    TypeName,
+    CharacterSet,
+    ExpectLit,
+    /// Keywords still expected: (first alternatives, then optionally one more keyword).
+    Expect(&'static [&'static str], Option<&'static [&'static str]>),
+}
+
+/// Trigger header: `… FOR EACH ROW [{FOLLOWS|PRECEDES} name]`, then the body.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TrigHdr {
+    Scan(u8),
+    AfterRow,
+    OrderName,
+    BodyNext,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
     Start,
     AfterCreate,
-    Header(Kind),
+    Routine(Hdr),
+    Trigger(TrigHdr),
+    /// Event header; true once DO was seen (the next token starts the body).
+    Event(bool),
     BeginNot,
     BeginAtomic,
     Body,
-    Done,
     Plain,
 }
 
@@ -463,140 +535,61 @@ const PLAIN_CREATE: [&str; 13] = [
     "RESOURCE",
 ];
 
-/// Follows the compound statement (`CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT … BEGIN … END`,
-/// MariaDB `BEGIN NOT ATOMIC … END`) the tokens belong to, so that the `;` inside its
-/// body are not statement ends. Conservative by design: anything it does not
-/// understand makes it refuse (`refuse`) or fall back to the plain rule (`Plain`). The
-/// server ends the routine at the END matching the body's BEGIN; counting a BEGIN the
-/// server does not (an identifier named `begin`) could hide a second statement, so a
-/// BEGIN only opens a block in statement position (or as the body / a handler body).
-/// Executable comments disable it (the server may or may not run their content).
+/// Type attributes allowed after `RETURNS <type> [(…)]`.
+const TYPE_MODS: [&str; 7] = [
+    "UNSIGNED", "SIGNED", "ZEROFILL", "BINARY", "ASCII", "UNICODE", "BYTE",
+];
+
+/// Words that are never the first word of a plain statement in a body.
+const CONTROL: [&str; 8] = [
+    "END", "ELSE", "ELSEIF", "WHEN", "UNTIL", "THEN", "DO", "DECLARE",
+];
+
+/// Follows the compound statement the tokens belong to (`CREATE PROCEDURE/FUNCTION/
+/// TRIGGER/EVENT` whose body is a compound statement, MariaDB `BEGIN NOT ATOMIC … END`),
+/// so that the `;` inside its body are not statement ends.
+///
+/// The server ends the CREATE at the end of the body statement; the tracker must never
+/// believe a body is still open when the server has ended it, or a following statement
+/// would run unseen. So it models where a statement STARTS: the body starts at the first
+/// token after the routine characteristics / `FOR EACH ROW [FOLLOWS|PRECEDES x]` / event
+/// `DO`; inside, a statement starts after `;`, BEGIN, `label:`, THEN, ELSE, DO (WHILE),
+/// LOOP, REPEAT and a handler's condition list. Only a BEGIN/IF/CASE/LOOP/WHILE/REPEAT in
+/// that position opens a construct (BEGIN and END are not reserved words: `select begin`
+/// is a column), only an END there closes one, and it must close the innermost
+/// construct (END IF, END CASE…). A body that does not start with a compound statement
+/// is a plain statement. Words after `.`, `@` or `@@` are identifiers. Anything else
+/// unexpected sets `refuse` (fail closed).
 struct Compound {
     phase: Phase,
+    mode: Mode,
     stack: Vec<Frame>,
-    paren: i32,
-    params_closed: bool,
-    saw_row: bool,
-    saw_do: bool,
-    stmt_pos: bool,
-    last_word_at_stmt: bool,
-    cur_first: Option<&'static str>,
-    in_handler: bool,
-    handler_begun: bool,
-    pending_begin: bool,
-    pending_end: bool,
-    labels_after_done: u8,
+    after_ident_marker: bool,
     absorbed: bool,
     refuse: bool,
-    prev: Option<Tok<'static>>,
 }
-
-/// Inner-statement keywords the tracker cares about, interned so `cur_first` is 'static.
-const FIRST_WORDS: [&str; 4] = ["IF", "ELSEIF", "WHILE", "DECLARE"];
 
 impl Compound {
     fn new(enabled: bool) -> Self {
         Compound {
             phase: if enabled { Phase::Start } else { Phase::Plain },
+            mode: Mode::StmtStart,
             stack: Vec::new(),
-            paren: 0,
-            params_closed: false,
-            saw_row: false,
-            saw_do: false,
-            stmt_pos: false,
-            last_word_at_stmt: false,
-            cur_first: None,
-            in_handler: false,
-            handler_begun: false,
-            pending_begin: false,
-            pending_end: false,
-            labels_after_done: 0,
+            after_ident_marker: false,
             absorbed: false,
             refuse: false,
-            prev: None,
         }
-    }
-
-    fn push(&mut self, f: Frame) {
-        self.stack.push(f);
-    }
-
-    /// Closes the innermost construct; a mismatch means the model diverged from the
-    /// server's: refuse.
-    fn pop(&mut self, closes_case_stmt: bool) {
-        match self.stack.pop() {
-            Some(Frame::CaseStmt) if closes_case_stmt => {}
-            Some(Frame::Block | Frame::CaseExpr) if !closes_case_stmt => {}
-            _ => self.refuse = true,
-        }
-        if self.stack.is_empty() {
-            self.phase = Phase::Done;
-        }
-    }
-
-    fn body_begin_allowed(&self, kind: Kind) -> bool {
-        match kind {
-            Kind::Routine => self.params_closed,
-            Kind::Event => self.saw_do,
-            Kind::Trigger => {
-                self.saw_row && !matches!(self.prev, Some(p) if p.is_any(&["FOLLOWS", "PRECEDES"]))
-            }
-        }
-    }
-
-    /// Resolves a pending BEGIN / END with the token that follows it. Returns true when
-    /// `tok` was consumed by the resolution.
-    fn resolve(&mut self, tok: Option<Tok<'_>>) -> bool {
-        if self.pending_begin {
-            self.pending_begin = false;
-            if tok == Some(Tok::Punct(b':')) {
-                // `begin: LOOP` — a label named begin.
-                self.stmt_pos = true;
-                return true;
-            }
-            self.push(Frame::Block);
-            self.stmt_pos = true;
-            return false;
-        }
-        if self.pending_end {
-            self.pending_end = false;
-            if let Some(t) = tok {
-                if t.is_any(&["IF", "LOOP", "WHILE", "REPEAT"]) {
-                    // END IF / END LOOP…: closes a construct not on the stack.
-                    return true;
-                }
-                if t.is("CASE") {
-                    self.pop(true);
-                    return true;
-                }
-            }
-            self.pop(false);
-        }
-        false
     }
 
     /// Feeds one token other than `;`.
     fn feed(&mut self, tok: Tok<'_>) {
-        let stat = |t: Tok<'_>| -> Option<Tok<'static>> {
-            match t {
-                Tok::Word(_) => None,
-                Tok::Punct(c) => Some(Tok::Punct(c)),
-                Tok::Lit => Some(Tok::Lit),
-            }
-        };
-        self.step(tok);
-        // Only keywords matter in `prev`: keep the interesting ones.
-        self.prev = match tok {
-            Tok::Word(w) => ["FOLLOWS", "PRECEDES", "FOR"]
-                .iter()
-                .find(|k| w.eq_ignore_ascii_case(k))
-                .map(|k| Tok::Word(k))
-                .or(Some(Tok::Word("_"))),
-            t => stat(t),
-        };
+        // A word right after `.` or `@` is an identifier (`t.case`, `@begin`, `@@x`).
+        let ident = self.after_ident_marker;
+        self.after_ident_marker = matches!(tok, Tok::Punct(b'.' | b'@'));
+        self.step(tok, ident);
     }
 
-    fn step(&mut self, tok: Tok<'_>) {
+    fn step(&mut self, tok: Tok<'_>, ident: bool) {
         match self.phase {
             Phase::Start => {
                 self.phase = if tok.is("CREATE") {
@@ -617,110 +610,430 @@ impl Compound {
             Phase::BeginAtomic => {
                 if tok.is("ATOMIC") {
                     self.phase = Phase::Body;
-                    self.push(Frame::Block);
-                    self.stmt_pos = true;
+                    self.stack.push(Frame::Block);
+                    self.mode = Mode::StmtStart;
                 } else {
                     self.phase = Phase::Plain;
                 }
             }
             Phase::AfterCreate => {
                 if tok.is_any(&["PROCEDURE", "FUNCTION"]) {
-                    self.phase = Phase::Header(Kind::Routine);
+                    self.phase = Phase::Routine(Hdr::Name);
                 } else if tok.is("TRIGGER") {
-                    self.phase = Phase::Header(Kind::Trigger);
+                    self.phase = Phase::Trigger(TrigHdr::Scan(0));
                 } else if tok.is("EVENT") {
-                    self.phase = Phase::Header(Kind::Event);
+                    self.phase = Phase::Event(false);
                 } else if tok.is_any(&PLAIN_CREATE) {
                     self.phase = Phase::Plain;
                 }
             }
-            Phase::Header(kind) => match tok {
-                Tok::Punct(b'(') => self.paren += 1,
-                Tok::Punct(b')') => {
-                    self.paren -= 1;
-                    if self.paren == 0 {
-                        self.params_closed = true;
-                    }
-                }
-                _ if self.paren == 0 && tok.is("ROW") => self.saw_row = true,
-                _ if self.paren == 0 && tok.is("DO") => self.saw_do = true,
-                _ if self.paren == 0 && tok.is("BEGIN") && self.body_begin_allowed(kind) => {
-                    self.phase = Phase::Body;
-                    self.push(Frame::Block);
-                    self.stmt_pos = true;
-                }
-                _ => {}
-            },
-            Phase::Body => self.body(tok),
-            Phase::Done => {
-                // `END label` may follow the body; anything else is not one statement.
-                match tok {
-                    Tok::Word(_) if self.labels_after_done == 0 => self.labels_after_done = 1,
-                    _ => self.refuse = true,
+            Phase::Routine(h) => self.routine(h, tok),
+            Phase::Trigger(h) => self.trigger(h, tok),
+            Phase::Event(false) => {
+                if tok.is("DO") {
+                    self.phase = Phase::Event(true);
                 }
             }
+            Phase::Event(true) => self.start_body(tok),
+            Phase::Body => self.body(tok, ident),
             Phase::Plain => {}
         }
     }
 
-    fn body(&mut self, tok: Tok<'_>) {
-        if self.resolve(Some(tok)) {
+    fn start_body(&mut self, tok: Tok<'_>) {
+        self.phase = Phase::Body;
+        self.mode = Mode::StmtStart;
+        self.stmt_start(tok);
+    }
+
+    fn routine(&mut self, h: Hdr, tok: Tok<'_>) {
+        let set = |s: &mut Self, h: Hdr| s.phase = Phase::Routine(h);
+        match h {
+            Hdr::Name => {
+                if tok == Tok::Punct(b'(') {
+                    set(self, Hdr::Params(1));
+                }
+            }
+            Hdr::Params(d) => match tok {
+                Tok::Punct(b'(') => set(self, Hdr::Params(d + 1)),
+                Tok::Punct(b')') if d == 1 => set(self, Hdr::Chars),
+                Tok::Punct(b')') => set(self, Hdr::Params(d - 1)),
+                _ => {}
+            },
+            Hdr::Returns => match tok {
+                Tok::Word(_) => set(self, Hdr::TypeAfterName),
+                _ => self.phase = Phase::Plain,
+            },
+            Hdr::TypeAfterName => {
+                if tok == Tok::Punct(b'(') {
+                    set(self, Hdr::TypeParen(1));
+                } else if tok.is_any(&["CHARSET", "COLLATE"]) {
+                    set(self, Hdr::TypeName);
+                } else if tok.is("CHARACTER") {
+                    set(self, Hdr::CharacterSet);
+                } else if !tok.is_any(&TYPE_MODS) {
+                    self.chars(tok);
+                }
+            }
+            Hdr::TypeParen(d) => match tok {
+                Tok::Punct(b'(') => set(self, Hdr::TypeParen(d + 1)),
+                Tok::Punct(b')') if d == 1 => set(self, Hdr::TypeAfterName),
+                Tok::Punct(b')') => set(self, Hdr::TypeParen(d - 1)),
+                _ => {}
+            },
+            Hdr::TypeName => match tok {
+                Tok::Word(_) | Tok::Lit => set(self, Hdr::TypeAfterName),
+                _ => self.phase = Phase::Plain,
+            },
+            Hdr::CharacterSet => {
+                if tok.is("SET") {
+                    set(self, Hdr::TypeName);
+                } else {
+                    self.phase = Phase::Plain;
+                }
+            }
+            Hdr::ExpectLit => {
+                if tok == Tok::Lit {
+                    set(self, Hdr::Chars);
+                } else {
+                    self.phase = Phase::Plain;
+                }
+            }
+            Hdr::Expect(now, then) => {
+                if !tok.is_any(now) {
+                    self.phase = Phase::Plain;
+                } else if let Some(next) = then {
+                    set(self, Hdr::Expect(next, None));
+                } else {
+                    set(self, Hdr::Chars);
+                }
+            }
+            Hdr::Chars => self.chars(tok),
+        }
+    }
+
+    /// Routine characteristics; the first other token starts the body.
+    fn chars(&mut self, tok: Tok<'_>) {
+        let next = if tok.is("RETURNS") {
+            Hdr::Returns
+        } else if tok.is("COMMENT") {
+            Hdr::ExpectLit
+        } else if tok.is("LANGUAGE") || tok.is("CONTAINS") || tok.is("NO") {
+            Hdr::Expect(&["SQL"], None)
+        } else if tok.is("NOT") {
+            Hdr::Expect(&["DETERMINISTIC"], None)
+        } else if tok.is("DETERMINISTIC") {
+            Hdr::Chars
+        } else if tok.is_any(&["READS", "MODIFIES"]) {
+            Hdr::Expect(&["SQL"], Some(&["DATA"]))
+        } else if tok.is("SQL") {
+            Hdr::Expect(&["SECURITY"], Some(&["DEFINER", "INVOKER"]))
+        } else {
+            return self.start_body(tok);
+        };
+        self.phase = Phase::Routine(next);
+    }
+
+    fn trigger(&mut self, h: TrigHdr, tok: Tok<'_>) {
+        let set = |s: &mut Self, h: TrigHdr| s.phase = Phase::Trigger(h);
+        match h {
+            TrigHdr::Scan(seen) => {
+                let want = ["FOR", "EACH", "ROW"][seen as usize];
+                if tok.is(want) {
+                    set(
+                        self,
+                        if seen == 2 {
+                            TrigHdr::AfterRow
+                        } else {
+                            TrigHdr::Scan(seen + 1)
+                        },
+                    );
+                } else {
+                    set(self, TrigHdr::Scan(u8::from(tok.is("FOR"))));
+                }
+            }
+            TrigHdr::AfterRow => {
+                if tok.is_any(&["FOLLOWS", "PRECEDES"]) {
+                    set(self, TrigHdr::OrderName);
+                } else {
+                    self.start_body(tok);
+                }
+            }
+            TrigHdr::OrderName => match tok {
+                Tok::Word(_) | Tok::Lit => set(self, TrigHdr::BodyNext),
+                _ => self.phase = Phase::Plain,
+            },
+            TrigHdr::BodyNext => self.start_body(tok),
+        }
+    }
+
+    fn top(&self) -> Option<Frame> {
+        self.stack.last().copied()
+    }
+
+    /// A token at a statement start (the stack may be empty: the routine body itself).
+    fn stmt_start(&mut self, tok: Tok<'_>) {
+        let root = self.stack.is_empty();
+        if !matches!(tok, Tok::Word(_)) {
+            // `(select 1)` or a stray token: a plain body, or not understood inside one.
+            if root {
+                self.phase = Phase::Plain;
+            } else {
+                self.refuse = true;
+            }
             return;
         }
-        if self.phase == Phase::Done {
-            return self.step(tok);
-        }
-        let at_stmt = self.stmt_pos;
-        self.stmt_pos = false;
-        if let Tok::Word(w) = tok
-            && at_stmt
-        {
-            self.cur_first = FIRST_WORDS
-                .iter()
-                .find(|k| w.eq_ignore_ascii_case(k))
-                .copied();
-            self.in_handler = false;
-            self.handler_begun = false;
-        }
-        let top = self.stack.last().copied();
-        match tok {
-            Tok::Word(_) if tok.is("BEGIN") => {
-                if at_stmt {
-                    self.pending_begin = true;
-                } else if self.cur_first == Some("DECLARE")
-                    && self.in_handler
-                    && !self.handler_begun
-                    && !matches!(self.prev, Some(p) if p.is("FOR") || p == Tok::Punct(b','))
-                {
-                    self.handler_begun = true;
-                    self.push(Frame::Block);
-                    self.stmt_pos = true;
-                }
-            }
-            Tok::Word(_) if tok.is("CASE") => self.push(if at_stmt {
-                Frame::CaseStmt
+        let top = self.top();
+        let (frame, mode) = if tok.is("BEGIN") {
+            (Some(Frame::Block), Mode::AfterBegin)
+        } else if tok.is("IF") {
+            (
+                Some(Frame::If),
+                Mode::Expr {
+                    until: Until::Then,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("CASE") {
+            (
+                Some(Frame::CaseStmt),
+                Mode::Expr {
+                    until: Until::When,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("LOOP") {
+            (Some(Frame::Loop), Mode::StmtStart)
+        } else if tok.is("WHILE") {
+            (
+                Some(Frame::While),
+                Mode::Expr {
+                    until: Until::Do,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("REPEAT") {
+            (Some(Frame::Repeat), Mode::StmtStart)
+        } else if root {
+            // The body is a plain statement (or `label:` before a compound one).
+            if tok.is_any(&CONTROL) {
+                self.phase = Phase::Plain;
             } else {
-                Frame::CaseExpr
-            }),
-            Tok::Word(_) if tok.is("END") => self.pending_end = true,
-            Tok::Word(_) if tok.is("THEN") => {
-                self.stmt_pos = top == Some(Frame::CaseStmt)
-                    || (top != Some(Frame::CaseExpr)
-                        && matches!(self.cur_first, Some("IF" | "ELSEIF")));
+                self.mode = Mode::PendingWord;
             }
-            Tok::Word(_) if tok.is_any(&["ELSE", "LOOP", "REPEAT"]) => self.stmt_pos = at_stmt,
-            Tok::Word(_) if tok.is("DO") => {
-                self.stmt_pos = self.cur_first == Some("WHILE") && top != Some(Frame::CaseExpr);
-            }
-            Tok::Word(_) if tok.is("HANDLER") => {
-                if self.cur_first == Some("DECLARE") {
-                    self.in_handler = true;
+            return;
+        } else if tok.is("DECLARE") {
+            (None, Mode::DeclareStart)
+        } else if tok.is("END") {
+            (None, Mode::EndPending)
+        } else if tok.is("ELSEIF") && top == Some(Frame::If) {
+            (
+                None,
+                Mode::Expr {
+                    until: Until::Then,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("ELSE") && matches!(top, Some(Frame::If | Frame::CaseStmt)) {
+            (None, Mode::StmtStart)
+        } else if tok.is("WHEN") && top == Some(Frame::CaseStmt) {
+            (
+                None,
+                Mode::Expr {
+                    until: Until::Then,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is("UNTIL") && top == Some(Frame::Repeat) {
+            (
+                None,
+                Mode::Expr {
+                    until: Until::EndRepeat,
+                    case_depth: 0,
+                },
+            )
+        } else if tok.is_any(&CONTROL) {
+            self.refuse = true;
+            return;
+        } else {
+            (None, Mode::PendingWord)
+        };
+        if let Some(f) = frame {
+            self.stack.push(f);
+        }
+        self.mode = mode;
+    }
+
+    fn body(&mut self, tok: Tok<'_>, ident: bool) {
+        match self.mode {
+            Mode::StmtStart => self.stmt_start(tok),
+            Mode::AfterBegin => {
+                if tok == Tok::Punct(b':') {
+                    // `begin: …`: a label named begin, not worth the ambiguity.
+                    self.refuse = true;
+                } else if tok.is("NOT") {
+                    self.mode = Mode::ExpectAtomic;
+                } else {
+                    self.mode = Mode::StmtStart;
+                    self.stmt_start(tok);
                 }
             }
-            Tok::Punct(b':') => self.stmt_pos = self.last_word_at_stmt,
-            _ => {}
+            Mode::ExpectAtomic => {
+                if tok.is("ATOMIC") {
+                    self.mode = Mode::StmtStart;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::PendingWord => {
+                if tok == Tok::Punct(b':') {
+                    self.mode = Mode::Label;
+                } else if self.stack.is_empty() {
+                    self.phase = Phase::Plain;
+                } else {
+                    self.mode = Mode::Ordinary;
+                }
+            }
+            Mode::Label => {
+                if tok.is_any(&["BEGIN", "LOOP", "WHILE", "REPEAT"]) {
+                    self.stmt_start(tok);
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::Ordinary => {}
+            Mode::Expr { until, case_depth } => {
+                if ident {
+                    return;
+                }
+                let expr = |d| Mode::Expr {
+                    until,
+                    case_depth: d,
+                };
+                if tok.is("CASE") {
+                    self.mode = expr(case_depth + 1);
+                } else if tok.is("END") {
+                    if case_depth > 0 {
+                        self.mode = expr(case_depth - 1);
+                    } else if until == Until::EndRepeat {
+                        self.mode = Mode::EndRepeatPending;
+                    } else {
+                        self.refuse = true;
+                    }
+                } else if case_depth > 0 {
+                    // THEN / WHEN / ELSE of a CASE expression.
+                } else if tok.is("THEN") && until == Until::Then {
+                    self.mode = Mode::StmtStart;
+                } else if tok.is("WHEN") && until == Until::When {
+                    self.mode = expr_then();
+                } else if tok.is("DO") && until == Until::Do {
+                    self.mode = Mode::StmtStart;
+                } else if tok.is_any(&["THEN", "WHEN", "DO"]) {
+                    self.refuse = true;
+                }
+            }
+            Mode::EndRepeatPending => {
+                if tok.is("REPEAT") && self.top() == Some(Frame::Repeat) {
+                    self.close(true);
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::EndPending => {
+                let ok = match self.top() {
+                    Some(Frame::Block) => !tok.is_any(&["IF", "CASE", "LOOP", "WHILE", "REPEAT"]),
+                    Some(Frame::If) => tok.is("IF"),
+                    Some(Frame::CaseStmt) => tok.is("CASE"),
+                    Some(Frame::Loop) => tok.is("LOOP"),
+                    Some(Frame::While) => tok.is("WHILE"),
+                    Some(Frame::Repeat) | None => false,
+                };
+                if !ok {
+                    self.refuse = true;
+                    return;
+                }
+                if self.top() == Some(Frame::Block) {
+                    // `END label`: the label is this token.
+                    self.close(true);
+                    self.body(tok, ident);
+                } else {
+                    let label = matches!(self.top(), Some(Frame::Loop | Frame::While));
+                    self.close(label);
+                }
+            }
+            Mode::AfterClose { label_allowed } => {
+                if label_allowed && matches!(tok, Tok::Word(_)) {
+                    self.mode = Mode::AfterClose {
+                        label_allowed: false,
+                    };
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::DeclareStart => {
+                self.mode = if tok.is_any(&["CONTINUE", "EXIT", "UNDO"]) {
+                    Mode::DeclareKind
+                } else {
+                    Mode::Ordinary
+                };
+            }
+            Mode::DeclareKind => {
+                self.mode = if tok.is("HANDLER") {
+                    Mode::DeclareFor
+                } else {
+                    Mode::Ordinary
+                };
+            }
+            Mode::DeclareFor => {
+                if tok.is("FOR") {
+                    self.mode = Mode::Cond;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::Cond => {
+                if tok.is("SQLSTATE") {
+                    self.mode = Mode::CondSqlstate { value_seen: false };
+                } else if tok.is("NOT") {
+                    self.mode = Mode::CondNot;
+                } else if matches!(tok, Tok::Word(_)) {
+                    self.mode = Mode::CondDone;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::CondSqlstate { value_seen } => {
+                if !value_seen && tok.is("VALUE") {
+                    self.mode = Mode::CondSqlstate { value_seen: true };
+                } else if tok == Tok::Lit {
+                    self.mode = Mode::CondDone;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::CondNot => {
+                if tok.is("FOUND") {
+                    self.mode = Mode::CondDone;
+                } else {
+                    self.refuse = true;
+                }
+            }
+            Mode::CondDone => {
+                if tok == Tok::Punct(b',') {
+                    self.mode = Mode::Cond;
+                } else {
+                    // The handler's statement.
+                    self.mode = Mode::StmtStart;
+                    self.stmt_start(tok);
+                }
+            }
         }
-        self.last_word_at_stmt = matches!(tok, Tok::Word(_)) && at_stmt;
+    }
+
+    /// Pops the innermost construct; an optional label and `;` follow.
+    fn close(&mut self, label_allowed: bool) {
+        self.stack.pop();
+        self.mode = Mode::AfterClose { label_allowed };
     }
 
     /// A `;`: true when it is inside the compound body (not a statement end).
@@ -728,26 +1041,55 @@ impl Compound {
         if self.phase != Phase::Body {
             return false;
         }
-        self.resolve(Some(Tok::Punct(b';')));
-        if self.phase != Phase::Body {
-            return false;
+        self.after_ident_marker = false;
+        let inside = match self.mode {
+            Mode::StmtStart | Mode::AfterBegin => !self.stack.is_empty(),
+            Mode::PendingWord if self.stack.is_empty() => {
+                self.phase = Phase::Plain;
+                false
+            }
+            Mode::PendingWord | Mode::Ordinary => true,
+            Mode::EndPending if self.top() == Some(Frame::Block) => {
+                self.stack.pop();
+                !self.stack.is_empty()
+            }
+            Mode::AfterClose { .. } => !self.stack.is_empty(),
+            _ => {
+                self.refuse = true;
+                false
+            }
+        };
+        if inside {
+            self.mode = Mode::StmtStart;
+            self.absorbed = true;
+        } else if !self.refuse && self.phase == Phase::Body {
+            self.mode = Mode::AfterClose {
+                label_allowed: false,
+            };
         }
-        self.stmt_pos = true;
-        self.cur_first = None;
-        self.in_handler = false;
-        self.handler_begun = false;
-        self.absorbed = true;
-        true
+        inside
     }
 
     /// End of input: false when the input cannot be trusted to be one statement.
     fn finish(&mut self) -> bool {
-        if self.phase == Phase::Body {
-            self.resolve(None);
+        if self.refuse {
+            return false;
         }
-        // A body still open after swallowing a `;` may have been closed earlier by the
-        // server (a BEGIN it does not count): refuse.
-        !(self.refuse || (self.absorbed && self.phase == Phase::Body))
+        if self.phase == Phase::Body
+            && self.mode == Mode::EndPending
+            && self.top() == Some(Frame::Block)
+        {
+            self.stack.pop();
+        }
+        // A body still open after swallowing a `;`: refuse (fail closed).
+        !(self.absorbed && self.phase == Phase::Body && !self.stack.is_empty())
+    }
+}
+
+const fn expr_then() -> Mode {
+    Mode::Expr {
+        until: Until::Then,
+        case_depth: 0,
     }
 }
 
@@ -769,9 +1111,9 @@ fn has_multiple_statements(sql: &str, modes: Modes) -> bool {
             if !compound.semi() {
                 seen_semi = true;
             }
-            continue;
+        } else {
+            compound.feed(tok);
         }
-        compound.feed(tok);
         if compound.refuse {
             return true;
         }
@@ -1495,6 +1837,15 @@ mod tests {
             "CREATE EVENT e ON SCHEDULE EVERY 1 DAY DO BEGIN DELETE FROM t; INSERT INTO t VALUES (1); END",
             "BEGIN NOT ATOMIC SELECT 1; SELECT 2; END",
             "CREATE PROCEDURE p() lbl: BEGIN SELECT 'a;b'; /* ; */ SELECT 2; -- ;\n END lbl",
+            // Characteristics before the body, and compound bodies other than BEGIN.
+            "CREATE DEFINER=CURRENT_USER() FUNCTION f(a DECIMAL(10,2)) RETURNS VARCHAR(20) CHARACTER SET utf8mb4 \
+             COLLATE utf8mb4_bin COMMENT 'x; y' LANGUAGE SQL NOT DETERMINISTIC READS SQL DATA \
+             SQL SECURITY INVOKER BEGIN DECLARE s VARCHAR(20); SET s = 'a'; RETURN s; END",
+            "CREATE PROCEDURE p() MODIFIES SQL DATA lbl: LOOP SELECT 1; LEAVE lbl; END LOOP lbl",
+            "CREATE PROCEDURE p() IF @a THEN SELECT 1; ELSE SELECT 2; END IF",
+            "CREATE PROCEDURE p() BEGIN DECLARE EXIT HANDLER FOR SQLSTATE VALUE '23000', NOT FOUND, 1062 \
+             BEGIN SELECT 1; END; WHILE (SELECT CASE WHEN @a THEN 1 ELSE 0 END) DO SELECT 2; END WHILE; \
+             IF CASE @x WHEN 1 THEN 1 END = 1 THEN SELECT t.begin, t.end, @case FROM t; END IF; END",
         ] {
             assert!(!has_multiple_statements(single, DEFAULT), "{single}");
         }
@@ -1521,6 +1872,27 @@ mod tests {
             "CREATE PROCEDURE p() SELECT 1; SELECT 2",
             "create table function (begin int); select 1",
             "CREATE PROCEDURE p() BEGIN SELECT 1; END x y; SELECT 2",
+            // Review round 1: a BEGIN / CASE that is not at a statement start opens nothing
+            // (each of these ran `DROP TABLE x` on MySQL 8.4 and MariaDB 11.4).
+            "create procedure p() select begin from t; drop table x; end",
+            "create procedure p() update t set begin = 1; drop table x; end",
+            "create procedure p() set @begin = 1; drop table x; end",
+            "create trigger tr before insert on y for each row insert into l select begin from t2; drop table x; end",
+            "create event e on schedule every 1 day do select begin from t; drop table x; end",
+            "create procedure p() begin declare continue handler for sqlexception select begin from t; end; drop table x; end",
+            "create procedure p() begin set @case = 1; end; drop table x; end",
+            "create procedure p() begin select t.case from t; end; drop table x; end",
+            // More of the same family.
+            "create procedure p() begin select @@begin; end; drop table x; end",
+            "create function f() returns int return (select begin from t); drop table x; end",
+            "create procedure p() comment 'begin' select 1; drop table x; end",
+            "create procedure p() begin if t.end then select 1; end if; end; drop table x; end",
+            "create procedure p() begin if begin then select 1; end if; end; drop table x; end if; end",
+            // Structure errors fail closed.
+            "create procedure p() begin end if; select 1; end",
+            "create procedure p() begin select 1; else select 2; end",
+            "create procedure p() begin begin: loop leave begin; end loop; end",
+            "create procedure p() begin if a then select 1; end; end; drop table x",
         ] {
             assert!(has_multiple_statements(multi, DEFAULT), "{multi}");
         }

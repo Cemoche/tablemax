@@ -178,3 +178,44 @@ test("delimiterAt gives the delimiter in effect at an offset", () => {
   const sel = sql.slice(sql.indexOf("select 2"), sql.indexOf("DELIMITER ;"));
   expect(splitStatements(sel, "mySql", { delimiter: "//" }).map((s) => s.text)).toEqual(["select 2"]);
 });
+
+// ---- Review round 1: BEGIN / CASE outside a statement start never open a body ----
+
+test("a BEGIN or CASE that is not at a statement start never glues the next statement", () => {
+  const script1 = "create procedure p() begin set @case = 1; end;\ndrop table x;\ncreate procedure q() begin select 1; end;";
+  expect(texts(script1, "mySql")).toEqual([
+    "create procedure p() begin set @case = 1; end",
+    "drop table x",
+    "create procedure q() begin select 1; end",
+  ]);
+  const script2 = "create procedure p() update shifts set begin = now();\ndrop table x;\ncreate procedure q() begin select 1; end;";
+  expect(texts(script2, "mySql")).toEqual([
+    "create procedure p() update shifts set begin = now()",
+    "drop table x",
+    "create procedure q() begin select 1; end",
+  ]);
+  // The inputs that ran `DROP TABLE x` on the servers: the DROP is never in the CREATE.
+  for (const sql of [
+    "create procedure p() select begin from t; drop table x; end",
+    "create procedure p() update t set begin = 1; drop table x; end",
+    "create procedure p() set @begin = 1; drop table x; end",
+    "create trigger tr before insert on y for each row insert into l select begin from t2; drop table x; end",
+    "create event e on schedule every 1 day do select begin from t; drop table x; end",
+    "create procedure p() begin declare continue handler for sqlexception select begin from t; end; drop table x; end",
+    "create procedure p() begin set @case = 1; end; drop table x; end",
+    "create procedure p() begin select t.case from t; end; drop table x; end",
+  ]) {
+    const st = texts(sql, "mySql");
+    expect(st, sql).toContain("drop table x");
+    expect(st.find((s) => /^create/i.test(s)), sql).not.toMatch(/drop table/i);
+  }
+});
+
+test("routine characteristics and non-BEGIN compound bodies", () => {
+  const fn =
+    "CREATE FUNCTION f(a DECIMAL(10,2)) RETURNS VARCHAR(20) CHARACTER SET utf8mb4 COMMENT 'x; y' " +
+    "NOT DETERMINISTIC READS SQL DATA SQL SECURITY INVOKER BEGIN DECLARE s VARCHAR(20); SET s = 'a'; RETURN s; END";
+  const loop = "CREATE PROCEDURE p() MODIFIES SQL DATA lbl: LOOP SELECT 1; LEAVE lbl; END LOOP lbl";
+  const iff = "CREATE PROCEDURE p() IF @a THEN SELECT 1; ELSE SELECT 2; END IF";
+  expect(texts([fn, loop, iff, "select 9"].join(";\n"), "mySql")).toEqual([fn, loop, iff, "select 9"]);
+});
