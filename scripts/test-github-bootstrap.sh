@@ -51,6 +51,9 @@ case "$1 $2" in
     joined="$(IFS=','; echo "${labels[*]}")"
     echo "issue|$title|$joined|$milestone|$assignee" >>"$S/writes"
     echo "https://github.com/o/r/issues/$(wc -l <"$S/issues")" ;;
+  "issue close")
+    [[ $4 == --reason && $5 == completed ]] || { echo "bad close: $*" >>"$S/unexpected"; exit 1; }
+    echo "close|$3" >>"$S/writes" ;;
   "auth status") echo "" ;;
   *) echo "$*" >>"$S/unexpected"; exit 1 ;;
 esac
@@ -67,15 +70,18 @@ else fail "dry run (code=$code, writes: $(wc -l <"$FAKE_GH_STATE/writes"))"; cat
 
 # 2. first run
 run
-labels="$(writes label)"; milestones="$(writes milestone)"; issues="$(writes issue)"
-if [[ $code -eq 0 && $labels -eq 21 && $milestones -eq 4 && $issues -eq 34 ]]; then
-  ok "first run creates 21 labels, 4 milestones, 34 issues"
-else fail "first run (code=$code labels=$labels milestones=$milestones issues=$issues)"; tail -5 "$TMP/out"; fi
+labels="$(writes label)"; milestones="$(writes milestone)"; issues="$(writes issue)"; closes="$(writes close)"
+if [[ $code -eq 0 && $labels -eq 21 && $milestones -eq 4 && $issues -eq 34 && $closes -eq 3 ]]; then
+  ok "first run creates 21 labels, 4 milestones, 34 issues and closes the 3 plan epics"
+else fail "first run (code=$code labels=$labels milestones=$milestones issues=$issues closes=$closes)"; tail -5 "$TMP/out"; fi
+
+if grep -q '^issue|[^|]*|[^|]*status:blocked' "$FAKE_GH_STATE/writes"; then fail "an issue is still status:blocked"
+else ok "no issue is created as status:blocked"; fi
 
 if grep -q '^label|good first issue$' "$FAKE_GH_STATE/writes"; then fail "existing label re-created"
 else ok "an existing label is not re-created"; fi
 
-if grep -Fq 'issue|[Epic] Plan 3 — Data|type:epic,plan:3,status:in-progress,area:frontend,area:backend|Plan 3 — Data|Cemoche' "$FAKE_GH_STATE/writes" \
+if grep -Fq 'issue|[Epic] Plan 3 — Data|type:epic,plan:3,area:frontend,area:backend|Plan 3 — Data|Cemoche' "$FAKE_GH_STATE/writes" \
   && grep -Fq 'issue|SSH config parsing edge cases|type:task,status:ready,good first issue,size:S,area:backend||' "$FAKE_GH_STATE/writes"; then
   ok "issues carry their labels (with spaces), milestone and assignee"
 else fail "issue arguments"; grep '^issue|' "$FAKE_GH_STATE/writes" | head -3; fi

@@ -87,8 +87,9 @@ ensure_milestone() { # title description
   created=$((created + 1))
 }
 
-ensure_issue() { # title labels(comma-separated) milestone(or "") assignee(or "") ; body on stdin
-  local title="$1" labels="$2" milestone="$3" assignee="$4" body
+ensure_issue() { # title labels milestone(or "") assignee(or "") [closed] ; body on stdin
+  # With "closed", a newly created issue is closed at once as completed (finished plans).
+  local title="$1" labels="$2" milestone="$3" assignee="$4" state="${5:-open}" body
   body="$(cat)"
   if has issues "$title"; then
     existing=$((existing + 1))
@@ -96,7 +97,7 @@ ensure_issue() { # title labels(comma-separated) milestone(or "") assignee(or ""
   fi
   if [[ $DRY_RUN -eq 1 ]]; then
     echo "would create issue      $title"
-    echo "                        labels: $labels${milestone:+ · milestone: $milestone}${assignee:+ · assignee: $assignee}"
+    echo "                        labels: $labels${milestone:+ · milestone: $milestone}${assignee:+ · assignee: $assignee}${5:+ · then closed as completed}"
   else
     local args=(issue create --title "$title" --body-file -)
     [[ -z $milestone ]] || args+=(--milestone "$milestone")
@@ -107,6 +108,10 @@ ensure_issue() { # title labels(comma-separated) milestone(or "") assignee(or ""
     local url # on its own line: a failing gh inside echo "$(…)" would not stop set -e
     url="$(printf '%s' "$body" | gh "${args[@]}")"
     echo "created issue           $url  $title"
+    if [[ $state == closed ]]; then
+      gh issue close "$url" --reason completed >/dev/null
+      echo "closed as completed     $url"
+    fi
   fi
   echo "$title" >>"$TMP/issues"
   created=$((created + 1))
@@ -151,49 +156,46 @@ ensure_milestone "$M5" "Safe mode, environment tint, settings, keymap, theme, Li
 ensure_milestone "$MP" "Spec §3: planned after v1"
 
 # ------------------------------------------------------------------ plan epics
+# Plans 3–5 are implemented on their branches before this script runs: their epics are
+# created closed (completed), as a record linking each milestone to its plan and PR.
 
-echo "== Plan epics"
+echo "== Plan epics (created closed: the plans are implemented)"
 PLANS_URL="docs/superpowers/plans"
+plan_epic() { # number title plan-file branch labels ; scope on stdin
+  local scope
+  scope="$(cat)"
+  ensure_issue "[Epic] Plan $1 — $2" "type:epic,plan:$1,$5" "Plan $1 — $2" "$OWNER" closed <<EOF
+Plan: \`$PLANS_URL/$3\`.
+Implemented in branch \`$4\`, see its PR (\`gh pr list --head $4 --state all\`).
 
-ensure_issue "[Epic] Plan 3 — Data" "type:epic,plan:3,status:in-progress,area:frontend,area:backend" "$M3" "$OWNER" <<EOF
-Plan: \`$PLANS_URL/2026-10-17-tablemax-03-data.md\` (branch \`feat/plan-03-data\`), executed by the owner's agents.
+$scope
+EOF
+}
 
+plan_epic 3 "Data" "2026-10-17-tablemax-03-data.md" "feat/plan-03-data" "area:frontend,area:backend" <<'EOF'
 Scope (spec §2 "Données (grille)" and "Structure"): inline editing (cell, insert, delete,
 duplicate) with a pending-changes panel and its SQL, commit in one transaction (Ctrl+S) or
 discard; read-only tables without a primary key or unique index; foreign-key navigation with a
 breadcrumb; filter builder and quick filter bar; row detail panel; copy as TSV/CSV/JSON/INSERT;
 read-only Structure view (columns, indexes, foreign keys, DDL).
-
-Files: \`src-tauri/src/driver/*\`, \`manager.rs\`, \`commands.rs\`, \`src/features/grid/*\`,
-\`src/lib/{ipc,types,strings}.ts\`, grid stores. Follow-ups touching these wait for this plan
-(\`status:blocked\`).
 EOF
 
-ensure_issue "[Epic] Plan 4 — Tabs & editor" "type:epic,plan:4,status:in-progress,area:frontend,area:backend" "$M4" "$OWNER" <<EOF
-Plan: \`$PLANS_URL/2026-10-17-tablemax-04-navigation.md\` (branch \`feat/plan-04-navigation\`).
-
+plan_epic 4 "Tabs & editor" "2026-10-17-tablemax-04-navigation.md" "feat/plan-04-navigation" "area:frontend,area:backend" <<'EOF'
 Scope (spec §2 "Navigation" and "Éditeur SQL"): preview tab, Ctrl+Tab in MRU order, search
 among open tabs, session restore, object sidebar with routines and database switch, command
 palette (Ctrl+K / Ctrl+P), SQL completion, formatting, comment toggle, auto LIMIT, history,
-saved queries, \`DELIMITER\` and compound bodies for MySQL.
-
-Deferred minors from Plan 1 to check here (\`docs/notes/plan-01-followups.md\`, Tasks 9 and
-11): shortcuts on \`e.key\` instead of \`e.code\`, no \`e.repeat\`/modal guard, tablist a11y,
-active tab not scrolled into view; splitter misses PG E-strings and SQLite \`[bracket;ident]\`;
-Run with no statement gives no feedback.
+saved queries, `DELIMITER` and compound bodies for MySQL.
+Plan 1 minors it was to cover (`docs/notes/plan-01-followups.md`, Tasks 9 and 11): shortcuts
+on `e.key`, tablist a11y, splitter edge cases — check the plan's own follow-up notes for what
+is left.
 EOF
 
-ensure_issue "[Epic] Plan 5 — Safety & packaging" "type:epic,plan:5,status:in-progress,area:frontend,area:backend,area:security" "$M5" "" <<EOF
-Plan: \`$PLANS_URL/2026-10-17-tablemax-05-safety.md\` (branch \`feat/plan-05-safety\`).
-
+plan_epic 5 "Safety & packaging" "2026-10-17-tablemax-05-safety.md" "feat/plan-05-safety" "area:frontend,area:backend,area:security" <<'EOF'
 Scope (spec §2 "Sécurité par environnement / Safe mode" and "Réglages"): safe mode levels per
 connection (prod defaults to confirming writes), also on grid Commit with the SQL shown;
 environment colour on the workspace border and title bar; settings (theme, editor font, page
 size, estimated-count threshold, auto LIMIT, keymap); Linux packaging (.deb, AppImage) with an
 original icon and a release-build check.
-
-Covers the Plan 1 follow-ups "template comment noise in src-tauri/Cargo.toml", "placeholder
-Tauri icons" and "release build not smoke-checked".
 EOF
 
 # ------------------------------------------------------------------ post-v1 epics (spec §3)
@@ -313,7 +315,7 @@ followup() { # title labels ; body on stdin (v1 tech debt: no milestone)
   ensure_issue "$1" "type:task,$2" "" ""
 }
 
-# Ready now: files no running plan (3, 4, 5) touches.
+# Ready: files Plans 3–5 did not touch.
 followup "SSH config parsing edge cases" "status:ready,good first issue,size:S,area:backend" <<'EOF'
 From `docs/notes/plan-02-followups.md` (Task 2):
 - an invalid `Port` value lets a later `Host` block win instead of being reported;
@@ -400,64 +402,64 @@ From `docs/notes/plan-02-followups.md` (Tasks 7–8):
 - close/Escape stays live during commit, so the discard can race the commit (disable while busy);
 - the options byte check accepts any value with bit 0 set (use `== 1`);
 - the `secret()` helper is used for `DatabaseName`.
-Not here (touches `manager.rs`, after Plan 3): clear the remembered last pick on discard/commit.
+Also (in `manager.rs`, see the SessionManager follow-up): clear the remembered last pick on discard/commit.
 
 Files: `src/features/connections/ImportDialog.tsx` (+ test), `src-tauri/src/import/tableplus.rs`.
 Acceptance: tests for the busy state and the options check; `pnpm test && pnpm lint`,
 `pnpm test:rust` green.
 EOF
 
-# Blocked: files a running plan rewrites; re-check each item once the plan is merged.
-followup "Lint the Vite/Vitest configs and the Rust tests" "status:blocked,size:S,area:infra" <<'EOF'
+# Ready too, but on files Plans 3–5 rewrote: re-check each item against the merged code first.
+followup "Lint the Vite/Vitest configs and the Rust tests" "status:ready,size:S,area:infra" <<'EOF'
 From `docs/notes/plan-01-followups.md`: `pnpm lint` does not type-check `vite.config.ts` /
 `vitest.config.ts` (tsc without `-b`), and `cargo clippy --all-targets` fails on
 `src-tauri/tests/mysql_driver.rs` (`useless_format`) because lint skips tests.
 
-Blocked until Plans 4 and 5 are merged (both change `package.json`).
+Plans 4 and 5 changed `package.json`: check the current lint script first.
 Files: `package.json`, `tsconfig.node.json`, `src-tauri/tests/mysql_driver.rs`.
 EOF
 
-followup "PostgreSQL driver edge cases" "status:blocked,size:M,area:backend" <<'EOF'
+followup "PostgreSQL driver edge cases" "status:ready,size:M,area:backend" <<'EOF'
 From `docs/notes/plan-01-followups.md` (Task 4): fallback path drops rows when prepare reports
 0 columns; `bytea_output` can be changed by the user (`RESET ALL`) so bytes decode wrong;
 `close()` aborts the task (no graceful Terminate); `percent_decode` panics on non-ASCII;
 `42P01` in `count_rows` maps to Query; Json/Decimal/Temporal values are not size-capped.
 
-Blocked until Plan 3 is merged (it rewrites `driver/postgres.rs`); drop what Plan 3 fixed.
+Plan 3 rewrote much of `driver/postgres.rs`: re-check each item first and drop what it fixed.
 EOF
 
-followup "MySQL/MariaDB driver edge cases" "status:blocked,size:M,area:backend" <<'EOF'
+followup "MySQL/MariaDB driver edge cases" "status:ready,size:M,area:backend" <<'EOF'
 From `docs/notes/plan-01-followups.md` (Task 5): canceller connects with the database name
 (fails if it was dropped); `KILL QUERY` quirks (MariaDB `KILL QUERY ID`, error 4031 →
 ConnectionLost); `sql_mode` refresh misses comment-prefixed `EXECUTE`/`CALL`; refresh
 ConnectionLost discards an applied DML result; JSON cache invalidation is approximate.
 
-Blocked until Plans 3 and 4 are merged (both change `driver/mysql.rs`).
+Plans 3 and 4 changed `driver/mysql.rs`: re-check each item first and drop what they fixed.
 EOF
 
-followup "SQLite driver edge cases" "status:blocked,size:S,area:backend" <<'EOF'
+followup "SQLite driver edge cases" "status:ready,size:S,area:backend" <<'EOF'
 From `docs/notes/plan-01-followups.md` (Task 3): `execute` reports stale `changes()` for DDL
 after DML (use a `total_changes` delta); `SQLITE_OPEN_URI` treats user paths starting with
 `file:` as URIs.
 
-Blocked until Plan 3 is merged (it changes `driver/sqlite.rs`).
+Plan 3 changed `driver/sqlite.rs`: re-check each item first.
 EOF
 
-followup "SessionManager: close, cancel and keyring edge cases" "status:blocked,size:M,area:backend" <<'EOF'
+followup "SessionManager: close, cancel and keyring edge cases" "status:ready,size:M,area:backend" <<'EOF'
 From `docs/notes/plan-01-followups.md` (Task 7) and `plan-02-followups.md` (Task 4, residuals):
 close can hang on MySQL until the statement ends; `close_workspace` shuts sessions one by one
 (N × 5 s); cancel returns Ok on its 5 s timeout; `unbind_stale_keyring` checks identity before
 the tunnel lock and the reopen (re-check right before each keyring read); the remembered
 TablePlus pick is never cleared; `fresh.close()` unbounded in the closed-during-reconnect branch.
 
-Blocked until Plans 3, 4 and 5 are merged (all change `manager.rs`).
+Plans 3, 4 and 5 all changed `manager.rs`: re-check each item first and drop what they fixed.
 EOF
 
-followup "Grid display minors" "status:blocked,size:S,area:frontend" <<'EOF'
+followup "Grid display minors" "status:ready,size:S,area:frontend" <<'EOF'
 From `docs/notes/plan-01-followups.md` (Task 10): floats shown with full round-trip digits
 (15.299999999999999); page not clamped after rows are deleted; a vacuous unmount test.
 
-Blocked until Plan 3 is merged (it rewrites the grid).
+Plan 3 rewrote the grid: re-check each item first.
 EOF
 
 # ------------------------------------------------------------------ project board
