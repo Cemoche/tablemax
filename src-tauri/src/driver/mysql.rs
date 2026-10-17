@@ -1278,11 +1278,15 @@ fn scan_multiple_statements(sql: &str, modes: Modes, exec_as_comment: bool) -> b
 }
 
 /// True when `sql` holds a dollar-quote word (`$$`, `$tag$…`): MySQL 9 reads a body
-/// between such quotes (JavaScript routines) that the lexer cannot see through.
+/// between such quotes (JavaScript routines) that the lexer cannot see through. Both
+/// readings of executable comments are checked (see [`has_multiple_statements`]): text
+/// inside a string in one reading can be live code in the other.
 fn has_dollar_quote(sql: &str, modes: Modes) -> bool {
-    lex(sql, modes, false).0.into_iter().any(|t| match t {
-        Tok::Word(w) => w.strip_prefix('$').is_some_and(|rest| rest.contains('$')),
-        _ => false,
+    [false, true].into_iter().any(|exec_as_comment| {
+        lex(sql, modes, exec_as_comment).0.into_iter().any(|t| match t {
+            Tok::Word(w) => w.strip_prefix('$').is_some_and(|rest| rest.contains('$')),
+            _ => false,
+        })
     })
 }
 
@@ -2677,6 +2681,9 @@ mod tests {
             "create function f() returns int language javascript as $js$return 1$js$",
             "create function f() returns int language javascript as $$ ' $$; drop table t; -- '",
             "select $$x$$",
+            // Inside a string when the executable comment is read as code, live when a
+            // server below its version reads it as a plain comment.
+            "select 1 /*!99999 ' */ $$ return 1 $$ -- '",
         ] {
             let e = refusal(sql, DEFAULT, None, false).expect(sql);
             assert_eq!(e.message, "dollar-quoted bodies are not supported", "{sql}");
