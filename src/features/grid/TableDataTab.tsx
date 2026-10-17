@@ -2,6 +2,7 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, ObjectRef } from "../../lib/types";
+import { useSettings } from "../../stores/settings";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { useWorkspaces } from "../../stores/workspaces";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
@@ -13,7 +14,7 @@ import { FilterBar } from "./FilterBar";
 import { GridContextMenu, joinMenuGroups } from "./GridContextMenu";
 import { PendingChangesPanel } from "./PendingChangesPanel";
 import { RowDetailPanel } from "./RowDetailPanel";
-import { DEFAULT_PAGE_SIZE, formatRowCount, usePagedTable } from "./usePagedTable";
+import { formatRowCount, usePagedTable } from "./usePagedTable";
 import { useFkLinks } from "./useFkLinks";
 import { useRowDetail } from "./useRowDetail";
 import { useSelectionCopy } from "./useSelectionCopy";
@@ -120,12 +121,13 @@ function TableDataView({
   active,
   refocusCommit,
 }: Props & { detail: ReturnType<typeof useRowDetail>; active: boolean; refocusCommit: RefObject<boolean> }) {
-  const t = usePagedTable(workspaceId, object, tabId);
+  const pageSizeSetting = useSettings((s) => s.settings.pageSize);
+  const t = usePagedTable(workspaceId, object, tabId, pageSizeSetting);
   const e = useTableEditing({ workspaceId, tabId, object, result: t.result, reload: t.reload });
   const links = useFkLinks({ workspaceId, tabId, object, dialect, info: e.info, data: t.result, model: e.model });
   const copy = useSelectionCopy(e.model, dialect, object);
   const rows = t.result?.rows.length ?? 0;
-  const from = t.page * DEFAULT_PAGE_SIZE + 1;
+  const from = t.page * t.pageSize + 1;
   const columns = (e.info?.columns ?? t.result?.columns ?? []).map((c) => c.name);
   const editing: GridEditing | undefined = e.editing && {
     ...e.editing,

@@ -10,7 +10,7 @@ export const DEFAULT_PAGE_SIZE = 300;
 
 const nf = new Intl.NumberFormat("en-US");
 
-/** With filters an estimate is the capped count (at least that many rows): "500,000+". */
+/** With filters an estimate is the capped count (at least that many rows): "<threshold>+" (the exact count threshold setting). */
 export function formatRowCount(c: RowCount | null, filtered = false): string {
   if (!c) return strings.grid.countUnknown;
   if (c.t === "exact") return nf.format(c.v);
@@ -21,8 +21,17 @@ export function usePagedTable(
   workspaceId: string,
   object: ObjectRef,
   tabId: string,
-  pageSize = DEFAULT_PAGE_SIZE,
+  wantedPageSize = DEFAULT_PAGE_SIZE,
 ) {
+  // The tab latches its page size: a new setting is adopted only while nothing is pending
+  // (paging is refused then, and the offsets stay consistent), and always restarts at page 0.
+  const [pageSize, setPageSize] = useState(wantedPageSize);
+  const pendingCount = usePendingChanges((s) => s.count(tabId));
+  useEffect(() => {
+    if (wantedPageSize === pageSize || pendingCount > 0) return;
+    setPageSize(wantedPageSize);
+    useGridViews.getState().setView(tabId, { page: 0 });
+  }, [wantedPageSize, pageSize, pendingCount, tabId]);
   const view = useGridViews((s) => s.views[tabId]) ?? useGridViews.getState().getView(tabId);
   const { page, sort, filters } = view;
   const [result, setResult] = useState<ResultSet | null>(null);
@@ -147,6 +156,7 @@ export function usePagedTable(
     pageCount,
     hasNext,
     hasPrev: page > 0,
+    pageSize,
     rowCount,
     sort,
     setSort,

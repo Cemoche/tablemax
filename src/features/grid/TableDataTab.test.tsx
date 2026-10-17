@@ -6,6 +6,7 @@ import { strings } from "../../lib/strings";
 import type { CellValue, ForeignKeyInfo, ResultSet, RowKey } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
 import { usePendingChanges } from "../../stores/pendingChanges";
+import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
 import { tableInfo } from "../../test/tableInfo";
 import type { DataGridProps } from "./DataGrid";
@@ -75,6 +76,7 @@ beforeEach(() => {
     awaitingReload: {},
     epoch: {},
   });
+  useSettings.setState({ settings: DEFAULT_SETTINGS });
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo());
   vi.mocked(ipc.changesPreview).mockResolvedValue([]);
 });
@@ -91,6 +93,50 @@ test("footer shows range with ≈ for estimates and pages forward", async () => 
     expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 301–600 of ≈ 1,234,567"),
   );
   expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
+});
+
+test("the page size comes from the settings (request and range label)", async () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 50 } });
+  vi.mocked(ipc.tablePage).mockResolvedValue(page(50));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–50 of 900"));
+  expect(ipc.tablePage).toHaveBeenCalledWith("w1", expect.objectContaining({ limit: 50, offset: 0 }));
+  await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 51–100 of 900"));
+  expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ limit: 50, offset: 50 }));
+});
+
+test("a new page size is adopted at page 0 when nothing is pending", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(page(300));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
+  await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 301–600 of 900"));
+  vi.mocked(ipc.tablePage).mockClear();
+  act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 100 } }));
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ limit: 100, offset: 0 })),
+  );
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
+  expect(useGridViews.getState().getView("t1").page).toBe(0);
+});
+
+test("a new page size waits for pending changes to be discarded", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(300));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
+  pending().toggleDelete("t1", obj, key(0));
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
+  act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 100 } }));
+  await act(async () => {});
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
+  expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900");
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ limit: 100, offset: 0 })),
+  );
 });
 
 test("error shows message with Retry; connectionLost hints", async () => {
