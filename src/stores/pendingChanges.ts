@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { matchesOriginal } from "../features/grid/editing";
-import { toAppError } from "../lib/errors";
+import { isConfirmationRequired, parseConfirmationIndices, toAppError } from "../lib/errors";
 import * as ipc from "../lib/ipc";
 import { dict, hasKey } from "../lib/records";
 import { strings } from "../lib/strings";
@@ -50,6 +50,21 @@ export interface ChangeEntry {
   change: RowChange;
 }
 
+/**
+ * A commit a protected connection refused until confirmed (nothing was written). Run
+ * resends exactly `list` (Ruling R10: the confirmation is not bound to the content).
+ */
+export interface CommitConfirm {
+  workspaceId: string;
+  object: ObjectRef;
+  /** The changes as they were sent and previewed. */
+  list: ChangeEntry[];
+  /** One SQL text per change of `list` (a fresh changes_preview of it). */
+  statements: string[];
+  /** Indices (into `list`) the backend wants confirmed. */
+  flagged: number[];
+}
+
 export const rowKeyId = (key: RowKey) => JSON.stringify(key);
 
 const EMPTY: PendingTab = {
@@ -73,6 +88,10 @@ interface PendingState {
   blocked: Record<string, boolean>;
   /** A commit is running: the grid is locked and every mutation below is refused. */
   committing: Record<string, boolean>;
+  /** The tab committing in each workspace (by workspace id): one at a time per workspace. */
+  committingIn: Record<string, string>;
+  /** A commit waiting for the user's confirmation: locked like `committing` meanwhile. */
+  confirming: Record<string, CommitConfirm>;
   /**
    * A commit succeeded and the page shown predates it: locked like `committing` until a
    * page requested after the commit settles (pageSettled).
@@ -80,7 +99,10 @@ interface PendingState {
   awaitingReload: Record<string, boolean>;
   /** Bumped when a commit ends with a page to reload (success, unknown outcome). */
   epoch: Record<string, number>;
-  /** Bumped by every successful commit: the tab reloads its page and count. */
+  /**
+   * Bumped by every successful commit, and by a Discard after an unknown outcome: the tab
+   * reloads its page and count.
+   */
   applied: Record<string, number>;
   /** The grid's cell editor is open (Mod+S waits until it is closed). */
   editorOpen: Record<string, boolean>;
@@ -106,6 +128,10 @@ interface PendingState {
   /** Deleting drops the row's edits; deleting again restores the row (without them). */
   toggleDelete: (tabId: string, object: ObjectRef, key: RowKey) => boolean;
   revertChange: (tabId: string, changeId: string) => boolean;
+  /**
+   * Drops every change. After a commit with an unknown outcome the tab stays blocked
+   * (`outcomeUnknown` and its message are kept) and its page is reloaded.
+   */
   discard: (tabId: string) => boolean;
   /** The tab is gone: forget everything about it (allowed during a commit). */
   drop: (tabId: string) => void;
@@ -132,9 +158,14 @@ interface PendingState {
    * commit's outcome is unknown. Success: discard + `applied` bump + locked until the
    * reload lands, true. Failure: nothing is removed, the failing change (or the tab) gets
    * the message, false; a lost connection sets `outcomeUnknown` instead of claiming that
-   * nothing was written.
+   * nothing was written. Refused too while another tab of the workspace commits. A
+   * protected connection asking for confirmation fills `confirming` (false, no error).
    */
   commit: (tabId: string, workspaceId: string, object: ObjectRef) => Promise<boolean>;
+  /** Run in the confirmation: resends exactly the confirmed list, confirmed. */
+  confirmCommit: (tabId: string) => Promise<boolean>;
+  /** Cancel in the confirmation: nothing is applied, the changes stay pending. */
+  cancelConfirm: (tabId: string) => void;
 }
 
 let insertSeq = 0;
@@ -154,7 +185,9 @@ export function refusedChange(err: AppError): { index: number; reason: string } 
 export const usePendingChanges = create<PendingState>((set, get) => {
   const tab = (tabId: string) => get().tabs[tabId] ?? EMPTY;
   const locked = (tabId: string) =>
-    get().committing[tabId] === true || get().awaitingReload[tabId] === true;
+    get().committing[tabId] === true ||
+    get().awaitingReload[tabId] === true ||
+    get().confirming[tabId] !== undefined;
   /** The tab's changes belong to `object` (or nothing is pending). */
   const sameTable = (tabId: string, object: ObjectRef) => {
     const bound = tab(tabId).object;
@@ -183,16 +216,132 @@ export const usePendingChanges = create<PendingState>((set, get) => {
     });
     return true;
   };
+  /** Nothing pending; an unknown outcome (and its message) stays until a reload settles. */
   const clear = (tabId: string) =>
-    set((s) => ({
-      tabs: { ...s.tabs, [tabId]: EMPTY },
-      blocked: { ...s.blocked, [tabId]: false },
-    }));
+    set((s) => {
+      const t = s.tabs[tabId];
+      const next = t?.outcomeUnknown ? { ...EMPTY, outcomeUnknown: true, error: t.error } : EMPTY;
+      return {
+        tabs: { ...s.tabs, [tabId]: next },
+        blocked: { ...s.blocked, [tabId]: false },
+      };
+    });
+  const omitConfirm = (tabId: string) =>
+    set((s) => {
+      if (s.confirming[tabId] === undefined) return s;
+      const confirming = { ...s.confirming };
+      delete confirming[tabId];
+      return { confirming };
+    });
+
+  /**
+   * Sends `list` (the tab's changes, checked by the caller) in one transaction and handles
+   * the outcome; see `commit`.
+   */
+  const apply = async (
+    tabId: string,
+    workspaceId: string,
+    object: ObjectRef,
+    list: ChangeEntry[],
+    confirmed: boolean,
+  ): Promise<boolean> => {
+    const changes = list.map((c) => c.change);
+    // The tab may be closed (dropped) while the commit runs: then nothing is written back.
+    const gone = () => get().tabs[tabId] === undefined;
+    const setCommitting = (on: boolean) =>
+      set((s) => {
+        if (gone()) return s;
+        const committingIn = { ...s.committingIn };
+        if (on) committingIn[workspaceId] = tabId;
+        else if (committingIn[workspaceId] === tabId) delete committingIn[workspaceId];
+        return { committing: { ...s.committing, [tabId]: on }, committingIn };
+      });
+    const fail = (changeId: string | null, message: string) =>
+      set((s) => {
+        const t = s.tabs[tabId];
+        if (!t) return s;
+        return {
+          tabs: {
+            ...s.tabs,
+            [tabId]: changeId
+              ? { ...t, errors: { [changeId]: message }, error: null }
+              : { ...t, errors: {}, error: message },
+          },
+        };
+      });
+    /** An `invalid` "change <i>: …" marks that change, anything else the tab. */
+    const failWith = (err: AppError, message: string) => {
+      const refused = refusedChange(err);
+      const entry = refused ? list[refused.index] : undefined;
+      if (refused && entry) fail(entry.id, refused.reason);
+      else fail(null, message);
+    };
+    setCommitting(true);
+    try {
+      const outcome = await ipc.changesApply(workspaceId, object, changes, confirmed);
+      if (outcome.applied) {
+        if (gone()) return true;
+        clear(tabId);
+        // Locked until the reload of the committed page lands (no edit on the old page).
+        set((s) => ({
+          applied: { ...s.applied, [tabId]: (s.applied[tabId] ?? 0) + 1 },
+          awaitingReload: { ...s.awaitingReload, [tabId]: true },
+          epoch: { ...s.epoch, [tabId]: (s.epoch[tabId] ?? 0) + 1 },
+        }));
+        return true;
+      }
+      const failed = outcome.failedIndex === null ? null : (list[outcome.failedIndex]?.id ?? null);
+      fail(failed, outcome.error?.message ?? strings.unknownError);
+      return false;
+    } catch (e) {
+      const err = toAppError(e);
+      // Checked first: nothing was built or written, so this is no failure. The statements
+      // shown come from a fresh preview of the very list sent (the panel's may be stale).
+      if (!confirmed && isConfirmationRequired(err)) {
+        if (gone()) return false;
+        let statements: string[];
+        try {
+          statements = await ipc.changesPreview(workspaceId, object, changes);
+        } catch (pe) {
+          const perr = toAppError(pe);
+          failWith(perr, strings.grid.confirmPreviewFailed(perr.message));
+          return false;
+        }
+        if (gone()) return false;
+        const flagged = parseConfirmationIndices(err.message, list.length);
+        set((s) => ({
+          confirming: { ...s.confirming, [tabId]: { workspaceId, object, list, statements, flagged } },
+        }));
+        return false;
+      }
+      if (err.kind === "cancelled") {
+        fail(null, strings.grid.commitCancelled);
+        return false;
+      }
+      if (UNKNOWN_OUTCOME.has(err.kind)) {
+        set((s) => {
+          const t = s.tabs[tabId];
+          if (!t) return s;
+          return {
+            tabs: { ...s.tabs, [tabId]: { ...t, errors: {}, error: err.message, outcomeUnknown: true } },
+            epoch: { ...s.epoch, [tabId]: (s.epoch[tabId] ?? 0) + 1 },
+          };
+        });
+        return false;
+      }
+      failWith(err, err.message);
+      return false;
+    } finally {
+      setCommitting(false);
+    }
+  };
 
   return {
     tabs: {},
     blocked: {},
     committing: {},
+    committingIn: {},
+    confirming: {},
     awaitingReload: {},
     epoch: {},
     applied: {},
@@ -296,7 +445,10 @@ export const usePendingChanges = create<PendingState>((set, get) => {
 
     discard: (tabId) => {
       if (locked(tabId)) return false;
+      const unknown = tab(tabId).outcomeUnknown;
       clear(tabId);
+      // The page shown may predate what the lost commit wrote: reload it to check.
+      if (unknown) set((s) => ({ applied: { ...s.applied, [tabId]: (s.applied[tabId] ?? 0) + 1 } }));
       return true;
     },
 
@@ -307,10 +459,15 @@ export const usePendingChanges = create<PendingState>((set, get) => {
           delete c[tabId];
           return c;
         };
+        const committingIn = Object.fromEntries(
+          Object.entries(s.committingIn).filter(([, t]) => t !== tabId),
+        );
         return {
           tabs: omit(s.tabs),
           blocked: omit(s.blocked),
           committing: omit(s.committing),
+          committingIn,
+          confirming: omit(s.confirming),
           awaitingReload: omit(s.awaitingReload),
           epoch: omit(s.epoch),
           applied: omit(s.applied),
@@ -370,76 +527,26 @@ export const usePendingChanges = create<PendingState>((set, get) => {
       const list = get().changeList(tabId);
       if (list.length === 0) return true;
       const bound = tab(tabId).object;
-      if (bound && !sameObject(bound, object)) {
-        set((s) => ({
-          tabs: { ...s.tabs, [tabId]: { ...tab(tabId), errors: {}, error: strings.grid.otherTableChanges(bound.name) } },
-        }));
+      const refuse = (error: string) => {
+        set((s) => ({ tabs: { ...s.tabs, [tabId]: { ...tab(tabId), errors: {}, error } } }));
         return false;
-      }
-      // The tab may be closed (dropped) while the commit runs: then nothing is written back.
-      const gone = () => get().tabs[tabId] === undefined;
-      const setCommitting = (on: boolean) =>
-        set((s) => (gone() ? s : { committing: { ...s.committing, [tabId]: on } }));
-      const fail = (changeId: string | null, message: string) =>
-        set((s) => {
-          const t = s.tabs[tabId];
-          if (!t) return s;
-          return {
-            tabs: {
-              ...s.tabs,
-              [tabId]: changeId
-                ? { ...t, errors: { [changeId]: message }, error: null }
-                : { ...t, errors: {}, error: message },
-            },
-          };
-        });
-      setCommitting(true);
-      try {
-        const outcome = await ipc.changesApply(
-          workspaceId,
-          object,
-          list.map((c) => c.change),
-        );
-        if (outcome.applied) {
-          if (gone()) return true;
-          clear(tabId);
-          // Locked until the reload of the committed page lands (no edit on the old page).
-          set((s) => ({
-            applied: { ...s.applied, [tabId]: (s.applied[tabId] ?? 0) + 1 },
-            awaitingReload: { ...s.awaitingReload, [tabId]: true },
-            epoch: { ...s.epoch, [tabId]: (s.epoch[tabId] ?? 0) + 1 },
-          }));
-          return true;
-        }
-        const failed = outcome.failedIndex === null ? null : (list[outcome.failedIndex]?.id ?? null);
-        fail(failed, outcome.error?.message ?? strings.unknownError);
-        return false;
-      } catch (e) {
-        const err = toAppError(e);
-        if (err.kind === "cancelled") {
-          fail(null, strings.grid.commitCancelled);
-          return false;
-        }
-        if (UNKNOWN_OUTCOME.has(err.kind)) {
-          set((s) => {
-            const t = s.tabs[tabId];
-            if (!t) return s;
-            return {
-              tabs: { ...s.tabs, [tabId]: { ...t, errors: {}, error: err.message, outcomeUnknown: true } },
-              epoch: { ...s.epoch, [tabId]: (s.epoch[tabId] ?? 0) + 1 },
-            };
-          });
-          return false;
-        }
-        const refused = refusedChange(err);
-        const entry = refused ? list[refused.index] : undefined;
-        if (refused && entry) fail(entry.id, refused.reason);
-        else fail(null, err.message);
-        return false;
-      } finally {
-        setCommitting(false);
-      }
+      };
+      if (bound && !sameObject(bound, object)) return refuse(strings.grid.otherTableChanges(bound.name));
+      const other = get().committingIn[workspaceId];
+      if (other !== undefined && other !== tabId) return refuse(strings.grid.otherTabCommitting);
+      return apply(tabId, workspaceId, object, list, false);
     },
+
+    confirmCommit: async (tabId) => {
+      const c = get().confirming[tabId];
+      if (!c || get().committing[tabId] === true) return false;
+      const other = get().committingIn[c.workspaceId];
+      if (other !== undefined && other !== tabId) return false;
+      omitConfirm(tabId);
+      return apply(tabId, c.workspaceId, c.object, c.list, true);
+    },
+
+    cancelConfirm: (tabId) => omitConfirm(tabId),
   };
 });
 

@@ -38,7 +38,17 @@ const info = (over = {}) => ({
 beforeEach(() => {
   vi.resetAllMocks();
   useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null, closeRequest: null });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
+  usePendingChanges.setState({
+    tabs: {},
+    blocked: {},
+    committing: {},
+    committingIn: {},
+    confirming: {},
+    applied: {},
+    editorOpen: {},
+    awaitingReload: {},
+    epoch: {},
+  });
   useConnections.setState({ items: [cfg()] });
   vi.mocked(ipc.workspaceOpen).mockResolvedValue(info());
   vi.mocked(ipc.schemasList).mockResolvedValue(["audit", "public"]);

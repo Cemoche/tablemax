@@ -28,7 +28,17 @@ const obj = { schema: "public", name: "order_lines" };
 
 beforeEach(() => {
   vi.resetAllMocks();
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
+  usePendingChanges.setState({
+    tabs: {},
+    blocked: {},
+    committing: {},
+    committingIn: {},
+    confirming: {},
+    applied: {},
+    editorOpen: {},
+    awaitingReload: {},
+    epoch: {},
+  });
 });
 
 test("setting a cell back to its original value removes the edit", () => {
@@ -134,7 +144,7 @@ test("commit applies toChanges, then clears the tab and bumps applied", async ()
   s().toggleDelete(T, obj, key(2));
   const changes = s().toChanges(T);
   await expect(s().commit(T, "w1", obj)).resolves.toBe(true);
-  expect(ipc.changesApply).toHaveBeenCalledWith("w1", obj, changes);
+  expect(ipc.changesApply).toHaveBeenCalledWith("w1", obj, changes, false);
   expect(s().count(T)).toBe(0);
   expect(s().applied[T]).toBe(1);
   expect(s().committing[T]).toBeFalsy();
@@ -274,9 +284,6 @@ test("only a connection failure makes the outcome unknown", async () => {
   vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "connection", message: "refused" });
   await s().commit(T, "w1", obj);
   expect(s().tabs[T].outcomeUnknown).toBe(true);
-  // Discarding forgets it.
-  s().discard(T);
-  expect(s().tabs[T].outcomeUnknown).toBe(false);
 });
 
 test("cancelCommit cancels the workspace's commit only while one runs", async () => {
@@ -340,4 +347,172 @@ test("changes are bound to the table of their first change", async () => {
   expect(s().tabs[T].object).toEqual(other);
   s().revertChange(T, `delete:${rowKeyId(key(2))}`);
   expect(s().tabs[T].object).toBeNull();
+});
+
+const ok = { applied: true, affected: [1, 1], failedIndex: null, error: null };
+const confirmFirst = () =>
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "confirmationRequired", message: "0,1" });
+const twoChanges = () => {
+  s().setCell(T, obj, key(1), "note", { t: "text", v: "new" }, row(1, "old"), columns);
+  s().toggleDelete(T, obj, key(2));
+  return s().changeList(T);
+};
+
+test("a protected connection's refusal asks for confirmation with a fresh preview, then Run resends the same list", async () => {
+  const list = twoChanges();
+  const changes = list.map((c) => c.change);
+  confirmFirst();
+  vi.mocked(ipc.changesPreview).mockResolvedValueOnce(["UPDATE one", "DELETE two"]);
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  expect(ipc.changesApply).toHaveBeenCalledWith("w1", obj, changes, false);
+  expect(ipc.changesPreview).toHaveBeenCalledWith("w1", obj, changes);
+  expect(s().confirming[T]).toEqual({
+    workspaceId: "w1",
+    object: obj,
+    list,
+    statements: ["UPDATE one", "DELETE two"],
+    flagged: [0, 1],
+  });
+  // Nothing written, nothing failed: the changes stay pending, no error.
+  expect(s().count(T)).toBe(2);
+  expect(s().tabs[T].error).toBeNull();
+  expect(s().tabs[T].errors).toEqual({});
+  expect(s().tabs[T].outcomeUnknown).toBe(false);
+  expect(s().committing[T]).toBeFalsy();
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce(ok);
+  await expect(s().confirmCommit(T)).resolves.toBe(true);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(2);
+  expect(ipc.changesApply).toHaveBeenLastCalledWith("w1", obj, changes, true);
+  expect(s().confirming[T]).toBeUndefined();
+  expect(s().count(T)).toBe(0);
+  expect(s().applied[T]).toBe(1);
+});
+
+test("while confirming the tab is locked; Cancel applies nothing and keeps the changes", async () => {
+  twoChanges();
+  confirmFirst();
+  vi.mocked(ipc.changesPreview).mockResolvedValueOnce(["a", "b"]);
+  await s().commit(T, "w1", obj);
+  expect(s().addInsert(T, obj)).toBeNull();
+  expect(s().toggleDelete(T, obj, key(3))).toBe(false);
+  expect(s().discard(T)).toBe(false);
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  s().cancelConfirm(T);
+  expect(s().confirming[T]).toBeUndefined();
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  expect(s().count(T)).toBe(2);
+  expect(s().tabs[T].error).toBeNull();
+  // Unlocked again.
+  expect(s().addInsert(T, obj)).not.toBeNull();
+  // Run without a pending confirmation does nothing.
+  await expect(s().confirmCommit(T)).resolves.toBe(false);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+});
+
+test("a failing confirmation preview shows its error and applies nothing", async () => {
+  twoChanges();
+  confirmFirst();
+  vi.mocked(ipc.changesPreview).mockRejectedValueOnce({ kind: "connection", message: "gone away" });
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
+  expect(s().confirming[T]).toBeUndefined();
+  expect(s().tabs[T].error).toBe(strings.grid.confirmPreviewFailed("gone away"));
+  // A preview failure is not a commit failure: nothing was sent.
+  expect(s().tabs[T].outcomeUnknown).toBe(false);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  expect(s().count(T)).toBe(2);
+  expect(s().committing[T]).toBeFalsy();
+});
+
+test("closing the tab forgets its confirmation and its commit slot", async () => {
+  twoChanges();
+  confirmFirst();
+  vi.mocked(ipc.changesPreview).mockResolvedValueOnce(["a", "b"]);
+  await s().commit(T, "w1", obj);
+  s().drop(T);
+  expect(s().confirming[T]).toBeUndefined();
+  let resolve!: (o: Awaited<ReturnType<typeof ipc.changesApply>>) => void;
+  vi.mocked(ipc.changesApply).mockImplementation(() => new Promise((r) => (resolve = r)));
+  s().toggleDelete(T, obj, key(1));
+  const done = s().commit(T, "w1", obj);
+  expect(s().committingIn.w1).toBe(T);
+  s().drop(T);
+  expect(s().committingIn.w1).toBeUndefined();
+  resolve(ok);
+  await done;
+  expect(s().committingIn.w1).toBeUndefined();
+});
+
+test("one committing tab per workspace", async () => {
+  let resolve!: (o: Awaited<ReturnType<typeof ipc.changesApply>>) => void;
+  vi.mocked(ipc.changesApply).mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+  s().toggleDelete(T, obj, key(1));
+  s().toggleDelete("tab2", obj, key(2));
+  s().toggleDelete("tab3", obj, key(3));
+  const done = s().commit(T, "w1", obj);
+  expect(s().committingIn).toEqual({ w1: T });
+  // Another tab of the same workspace is refused (and told why); another workspace is not.
+  await expect(s().commit("tab2", "w1", obj)).resolves.toBe(false);
+  expect(s().tabs.tab2.error).toBe(strings.grid.otherTabCommitting);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce(ok);
+  await expect(s().commit("tab3", "w2", obj)).resolves.toBe(true);
+  resolve(ok);
+  await done;
+  expect(s().committingIn).toEqual({});
+  // The backend's own refusal of a concurrent commit is shown like any failure.
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({
+    kind: "invalid",
+    message: "a commit is already running in this workspace",
+  });
+  await expect(s().commit("tab2", "w1", obj)).resolves.toBe(false);
+  expect(s().tabs.tab2.error).toBe("a commit is already running in this workspace");
+});
+
+test("Discard after an unknown outcome drops the edits but stays blocked until a reload settles", async () => {
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "connection", message: "outcome unknown" });
+  s().toggleDelete(T, obj, key(1));
+  await s().commit(T, "w1", obj);
+  expect(s().tabs[T].outcomeUnknown).toBe(true);
+  const applied = s().applied[T] ?? 0;
+  expect(s().discard(T)).toBe(true);
+  expect(s().count(T)).toBe(0);
+  expect(s().tabs[T].outcomeUnknown).toBe(true);
+  expect(s().tabs[T].error).toBe("outcome unknown");
+  expect(s().guardReload(T)).toBe(true);
+  // The page is reloaded (the same signal as after a commit).
+  expect(s().applied[T]).toBe(applied + 1);
+  s().toggleDelete(T, obj, key(2));
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  s().pageSettled(T, s().epochOf(T), true);
+  expect(s().tabs[T].outcomeUnknown).toBe(false);
+  expect(s().tabs[T].error).toBeNull();
+});
+
+test("a plain Discard and a successful commit still reset the tab", async () => {
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce({
+    applied: false,
+    affected: [],
+    failedIndex: null,
+    error: { kind: "query", message: "deferred constraint violated" },
+  });
+  s().toggleDelete(T, obj, key(1));
+  await s().commit(T, "w1", obj);
+  expect(s().tabs[T].error).toBe("deferred constraint violated");
+  s().discard(T);
+  expect(s().tabs[T].error).toBeNull();
+  expect(s().applied[T]).toBeUndefined();
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce({
+    applied: false,
+    affected: [],
+    failedIndex: null,
+    error: { kind: "query", message: "again" },
+  });
+  s().toggleDelete(T, obj, key(1));
+  await s().commit(T, "w1", obj);
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce(ok);
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(true);
+  expect(s().tabs[T]).toMatchObject({ error: null, outcomeUnknown: false, errors: {} });
 });

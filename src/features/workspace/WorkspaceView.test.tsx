@@ -43,7 +43,17 @@ const View = () => {
 beforeEach(() => {
   vi.resetAllMocks();
   useWorkspaces.setState({ workspaces: [base], activeWorkspaceId: "w1", closeRequest: null });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
+  usePendingChanges.setState({
+    tabs: {},
+    blocked: {},
+    committing: {},
+    committingIn: {},
+    confirming: {},
+    applied: {},
+    editorOpen: {},
+    awaitingReload: {},
+    epoch: {},
+  });
   vi.mocked(ipc.changesApply).mockResolvedValue({
     applied: true,
     affected: [1],
@@ -57,9 +67,22 @@ test("Ctrl+S commits the pending changes of the active table tab", async () => {
   render(<View />);
   await userEvent.keyboard("{Control>}s{/Control}");
   await waitFor(() =>
-    expect(ipc.changesApply).toHaveBeenCalledWith("w1", object, [{ kind: "insert", values: [] }]),
+    expect(ipc.changesApply).toHaveBeenCalledWith("w1", object, [{ kind: "insert", values: [] }], false),
   );
   await waitFor(() => expect(usePendingChanges.getState().count("t1")).toBe(0));
+});
+
+test("Ctrl+S on a protected connection asks for confirmation instead of committing", async () => {
+  vi.mocked(ipc.changesApply).mockReset();
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "confirmationRequired", message: "0" });
+  vi.mocked(ipc.changesPreview).mockResolvedValue(["INSERT INTO users DEFAULT VALUES"]);
+  usePendingChanges.getState().addInsert("t1", object);
+  render(<View />);
+  await userEvent.keyboard("{Control>}s{/Control}");
+  await waitFor(() => expect(usePendingChanges.getState().confirming.t1).toBeDefined());
+  expect(usePendingChanges.getState().confirming.t1.statements).toEqual(["INSERT INTO users DEFAULT VALUES"]);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  expect(usePendingChanges.getState().count("t1")).toBe(1);
 });
 
 test("Ctrl+S does nothing in a query tab or while a modal is open", async () => {

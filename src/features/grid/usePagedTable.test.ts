@@ -18,7 +18,17 @@ const rs = (n: number): ResultSet => ({
 beforeEach(() => {
   vi.resetAllMocks();
   useGridViews.setState({ views: {} });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
+  usePendingChanges.setState({
+    tabs: {},
+    blocked: {},
+    committing: {},
+    committingIn: {},
+    confirming: {},
+    applied: {},
+    editorOpen: {},
+    awaitingReload: {},
+    epoch: {},
+  });
   vi.mocked(ipc.tablePage).mockResolvedValue(rs(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 650 });
 });

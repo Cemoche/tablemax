@@ -136,7 +136,10 @@ function useChangesPreview(workspaceId: string, object: ObjectRef, list: ChangeE
  */
 export function PendingChangesPanel({ workspaceId, tabId, object }: Props) {
   const tab = usePendingChanges((st) => st.tabs[tabId]);
-  const committing = usePendingChanges((st) => st.committing[tabId] ?? false);
+  // A commit runs or waits for its confirmation: the changes cannot be undone meanwhile.
+  const committing = usePendingChanges(
+    (st) => (st.committing[tabId] ?? false) || st.confirming[tabId] !== undefined,
+  );
   const edits = tab?.edits;
   const inserts = tab?.inserts;
   const deletes = tab?.deletes;

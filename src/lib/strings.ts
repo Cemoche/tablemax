@@ -279,6 +279,8 @@ export const strings = {
       "The connection was lost during the commit: some or all changes may have been saved. Reload and check before committing again.",
     cancelCommit: "Cancel",
     cancelCommitLabel: "Cancel the commit",
+    otherTabCommitting: "Another tab of this connection is committing.",
+    confirmPreviewFailed: (message: string) => `the statements to confirm could not be prepared: ${message}`,
     closeWhileCommitting: "Committing… wait for the commit to finish.",
     editorLabel: "Cell value",
     editorLoading: "loading…",

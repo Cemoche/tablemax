@@ -44,7 +44,17 @@ const deferred = <T,>() => {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
+  usePendingChanges.setState({
+    tabs: {},
+    blocked: {},
+    committing: {},
+    committingIn: {},
+    confirming: {},
+    applied: {},
+    editorOpen: {},
+    awaitingReload: {},
+    epoch: {},
+  });
 });
 
 test("lists each change with its kind, key, columns and SQL", async () => {

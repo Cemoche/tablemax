@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
@@ -64,7 +64,17 @@ beforeEach(() => {
   grid = null;
   structureMounts = 0;
   useGridViews.setState({ views: {}, trails: {} });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
+  usePendingChanges.setState({
+    tabs: {},
+    blocked: {},
+    committing: {},
+    committingIn: {},
+    confirming: {},
+    applied: {},
+    editorOpen: {},
+    awaitingReload: {},
+    epoch: {},
+  });
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo());
   vi.mocked(ipc.changesPreview).mockResolvedValue([]);
 });
@@ -131,7 +141,7 @@ test("editing through the grid, then commit applies the changes and reloads", as
   ]);
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
   await userEvent.click(screen.getByRole("button", { name: strings.grid.commit("Ctrl+S") }));
-  expect(ipc.changesApply).toHaveBeenCalledWith("w1", obj, changes);
+  expect(ipc.changesApply).toHaveBeenCalledWith("w1", obj, changes, false);
   await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
   expect(ipc.tableCount).toHaveBeenCalledTimes(2);
   expect(pending().count("t1")).toBe(0);
@@ -337,9 +347,12 @@ test("a commit and a reload with shifted rows keep the details on the same recor
   expect(note()).toHaveFocus();
   // Mod+S while the field still has the focus: the typed text is already pending.
   await act(() => pending().commit("t1", "w1", obj));
-  expect(ipc.changesApply).toHaveBeenCalledWith("w1", obj, [
-    { kind: "update", key: key(1), set: [["note", { t: "text", v: "note 1!" }]] },
-  ]);
+  expect(ipc.changesApply).toHaveBeenCalledWith(
+    "w1",
+    obj,
+    [{ kind: "update", key: key(1), set: [["note", { t: "text", v: "note 1!" }]] }],
+    false,
+  );
   await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
   // line 1 is now the 4th row: the panel follows it and shows the reloaded value.
   await waitFor(() => expect(note().value).toBe("note 1 saved"));
@@ -893,4 +906,163 @@ test("with the structure shown, Alt+← and Ctrl+I leave the hidden data view al
   expect(details).toHaveAttribute("aria-pressed", "true");
   await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
   await waitFor(() => expect(theTab()).toMatchObject({ object: obj }));
+});
+
+const commitName = strings.grid.commit("Ctrl+S");
+const applied = { applied: true, affected: [1, 1], failedIndex: null, error: null };
+
+function setWorkspace(envTag: "prod" | "local") {
+  useWorkspaces.setState({
+    workspaces: [
+      {
+        id: "w1",
+        connectionId: "c1",
+        name: "Billing",
+        color: "swatch-1",
+        envTag,
+        dialect: "postgres",
+        schemas: ["public"],
+        currentSchema: "public",
+        tabs: [{ id: "t1", kind: "table", object: obj, title: obj.name }],
+        activeTabId: "t1",
+      },
+    ],
+    activeWorkspaceId: "w1",
+  });
+}
+
+/** A prod workspace, two pending changes, Commit refused until confirmed. */
+async function refusedCommit() {
+  setWorkspace("prod");
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "confirmationRequired", message: "0,1" });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onEdit(1, 3, "changed"));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.addRow }));
+  return pending().toChanges("t1");
+}
+
+test("a protected connection asks to confirm the commit, showing one SQL per change; Run resends the same list", async () => {
+  const changes = await refusedCommit();
+  vi.mocked(ipc.changesPreview).mockImplementation(async (_w, _o, list) =>
+    list.length === 2 ? ["UPDATE order_lines SET note = 'changed'", "INSERT INTO order_lines DEFAULT VALUES"] : [],
+  );
+  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  const dialog = await screen.findByRole("dialog");
+  expect(ipc.changesApply).toHaveBeenCalledWith("w1", obj, changes, false);
+  expect(ipc.changesPreview).toHaveBeenLastCalledWith("w1", obj, changes);
+  expect(within(dialog).getByText(strings.safety.dialogIntro("Billing", "PROD"))).toBeInTheDocument();
+  expect(within(dialog).getByText("UPDATE order_lines SET note = 'changed'")).toBeInTheDocument();
+  expect(within(dialog).getByText("INSERT INTO order_lines DEFAULT VALUES")).toBeInTheDocument();
+  expect(within(dialog).getAllByText(strings.safety.needsConfirmation)).toHaveLength(2);
+  // No failure shown for the refusal itself.
+  expect(screen.queryByText(strings.grid.nothingWritten)).toBeNull();
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce(applied);
+  await userEvent.click(within(dialog).getByRole("button", { name: strings.safety.confirmRun }));
+  expect(ipc.changesApply).toHaveBeenCalledTimes(2);
+  expect(ipc.changesApply).toHaveBeenLastCalledWith("w1", obj, changes, true);
+  await waitFor(() => expect(pending().count("t1")).toBe(0));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("Cancel in the commit confirmation applies nothing and keeps the changes", async () => {
+  await refusedCommit();
+  vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);
+  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  const dialog = await screen.findByRole("dialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: strings.safety.confirmCancel }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  expect(pending().count("t1")).toBe(2);
+  expect(screen.queryByRole("alert")).toBeNull();
+  await waitFor(() => expect(screen.getByRole("button", { name: commitName })).toHaveFocus());
+});
+
+test("a failing preview for the confirmation shows its error and applies nothing", async () => {
+  await refusedCommit();
+  vi.mocked(ipc.changesPreview).mockRejectedValue({ kind: "query", message: "preview broke" });
+  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  expect(
+    await screen.findByText(strings.grid.commitFailed(strings.grid.confirmPreviewFailed("preview broke"))),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  expect(pending().count("t1")).toBe(2);
+});
+
+test("a commit started without the button (Mod+S) also ends in the confirmation", async () => {
+  await refusedCommit();
+  vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);
+  await act(() => pending().commit("t1", "w1", obj));
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+});
+
+test("an unprotected connection commits without a confirmation", async () => {
+  setWorkspace("local");
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  vi.mocked(ipc.changesApply).mockResolvedValue(applied);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onEdit(1, 3, "changed"));
+  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  await waitFor(() => expect(pending().count("t1")).toBe(0));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+});
+
+test("Commit is disabled in the other table tabs of a workspace while one commits", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  let resolve!: (o: Awaited<ReturnType<typeof ipc.changesApply>>) => void;
+  vi.mocked(ipc.changesApply).mockImplementation(() => new Promise((r) => (resolve = r)));
+  pending().toggleDelete("t2", obj, key(0));
+  pending().toggleDelete("t3", obj, key(0));
+  const b = render(<TableDataTab workspaceId="w1" tabId="t2" object={obj} dialect="postgres" />);
+  const c = render(<TableDataTab workspaceId="w2" tabId="t3" object={obj} dialect="postgres" />);
+  const commitB = await within(b.container).findByRole("button", { name: commitName });
+  const commitC = await within(c.container).findByRole("button", { name: commitName });
+  await waitFor(() => expect(commitB).toBeEnabled());
+  pending().toggleDelete("t1", obj, key(1));
+  let done!: Promise<boolean>;
+  act(() => {
+    done = pending().commit("t1", "w1", obj);
+  });
+  expect(commitB).toBeDisabled();
+  expect(commitB).toHaveAttribute("title", strings.grid.otherTabCommitting);
+  expect(commitC).toBeEnabled();
+  expect(commitC).not.toHaveAttribute("title");
+  await act(async () => {
+    resolve(applied);
+    await done;
+  });
+  expect(commitB).toBeEnabled();
+  expect(commitB).not.toHaveAttribute("title");
+});
+
+test("Discard after an unknown outcome drops the edits, reloads, and stays blocked until the page is back", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValueOnce(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "connection", message: "outcome unknown" });
+  let reloaded: (r: ResultSet) => void = () => {};
+  vi.mocked(ipc.tablePage).mockReturnValueOnce(new Promise<ResultSet>((r) => (reloaded = r)));
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onEdit(1, 3, "changed"));
+  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  expect(await screen.findByText(strings.grid.commitOutcomeUnknown)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
+  expect(pending().count("t1")).toBe(0);
+  // Still blocked: the warning stays and the page is reloaded.
+  expect(screen.getByText(strings.grid.commitOutcomeUnknown)).toBeInTheDocument();
+  expect(pending().guardReload("t1")).toBe(true);
+  await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
+  act(() => grid!.editing!.onEdit(1, 3, "again"));
+  await act(() => pending().commit("t1", "w1", obj));
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  await act(async () => reloaded(lines(2)));
+  await waitFor(() => expect(screen.queryByText(strings.grid.commitOutcomeUnknown)).toBeNull());
+  expect(screen.getByRole("button", { name: commitName })).toBeEnabled();
 });

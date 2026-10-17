@@ -73,9 +73,16 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
   const blocked = usePendingChanges((s) => s.blocked[tabId] ?? false);
   const committing = usePendingChanges((s) => s.committing[tabId] ?? false);
   const awaitingReload = usePendingChanges((s) => s.awaitingReload[tabId] ?? false);
+  /** A commit the protected connection wants confirmed (the tab shows the dialog). */
+  const confirm = usePendingChanges((s) => s.confirming[tabId] ?? null);
+  /** Another table tab of the workspace is committing: this one may not start. */
+  const otherCommitting = usePendingChanges((s) => {
+    const t = s.committingIn[workspaceId];
+    return t !== undefined && t !== tabId;
+  });
   const appliedSeq = usePendingChanges((s) => s.applied[tabId] ?? 0);
-  /** Edits are refused: a commit runs, or its reload has not landed yet. */
-  const locked = committing || awaitingReload;
+  /** Edits are refused: a commit runs, waits for its confirmation, or its reload has not landed. */
+  const locked = committing || awaitingReload || confirm !== null;
   /**
    * The open context menu, bound to its record (and the rows of its copy block) by
    * identity: it follows the record when rows are added above it, and closes when the
@@ -305,8 +312,12 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     count,
     blocked,
     committing,
-    /** Edits refused (a commit runs or its reload has not landed). */
+    /** Edits refused (a commit runs or waits for confirmation, or its reload has not landed). */
     locked,
+    /** The commit waiting for confirmation, else null. */
+    confirm,
+    /** Another table tab of the workspace is committing (Commit is disabled here). */
+    otherCommitting,
     /** The last commit lost its connection: Commit is refused until a reload. */
     outcomeUnknown,
     hint,
@@ -336,6 +347,10 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     /** A context-menu action on a cell or row. */
     runAction,
     commit: () => void store().commit(tabId, workspaceId, object),
+    /** Run in the confirmation: sends the confirmed list as it was shown. */
+    confirmCommit: () => void store().confirmCommit(tabId),
+    /** Cancel in the confirmation: nothing applied, the changes stay. */
+    cancelConfirm: () => store().cancelConfirm(tabId),
     /** Cancels the running commit (rolled back). */
     cancelCommit: () => void store().cancelCommit(tabId, workspaceId).catch(() => {}),
     addRow: () => store().addInsert(tabId, object),

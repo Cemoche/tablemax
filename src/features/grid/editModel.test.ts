@@ -31,7 +31,17 @@ const model = (data: ResultSet, info = tableInfo(), locked = false) =>
   buildGridModel(data, info, s().tabs[T], locked);
 
 beforeEach(() => {
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
+  usePendingChanges.setState({
+    tabs: {},
+    blocked: {},
+    committing: {},
+    committingIn: {},
+    confirming: {},
+    applied: {},
+    editorOpen: {},
+    awaitingReload: {},
+    epoch: {},
+  });
 });
 
 test("inserts come first, then the page rows with their pending state", () => {

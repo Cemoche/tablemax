@@ -1,8 +1,12 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, ObjectRef } from "../../lib/types";
+import type { CommitConfirm } from "../../stores/pendingChanges";
+import { useWorkspaces } from "../../stores/workspaces";
+import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
 import { StructureTab } from "../structure/StructureTab";
+import { type LiveEnvSource, useLiveEnv } from "../workspace/useLiveEnv";
 import { Breadcrumb } from "./Breadcrumb";
 import { DataGrid, type GridEditing } from "./DataGrid";
 import { FilterBar } from "./FilterBar";
@@ -25,6 +29,36 @@ interface Props {
 
 const btn =
   "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
+
+/** Only while the workspace is gone (a table tab always lives in one): the strictest look. */
+const NO_WORKSPACE: LiveEnvSource = { connectionId: "", envTag: "prod", safeMode: null };
+
+/** The commit a protected connection refused until confirmed, as QueryTab asks for a batch. */
+function CommitConfirmDialog({
+  workspaceId,
+  confirm,
+  onRun,
+  onCancel,
+}: {
+  workspaceId: string;
+  confirm: CommitConfirm;
+  onRun: () => void;
+  onCancel: () => void;
+}) {
+  const workspace = useWorkspaces((s) => s.workspaces.find((w) => w.id === workspaceId));
+  const env = useLiveEnv(workspace ?? NO_WORKSPACE);
+  return (
+    <ConfirmRunDialog
+      connectionName={workspace?.name ?? ""}
+      envTag={env.envTag}
+      safeMode={env.mode}
+      statements={confirm.statements}
+      flagged={confirm.flagged}
+      onRun={onRun}
+      onCancel={onCancel}
+    />
+  );
+}
 
 export function TableDataTab(props: Props) {
   // Kept across foreign key navigation (the panel shows the referenced row once selected).
@@ -80,6 +114,14 @@ function TableDataView({
     },
   };
   const target = e.menuTarget;
+  // Cancel in the commit confirmation gives the focus back to Commit (enabled again then).
+  const commitRef = useRef<HTMLButtonElement>(null);
+  const refocusCommit = useRef(false);
+  useEffect(() => {
+    if (e.confirm || !refocusCommit.current) return;
+    refocusCommit.current = false;
+    commitRef.current?.focus();
+  }, [e.confirm]);
   const menuItems = target
     ? joinMenuGroups([links.menuItems(target.row, target.col), e.menuItems, copy.menuItems(target.block)])
     : [];
@@ -118,10 +160,12 @@ function TableDataView({
             {strings.grid.addRow}
           </button>
           <button
+            ref={commitRef}
             type="button"
             className={btn}
             onClick={e.commit}
-            disabled={e.count === 0 || e.locked || e.outcomeUnknown}
+            disabled={e.count === 0 || e.locked || e.outcomeUnknown || e.otherCommitting}
+            title={e.otherCommitting ? strings.grid.otherTabCommitting : undefined}
           >
             {e.committing ? strings.grid.committing : strings.grid.commit(formatShortcut("Mod+S"))}
           </button>
@@ -201,6 +245,17 @@ function TableDataView({
           />
         )}
       </div>
+      {e.confirm && (
+        <CommitConfirmDialog
+          workspaceId={workspaceId}
+          confirm={e.confirm}
+          onRun={e.confirmCommit}
+          onCancel={() => {
+            refocusCommit.current = true;
+            e.cancelConfirm();
+          }}
+        />
+      )}
       {target && menuItems.length > 0 && (
         <GridContextMenu
           x={target.x}
