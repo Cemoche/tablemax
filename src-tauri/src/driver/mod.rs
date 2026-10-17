@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod mysql;
 pub mod postgres;
 pub mod sql;
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::CellValue;
+use catalog::{Catalog, DbRoutine};
 use tls::SslConfig;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -166,6 +168,15 @@ pub trait Session: Send + Sync {
     async fn execute(&self, sql: &str) -> AppResult<StatementOutcome>;
     fn canceller(&self) -> Arc<dyn Canceller>;
     async fn close(&self) -> AppResult<()>;
+    /// Tables, views and their columns (definition order) of `schema` in one query,
+    /// for completion and the palette. `None` = the default schema of the engine.
+    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog>;
+    /// Functions and procedures of `schema` (PostgreSQL: every non-system schema when
+    /// `None`). SQLite has none.
+    async fn list_routines(&self, schema: Option<&str>) -> AppResult<Vec<DbRoutine>>;
+    /// Databases the connection can switch to (PostgreSQL), or the schemas for
+    /// MySQL / attached databases for SQLite.
+    async fn list_databases(&self) -> AppResult<Vec<String>>;
 }
 
 pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {

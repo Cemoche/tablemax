@@ -73,6 +73,10 @@ pub fn run() {
             commands::saved_query_write,
             commands::saved_query_rename,
             commands::saved_query_delete,
+            commands::catalog_get,
+            commands::routines_list,
+            commands::databases_list,
+            commands::workspace_switch_database,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

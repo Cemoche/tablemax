@@ -28,6 +28,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::time::Instant;
 
+use crate::driver::catalog::{CATALOG_TTL, Catalog, CatalogCache, DbRoutine};
 use crate::driver::{
     self, Canceller, ConnectParams, Dialect, DriverKind, Session, StatementOutcome,
 };
@@ -60,6 +61,11 @@ pub struct WorkspaceInfo {
     pub connection_id: String,
     pub dialect: Dialect,
     pub server_version: String,
+    /// The database the browse connection is on: the connection's configured one (for
+    /// PostgreSQL the one actually connected to), the new one after
+    /// [`SessionManager::switch_database`]. `None` when the engine has no such notion
+    /// or none is configured.
+    pub database: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -111,6 +117,10 @@ struct Workspace {
     /// The tunnel `browse` was connected through; once it is dead, `browse` is rebuilt.
     browse_tunnel: Option<Arc<SshTunnel>>,
     sql_sessions: Vec<String>,
+    /// PostgreSQL database chosen by `switch_database`. Kept apart from `config`
+    /// (the saved connection's identity, which guards the keyring on reconnect) and
+    /// applied to the browse connection and to every SQL session opened afterwards.
+    database: Option<String>,
 }
 
 /// A workspace's reconnect parameters (held secrets are copies, dropped after use).
@@ -119,6 +129,18 @@ struct Reconnect {
     password: Option<String>,
     ssh_secret: Option<String>,
     slot: TunnelSlot,
+    /// The workspace's switched-to database; see [`Workspace::database`].
+    database: Option<String>,
+}
+
+impl Reconnect {
+    /// Points `config` at the switched-to database. Call after `unbind_stale_keyring`,
+    /// which compares `config` with the saved connection.
+    fn apply_database(&mut self) {
+        if let Some(db) = self.database.take() {
+            self.config.database = Some(db);
+        }
+    }
 }
 
 /// Control flags of one batch. A fresh one is installed for every batch, so no flag
@@ -202,6 +224,8 @@ pub struct SessionManager {
     state: Mutex<State>,
     /// `<app data>/queries`: saved queries, one folder per connection.
     queries_dir: Option<PathBuf>,
+    /// Completion catalogs per `(workspace, schema)`.
+    catalogs: CatalogCache,
 }
 
 fn workspace_not_found(id: &str) -> AppError {
@@ -242,6 +266,27 @@ async fn connect(
         dial: tunnel.map(SshTunnel::local_addr),
     })
     .await
+}
+
+/// The database a freshly opened browse connection is on: the configured one, else (for
+/// PostgreSQL, which then connects to the database named like the user) asked from the
+/// server. Best effort: `None` when unknown.
+async fn opened_database(cfg: &ConnectionConfig, browse: &dyn Session) -> Option<String> {
+    use crate::value::CellValue;
+    if let Some(db) = non_empty(cfg.database.as_deref()) {
+        return Some(db.to_string());
+    }
+    if cfg.kind != DriverKind::Postgres {
+        return None;
+    }
+    let out = browse
+        .execute("SELECT current_database()::text")
+        .await
+        .ok()?;
+    match out.result?.rows.into_iter().next()?.into_iter().next()? {
+        CellValue::Text(s) => Some(s),
+        _ => None,
+    }
 }
 
 /// Bounds `fut` by [`SSH_OPEN_TIMEOUT`] (Connection "ssh connection timed out").
@@ -389,7 +434,15 @@ impl SessionManager {
             import_pick: LastPick::default(),
             state: Mutex::new(State::default()),
             queries_dir: None,
+            catalogs: CatalogCache::new(CATALOG_TTL),
         }
+    }
+
+    /// Replaces the catalog cache lifetime (tests).
+    #[doc(hidden)]
+    pub fn with_catalog_ttl(mut self, ttl: Duration) -> Self {
+        self.catalogs = CatalogCache::new(ttl);
+        self
     }
 
     /// Where saved queries live (`<app data>/queries`); without it they are unavailable.
@@ -747,11 +800,13 @@ impl SessionManager {
                 return Err(e);
             }
         };
+        let database = opened_database(&config, browse.as_ref()).await;
         let info = WorkspaceInfo {
             workspace_id: uuid::Uuid::new_v4().to_string(),
             connection_id: config.id.clone(),
             dialect: browse.dialect(),
             server_version: browse.server_version(),
+            database,
         };
         self.state().workspaces.insert(
             info.workspace_id.clone(),
@@ -763,6 +818,7 @@ impl SessionManager {
                 tunnel: Arc::new(tokio::sync::Mutex::new(tunnel)),
                 browse,
                 sql_sessions: Vec::new(),
+                database: None,
             },
         );
         Ok(info)
@@ -785,6 +841,7 @@ impl SessionManager {
                 .collect();
             (ws, sessions)
         };
+        self.catalogs.forget(workspace_id);
         let mut first_err = None;
         for s in sessions {
             if let Err(e) = shutdown_sql(&s).await {
@@ -822,6 +879,7 @@ impl SessionManager {
             password: ws.held_password.as_ref().map(|p| p.0.clone()),
             ssh_secret: ws.held_ssh_secret.as_ref().map(|p| p.0.clone()),
             slot: ws.tunnel.clone(),
+            database: ws.database.clone(),
         })
     }
 
@@ -886,6 +944,7 @@ impl SessionManager {
         }
         let mut r = self.reconnect_material(workspace_id)?;
         self.unbind_stale_keyring(&mut r).await?;
+        r.apply_database();
         let mut current = r.slot.lock().await;
         // Another caller may have rebuilt it while we waited for the lock.
         if let Some(browse) = self.usable_browse(workspace_id)? {
@@ -923,6 +982,7 @@ impl SessionManager {
     pub async fn open_sql_session(&self, workspace_id: &str) -> AppResult<String> {
         let mut r = self.reconnect_material(workspace_id)?;
         self.unbind_stale_keyring(&mut r).await?;
+        r.apply_database();
         let password = self.resolve_password(&r.config, r.password).await?;
         let tunnel = self
             .live_tunnel(workspace_id, &r.config, &r.slot, r.ssh_secret)
@@ -1051,6 +1111,109 @@ impl SessionManager {
     pub async fn cancel(&self, session_id: &str) -> AppResult<()> {
         let entry = self.sql_entry(session_id)?;
         request_cancel(&entry).await
+    }
+}
+
+impl SessionManager {
+    /// Tables, views and columns of `schema` for completion and the palette, cached per
+    /// `(workspace, schema)` for [`CATALOG_TTL`]; `refresh` bypasses and refills the cache.
+    pub async fn catalog(
+        &self,
+        workspace_id: &str,
+        schema: Option<&str>,
+        refresh: bool,
+    ) -> AppResult<Catalog> {
+        if !refresh && let Some(hit) = self.catalogs.get(workspace_id, schema) {
+            return Ok(Catalog::clone(&hit));
+        }
+        // Taken before the fetch: a database switch in between discards the result.
+        let generation = self.catalogs.generation(workspace_id);
+        let fresh = Arc::new(self.browse(workspace_id).await?.catalog(schema).await?);
+        self.catalogs
+            .put(workspace_id, schema, generation, fresh.clone(), || {
+                self.state().workspaces.contains_key(workspace_id)
+            });
+        Ok(Catalog::clone(&fresh))
+    }
+
+    /// Functions and procedures of `schema` (every user schema when `None` on PostgreSQL).
+    pub async fn routines_list(
+        &self,
+        workspace_id: &str,
+        schema: Option<&str>,
+    ) -> AppResult<Vec<DbRoutine>> {
+        self.browse(workspace_id).await?.list_routines(schema).await
+    }
+
+    /// Databases the connection can switch to (MySQL: the schemas, SQLite: attached).
+    pub async fn databases_list(&self, workspace_id: &str) -> AppResult<Vec<String>> {
+        self.browse(workspace_id).await?.list_databases().await
+    }
+
+    /// PostgreSQL only: moves the workspace's browse connection to `database` (same
+    /// host, user, TLS, secrets already held by the workspace, same SSH tunnel). SQL
+    /// sessions opened from now on use it too; the ones already open keep their
+    /// connection and database. The workspace's cached catalogs are dropped.
+    ///
+    /// MySQL / MariaDB / SQLite have no such switch (they change schema, as before):
+    /// Invalid. A database that does not exist is NotFound and nothing changes.
+    pub async fn switch_database(
+        &self,
+        workspace_id: &str,
+        database: &str,
+    ) -> AppResult<WorkspaceInfo> {
+        let mut r = self.reconnect_material(workspace_id)?;
+        if r.config.kind != DriverKind::Postgres {
+            return Err(AppError::new(
+                ErrorKind::Invalid,
+                "only PostgreSQL connections switch database; use the schema instead",
+            ));
+        }
+        if database.is_empty() {
+            return Err(AppError::new(ErrorKind::Invalid, "database name is empty"));
+        }
+        self.unbind_stale_keyring(&mut r).await?;
+        // The slot lock also serializes concurrent switches and browse reconnects.
+        let mut current = r.slot.lock().await;
+        let tunnel = if ssh_of(&r.config).is_some() {
+            Some(
+                self.revive_tunnel(workspace_id, &r.config, &mut current, r.ssh_secret)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let password = self.resolve_password(&r.config, r.password).await?;
+        let mut cfg = r.config.clone();
+        cfg.database = Some(database.to_string());
+        let fresh = connect(&cfg, password, tunnel.as_deref()).await?;
+        let swapped = {
+            let mut st = self.state();
+            st.workspaces.get_mut(workspace_id).map(|ws| {
+                ws.browse_tunnel = tunnel;
+                ws.database = Some(database.to_string());
+                (
+                    std::mem::replace(&mut ws.browse, fresh.clone()),
+                    ws.config.id.clone(),
+                )
+            })
+        };
+        drop(current);
+        let Some((old, connection_id)) = swapped else {
+            // The workspace was closed while we were connecting.
+            let _ = fresh.close().await;
+            return Err(workspace_not_found(workspace_id));
+        };
+        self.catalogs.invalidate(workspace_id);
+        // Bounded, like the browse swap in `browse`.
+        let _ = tokio::time::timeout(CANCEL_TIMEOUT, old.close()).await;
+        Ok(WorkspaceInfo {
+            workspace_id: workspace_id.to_string(),
+            connection_id,
+            dialect: fresh.dialect(),
+            server_version: fresh.server_version(),
+            database: Some(database.to_string()),
+        })
     }
 }
 
@@ -1659,11 +1822,12 @@ mod tests {
             connection_id: "c".into(),
             dialect: Dialect::Sqlite,
             server_version: "3".into(),
+            database: None,
         })
         .unwrap();
         assert_eq!(
             info,
-            serde_json::json!({"workspaceId": "w", "connectionId": "c", "dialect": "sqlite", "serverVersion": "3"})
+            serde_json::json!({"workspaceId": "w", "connectionId": "c", "dialect": "sqlite", "serverVersion": "3", "database": null})
         );
     }
 
@@ -1720,6 +1884,165 @@ mod tests {
         async fn close(&self) -> AppResult<()> {
             Ok(())
         }
+        async fn catalog(&self, _: Option<&str>) -> AppResult<Catalog> {
+            Ok(Catalog {
+                schema: None,
+                tables: vec![],
+            })
+        }
+        async fn list_routines(&self, _: Option<&str>) -> AppResult<Vec<DbRoutine>> {
+            Ok(vec![])
+        }
+        async fn list_databases(&self) -> AppResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    /// A browse session that counts `catalog` calls and answers with the call number
+    /// as the schema name, so a cached answer is told from a fresh one.
+    struct CatalogSession(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl Session for CatalogSession {
+        fn dialect(&self) -> Dialect {
+            Dialect::Sqlite
+        }
+        fn server_version(&self) -> String {
+            "stub".into()
+        }
+        async fn list_schemas(&self) -> AppResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn list_objects(&self, _: Option<&str>) -> AppResult<Vec<DbObject>> {
+            Ok(vec![])
+        }
+        async fn fetch_page(&self, _: &PageRequest) -> AppResult<ResultSet> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
+            Ok(RowCount::Exact(0))
+        }
+        async fn execute(&self, _: &str) -> AppResult<StatementOutcome> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        fn canceller(&self) -> Arc<dyn Canceller> {
+            Arc::new(CountingCanceller(Arc::default(), Duration::ZERO))
+        }
+        async fn close(&self) -> AppResult<()> {
+            Ok(())
+        }
+        async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
+            let n = self.0.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(Catalog {
+                schema: Some(format!("{}#{n}", schema.unwrap_or("-"))),
+                tables: vec![],
+            })
+        }
+        async fn list_routines(&self, _: Option<&str>) -> AppResult<Vec<DbRoutine>> {
+            Ok(vec![])
+        }
+        async fn list_databases(&self) -> AppResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    fn insert_catalog_workspace(fx: &Fx, id: &str) -> Arc<AtomicUsize> {
+        let calls = Arc::new(AtomicUsize::new(0));
+        fx.mgr.state().workspaces.insert(
+            id.into(),
+            Workspace {
+                config: cfg(DriverKind::Postgres, PasswordMode::None),
+                held_password: None,
+                held_ssh_secret: None,
+                tunnel: Default::default(),
+                browse: Arc::new(CatalogSession(calls.clone())),
+                browse_tunnel: None,
+                sql_sessions: Vec::new(),
+                database: None,
+            },
+        );
+        calls
+    }
+
+    #[tokio::test]
+    async fn catalog_is_cached_per_workspace_and_schema() {
+        let fx = fixture();
+        let calls = insert_catalog_workspace(&fx, "w1");
+        let other = insert_catalog_workspace(&fx, "w2");
+        let get = |ws: &'static str, schema: Option<&'static str>, refresh| {
+            let mgr = &fx.mgr;
+            async move { mgr.catalog(ws, schema, refresh).await.unwrap().schema }
+        };
+        assert_eq!(get("w1", Some("a"), false).await.as_deref(), Some("a#1"));
+        assert_eq!(get("w1", Some("a"), false).await.as_deref(), Some("a#1"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "second read is cached");
+        // Another schema, another workspace: their own entries.
+        assert_eq!(get("w1", Some("b"), false).await.as_deref(), Some("b#2"));
+        assert_eq!(get("w2", Some("a"), false).await.as_deref(), Some("a#1"));
+        assert_eq!(other.load(Ordering::SeqCst), 1);
+        // refresh forces a fetch and refills the cache.
+        assert_eq!(get("w1", Some("a"), true).await.as_deref(), Some("a#3"));
+        assert_eq!(get("w1", Some("a"), false).await.as_deref(), Some("a#3"));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        // Closing drops the workspace's entries; the other keeps its own.
+        fx.mgr.close_workspace("w1").await.unwrap();
+        assert_eq!(
+            fx.mgr
+                .catalog("w1", Some("a"), false)
+                .await
+                .unwrap_err()
+                .kind,
+            ErrorKind::NotFound
+        );
+        assert!(fx.mgr.catalogs.get("w1", Some("a")).is_none());
+        assert!(fx.mgr.catalogs.get("w2", Some("a")).is_some());
+    }
+
+    #[tokio::test]
+    async fn catalog_expires_after_the_ttl() {
+        let dir = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(MemorySecretStore::new());
+        let mgr =
+            Arc::new(manager(&dir, secrets.clone()).with_catalog_ttl(Duration::from_millis(30)));
+        let fx = Fx {
+            db_path: dir.path().join("none.db"),
+            _dir: dir,
+            secrets,
+            mgr,
+        };
+        let calls = insert_catalog_workspace(&fx, "w1");
+        fx.mgr.catalog("w1", None, false).await.unwrap();
+        fx.mgr.catalog("w1", None, false).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        fx.mgr.catalog("w1", None, false).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn sqlite_workspace_reports_its_database_and_refuses_to_switch() {
+        let fx = fixture();
+        let ws = sqlite_ws(&fx).await;
+        assert_eq!(ws.database, None);
+        let e = fx
+            .mgr
+            .switch_database(&ws.workspace_id, "other")
+            .await
+            .unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+        assert_eq!(
+            fx.mgr.databases_list(&ws.workspace_id).await.unwrap(),
+            ["main"]
+        );
+        assert!(
+            fx.mgr
+                .routines_list(&ws.workspace_id, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let cat = fx.mgr.catalog(&ws.workspace_id, None, false).await.unwrap();
+        assert_eq!(cat.schema.as_deref(), Some("main"));
     }
 
     async fn stubborn_session(fx: &Fx, delay: Duration) -> (String, Arc<AtomicUsize>) {
@@ -1765,6 +2088,7 @@ mod tests {
                 browse,
                 browse_tunnel: None,
                 sql_sessions: Vec::new(),
+                database: None,
             },
         );
         fx.mgr.close_workspace("w-stub").await.unwrap();

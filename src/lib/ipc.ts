@@ -2,8 +2,10 @@
 // Rejected promises carry an AppError (use toAppError from ./errors to normalise).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
+  Catalog,
   ConnectionConfig,
   DbObject,
+  DbRoutine,
   ExecEvent,
   FilePurpose,
   ImportPreview,
@@ -137,3 +139,23 @@ export const savedQueryRename = (connectionId: string, from: string, to: string)
 
 export const savedQueryDelete = (connectionId: string, name: string) =>
   invoke<void>("saved_query_delete", { connectionId, name });
+
+// ---- Completion catalog, routines and database switching ----
+
+/** Tables, views and columns of a schema; cached 5 minutes per workspace and schema. */
+export const catalogGet = (workspaceId: string, schema: string | null, refresh: boolean) =>
+  invoke<Catalog>("catalog_get", { workspaceId, schema, refresh });
+
+export const routinesList = (workspaceId: string, schema: string | null) =>
+  invoke<DbRoutine[]>("routines_list", { workspaceId, schema });
+
+/** PostgreSQL: the databases to switch to. MySQL: the schemas. SQLite: attached databases. */
+export const databasesList = (workspaceId: string) =>
+  invoke<string[]>("databases_list", { workspaceId });
+
+/**
+ * PostgreSQL only: the workspace's browsing moves to `database` (new SQL tabs use it too,
+ * open ones keep theirs). Other engines reject with `invalid`; they switch schema.
+ */
+export const workspaceSwitchDatabase = (workspaceId: string, database: string) =>
+  invoke<WorkspaceInfo>("workspace_switch_database", { workspaceId, database });

@@ -1,7 +1,9 @@
 import { expect, test } from "vitest";
 import type {
+  Catalog,
   CellValue,
   ConnectionConfig,
+  DbRoutine,
   ErrorKind,
   ExecEvent,
   FilePurpose,
@@ -42,9 +44,10 @@ test("ExecEvent fixtures", () => {
 
 test("WorkspaceInfo, RowCount and ConnectionConfig fixtures", () => {
   const info: WorkspaceInfo = JSON.parse(
-    '{"workspaceId":"w","connectionId":"c","dialect":"sqlite","serverVersion":"3"}',
+    '{"workspaceId":"w","connectionId":"c","dialect":"sqlite","serverVersion":"3","database":null}',
   );
   expect(info.dialect).toBe("sqlite");
+  expect(info.database).toBeNull();
   const n: RowCount = { t: "estimate", v: 5 };
   expect(n.t).toBe("estimate");
   const c: ConnectionConfig = {
@@ -122,4 +125,15 @@ test("HistoryEntry and SavedQuery", () => {
   expect(h.error).toBeNull();
   const q: SavedQuery = JSON.parse('{"name":"Été","modifiedAt":1760000000000,"size":5}');
   expect(q.modifiedAt).toBe(1760000000000);
+});
+
+// driver/catalog.rs serde_shape_is_camel_case (literal JSON as serialised).
+test("Catalog and DbRoutine", () => {
+  const c: Catalog = JSON.parse(
+    '{"schema":null,"tables":[{"name":"t","kind":"view","columns":[{"name":"c","typeName":"int"}]}]}',
+  );
+  expect(c.tables[0].columns[0].typeName).toBe("int");
+  expect(c.tables[0].kind).toBe("view");
+  const r: DbRoutine = JSON.parse('{"schema":"s","name":"f","kind":"procedure"}');
+  expect(r.kind).toBe("procedure");
 });

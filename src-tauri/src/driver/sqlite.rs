@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, InterruptHandle, OpenFlags};
 
+use super::catalog::{Catalog, CatalogColumn, DbRoutine, group_rows};
 use super::sql::{build_page_query, qualified};
 use super::{
     Canceller, ColumnMeta, DbObject, Dialect, ObjectKind, ObjectRef, PageRequest, ResultSet,
@@ -256,5 +257,56 @@ impl Session for SqliteSession {
         })
         .await
         .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
+    }
+
+    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
+        let schema = schema.unwrap_or("main").to_string();
+        // One blocking call: sqlite_schema joined with the table-valued pragma_table_info.
+        self.with_conn(move |c| {
+            let sql = format!(
+                "SELECT m.name, m.type, p.name, p.type \
+                 FROM {}.sqlite_schema m LEFT JOIN pragma_table_info(m.name, ?1) p ON 1 \
+                 WHERE m.type IN ('table','view') AND substr(m.name,1,7) <> 'sqlite_' \
+                 ORDER BY m.name, p.cid",
+                super::sql::quote_ident(Dialect::Sqlite, &schema)
+            );
+            let mut stmt = c.prepare(&sql).map_err(map_err)?;
+            let rows = stmt
+                .query_map([&schema], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                    ))
+                })
+                .map_err(map_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_err)?;
+            Ok(group_rows(
+                Some(schema.clone()),
+                rows.into_iter().map(|(table, ty, name, col_type)| {
+                    let kind = if ty == "view" {
+                        ObjectKind::View
+                    } else {
+                        ObjectKind::Table
+                    };
+                    let col = name.map(|name| CatalogColumn {
+                        name,
+                        type_name: col_type.unwrap_or_default(),
+                    });
+                    (table, kind, col)
+                }),
+            ))
+        })
+        .await
+    }
+
+    async fn list_routines(&self, _schema: Option<&str>) -> AppResult<Vec<DbRoutine>> {
+        Ok(Vec::new())
+    }
+
+    async fn list_databases(&self) -> AppResult<Vec<String>> {
+        self.list_schemas().await
     }
 }

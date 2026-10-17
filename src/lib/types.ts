@@ -189,6 +189,8 @@ export interface WorkspaceInfo {
   connectionId: string;
   dialect: Dialect;
   serverVersion: string;
+  /** Database the browse connection is on; null when unknown or not applicable. */
+  database: string | null;
 }
 
 export type ExecEvent =
@@ -217,4 +219,33 @@ export interface SavedQuery {
   /** Milliseconds since the Unix epoch. */
   modifiedAt: number;
   size: number;
+}
+
+// ---- Completion catalog and routines (driver/catalog.rs) ----
+
+export interface CatalogColumn {
+  name: string;
+  typeName: string;
+}
+
+export interface CatalogTable {
+  name: string;
+  /** Same values as DbObject.kind. */
+  kind: DbObject["kind"];
+  /** In definition order. */
+  columns: CatalogColumn[];
+}
+
+export interface Catalog {
+  schema: string | null;
+  /** Sorted by name. */
+  tables: CatalogTable[];
+}
+
+export type RoutineKind = "function" | "procedure";
+
+export interface DbRoutine {
+  schema: string | null;
+  name: string;
+  kind: RoutineKind;
 }

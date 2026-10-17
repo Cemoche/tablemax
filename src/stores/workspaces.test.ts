@@ -30,6 +30,7 @@ const info = (over = {}) => ({
   connectionId: "c1",
   dialect: "postgres" as const,
   serverVersion: "16",
+  database: null,
   ...over,
 });
 

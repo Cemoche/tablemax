@@ -43,6 +43,7 @@ use mysql_async::{
     Value,
 };
 
+use super::catalog::{Catalog, CatalogColumn, DbRoutine, RoutineKind, group_rows};
 use super::sql::{build_page_query, qualified};
 use super::tls::{SslConfig, SslMode, load_files, native_roots};
 use super::{
@@ -777,6 +778,18 @@ impl MySession {
         })?;
         from_rows(rows)
     }
+
+    /// `schema`, else the connection's current database (Invalid when none is selected).
+    async fn schema_or_current(&self, schema: Option<&str>) -> AppResult<String> {
+        if let Some(s) = schema {
+            return Ok(s.to_string());
+        }
+        let cur: Vec<(Option<String>,)> = self.exec_rows("SELECT DATABASE()", ()).await?;
+        cur.into_iter()
+            .next()
+            .and_then(|r| r.0)
+            .ok_or_else(|| AppError::new(ErrorKind::Invalid, "no database selected"))
+    }
 }
 
 #[async_trait]
@@ -904,6 +917,66 @@ impl Session for MySession {
             let _ = c.disconnect().await;
         }
         Ok(())
+    }
+
+    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
+        let db = self.schema_or_current(schema).await?;
+        // One query; LEFT JOIN keeps column-less objects.
+        let rows: Vec<(String, String, Option<String>, Option<String>)> = self
+            .exec_rows(
+                "SELECT CAST(t.TABLE_NAME AS CHAR), CAST(t.TABLE_TYPE AS CHAR), \
+                 CAST(c.COLUMN_NAME AS CHAR), CAST(c.COLUMN_TYPE AS CHAR) \
+                 FROM information_schema.TABLES t \
+                 LEFT JOIN information_schema.COLUMNS c \
+                 ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME \
+                 WHERE t.TABLE_SCHEMA = ? AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
+                 ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION",
+                (db.clone(),),
+            )
+            .await?;
+        Ok(group_rows(
+            Some(db),
+            rows.into_iter().map(|(table, ty, name, col_type)| {
+                let kind = if ty == "VIEW" {
+                    ObjectKind::View
+                } else {
+                    ObjectKind::Table
+                };
+                let col = name.map(|name| CatalogColumn {
+                    name,
+                    type_name: col_type.unwrap_or_default(),
+                });
+                (table, kind, col)
+            }),
+        ))
+    }
+
+    async fn list_routines(&self, schema: Option<&str>) -> AppResult<Vec<DbRoutine>> {
+        let db = self.schema_or_current(schema).await?;
+        let rows: Vec<(String, String)> = self
+            .exec_rows(
+                "SELECT CAST(ROUTINE_NAME AS CHAR), CAST(ROUTINE_TYPE AS CHAR) \
+                 FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? \
+                 ORDER BY ROUTINE_NAME",
+                (db.clone(),),
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(name, ty)| DbRoutine {
+                schema: Some(db.clone()),
+                name,
+                kind: if ty.eq_ignore_ascii_case("PROCEDURE") {
+                    RoutineKind::Procedure
+                } else {
+                    RoutineKind::Function
+                },
+            })
+            .collect())
+    }
+
+    async fn list_databases(&self) -> AppResult<Vec<String>> {
+        self.list_schemas().await
     }
 }
 

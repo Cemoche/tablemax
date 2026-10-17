@@ -8,6 +8,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+use crate::driver::catalog::{Catalog, DbRoutine};
 use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::history::HistoryEntry;
@@ -369,4 +370,47 @@ pub async fn saved_query_delete(
     name: String,
 ) -> AppResult<()> {
     state.saved_query_delete(&connection_id, &name).await
+}
+
+// ---- Completion catalog, routines and database switching ----
+
+#[tauri::command]
+pub async fn catalog_get(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    schema: Option<String>,
+    refresh: bool,
+) -> AppResult<Catalog> {
+    state
+        .catalog(&workspace_id, schema.as_deref(), refresh)
+        .await
+}
+
+#[tauri::command]
+pub async fn routines_list(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    schema: Option<String>,
+) -> AppResult<Vec<DbRoutine>> {
+    state.routines_list(&workspace_id, schema.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn databases_list(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+) -> AppResult<Vec<String>> {
+    state.databases_list(&workspace_id).await
+}
+
+/// PostgreSQL only: reconnects the workspace's browse connection to `database`; new SQL
+/// sessions use it, open ones keep theirs. MySQL / MariaDB / SQLite switch schema, not
+/// database: Invalid.
+#[tauri::command]
+pub async fn workspace_switch_database(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    database: String,
+) -> AppResult<WorkspaceInfo> {
+    state.switch_database(&workspace_id, &database).await
 }
