@@ -166,7 +166,11 @@ export function QueryTab({ workspace, tab }: Props) {
     let sessionId = currentSessionId(wsId, tabId);
     try {
       if (!sessionId) {
-        const opened = await ipc.sqlSessionOpen(wsId);
+        // PostgreSQL: the tab stays on the database of its first session, even after the
+        // workspace switched database (a lost session reopens there).
+        const current = useWorkspaces.getState().workspaces.find((w) => w.id === wsId)?.database ?? null;
+        const database = dialect === "postgres" ? (currentTab(wsId, tabId)?.database ?? current) : null;
+        const opened = await ipc.sqlSessionOpen(wsId, database);
         if (!tabExists(wsId, tabId)) {
           // Tab closed while the session was opening: nothing owns it any more.
           void ipc.sqlSessionClose(opened)?.catch(() => {});
@@ -174,7 +178,10 @@ export function QueryTab({ workspace, tab }: Props) {
           return;
         }
         sessionId = opened;
-        useWorkspaces.getState().updateTab(wsId, tabId, { sqlSessionId: sessionId });
+        useWorkspaces.getState().updateTab(wsId, tabId, {
+          sqlSessionId: sessionId,
+          ...(database !== null && { database }),
+        });
       }
       const sid = sessionId;
       const limited = useAutoLimit.getState().on[tabId];
@@ -236,9 +243,12 @@ export function QueryTab({ workspace, tab }: Props) {
           // Unknown: the write below reports real problems.
         }
       }
-      // Case-insensitive: on some file systems `Report` and `report` are one file.
-      if (list?.some((q) => q.name.toLowerCase() === name.toLowerCase())) {
-        setReplaceName(name);
+      // Case-insensitive: on some file systems `Report` and `report` are one file. The
+      // replacement keeps the existing spelling, so it is the same file everywhere (and
+      // the name the confirmation shows).
+      const existing = list?.find((q) => q.name.toLowerCase() === name.toLowerCase());
+      if (existing) {
+        setReplaceName(existing.name);
         return;
       }
     }

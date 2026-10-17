@@ -17,8 +17,12 @@ import { type Tab, type Workspace, useWorkspaces } from "./workspaces";
 
 export type SessionTab =
   | { kind: "table"; object: ObjectRef; preview: boolean }
-  /** `savedName` (optional, Plan 4 Task 8): the saved query the tab is linked to. */
-  | { kind: "query"; title: string; sql: string; savedName?: string };
+  /**
+   * `savedName` (optional, Plan 4 Task 8): the saved query the tab is linked to.
+   * `database` (optional, Plan 4 review): the database its SQL session was opened on.
+   * The SQL text is kept as typed: it is the user's own unsaved document, like a file.
+   */
+  | { kind: "query"; title: string; sql: string; savedName?: string; database?: string };
 
 export interface SessionWorkspace {
   connectionId: string;
@@ -58,22 +62,30 @@ export function snapshot(state: {
         (t): SessionTab =>
           t.kind === "table"
             ? { kind: "table", object: { schema: t.object.schema, name: t.object.name }, preview: t.preview }
-            : t.savedName
-              ? { kind: "query", title: t.title, sql: t.sql, savedName: t.savedName }
-              : { kind: "query", title: t.title, sql: t.sql },
+            : {
+                kind: "query",
+                title: t.title,
+                sql: t.sql,
+                ...(t.savedName ? { savedName: t.savedName } : {}),
+                ...(t.database ? { database: t.database } : {}),
+              },
       ),
     })),
   };
 }
 
 // ---- Validation: required fields must be there with the right type; extra ones are
-// ignored (forward compatible within version 1) and dropped from the result. ----
+// ignored (forward compatible within version 1) and dropped from the result. A tab of a
+// kind this version does not know (added later) is skipped, not fatal. ----
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 const isStrOrNull = (v: unknown): v is string | null => v === null || typeof v === "string";
 const isIndex = (v: unknown, len: number): v is number | null =>
   v === null || (Number.isInteger(v) && (v as number) >= 0 && (v as number) < len);
+
+/** Tab kinds this version restores; another string kind is skipped. */
+const KNOWN_TAB_KINDS = ["table", "query"];
 
 function parseTab(v: unknown): SessionTab | null {
   if (!isObj(v)) return null;
@@ -85,9 +97,15 @@ function parseTab(v: unknown): SessionTab | null {
   }
   if (v.kind === "query") {
     if (typeof v.title !== "string" || typeof v.sql !== "string") return null;
-    if (v.savedName === undefined) return { kind: "query", title: v.title, sql: v.sql };
-    if (typeof v.savedName !== "string") return null;
-    return { kind: "query", title: v.title, sql: v.sql, savedName: v.savedName };
+    const optional = (x: unknown) => x === undefined || typeof x === "string";
+    if (!optional(v.savedName) || !optional(v.database)) return null;
+    return {
+      kind: "query",
+      title: v.title,
+      sql: v.sql,
+      ...(typeof v.savedName === "string" ? { savedName: v.savedName } : {}),
+      ...(typeof v.database === "string" ? { database: v.database } : {}),
+    };
   }
   return null;
 }
@@ -95,18 +113,21 @@ function parseTab(v: unknown): SessionTab | null {
 function parseWorkspace(v: unknown): SessionWorkspace | null {
   if (!isObj(v) || typeof v.connectionId !== "string") return null;
   if (!isStrOrNull(v.currentSchema) || !isStrOrNull(v.database) || !Array.isArray(v.tabs)) return null;
+  if (!isIndex(v.activeTabIndex, v.tabs.length)) return null;
   const tabs: SessionTab[] = [];
-  for (const t of v.tabs) {
+  let activeTabIndex: number | null = null;
+  for (const [i, t] of v.tabs.entries()) {
+    if (isObj(t) && typeof t.kind === "string" && !KNOWN_TAB_KINDS.includes(t.kind)) continue;
     const tab = parseTab(t);
     if (!tab) return null;
+    if (i === v.activeTabIndex) activeTabIndex = tabs.length;
     tabs.push(tab);
   }
-  if (!isIndex(v.activeTabIndex, tabs.length)) return null;
   return {
     connectionId: v.connectionId,
     currentSchema: v.currentSchema,
     database: v.database,
-    activeTabIndex: v.activeTabIndex,
+    activeTabIndex,
     tabs,
   };
 }
@@ -144,18 +165,21 @@ function restoredWorkspaces(snap: SessionSnapshot): { workspaces: Workspace[]; a
       (t): Tab =>
         t.kind === "table"
           ? { id: crypto.randomUUID(), kind: "table", object: t.object, title: t.object.name, preview: t.preview }
-          : t.savedName
-            ? {
-                id: crypto.randomUUID(),
-                kind: "query",
-                title: t.title,
-                sql: t.sql,
-                sqlSessionId: null,
-                savedName: t.savedName,
-                // Unknown until the file is read (`hydrateSavedLinks`): no "modified" dot yet.
-                savedSql: undefined,
-              }
-            : { id: crypto.randomUUID(), kind: "query", title: t.title, sql: t.sql, sqlSessionId: null },
+          : {
+              id: crypto.randomUUID(),
+              kind: "query",
+              title: t.title,
+              sql: t.sql,
+              sqlSessionId: null,
+              ...(t.savedName
+                ? {
+                    savedName: t.savedName,
+                    // Unknown until the file is read (`hydrateSavedLinks`): no "modified" dot yet.
+                    savedSql: undefined,
+                  }
+                : {}),
+              ...(t.database ? { database: t.database } : {}),
+            },
     );
     const active = sw.activeTabIndex === null ? null : tabs[sw.activeTabIndex];
     const ws: Workspace = {

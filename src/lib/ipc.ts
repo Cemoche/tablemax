@@ -86,8 +86,9 @@ export const tablePage = (workspaceId: string, request: PageRequest) =>
 export const tableCount = (workspaceId: string, object: ObjectRef) =>
   invoke<RowCount>("table_count", { workspaceId, object });
 
-export const sqlSessionOpen = (workspaceId: string) =>
-  invoke<string>("sql_session_open", { workspaceId });
+/** `database` (PostgreSQL): open on that database instead of the workspace's current one. */
+export const sqlSessionOpen = (workspaceId: string, database: string | null = null) =>
+  invoke<string>("sql_session_open", { workspaceId, database });
 
 export const sqlSessionClose = (sessionId: string) =>
   invoke<void>("sql_session_close", { sessionId });

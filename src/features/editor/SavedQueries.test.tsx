@@ -121,6 +121,21 @@ test("saving onto an existing name asks before replacing it", async () => {
   await waitFor(() => expect(ipc.savedQueryWrite).toHaveBeenCalledWith("c1", "taken", "select 2"));
 });
 
+test("saving onto a case variant of an existing name replaces that query, under its spelling", async () => {
+  // On a case-sensitive file system `report` would be a second file next to `Report`.
+  await setup({ sql: "select 2" }, [sq("Report")]);
+  pressModS();
+  const dialog = screen.getByRole("dialog", { name: S.saveTitle });
+  await userEvent.type(within(dialog).getByRole("textbox", { name: S.nameLabel }), "report");
+  await userEvent.click(within(dialog).getByRole("button", { name: S.saveConfirm }));
+  const confirm = await screen.findByRole("alertdialog", { name: S.replaceTitle });
+  expect(confirm).toHaveTextContent(S.replaceBody("Report"));
+  await userEvent.click(within(confirm).getByRole("button", { name: S.replaceConfirm }));
+  await waitFor(() => expect(ipc.savedQueryWrite).toHaveBeenCalledWith("c1", "Report", "select 2"));
+  expect(ipc.savedQueryWrite).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(tab0()).toMatchObject({ title: "Report", savedName: "Report" }));
+});
+
 test("Mod+S on a linked tab overwrites silently", async () => {
   await setup({ title: "report", sql: "select 3", savedName: "report", savedSql: "select 1" }, [sq("report")]);
   pressModS();

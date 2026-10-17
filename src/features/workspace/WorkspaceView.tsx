@@ -53,6 +53,7 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   const openQueryTab = useWorkspaces((s) => s.openQueryTab);
   const closeTab = useWorkspaces((s) => s.closeTab);
   const sidebarVisible = useWorkspaces((s) => s.sidebarVisible);
+  const dismissNotice = useWorkspaces((s) => s.dismissNotice);
   const { id, activeTabId } = workspace;
   // A restored workspace has a placeholder id until it connects: nothing below may
   // reach the backend with it.
@@ -69,6 +70,20 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
       {connected && sidebarVisible && <ObjectSidebar workspace={workspace} />}
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar workspace={workspace} />
+        {workspace.notice && (
+          <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1 text-sm">
+            <span role="status" className="min-w-0 flex-1 text-warning">
+              {workspace.notice}
+            </span>
+            <button
+              type="button"
+              onClick={() => dismissNotice(id)}
+              className="shrink-0 rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2"
+            >
+              {strings.workspace.dismissNotice}
+            </button>
+          </div>
+        )}
         <TabSwitcher workspace={workspace} />
         <div
           data-tab-content=""
