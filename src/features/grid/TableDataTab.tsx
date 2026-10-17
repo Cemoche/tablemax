@@ -3,7 +3,10 @@ import { strings } from "../../lib/strings";
 import type { ObjectRef } from "../../lib/types";
 import { DataGrid } from "./DataGrid";
 import { GridContextMenu } from "./GridContextMenu";
+import { PendingChangesPanel } from "./PendingChangesPanel";
+import { RowDetailPanel } from "./RowDetailPanel";
 import { DEFAULT_PAGE_SIZE, formatRowCount, usePagedTable } from "./usePagedTable";
+import { useRowDetail } from "./useRowDetail";
 import { useTableEditing } from "./useTableEditing";
 
 interface Props {
@@ -18,6 +21,7 @@ const btn =
 export function TableDataTab({ workspaceId, tabId, object }: Props) {
   const t = usePagedTable(workspaceId, object, tabId);
   const e = useTableEditing({ workspaceId, tabId, object, result: t.result, reload: t.reload });
+  const detail = useRowDetail();
   const rows = t.result?.rows.length ?? 0;
   const from = t.page * DEFAULT_PAGE_SIZE + 1;
 
@@ -83,9 +87,27 @@ export function TableDataTab({ workspaceId, tabId, object }: Props) {
           {strings.grid.commitOrDiscardFirst}
         </div>
       )}
-      <div className="min-h-0 flex-1">
-        {t.result && (
-          <DataGrid data={t.result} sort={t.sort} onSort={t.setSort} editing={e.editing} />
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1">
+            {t.result && (
+              <DataGrid data={t.result} sort={t.sort} onSort={t.setSort} editing={e.editing} />
+            )}
+          </div>
+          {e.editable && <PendingChangesPanel workspaceId={workspaceId} tabId={tabId} object={object} />}
+        </div>
+        {detail.open && t.result && e.model && (
+          <RowDetailPanel
+            workspaceId={workspaceId}
+            object={object}
+            data={t.result}
+            info={e.info}
+            model={e.model}
+            row={e.selectedRow}
+            onChange={e.setValue}
+            onAction={e.runAction}
+            onClose={detail.close}
+          />
         )}
       </div>
       {e.menu && (
@@ -106,6 +128,15 @@ export function TableDataTab({ workspaceId, tabId, object }: Props) {
         </button>
         <button type="button" className={btn} onClick={t.reload} disabled={t.loading}>
           {strings.grid.reload}
+        </button>
+        <button
+          type="button"
+          className={`${btn} aria-pressed:bg-surface-2`}
+          aria-pressed={detail.open}
+          title={strings.grid.rowDetailsShortcut(modShortcut("I"))}
+          onClick={detail.toggle}
+        >
+          {strings.grid.rowDetails}
         </button>
         <span data-testid="footer-range">
           {rows === 0

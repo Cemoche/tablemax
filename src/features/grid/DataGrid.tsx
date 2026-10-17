@@ -1,9 +1,11 @@
 import {
   type CellClickedEventArgs,
+  CompactSelection,
   type DrawCellCallback,
   type GridCell,
   GridCellKind,
   type GridColumn,
+  type GridSelection,
   type Item,
   type ProvideEditorCallback,
   type ProvideEditorComponent,
@@ -37,6 +39,8 @@ export interface GridEditing {
   onActivate: (row: number, col: number) => void;
   /** The cell editor opened (true) or closed (false). */
   onEditorOpen: (open: boolean) => void;
+  /** The selected row changed (the current cell's row; null when nothing is selected). */
+  onSelect: (row: number | null) => void;
 }
 
 export interface DataGridProps {
@@ -66,6 +70,11 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
   const activated = useRef<Item | null>(null);
   /** Cancels the open cell editor (set while one is open). */
   const closeEditor = useRef<(() => void) | null>(null);
+  /** Controlled for table grids, to report the selected row. */
+  const [selection, setSelection] = useState<GridSelection>(() => ({
+    columns: CompactSelection.empty(),
+    rows: CompactSelection.empty(),
+  }));
 
   // New data (a reload) closes an open editor: its row index may now be another row.
   const shownData = useRef(data);
@@ -227,6 +236,11 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
         provideEditor,
         // Delete would clear the selected cells to "": NULL/empty are explicit menu choices.
         onDelete: () => false,
+        gridSelection: selection,
+        onGridSelectionChange: (s: GridSelection) => {
+          setSelection(s);
+          editingRef.current?.onSelect(s.current?.cell[1] ?? s.rows.first() ?? null);
+        },
         onCellActivated: ([col, row]: Item) => {
           activated.current = [col, row];
           editingRef.current?.onActivate(row, col);

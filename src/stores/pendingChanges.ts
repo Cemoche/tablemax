@@ -4,7 +4,7 @@ import { toAppError } from "../lib/errors";
 import * as ipc from "../lib/ipc";
 import { dict, hasKey } from "../lib/records";
 import { strings } from "../lib/strings";
-import type { CellValue, EditValue, ObjectRef, RowChange, RowKey } from "../lib/types";
+import type { AppError, CellValue, EditValue, ObjectRef, RowChange, RowKey } from "../lib/types";
 
 export interface PendingEdit {
   key: RowKey;
@@ -94,6 +94,15 @@ let insertSeq = 0;
 
 /** `change 3: reason` (changes_apply / changes_preview refusing a change before running). */
 const REFUSED = /^change (\d+): ([\s\S]*)$/;
+
+/**
+ * The change an `invalid` "change <i>: <reason>" refusal names (0-based index in the
+ * list sent), else null.
+ */
+export function refusedChange(err: AppError): { index: number; reason: string } | null {
+  const m = err.kind === "invalid" ? REFUSED.exec(err.message) : null;
+  return m ? { index: Number(m[1]), reason: m[2] } : null;
+}
 
 export const usePendingChanges = create<PendingState>((set, get) => {
   const tab = (tabId: string) => get().tabs[tabId] ?? EMPTY;
@@ -314,9 +323,9 @@ export const usePendingChanges = create<PendingState>((set, get) => {
           fail(null, strings.grid.commitCancelled);
           return false;
         }
-        const refused = err.kind === "invalid" ? REFUSED.exec(err.message) : null;
-        const entry = refused ? list[Number(refused[1])] : undefined;
-        if (refused && entry) fail(entry.id, refused[2]);
+        const refused = refusedChange(err);
+        const entry = refused ? list[refused.index] : undefined;
+        if (refused && entry) fail(entry.id, refused.reason);
         else fail(null, err.message);
         return false;
       } finally {

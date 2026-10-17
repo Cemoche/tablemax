@@ -37,6 +37,8 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
   );
   /** Why the cell the user tried to edit is read-only, or a failed load. */
   const [hint, setHint] = useState<string | null>(null);
+  /** The grid's selected row, by identity (display indexes move when rows are inserted). */
+  const [selected, setSelected] = useState<{ tempId: string } | { index: number } | null>(null);
 
   const editable = info !== null && readOnlyReason(info) === null;
   const readOnly = infoError
@@ -59,6 +61,21 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
   );
 
   const store = usePendingChanges.getState;
+
+  const selectedRow = (() => {
+    if (!model || !selected) return null;
+    const i = model.rows.findIndex((r) =>
+      "tempId" in selected
+        ? r.kind === "insert" && r.tempId === selected.tempId
+        : r.kind === "row" && r.index === selected.index,
+    );
+    return i < 0 ? null : i;
+  })();
+
+  const select = (row: number | null) => {
+    const r = row === null ? undefined : model?.rows[row];
+    setSelected(!r ? null : r.kind === "insert" ? { tempId: r.tempId } : { index: r.index });
+  };
 
   const setValue = (row: number, col: number, value: EditValue) => {
     const r = model?.rows[row];
@@ -138,6 +155,7 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
         onContextMenu: (row, col, x, y) => setMenuAt({ row, col, x, y }),
         onActivate: (row, col) => setHint(model.cell(row, col).reason),
         onEditorOpen: (open) => store().setEditorOpen(tabId, open),
+        onSelect: select,
       }
     : undefined;
 
@@ -182,6 +200,12 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     failure,
     menu,
     closeMenu: () => setMenuAt(null),
+    /** Display row selected in the grid (null: none, or the row is gone). */
+    selectedRow,
+    /** Writes a cell through the store (same rules as the grid's editor). */
+    setValue,
+    /** A context-menu action on a cell or row. */
+    runAction,
     commit: () => void store().commit(tabId, workspaceId, object),
     addRow: () => store().addInsert(tabId),
     discard: () => store().discard(tabId),

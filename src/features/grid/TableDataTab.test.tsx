@@ -51,6 +51,7 @@ beforeEach(() => {
   useGridViews.setState({ views: {} });
   usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo());
+  vi.mocked(ipc.changesPreview).mockResolvedValue([]);
 });
 
 test("footer shows range with ≈ for estimates and pages forward", async () => {
@@ -253,4 +254,48 @@ test("the grid reports when its cell editor is open", async () => {
   expect(pending().editorOpen.t1).toBe(true);
   act(() => grid!.editing!.onEditorOpen(false));
   expect(pending().editorOpen.t1).toBe(false);
+});
+
+test("the pending changes panel opens with the first change", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  vi.mocked(ipc.changesPreview).mockResolvedValue(["DELETE …"]);
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  await waitFor(() => expect(grid?.editing?.model.cell(0, 3).editable).toBe(true));
+  expect(screen.queryByRole("button", { name: strings.grid.changes.title(1) })).toBeNull();
+  act(() => grid!.editing!.onContextMenu(1, null, 5, 5));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.deleteRow }));
+  expect(screen.getByRole("button", { name: strings.grid.changes.title(1) })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(await screen.findByText("DELETE …")).toBeInTheDocument();
+  expect(ipc.changesPreview).toHaveBeenCalledWith("w1", obj, [{ kind: "delete", key: key(1) }]);
+});
+
+test("Row details shows the selected row, follows it and edits it through the store", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  const toggle = screen.getByRole("button", { name: strings.grid.rowDetails });
+  await userEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
+  act(() => grid!.editing!.onSelect(1));
+  const note = () => screen.getByLabelText("note") as HTMLTextAreaElement;
+  expect(note().value).toBe("note 1");
+  // A new row shifts the display rows: the panel stays on the same row.
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.addRow }));
+  expect(note().value).toBe("note 1");
+  await userEvent.type(note(), "!");
+  expect(pending().toChanges("t1")[0]).toEqual({
+    kind: "update",
+    key: key(1),
+    set: [["note", { t: "text", v: "note 1!" }]],
+  });
+  await userEvent.keyboard("{Control>}i{/Control}");
+  expect(screen.queryByRole("complementary", { name: strings.grid.rowDetails })).toBeNull();
+  await userEvent.keyboard("{Control>}i{/Control}");
+  expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
 });
