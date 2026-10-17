@@ -834,6 +834,53 @@ async fn mysql_modes_changed_by_disguised_statements_are_seen() {
     }
 }
 
+/// Objects of the test database, counted from a fresh session (the test session's
+/// sql_select_limit would also limit this metadata read).
+async fn table_count_elsewhere(g: &TestDb) -> usize {
+    let admin = connect_mysql(&g.params).await.unwrap();
+    let count = admin.list_objects(Some(&g.name)).await.unwrap().len();
+    admin.close().await.unwrap();
+    count
+}
+
+/// `sql_select_limit = 0` must not blind the session-state re-read (an empty answer was
+/// once taken as "default modes, safe charset").
+#[tokio::test]
+async fn mysql_sql_select_limit_does_not_hide_the_session_state() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!("create table `{n}`.t(a int)"))
+            .await
+            .unwrap();
+        s.execute("SET SESSION sql_select_limit = 0").await.unwrap();
+        s.execute("SET NAMES gbk").await.unwrap();
+        let e = s
+            .execute(&format!("select '中\\'; drop table `{n}`.t; -- '"))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid, "{}", e.message);
+        assert!(
+            e.message.contains("client character set gbk"),
+            "{}",
+            e.message
+        );
+        assert_eq!(table_count_elsewhere(&g).await, 1);
+        s.execute("SET NAMES utf8mb4").await.unwrap();
+        s.execute("SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')")
+            .await
+            .unwrap();
+        let e = s
+            .execute(&format!(r"select 'a\'; drop table `{n}`.t; -- '"))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.kind, ErrorKind::Invalid, "{}", e.message);
+        assert_eq!(table_count_elsewhere(&g).await, 1);
+    }
+}
+
 #[tokio::test]
 async fn mysql_failed_cancel_does_not_report_cancelled() {
     for (url, kind) in targets() {

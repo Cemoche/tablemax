@@ -30,8 +30,10 @@
 //! runs their content. The lexer follows the session's `sql_mode` (NO_BACKSLASH_ESCAPES,
 //! ANSI_QUOTES): it is read at connect and re-read after EVERY statement (success or
 //! error), since a prepared or comment-wrapped statement can change it without any
-//! visible keyword; if that re-read fails while the link is up, the session state is
-//! unknown and every statement is refused until a re-read succeeds. The lexer reads the
+//! visible keyword. The re-read never assumes defaults (no row or NULL is an error; its
+//! `LIMIT 1` defeats `sql_select_limit`); if it fails while the link is up, the session
+//! state is unknown: the next statement first retries it, and a second failure reports
+//! the session lost so it gets rebuilt. The lexer reads the
 //! text as UTF-8 (what the driver sends): when the session's client character set is one
 //! whose multi-byte characters can end with an ASCII byte such as `\` (big5, cp932,
 //! gb18030, gbk, sjis), the server would tokenize differently, so every statement is
@@ -208,18 +210,34 @@ fn from_rows<T: FromRow>(rows: Vec<Row>) -> AppResult<Vec<T>> {
         .collect()
 }
 
+/// The session-state query. The explicit LIMIT overrides `sql_select_limit` (which the
+/// user can set to 0 to get an empty answer).
+const SESSION_MODES_SQL: &str = "SELECT @@SESSION.sql_mode, @@SESSION.character_set_client LIMIT 1";
+
 /// The session's sql_mode flags and its unsafe client character set, if any.
 async fn read_session_modes(conn: &mut Conn) -> Result<(Modes, Option<String>), AppError> {
     let row: Option<Row> = conn
-        .query_first::<Row, _>("SELECT @@SESSION.sql_mode, @@SESSION.character_set_client")
+        .query_first::<Row, _>(SESSION_MODES_SQL)
         .await
         .map_err(|e| map_err(&e, true))?;
-    let rows: Vec<(Option<String>, Option<String>)> = from_rows(row.into_iter().collect())?;
-    let (mode, charset) = rows.into_iter().next().unwrap_or_default();
-    Ok((
-        Modes::from_sql_mode(&mode.unwrap_or_default()),
-        unsafe_client_charset(charset.as_deref()),
-    ))
+    session_modes_from(from_rows(row.into_iter().collect())?)
+}
+
+/// Interprets the session-state rows. No row, or a NULL in either column, is an error:
+/// never assume the defaults (fail closed).
+fn session_modes_from(
+    rows: Vec<(Option<String>, Option<String>)>,
+) -> Result<(Modes, Option<String>), AppError> {
+    match rows.into_iter().next() {
+        Some((Some(mode), Some(charset))) => Ok((
+            Modes::from_sql_mode(&mode),
+            unsafe_client_charset(Some(&charset)),
+        )),
+        _ => Err(AppError::new(
+            ErrorKind::Query,
+            "session state could not be read",
+        )),
+    }
 }
 
 /// First column of the first row as text (`None` for no row or NULL), without panicking.
@@ -1395,6 +1413,22 @@ fn absorb_reread(
     }
 }
 
+/// The pre-statement retry of a failed re-read: success clears the unknown state; a
+/// second failure (or a lost link) is a lost session.
+fn retry_reread(
+    inner: &mut Inner,
+    reread: Result<(Modes, Option<String>), AppError>,
+) -> AppResult<()> {
+    absorb_reread(inner, reread)?;
+    if inner.modes_unknown {
+        return Err(AppError::new(
+            ErrorKind::ConnectionLost,
+            "session state could not be verified: reconnect",
+        ));
+    }
+    Ok(())
+}
+
 fn is_ddl(sql: &str) -> bool {
     matches!(
         first_word(sql).as_str(),
@@ -1432,13 +1466,18 @@ impl MySession {
         }
         let mut guard = self.inner.lock().await;
         let inner = &mut *guard;
-        // An earlier re-read failed: try again before deciding anything.
+        // An earlier re-read failed: try again before deciding anything. A second failure
+        // ends the session (reported as lost), so the manager's reconnect paths rebuild it
+        // instead of the session refusing everything forever.
         if inner.modes_unknown
             && let Some(conn) = inner.conn.as_mut()
         {
             let reread = read_session_modes(conn).await;
-            if let Err(e) = absorb_reread(inner, reread) {
-                self.note_loss(&e);
+            if let Err(e) = retry_reread(inner, reread) {
+                self.lost.store(true, Ordering::SeqCst);
+                if let Some(c) = inner.conn.take() {
+                    let _ = tokio::time::timeout(CONNECT_TIMEOUT, c.disconnect()).await;
+                }
                 return Err(e);
             }
         }
@@ -1908,6 +1947,45 @@ mod tests {
             modes_unknown: false,
             json_cache: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn an_empty_or_null_session_state_read_is_an_error() {
+        let row = |m: Option<&str>, c: Option<&str>| (m.map(String::from), c.map(String::from));
+        for rows in [
+            vec![],
+            vec![row(None, Some("utf8mb4"))],
+            vec![row(Some(""), None)],
+            vec![row(None, None)],
+        ] {
+            let e = session_modes_from(rows.clone()).expect_err(&format!("{rows:?}"));
+            assert_eq!(e.kind, ErrorKind::Query);
+            // ... which leaves the session state unknown, never the defaults.
+            let mut st = inner();
+            st.unsafe_charset = Some("gbk".into());
+            absorb_reread(&mut st, Err(e)).unwrap();
+            assert!(st.modes_unknown);
+        }
+        assert_eq!(
+            session_modes_from(vec![row(Some("NO_BACKSLASH_ESCAPES"), Some("gbk"))]).unwrap(),
+            (NBE, Some("gbk".into()))
+        );
+        assert_eq!(
+            session_modes_from(vec![row(Some(""), Some("utf8mb4"))]).unwrap(),
+            (DEFAULT, None)
+        );
+        assert!(SESSION_MODES_SQL.ends_with("LIMIT 1"));
+    }
+
+    #[test]
+    fn a_second_failed_reread_is_a_lost_session() {
+        let mut st = inner();
+        st.modes_unknown = true;
+        let e = retry_reread(&mut st, Err(AppError::new(ErrorKind::Query, "x"))).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::ConnectionLost);
+        assert_eq!(e.message, "session state could not be verified: reconnect");
+        assert!(retry_reread(&mut st, Ok((DEFAULT, None))).is_ok());
+        assert!(!st.modes_unknown);
     }
 
     #[test]
