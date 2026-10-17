@@ -50,8 +50,8 @@ Opening a table shows its rows in a grid (300 rows a page, row count in the foot
 structure (`Alt+1` / `Alt+2`, `⌥1` / `⌥2` on macOS).
 
 - **Editing**: double-click a cell, press Enter or start typing. Right-click a cell or row
-  for **Set NULL**, **Set empty string**, **Set DEFAULT**, **Revert cell**, **Duplicate
-  row**, **Delete row** / **Restore row**; **+ Row** adds a row. Edits are not written
+  for **Set NULL**, **Set empty string** (text columns), **Set DEFAULT**, **Revert cell**,
+  **Duplicate row**, **Delete row** / **Restore row**; **+ Row** adds a row. Edits are not written
   right away: changed cells, new rows and rows to delete are highlighted as **pending
   changes**. Only tables with a primary key (or a unique index on `NOT NULL` columns) can
   be edited; views, tables without such a key, generated and binary columns are read-only,
@@ -60,8 +60,13 @@ structure (`Alt+1` / `Alt+2`, `⌥1` / `⌥2` on macOS).
   `INSERT` / `DELETE`, values shown as literals) and an **Undo** button.
 - **Commit** (`Ctrl+S`, `⌘S` on macOS) writes all pending changes in one transaction,
   values sent as bound parameters. Each `UPDATE` / `DELETE` must touch exactly one row:
-  if the row changed or was deleted since it was loaded, everything is rolled back,
-  nothing is written and the changes stay pending. **Discard** drops them; closing a tab
+  if the row was deleted or its key changed since it was loaded, everything is rolled
+  back, nothing is written and the changes stay pending. Concurrent edits of other
+  columns are not detected: the last write wins (like other desktop clients). A commit
+  waiting for a row locked elsewhere gives up after 30 s (a normal failure, nothing
+  written) and can be cancelled meanwhile (**Cancel**, everything rolled back). If the
+  connection drops during a commit, the outcome is unknown: reload and check before
+  committing again. **Discard** drops them; closing a tab
   or workspace that has some asks first. Paging, sorting, filtering, reloading and
   following a foreign key wait until the pending changes are committed or discarded.
 - **Row details** (`Ctrl+I`, `⌘I`): the selected row as a form, with indented JSON and

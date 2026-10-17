@@ -41,7 +41,12 @@ added to the scratch SQLite file. Values changed during the check were put back 
   default, `placed_at 2026-10-17 12:00:00+00`).
 - Quick bar `id = 12002`, right-click → **Delete row**, **Ctrl+S**: "No rows"; `psql`: gone.
 
-### Conflict
+### Conflict (row deleted since it was loaded)
+The exactly-one-row guard catches a row deleted (or whose key changed) after it was
+loaded, as below. A concurrent edit of *other* columns of a still-present row is not a
+conflict: the commit overwrites it (last write wins, see `plan-03-followups.md`, Rulings).
+The messages quoted below were captured before the wording changed to "the row was deleted
+or its key changed since it was loaded".
 - SQL tab (Ctrl+T): `INSERT INTO orders … RETURNING id` → 12003.
 - Back to `orders`, bar `id in (31, 12003)`, both totals → `1.11` (2 pending changes).
 - SQL tab: `DELETE FROM orders WHERE id = 12003` → "1 row affected".
