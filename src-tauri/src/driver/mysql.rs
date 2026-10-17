@@ -43,6 +43,10 @@ use mysql_async::{
     Value,
 };
 
+use super::meta::{
+    ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, object_not_found,
+    sort_indexes,
+};
 use super::sql::{build_page_query, qualified};
 use super::tls::{SslConfig, SslMode, load_files, native_roots};
 use super::{
@@ -779,6 +783,239 @@ impl MySession {
     }
 }
 
+/// `EXTRA` holds the keyword (case-insensitive, whitespace-separated).
+fn extra_has(extra: &str, keyword: &str) -> bool {
+    extra
+        .split_whitespace()
+        .any(|w| w.eq_ignore_ascii_case(keyword))
+}
+
+/// Generated column: `VIRTUAL GENERATED` / `STORED GENERATED` (MySQL, MariaDB 10.2+) or
+/// `VIRTUAL` / `PERSISTENT` (older MariaDB). MySQL's `DEFAULT_GENERATED` is not one.
+fn extra_generated(extra: &str) -> bool {
+    ["VIRTUAL", "STORED", "PERSISTENT"]
+        .iter()
+        .any(|k| extra_has(extra, k))
+}
+
+/// `COLUMN_DEFAULT` as an SQL expression, the same for MySQL and MariaDB.
+///
+/// MariaDB already reports an expression: literals quoted (`'abc'`), no default or
+/// DEFAULT NULL as `NULL`, functions as `current_timestamp()`. MySQL reports the raw value
+/// of a literal (`abc`, a string `NULL` included) and an expression only when `EXTRA` says
+/// `DEFAULT_GENERATED`; its literals are quoted here like MariaDB does (`'` doubled, `\`
+/// escaped), except numbers and bit literals.
+fn normalize_default(
+    raw: Option<String>,
+    data_type: &str,
+    extra: &str,
+    mariadb: bool,
+) -> Option<String> {
+    let raw = raw?;
+    if mariadb {
+        if raw.eq_ignore_ascii_case("NULL") {
+            return None;
+        }
+        // MariaDB writes CURRENT_TIMESTAMP as a function call.
+        let lower = raw.to_ascii_lowercase();
+        if let Some(args) = lower.strip_prefix("current_timestamp(")
+            && let Some(precision) = args.strip_suffix(')')
+        {
+            return Some(if precision.is_empty() {
+                "CURRENT_TIMESTAMP".to_string()
+            } else {
+                format!("CURRENT_TIMESTAMP({precision})")
+            });
+        }
+        return Some(raw);
+    }
+    if extra_has(extra, "DEFAULT_GENERATED") {
+        return Some(raw);
+    }
+    let numeric = matches!(
+        data_type.to_ascii_lowercase().as_str(),
+        "tinyint"
+            | "smallint"
+            | "mediumint"
+            | "int"
+            | "integer"
+            | "bigint"
+            | "decimal"
+            | "numeric"
+            | "float"
+            | "double"
+            | "real"
+            | "year"
+    );
+    if numeric || (data_type.eq_ignore_ascii_case("bit") && raw.starts_with("b'")) {
+        return Some(raw);
+    }
+    Some(format!(
+        "'{}'",
+        raw.replace('\\', "\\\\").replace('\'', "''")
+    ))
+}
+
+impl MySession {
+    /// The database of `obj`, else the session's current one.
+    async fn database_of(&self, obj: &ObjectRef) -> AppResult<String> {
+        if let Some(s) = &obj.schema {
+            return Ok(s.clone());
+        }
+        let cur: Vec<(Option<String>,)> = self.exec_rows("SELECT DATABASE()", ()).await?;
+        cur.into_iter()
+            .next()
+            .and_then(|r| r.0)
+            .ok_or_else(|| AppError::new(ErrorKind::Invalid, "no database selected"))
+    }
+
+    async fn kind_of(&self, db: &str, name: &str) -> AppResult<ObjectKind> {
+        let rows: Vec<(String,)> = self
+            .exec_rows(
+                "SELECT CAST(TABLE_TYPE AS CHAR) FROM information_schema.TABLES \
+                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+                (db, name),
+            )
+            .await?;
+        match rows.into_iter().next() {
+            Some((ty,)) if ty.contains("VIEW") => Ok(ObjectKind::View),
+            Some(_) => Ok(ObjectKind::Table),
+            None => Err(object_not_found(db, name)),
+        }
+    }
+
+    async fn columns_of(&self, db: &str, name: &str) -> AppResult<Vec<ColumnInfo>> {
+        type Row7 = (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let rows: Vec<Row7> = self
+            .exec_rows(
+                "SELECT CAST(COLUMN_NAME AS CHAR), CAST(COLUMN_TYPE AS CHAR), \
+                 CAST(DATA_TYPE AS CHAR), CAST(IS_NULLABLE AS CHAR), \
+                 CAST(COLUMN_DEFAULT AS CHAR), CAST(EXTRA AS CHAR), CAST(COLUMN_COMMENT AS CHAR) \
+                 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+                 ORDER BY ORDINAL_POSITION",
+                (db, name),
+            )
+            .await?;
+        // MariaDB has no JSON type: JSON is LONGTEXT + CHECK (json_valid(`col`)).
+        let mut json = HashSet::new();
+        if self.mariadb {
+            let checks: Vec<(Option<String>,)> = self
+                .exec_rows(
+                    "SELECT CAST(CHECK_CLAUSE AS CHAR) FROM information_schema.CHECK_CONSTRAINTS \
+                     WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ?",
+                    (db, name),
+                )
+                .await?;
+            for clause in checks.into_iter().filter_map(|c| c.0) {
+                json_columns_in(&clause, &mut json);
+            }
+        }
+        Ok(rows
+            .into_iter()
+            .map(
+                |(col, column_type, data_type, nullable, default, extra, comment)| {
+                    let extra = extra.unwrap_or_default();
+                    let is_json = data_type.eq_ignore_ascii_case("longtext") && json.contains(&col);
+                    ColumnInfo {
+                        default: normalize_default(default, &data_type, &extra, self.mariadb),
+                        type_name: if is_json { "json".into() } else { column_type },
+                        name: col,
+                        nullable: nullable == "YES",
+                        auto_increment: extra_has(&extra, "auto_increment"),
+                        generated: extra_generated(&extra),
+                        comment: comment.filter(|c| !c.is_empty()),
+                    }
+                },
+            )
+            .collect())
+    }
+
+    async fn indexes_of(&self, db: &str, name: &str) -> AppResult<Vec<IndexInfo>> {
+        // A functional key part (MySQL 8) has no COLUMN_NAME but an EXPRESSION, a column
+        // MariaDB does not have.
+        let part = if self.mariadb {
+            "CAST(COLUMN_NAME AS CHAR)"
+        } else {
+            "CAST(COALESCE(COLUMN_NAME, CONCAT('(', EXPRESSION, ')')) AS CHAR)"
+        };
+        let rows: Vec<(String, i64, Option<String>)> = self
+            .exec_rows(
+                &format!(
+                    "SELECT CAST(INDEX_NAME AS CHAR), CAST(NON_UNIQUE AS SIGNED), {part} \
+                     FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+                     ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+                ),
+                (db, name),
+            )
+            .await?;
+        let mut out: Vec<IndexInfo> = Vec::new();
+        for (index, non_unique, column) in rows {
+            if out.last().is_none_or(|i| i.name != index) {
+                out.push(IndexInfo {
+                    primary: index == "PRIMARY",
+                    name: index,
+                    columns: Vec::new(),
+                    unique: non_unique == 0,
+                    definition: None,
+                });
+            }
+            if let Some(i) = out.last_mut() {
+                i.columns
+                    .push(column.unwrap_or_else(|| "(expression)".into()));
+            }
+        }
+        sort_indexes(&mut out);
+        Ok(out)
+    }
+
+    async fn foreign_keys_of(&self, db: &str, name: &str) -> AppResult<Vec<ForeignKeyInfo>> {
+        type FkRow = (String, String, String, String, String, String, String);
+        let rows: Vec<FkRow> = self
+            .exec_rows(
+                "SELECT CAST(k.CONSTRAINT_NAME AS CHAR), CAST(k.COLUMN_NAME AS CHAR), \
+                 CAST(k.REFERENCED_TABLE_SCHEMA AS CHAR), CAST(k.REFERENCED_TABLE_NAME AS CHAR), \
+                 CAST(k.REFERENCED_COLUMN_NAME AS CHAR), CAST(r.UPDATE_RULE AS CHAR), \
+                 CAST(r.DELETE_RULE AS CHAR) \
+                 FROM information_schema.KEY_COLUMN_USAGE k \
+                 JOIN information_schema.REFERENTIAL_CONSTRAINTS r \
+                   ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA \
+                   AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME \
+                 WHERE k.TABLE_SCHEMA = ? AND k.TABLE_NAME = ? \
+                   AND k.REFERENCED_TABLE_NAME IS NOT NULL \
+                 ORDER BY k.CONSTRAINT_NAME, k.ORDINAL_POSITION",
+                (db, name),
+            )
+            .await?;
+        let mut out: Vec<ForeignKeyInfo> = Vec::new();
+        for (fk, column, ref_schema, ref_table, ref_column, on_update, on_delete) in rows {
+            if out.last().is_none_or(|f| f.name != fk) {
+                out.push(ForeignKeyInfo {
+                    name: fk,
+                    columns: Vec::new(),
+                    ref_schema: Some(ref_schema),
+                    ref_table,
+                    ref_columns: Vec::new(),
+                    on_update,
+                    on_delete,
+                });
+            }
+            if let Some(f) = out.last_mut() {
+                f.columns.push(column);
+                f.ref_columns.push(ref_column);
+            }
+        }
+        Ok(out)
+    }
+}
+
 #[async_trait]
 impl Session for MySession {
     fn dialect(&self) -> Dialect {
@@ -876,6 +1113,60 @@ impl Session for MySession {
             Some(CellValue::BigInt(s)) => Ok(RowCount::Exact(s.parse().unwrap_or(u64::MAX))),
             _ => Err(AppError::new(ErrorKind::Query, "count returned no value")),
         }
+    }
+
+    async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
+        let db = self.database_of(obj).await?;
+        let kind = self.kind_of(&db, &obj.name).await?;
+        let columns = self.columns_of(&db, &obj.name).await?;
+        let indexes = self.indexes_of(&db, &obj.name).await?;
+        let primary_key = indexes
+            .iter()
+            .find(|i| i.primary)
+            .map(|i| i.columns.clone())
+            .unwrap_or_default();
+        Ok(TableInfo {
+            row_key: derive_row_key(&primary_key, &indexes, &columns),
+            foreign_keys: self.foreign_keys_of(&db, &obj.name).await?,
+            object: ObjectRef {
+                schema: Some(db),
+                name: obj.name.clone(),
+            },
+            kind,
+            columns,
+            primary_key,
+            indexes,
+            has_rowid: false,
+        })
+    }
+
+    async fn table_ddl(&self, obj: &ObjectRef) -> AppResult<String> {
+        let db = self.database_of(obj).await?;
+        let q = qualified(
+            Dialect::MySql,
+            &ObjectRef {
+                schema: Some(db.clone()),
+                name: obj.name.clone(),
+            },
+        );
+        let ddl = match self.kind_of(&db, &obj.name).await? {
+            ObjectKind::Table => self
+                .exec_rows::<(String, String), _>(&format!("SHOW CREATE TABLE {q}"), ())
+                .await?
+                .into_iter()
+                .next()
+                .map(|r| r.1),
+            ObjectKind::View => self
+                .exec_rows::<(String, String, String, String), _>(
+                    &format!("SHOW CREATE VIEW {q}"),
+                    (),
+                )
+                .await?
+                .into_iter()
+                .next()
+                .map(|r| r.1),
+        };
+        ddl.ok_or_else(|| object_not_found(&db, &obj.name))
     }
 
     async fn execute(&self, sql: &str) -> AppResult<StatementOutcome> {

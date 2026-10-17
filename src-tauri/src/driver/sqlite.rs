@@ -10,9 +10,13 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use rusqlite::types::ValueRef;
-use rusqlite::{Connection, InterruptHandle, OpenFlags};
+use rusqlite::{Connection, InterruptHandle, OpenFlags, OptionalExtension};
 
-use super::sql::{build_page_query, qualified};
+use super::meta::{
+    ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, non_null_default,
+    object_not_found, sort_indexes,
+};
+use super::sql::{build_page_query, qualified, quote_ident};
 use super::{
     Canceller, ColumnMeta, DbObject, Dialect, ObjectKind, ObjectRef, PageRequest, ResultSet,
     RowCount, Session, StatementOutcome,
@@ -143,6 +147,276 @@ fn read_rows(stmt: &mut rusqlite::Statement<'_>) -> AppResult<ResultSet> {
     })
 }
 
+/// Kind and `CREATE` statement of a table or view; `NotFound` when the schema or the
+/// object does not exist.
+fn object_of(c: &Connection, schema: &str, name: &str) -> AppResult<(ObjectKind, String)> {
+    let known: bool = c
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_database_list WHERE name = ?1)",
+            [schema],
+            |r| r.get(0),
+        )
+        .map_err(map_err)?;
+    if !known {
+        return Err(object_not_found(schema, name));
+    }
+    let sql = format!(
+        "SELECT type, sql FROM {}.sqlite_schema WHERE name = ?1 AND type IN ('table', 'view')",
+        quote_ident(Dialect::Sqlite, schema)
+    );
+    let found = c
+        .query_row(&sql, [name], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        })
+        .optional()
+        .map_err(map_err)?;
+    let (ty, create) = found.ok_or_else(|| object_not_found(schema, name))?;
+    let kind = if ty == "view" {
+        ObjectKind::View
+    } else {
+        ObjectKind::Table
+    };
+    Ok((kind, create.unwrap_or_default()))
+}
+
+/// Primary key columns in key order.
+fn primary_key_of(c: &Connection, schema: &str, table: &str) -> AppResult<Vec<String>> {
+    let mut stmt = c
+        .prepare("SELECT name FROM pragma_table_info(?1, ?2) WHERE pk > 0 ORDER BY pk")
+        .map_err(map_err)?;
+    stmt.query_map([table, schema], |r| r.get(0))
+        .map_err(map_err)?
+        .collect::<Result<_, _>>()
+        .map_err(map_err)
+}
+
+fn table_info_of(c: &Connection, schema: &str, name: &str) -> AppResult<TableInfo> {
+    let (kind, _) = object_of(c, schema, name)?;
+    let without_rowid: bool = c
+        .query_row(
+            "SELECT wr FROM pragma_table_list WHERE schema = ?1 AND name = ?2",
+            [schema, name],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(map_err)?
+        .unwrap_or(false);
+    let has_rowid = kind == ObjectKind::Table && !without_rowid;
+
+    // name, declared type, notnull, default, pk position, hidden (2/3 = generated).
+    type XInfo = (String, String, bool, Option<String>, i64, i64);
+    let mut stmt = c
+        .prepare(
+            "SELECT name, type, \"notnull\", dflt_value, pk, hidden \
+             FROM pragma_table_xinfo(?1, ?2) WHERE hidden <> 1 ORDER BY cid",
+        )
+        .map_err(map_err)?;
+    let raw: Vec<XInfo> = stmt
+        .query_map([name, schema], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        })
+        .map_err(map_err)?
+        .collect::<Result<_, _>>()
+        .map_err(map_err)?;
+    let mut pk: Vec<(i64, String)> = raw
+        .iter()
+        .filter(|x| x.4 > 0)
+        .map(|x| (x.4, x.0.clone()))
+        .collect();
+    pk.sort();
+    let primary_key: Vec<String> = pk.into_iter().map(|(_, n)| n).collect();
+    // `INTEGER PRIMARY KEY` on a rowid table is an alias of the rowid: never NULL,
+    // assigned automatically.
+    let rowid_alias = |x: &XInfo| {
+        has_rowid && primary_key.len() == 1 && x.4 == 1 && x.1.eq_ignore_ascii_case("INTEGER")
+    };
+    let columns: Vec<ColumnInfo> = raw
+        .iter()
+        .map(|x| {
+            let alias = rowid_alias(x);
+            // WITHOUT ROWID tables enforce NOT NULL on their primary key.
+            let not_null = x.2 || alias || (without_rowid && x.4 > 0);
+            ColumnInfo {
+                name: x.0.clone(),
+                type_name: x.1.clone(),
+                nullable: !not_null,
+                default: non_null_default(x.3.clone()),
+                auto_increment: alias,
+                generated: x.5 == 2 || x.5 == 3,
+                comment: None,
+            }
+        })
+        .collect();
+
+    let q = quote_ident(Dialect::Sqlite, schema);
+    let mut stmt = c
+        .prepare("SELECT name, \"unique\", origin, partial FROM pragma_index_list(?1, ?2)")
+        .map_err(map_err)?;
+    let listed: Vec<(String, bool, String, bool)> = stmt
+        .query_map([name, schema], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .map_err(map_err)?
+        .collect::<Result<_, _>>()
+        .map_err(map_err)?;
+    let mut indexes = Vec::new();
+    let mut partial = Vec::new();
+    for (idx, unique, origin, is_partial) in listed {
+        let mut stmt = c
+            .prepare("SELECT cid, name FROM pragma_index_info(?1, ?2) ORDER BY seqno")
+            .map_err(map_err)?;
+        let columns: Vec<String> = stmt
+            .query_map([idx.as_str(), schema], |r| {
+                let cid: i64 = r.get(0)?;
+                let name: Option<String> = r.get(1)?;
+                Ok(name.unwrap_or_else(|| {
+                    if cid == -1 {
+                        "rowid".into()
+                    } else {
+                        "(expression)".into()
+                    }
+                }))
+            })
+            .map_err(map_err)?
+            .collect::<Result<_, _>>()
+            .map_err(map_err)?;
+        let definition: Option<String> = c
+            .query_row(
+                &format!("SELECT sql FROM {q}.sqlite_schema WHERE type = 'index' AND name = ?1"),
+                [idx.as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(map_err)?
+            .flatten();
+        if is_partial {
+            partial.push(idx.clone());
+        }
+        indexes.push(IndexInfo {
+            name: idx,
+            columns,
+            unique,
+            primary: origin == "pk",
+            definition,
+        });
+    }
+    // A rowid alias primary key has no index of its own: list it like the others.
+    if !primary_key.is_empty() && !indexes.iter().any(|i| i.primary) {
+        indexes.push(IndexInfo {
+            name: "PRIMARY".into(),
+            columns: primary_key.clone(),
+            unique: true,
+            primary: true,
+            definition: None,
+        });
+    }
+    sort_indexes(&mut indexes);
+    let row_key = derive_row_key(
+        &primary_key,
+        indexes.iter().filter(|i| !partial.contains(&i.name)),
+        &columns,
+    );
+
+    // id, seq, table, from, to (NULL = the parent's primary key), on_update, on_delete.
+    type FkRow = (i64, String, String, Option<String>, String, String);
+    let mut stmt = c
+        .prepare(
+            "SELECT id, \"table\", \"from\", \"to\", on_update, on_delete \
+             FROM pragma_foreign_key_list(?1, ?2) ORDER BY id, seq",
+        )
+        .map_err(map_err)?;
+    let fk_rows: Vec<FkRow> = stmt
+        .query_map([name, schema], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        })
+        .map_err(map_err)?
+        .collect::<Result<_, _>>()
+        .map_err(map_err)?;
+    let mut foreign_keys: Vec<ForeignKeyInfo> = Vec::new();
+    let mut implicit: Vec<bool> = Vec::new();
+    let mut last_id = None;
+    for (id, table, from, to, on_update, on_delete) in fk_rows {
+        if last_id != Some(id) {
+            last_id = Some(id);
+            implicit.push(false);
+            foreign_keys.push(ForeignKeyInfo {
+                name: String::new(),
+                columns: Vec::new(),
+                ref_schema: Some(schema.to_string()),
+                ref_table: table,
+                ref_columns: Vec::new(),
+                on_update,
+                on_delete,
+            });
+        }
+        let (fk, imp) = (
+            foreign_keys.last_mut().expect("pushed above"),
+            implicit.last_mut().expect("pushed above"),
+        );
+        fk.columns.push(from);
+        match to {
+            Some(to) => fk.ref_columns.push(to),
+            None => *imp = true,
+        }
+    }
+    for (fk, imp) in foreign_keys.iter_mut().zip(implicit) {
+        if imp {
+            fk.ref_columns = primary_key_of(c, schema, &fk.ref_table)?;
+        }
+        // SQLite keeps no name for a foreign key: `<table>_<columns>_fkey`, like PostgreSQL.
+        fk.name = format!("{name}_{}_fkey", fk.columns.join("_"));
+    }
+
+    Ok(TableInfo {
+        object: ObjectRef {
+            schema: Some(schema.to_string()),
+            name: name.to_string(),
+        },
+        kind,
+        columns,
+        primary_key,
+        indexes,
+        foreign_keys,
+        row_key,
+        has_rowid,
+    })
+}
+
+/// The table/view statement, then its indexes and triggers, each ending with `;`.
+fn table_ddl_of(c: &Connection, schema: &str, name: &str) -> AppResult<String> {
+    let (_, create) = object_of(c, schema, name)?;
+    let sql = format!(
+        "SELECT sql FROM {}.sqlite_schema WHERE tbl_name = ?1 \
+         AND type IN ('index', 'trigger') AND sql IS NOT NULL ORDER BY type, name",
+        quote_ident(Dialect::Sqlite, schema)
+    );
+    let mut stmt = c.prepare(&sql).map_err(map_err)?;
+    let extra: Vec<String> = stmt
+        .query_map([name], |r| r.get(0))
+        .map_err(map_err)?
+        .collect::<Result<_, _>>()
+        .map_err(map_err)?;
+    Ok(std::iter::once(create)
+        .chain(extra)
+        .map(|s| format!("{};", s.trim_end().trim_end_matches(';')))
+        .collect::<Vec<_>>()
+        .join("\n\n"))
+}
+
 #[async_trait]
 impl Session for SqliteSession {
     fn dialect(&self) -> Dialect {
@@ -173,7 +447,7 @@ impl Session for SqliteSession {
                 "SELECT name, type FROM {}.sqlite_schema \
                  WHERE type IN ('table','view') AND substr(name,1,7) <> 'sqlite_' \
                  ORDER BY name",
-                super::sql::quote_ident(Dialect::Sqlite, &schema)
+                quote_ident(Dialect::Sqlite, &schema)
             );
             let mut stmt = c.prepare(&sql).map_err(map_err)?;
             let rows = stmt
@@ -213,6 +487,20 @@ impl Session for SqliteSession {
             Ok(RowCount::Exact(n.max(0) as u64))
         })
         .await
+    }
+
+    async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
+        let schema = obj.schema.clone().unwrap_or_else(|| "main".into());
+        let name = obj.name.clone();
+        self.with_conn(move |c| table_info_of(c, &schema, &name))
+            .await
+    }
+
+    async fn table_ddl(&self, obj: &ObjectRef) -> AppResult<String> {
+        let schema = obj.schema.clone().unwrap_or_else(|| "main".into());
+        let name = obj.name.clone();
+        self.with_conn(move |c| table_ddl_of(c, &schema, &name))
+            .await
     }
 
     async fn execute(&self, sql: &str) -> AppResult<StatementOutcome> {

@@ -1,3 +1,4 @@
+pub mod meta;
 pub mod mysql;
 pub mod postgres;
 pub mod sql;
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::CellValue;
+use meta::TableInfo;
 use tls::SslConfig;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -163,6 +165,10 @@ pub trait Session: Send + Sync {
     async fn list_objects(&self, schema: Option<&str>) -> AppResult<Vec<DbObject>>;
     async fn fetch_page(&self, req: &PageRequest) -> AppResult<ResultSet>;
     async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount>;
+    /// Columns, keys, indexes and foreign keys of a table or view (`NotFound` if absent).
+    async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo>;
+    /// The `CREATE` statement(s) of a table or view (`NotFound` if absent).
+    async fn table_ddl(&self, obj: &ObjectRef) -> AppResult<String>;
     async fn execute(&self, sql: &str) -> AppResult<StatementOutcome>;
     fn canceller(&self) -> Arc<dyn Canceller>;
     async fn close(&self) -> AppResult<()>;

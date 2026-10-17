@@ -8,6 +8,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+use crate::driver::meta::TableInfo;
 use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::import::{ImportPreview, ImportResult};
@@ -218,6 +219,31 @@ pub async fn table_count(
         .await?
         .count_rows(&object, EXACT_COUNT_THRESHOLD)
         .await
+}
+
+/// Cached per workspace; `refresh` re-reads it from the database.
+#[tauri::command]
+pub async fn table_info(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    object: ObjectRef,
+    refresh: bool,
+) -> AppResult<TableInfo> {
+    if refresh {
+        state.invalidate_table_info(&workspace_id, &object);
+    }
+    Ok(TableInfo::clone(
+        &*state.table_info(&workspace_id, &object).await?,
+    ))
+}
+
+#[tauri::command]
+pub async fn table_ddl(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    object: ObjectRef,
+) -> AppResult<String> {
+    state.browse(&workspace_id).await?.table_ddl(&object).await
 }
 
 #[tauri::command]

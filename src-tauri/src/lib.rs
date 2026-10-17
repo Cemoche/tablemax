@@ -58,6 +58,8 @@ pub fn run() {
             commands::objects_list,
             commands::table_page,
             commands::table_count,
+            commands::table_info,
+            commands::table_ddl,
             commands::sql_session_open,
             commands::sql_session_close,
             commands::sql_execute,

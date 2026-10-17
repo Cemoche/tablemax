@@ -33,6 +33,10 @@ use tokio_postgres::types::Type;
 use tokio_postgres::{CancelToken, Client, Config, NoTls, SimpleQueryMessage, Socket};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
+use super::meta::{
+    ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, non_null_default,
+    object_not_found,
+};
 use super::sql::{build_page_query, qualified};
 use super::tls::{SslMode, rustls_client_config};
 use super::{
@@ -354,6 +358,308 @@ fn cell_from_text(ty: Option<&Type>, s: &str) -> CellValue {
     }
 }
 
+/// A table or view found in the catalog.
+struct PgRel {
+    oid: u32,
+    schema: String,
+    relkind: String,
+    /// `schema.name`, each part quoted only when needed (server `quote_ident`).
+    qualified: String,
+}
+
+/// One column with what both `table_info` and `table_ddl` need.
+struct PgColumn {
+    info: ColumnInfo,
+    quoted: String,
+    /// `a` (ALWAYS) / `d` (BY DEFAULT) identity, else empty.
+    identity: String,
+    /// The generation expression of a generated column.
+    generation: Option<String>,
+    /// `quote_literal(comment)`.
+    comment_literal: Option<String>,
+}
+
+struct PgIndex {
+    info: IndexInfo,
+    partial: bool,
+    /// Backs a PRIMARY KEY / UNIQUE / EXCLUDE constraint (part of the constraint's DDL).
+    constraint: bool,
+}
+
+/// Keeps a constraint unless it is a per-partition copy of one declared on this same
+/// table (an FK to a partitioned table has one such row per referenced partition).
+const PG_OWN_CONSTRAINT: &str = "NOT EXISTS (SELECT 1 FROM pg_constraint p \
+     WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)";
+
+fn pg_action(code: &str) -> String {
+    match code {
+        "r" => "RESTRICT",
+        "c" => "CASCADE",
+        "n" => "SET NULL",
+        "d" => "SET DEFAULT",
+        _ => "NO ACTION",
+    }
+    .to_string()
+}
+
+impl PgSession {
+    async fn relation(&self, obj: &ObjectRef) -> AppResult<PgRel> {
+        self.check()?;
+        let schema = obj.schema.clone().unwrap_or_else(|| "public".into());
+        let row = self
+            .client
+            .query_opt(
+                "SELECT c.oid, c.relkind::text, format('%I.%I', n.nspname, c.relname) \
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = $1::text AND c.relname = $2::text \
+                 AND c.relkind IN ('r', 'p', 'v', 'm')",
+                &[&schema, &obj.name],
+            )
+            .await
+            .map_err(map_err)?
+            .ok_or_else(|| object_not_found(&schema, &obj.name))?;
+        Ok(PgRel {
+            oid: row.get(0),
+            relkind: row.get(1),
+            qualified: row.get(2),
+            schema,
+        })
+    }
+
+    async fn columns(&self, oid: u32) -> AppResult<Vec<PgColumn>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT a.attname::text, quote_ident(a.attname), \
+                 format_type(a.atttypid, a.atttypmod), a.attnotnull, \
+                 pg_get_expr(d.adbin, d.adrelid), a.attidentity::text, a.attgenerated::text, \
+                 col_description(a.attrelid, a.attnum), \
+                 quote_literal(col_description(a.attrelid, a.attnum)) \
+                 FROM pg_attribute a \
+                 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+                 WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped \
+                 ORDER BY a.attnum",
+                &[&oid],
+            )
+            .await
+            .map_err(map_err)?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let expr: Option<String> = r.get(4);
+                let identity: String = r.get(5);
+                let generated = !r.get::<_, String>(6).is_empty();
+                let default = if generated {
+                    None
+                } else {
+                    non_null_default(expr.clone())
+                };
+                let serial = default
+                    .as_deref()
+                    .is_some_and(|d| d.starts_with("nextval("));
+                PgColumn {
+                    info: ColumnInfo {
+                        name: r.get(0),
+                        type_name: r.get(2),
+                        nullable: !r.get::<_, bool>(3),
+                        auto_increment: !identity.is_empty() || serial,
+                        default,
+                        generated,
+                        comment: r.get(7),
+                    },
+                    quoted: r.get(1),
+                    identity,
+                    generation: if generated { expr } else { None },
+                    comment_literal: r.get(8),
+                }
+            })
+            .collect())
+    }
+
+    async fn indexes(&self, oid: u32) -> AppResult<Vec<PgIndex>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT i.relname::text, ix.indisunique, ix.indisprimary, \
+                 pg_get_indexdef(ix.indexrelid), ix.indpred IS NOT NULL, \
+                 ARRAY(SELECT COALESCE(a.attname::text, pg_get_indexdef(ix.indexrelid, s.k, true)) \
+                   FROM generate_series(1, ix.indnkeyatts::int) AS s(k) \
+                   LEFT JOIN pg_attribute a ON a.attrelid = ix.indrelid \
+                     AND a.attnum = ix.indkey[s.k - 1] AND a.attnum > 0 \
+                   ORDER BY s.k), \
+                 EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = ix.indexrelid \
+                   AND con.conrelid = ix.indrelid AND con.contype IN ('p', 'u', 'x')) \
+                 FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid \
+                 WHERE ix.indrelid = $1",
+                &[&oid],
+            )
+            .await
+            .map_err(map_err)?;
+        let mut out: Vec<PgIndex> = rows
+            .iter()
+            .map(|r| PgIndex {
+                info: IndexInfo {
+                    name: r.get(0),
+                    unique: r.get(1),
+                    primary: r.get(2),
+                    definition: Some(r.get(3)),
+                    columns: r.get(5),
+                },
+                partial: r.get(4),
+                constraint: r.get(6),
+            })
+            .collect();
+        // Primary first, then by name (as `meta::sort_indexes`).
+        out.sort_by(|a, b| {
+            b.info
+                .primary
+                .cmp(&a.info.primary)
+                .then_with(|| a.info.name.cmp(&b.info.name))
+        });
+        Ok(out)
+    }
+
+    async fn foreign_keys(&self, oid: u32) -> AppResult<Vec<ForeignKeyInfo>> {
+        let rows = self
+            .client
+            .query(
+                &format!(
+                    "SELECT con.conname::text, \
+                     ARRAY(SELECT a.attname::text FROM unnest(con.conkey) WITH ORDINALITY AS u(n, o) \
+                       JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = u.n ORDER BY u.o), \
+                     rn.nspname::text, rc.relname::text, \
+                     ARRAY(SELECT a.attname::text FROM unnest(con.confkey) WITH ORDINALITY AS u(n, o) \
+                       JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = u.n ORDER BY u.o), \
+                     con.confupdtype::text, con.confdeltype::text \
+                     FROM pg_constraint con \
+                     JOIN pg_class rc ON rc.oid = con.confrelid \
+                     JOIN pg_namespace rn ON rn.oid = rc.relnamespace \
+                     WHERE con.conrelid = $1 AND con.contype = 'f' AND {PG_OWN_CONSTRAINT} \
+                     ORDER BY con.conname"
+                ),
+                &[&oid],
+            )
+            .await
+            .map_err(map_err)?;
+        Ok(rows
+            .iter()
+            .map(|r| ForeignKeyInfo {
+                name: r.get(0),
+                columns: r.get(1),
+                ref_schema: Some(r.get(2)),
+                ref_table: r.get(3),
+                ref_columns: r.get(4),
+                on_update: pg_action(r.get(5)),
+                on_delete: pg_action(r.get(6)),
+            })
+            .collect())
+    }
+
+    async fn table_ddl_of(&self, rel: &PgRel) -> AppResult<String> {
+        let oid = rel.oid;
+        if rel.relkind == "v" || rel.relkind == "m" {
+            let row = self
+                .client
+                .query_one("SELECT pg_get_viewdef($1::oid, true)", &[&oid])
+                .await
+                .map_err(map_err)?;
+            let def: String = row.get(0);
+            let what = if rel.relkind == "m" {
+                "MATERIALIZED VIEW"
+            } else {
+                "VIEW"
+            };
+            return Ok(format!("CREATE {what} {} AS\n{def}", rel.qualified));
+        }
+        let columns = self.columns(oid).await?;
+        let mut lines: Vec<String> = columns
+            .iter()
+            .map(|c| {
+                let mut l = format!("    {} {}", c.quoted, c.info.type_name);
+                if let Some(d) = &c.info.default {
+                    l.push_str(&format!(" DEFAULT {d}"));
+                }
+                if !c.info.nullable {
+                    l.push_str(" NOT NULL");
+                }
+                match c.identity.as_str() {
+                    "a" => l.push_str(" GENERATED ALWAYS AS IDENTITY"),
+                    "d" => l.push_str(" GENERATED BY DEFAULT AS IDENTITY"),
+                    _ => {}
+                }
+                if let Some(g) = &c.generation {
+                    l.push_str(&format!(" GENERATED ALWAYS AS ({g}) STORED"));
+                }
+                l
+            })
+            .collect();
+        let constraints = self
+            .client
+            .query(
+                &format!(
+                    "SELECT quote_ident(con.conname), pg_get_constraintdef(con.oid, true) \
+                     FROM pg_constraint con \
+                     WHERE con.conrelid = $1 AND con.contype IN ('p', 'u', 'x', 'c', 'f') \
+                     AND {PG_OWN_CONSTRAINT} \
+                     ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'x' THEN 2 \
+                     WHEN 'c' THEN 3 ELSE 4 END, con.conname"
+                ),
+                &[&oid],
+            )
+            .await
+            .map_err(map_err)?;
+        for r in &constraints {
+            lines.push(format!(
+                "    CONSTRAINT {} {}",
+                r.get::<_, String>(0),
+                r.get::<_, String>(1)
+            ));
+        }
+        let mut ddl = format!("CREATE TABLE {} (\n{}\n)", rel.qualified, lines.join(",\n"));
+        if rel.relkind == "p" {
+            let row = self
+                .client
+                .query_one("SELECT pg_get_partkeydef($1::oid)", &[&oid])
+                .await
+                .map_err(map_err)?;
+            if let Some(key) = row.get::<_, Option<String>>(0) {
+                ddl.push_str(&format!(" PARTITION BY {key}"));
+            }
+        }
+        ddl.push(';');
+        for i in self.indexes(oid).await? {
+            if let (false, Some(def)) = (i.constraint, &i.info.definition) {
+                ddl.push_str(&format!("\n\n{def};"));
+            }
+        }
+        let table_comment = self
+            .client
+            .query_one(
+                "SELECT quote_literal(obj_description($1::oid, 'pg_class'))",
+                &[&oid],
+            )
+            .await
+            .map_err(map_err)?;
+        let mut comments = Vec::new();
+        if let Some(lit) = table_comment.get::<_, Option<String>>(0) {
+            comments.push(format!("COMMENT ON TABLE {} IS {lit};", rel.qualified));
+        }
+        for c in &columns {
+            if let Some(lit) = &c.comment_literal {
+                comments.push(format!(
+                    "COMMENT ON COLUMN {}.{} IS {lit};",
+                    rel.qualified, c.quoted
+                ));
+            }
+        }
+        if !comments.is_empty() {
+            ddl.push_str("\n\n");
+            ddl.push_str(&comments.join("\n"));
+        }
+        Ok(ddl)
+    }
+}
+
 #[async_trait]
 impl Session for PgSession {
     fn dialect(&self) -> Dialect {
@@ -443,6 +749,50 @@ impl Session for PgSession {
             .map_err(map_err)?;
         let n: i64 = row.get(0);
         Ok(RowCount::Exact(n.max(0) as u64))
+    }
+
+    async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
+        let rel = self.relation(obj).await?;
+        let columns: Vec<ColumnInfo> = self
+            .columns(rel.oid)
+            .await?
+            .into_iter()
+            .map(|c| c.info)
+            .collect();
+        let indexes = self.indexes(rel.oid).await?;
+        let primary_key = indexes
+            .iter()
+            .find(|i| i.info.primary)
+            .map(|i| i.info.columns.clone())
+            .unwrap_or_default();
+        let row_key = derive_row_key(
+            &primary_key,
+            indexes.iter().filter(|i| !i.partial).map(|i| &i.info),
+            &columns,
+        );
+        let is_view = rel.relkind == "v" || rel.relkind == "m";
+        Ok(TableInfo {
+            object: ObjectRef {
+                schema: Some(rel.schema.clone()),
+                name: obj.name.clone(),
+            },
+            kind: if is_view {
+                ObjectKind::View
+            } else {
+                ObjectKind::Table
+            },
+            columns,
+            primary_key,
+            indexes: indexes.into_iter().map(|i| i.info).collect(),
+            foreign_keys: self.foreign_keys(rel.oid).await?,
+            row_key,
+            has_rowid: false,
+        })
+    }
+
+    async fn table_ddl(&self, obj: &ObjectRef) -> AppResult<String> {
+        let rel = self.relation(obj).await?;
+        self.table_ddl_of(&rel).await
     }
 
     async fn execute(&self, sql: &str) -> AppResult<StatementOutcome> {

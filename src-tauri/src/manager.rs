@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -28,17 +28,19 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::time::Instant;
 
+use crate::driver::meta::TableInfo;
 use crate::driver::{
-    self, Canceller, ConnectParams, Dialect, DriverKind, Session, StatementOutcome,
+    self, Canceller, ConnectParams, Dialect, DriverKind, ObjectRef, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::import::{self, IMPORT_TTL, ImportPreview, ImportResult, LastPick, PendingImports};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
 use crate::ssh::config::{SshConfigFile, user_config};
 use crate::ssh::known_hosts::KnownHosts;
-use crate::ssh::tunnel::{self, HostKeyPolicy, SshAuthMaterial, SshTarget, SshTunnel};
+use crate::ssh::target::{home_dir, resolve_ssh_target};
+use crate::ssh::tunnel::{self, HostKeyPolicy, SshTunnel};
 use crate::store::{
-    self, ConnectionConfig, ConnectionStore, PasswordMode, SshAuth, SshSettings, same_identity,
+    self, ConnectionConfig, ConnectionStore, PasswordMode, SshSettings, same_identity,
 };
 
 /// How often a pending cancel is re-sent while the statement is still running.
@@ -108,6 +110,8 @@ struct Workspace {
     /// The tunnel `browse` was connected through; once it is dead, `browse` is rebuilt.
     browse_tunnel: Option<Arc<SshTunnel>>,
     sql_sessions: Vec<String>,
+    /// Table metadata read through `browse`, by (schema, name); dropped with the workspace.
+    table_info: HashMap<(Option<String>, String), Arc<TableInfo>>,
 }
 
 /// A workspace's reconnect parameters (held secrets are copies, dropped after use).
@@ -254,68 +258,6 @@ async fn with_ssh_timeout<T>(fut: impl Future<Output = AppResult<T>>) -> AppResu
 /// The SSH settings that apply to `cfg` (SQLite never uses a tunnel).
 fn ssh_of(cfg: &ConnectionConfig) -> Option<&SshSettings> {
     cfg.ssh.as_ref().filter(|_| cfg.kind != DriverKind::Sqlite)
-}
-
-fn non_empty(s: Option<&str>) -> Option<&str> {
-    s.filter(|s| !s.trim().is_empty())
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-}
-
-/// The SSH target for `ssh`: `config.resolve(host)`, overridden by the form's port and
-/// user. Key auth uses the form's key file, else the first existing `IdentityFile`,
-/// else the first existing `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa` (like OpenSSH).
-fn resolve_ssh_target(
-    ssh: &SshSettings,
-    config: &SshConfigFile,
-    home: Option<&Path>,
-    secret: Option<String>,
-) -> AppResult<SshTarget> {
-    if ssh.host.trim().is_empty() {
-        return Err(AppError::new(ErrorKind::Invalid, "ssh host required"));
-    }
-    let resolved = config.resolve(&ssh.host);
-    let user = non_empty(ssh.user.as_deref())
-        .or(non_empty(resolved.user.as_deref()))
-        .ok_or_else(|| AppError::new(ErrorKind::Invalid, "ssh user required"))?
-        .to_string();
-    let auth = match ssh.auth {
-        SshAuth::Agent => SshAuthMaterial::Agent,
-        SshAuth::Password => {
-            SshAuthMaterial::Password(secret.ok_or_else(|| ssh.secret_required())?)
-        }
-        SshAuth::Key => {
-            let path = match non_empty(ssh.key_file.as_deref()) {
-                Some(path) => PathBuf::from(path),
-                None => {
-                    let defaults = home.into_iter().flat_map(|h| {
-                        ["id_ed25519", "id_ecdsa", "id_rsa"].map(|n| h.join(".ssh").join(n))
-                    });
-                    resolved
-                        .identity_files
-                        .iter()
-                        .cloned()
-                        .chain(defaults)
-                        .find(|p| p.is_file())
-                        .ok_or_else(|| AppError::new(ErrorKind::Invalid, "ssh key file required"))?
-                }
-            };
-            SshAuthMaterial::Key {
-                path,
-                passphrase: secret,
-            }
-        }
-    };
-    Ok(SshTarget {
-        host: resolved.host_name,
-        port: ssh.port.unwrap_or(resolved.port),
-        user,
-        auth,
-    })
 }
 
 /// Requests cancellation of the batch running on `entry` (no-op when idle).
@@ -741,6 +683,7 @@ impl SessionManager {
                 tunnel: Arc::new(tokio::sync::Mutex::new(tunnel)),
                 browse,
                 sql_sessions: Vec::new(),
+                table_info: HashMap::new(),
             },
         );
         Ok(info)
@@ -896,6 +839,39 @@ impl SessionManager {
         }
     }
 
+    /// The metadata of a table or view, read once through the browse connection and
+    /// cached until [`Self::invalidate_table_info`] or the workspace closes.
+    pub async fn table_info(
+        &self,
+        workspace_id: &str,
+        obj: &ObjectRef,
+    ) -> AppResult<Arc<TableInfo>> {
+        let key = (obj.schema.clone(), obj.name.clone());
+        {
+            let st = self.state();
+            let ws = st
+                .workspaces
+                .get(workspace_id)
+                .ok_or_else(|| workspace_not_found(workspace_id))?;
+            if let Some(hit) = ws.table_info.get(&key) {
+                return Ok(hit.clone());
+            }
+        }
+        let info = Arc::new(self.browse(workspace_id).await?.table_info(obj).await?);
+        if let Some(ws) = self.state().workspaces.get_mut(workspace_id) {
+            ws.table_info.insert(key, info.clone());
+        }
+        Ok(info)
+    }
+
+    /// Forgets the cached metadata of `obj` (no-op when absent or the workspace is closed).
+    pub fn invalidate_table_info(&self, workspace_id: &str, obj: &ObjectRef) {
+        if let Some(ws) = self.state().workspaces.get_mut(workspace_id) {
+            ws.table_info
+                .remove(&(obj.schema.clone(), obj.name.clone()));
+        }
+    }
+
     /// Opens a dedicated connection with the workspace's parameters, through its
     /// tunnel (reopened first if it died). Same keyring rule as [`Self::browse`].
     pub async fn open_sql_session(&self, workspace_id: &str) -> AppResult<String> {
@@ -1034,9 +1010,10 @@ mod tests {
 
     use super::*;
     use crate::driver::tls::SslConfig;
-    use crate::driver::{Canceller, DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
+    use crate::driver::{
+        Canceller, DbObject, ObjectKind, ObjectRef, PageRequest, ResultSet, RowCount,
+    };
     use crate::secrets::{MemorySecretStore, SecretKey, SecretKind};
-    use crate::ssh::tunnel::SshAuthMaterial;
     use crate::store::{EnvTag, PasswordMode, SshAuth, SshSettings};
 
     const WAIT: Duration = Duration::from_secs(10);
@@ -1538,6 +1515,12 @@ mod tests {
         async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
             Ok(RowCount::Exact(0))
         }
+        async fn table_info(&self, _: &ObjectRef) -> AppResult<TableInfo> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn table_ddl(&self, _: &ObjectRef) -> AppResult<String> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
         async fn execute(&self, _: &str) -> AppResult<StatementOutcome> {
             tokio::time::sleep(self.delay).await;
             Ok(StatementOutcome {
@@ -1597,10 +1580,150 @@ mod tests {
                 browse,
                 browse_tunnel: None,
                 sql_sessions: Vec::new(),
+                table_info: HashMap::new(),
             },
         );
         fx.mgr.close_workspace("w-stub").await.unwrap();
         assert_eq!(cancels.load(Ordering::SeqCst), 1);
+    }
+
+    /// Serves a one-column table and counts `table_info` calls; `missing` is NotFound.
+    struct MetaSession(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl Session for MetaSession {
+        fn dialect(&self) -> Dialect {
+            Dialect::Postgres
+        }
+        fn server_version(&self) -> String {
+            "meta".into()
+        }
+        async fn list_schemas(&self) -> AppResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn list_objects(&self, _: Option<&str>) -> AppResult<Vec<DbObject>> {
+            Ok(vec![])
+        }
+        async fn fetch_page(&self, _: &PageRequest) -> AppResult<ResultSet> {
+            Err(AppError::new(ErrorKind::Invalid, "meta"))
+        }
+        async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
+            Ok(RowCount::Exact(0))
+        }
+        async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            if obj.name == "missing" {
+                return Err(AppError::new(ErrorKind::NotFound, "missing"));
+            }
+            Ok(TableInfo {
+                object: obj.clone(),
+                kind: ObjectKind::Table,
+                columns: vec![],
+                primary_key: vec![],
+                indexes: vec![],
+                foreign_keys: vec![],
+                row_key: None,
+                has_rowid: false,
+            })
+        }
+        async fn table_ddl(&self, _: &ObjectRef) -> AppResult<String> {
+            Ok(String::new())
+        }
+        async fn execute(&self, _: &str) -> AppResult<StatementOutcome> {
+            Err(AppError::new(ErrorKind::Invalid, "meta"))
+        }
+        fn canceller(&self) -> Arc<dyn Canceller> {
+            Arc::new(CountingCanceller(Arc::default(), Duration::ZERO))
+        }
+        async fn close(&self) -> AppResult<()> {
+            Ok(())
+        }
+    }
+
+    /// A workspace whose browse connection is a [`MetaSession`]; returns its call count.
+    fn meta_workspace(fx: &Fx, id: &str) -> Arc<AtomicUsize> {
+        let calls = Arc::new(AtomicUsize::new(0));
+        fx.mgr.state().workspaces.insert(
+            id.into(),
+            Workspace {
+                config: cfg(DriverKind::Postgres, PasswordMode::None),
+                held_password: None,
+                held_ssh_secret: None,
+                tunnel: Default::default(),
+                browse: Arc::new(MetaSession(calls.clone())),
+                browse_tunnel: None,
+                sql_sessions: Vec::new(),
+                table_info: HashMap::new(),
+            },
+        );
+        calls
+    }
+
+    fn obj(schema: Option<&str>, name: &str) -> ObjectRef {
+        ObjectRef {
+            schema: schema.map(Into::into),
+            name: name.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn table_info_is_cached_per_workspace_and_object() {
+        let fx = fixture();
+        let calls = meta_workspace(&fx, "w1");
+        let a = obj(Some("public"), "a");
+        let first = fx.mgr.table_info("w1", &a).await.unwrap();
+        let again = fx.mgr.table_info("w1", &a).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(Arc::ptr_eq(&first, &again));
+        assert_eq!(first.object, a);
+
+        // Another object (or the same name in another schema) is another entry.
+        fx.mgr.table_info("w1", &obj(None, "a")).await.unwrap();
+        fx.mgr
+            .table_info("w1", &obj(Some("other"), "a"))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+        // Refresh = invalidate, then one more driver call.
+        fx.mgr.invalidate_table_info("w1", &a);
+        let fresh = fx.mgr.table_info("w1", &a).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert!(!Arc::ptr_eq(&first, &fresh));
+        fx.mgr.table_info("w1", &a).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+
+        // Errors are not cached.
+        let missing = obj(None, "missing");
+        for n in 5..=6 {
+            let e = fx.mgr.table_info("w1", &missing).await.unwrap_err();
+            assert_eq!(e.kind, ErrorKind::NotFound);
+            assert_eq!(calls.load(Ordering::SeqCst), n);
+        }
+
+        // Workspaces never share entries.
+        let other = meta_workspace(&fx, "w2");
+        fx.mgr.table_info("w2", &a).await.unwrap();
+        assert_eq!(other.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 6);
+    }
+
+    #[tokio::test]
+    async fn closing_a_workspace_drops_its_table_info() {
+        let fx = fixture();
+        let calls = meta_workspace(&fx, "w1");
+        let a = obj(None, "a");
+        fx.mgr.table_info("w1", &a).await.unwrap();
+        fx.mgr.close_workspace("w1").await.unwrap();
+        let e = fx.mgr.table_info("w1", &a).await.unwrap_err();
+        assert_eq!(e.kind, ErrorKind::NotFound);
+        // Same id reopened: a fresh cache.
+        let again = meta_workspace(&fx, "w1");
+        fx.mgr.table_info("w1", &a).await.unwrap();
+        assert_eq!(again.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // Invalidating on an unknown workspace is a no-op.
+        fx.mgr.invalidate_table_info("nope", &a);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1861,111 +1984,6 @@ mod tests {
             key_file: None,
             secret_mode: PasswordMode::Keyring,
         }
-    }
-
-    fn touch(path: &std::path::Path) {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, "key").unwrap();
-    }
-
-    #[test]
-    fn ssh_target_form_fields_win_over_the_config() {
-        let home = tempfile::tempdir().unwrap();
-        let config = SshConfigFile::parse(
-            "Host bastion\n  HostName bastion.example.com\n  Port 2200\n  User cfg-user\n",
-            home.path(),
-        );
-        let mut s = ssh(SshAuth::Password);
-        let t = resolve_ssh_target(&s, &config, Some(home.path()), Some("pw".into())).unwrap();
-        assert_eq!(
-            (t.host.as_str(), t.port, t.user.as_str()),
-            ("bastion.example.com", 2200, "cfg-user")
-        );
-        assert!(matches!(t.auth, SshAuthMaterial::Password(ref p) if p == "pw"));
-        s.port = Some(22);
-        s.user = Some("form-user".into());
-        let t = resolve_ssh_target(&s, &config, Some(home.path()), Some("pw".into())).unwrap();
-        assert_eq!((t.port, t.user.as_str()), (22, "form-user"));
-        // An empty user field counts as absent.
-        s.user = Some(String::new());
-        let t = resolve_ssh_target(&s, &config, Some(home.path()), Some("pw".into())).unwrap();
-        assert_eq!(t.user, "cfg-user");
-    }
-
-    #[test]
-    fn ssh_target_without_user_or_password_is_refused() {
-        let home = tempfile::tempdir().unwrap();
-        let config = SshConfigFile::default();
-        let e =
-            resolve_ssh_target(&ssh(SshAuth::Agent), &config, Some(home.path()), None).unwrap_err();
-        assert_eq!(
-            (e.kind, e.message.as_str()),
-            (ErrorKind::Invalid, "ssh user required")
-        );
-        let mut s = ssh(SshAuth::Password);
-        s.user = Some("u".into());
-        let e = resolve_ssh_target(&s, &config, Some(home.path()), None).unwrap_err();
-        assert_eq!(
-            (e.kind, e.message.as_str()),
-            (ErrorKind::Auth, "ssh password required")
-        );
-        s.auth = SshAuth::Agent;
-        let t = resolve_ssh_target(&s, &config, Some(home.path()), Some("x".into())).unwrap();
-        assert!(matches!(t.auth, SshAuthMaterial::Agent));
-        assert_eq!((t.host.as_str(), t.port), ("bastion", 22));
-    }
-
-    #[test]
-    fn ssh_key_file_resolution_order() {
-        let home = tempfile::tempdir().unwrap();
-        let h = home.path();
-        let key_of = |s: &SshSettings, config: &SshConfigFile| match resolve_ssh_target(
-            s,
-            config,
-            Some(h),
-            Some("pp".into()),
-        ) {
-            Ok(t) => match t.auth {
-                SshAuthMaterial::Key { path, passphrase } => {
-                    assert_eq!(passphrase.as_deref(), Some("pp"));
-                    Ok(path)
-                }
-                other => panic!("{other:?}"),
-            },
-            Err(e) => Err(e),
-        };
-        let mut s = ssh(SshAuth::Key);
-        s.user = Some("u".into());
-        let empty = SshConfigFile::default();
-        let e = key_of(&s, &empty).unwrap_err();
-        assert_eq!(
-            (e.kind, e.message.as_str()),
-            (ErrorKind::Invalid, "ssh key file required")
-        );
-
-        // OpenSSH defaults, in order: id_ed25519, id_ecdsa, id_rsa.
-        touch(&h.join(".ssh/id_rsa"));
-        assert_eq!(key_of(&s, &empty).unwrap(), h.join(".ssh/id_rsa"));
-        touch(&h.join(".ssh/id_ecdsa"));
-        assert_eq!(key_of(&s, &empty).unwrap(), h.join(".ssh/id_ecdsa"));
-        touch(&h.join(".ssh/id_ed25519"));
-        assert_eq!(key_of(&s, &empty).unwrap(), h.join(".ssh/id_ed25519"));
-
-        // The first existing IdentityFile beats the defaults.
-        touch(&h.join("keys/second"));
-        let config = SshConfigFile::parse(
-            "Host bastion\n  IdentityFile ~/keys/first\n  IdentityFile ~/keys/second\n",
-            h,
-        );
-        assert_eq!(key_of(&s, &config).unwrap(), h.join("keys/second"));
-
-        // The form's key file beats everything, even when it does not exist (the
-        // tunnel then reports it as unreadable).
-        s.key_file = Some("/elsewhere/key".into());
-        assert_eq!(
-            key_of(&s, &config).unwrap(),
-            PathBuf::from("/elsewhere/key")
-        );
     }
 
     #[tokio::test]
