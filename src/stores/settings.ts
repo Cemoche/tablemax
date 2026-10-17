@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { cleanKeymap } from "../features/settings/bounds";
 import { toAppError } from "../lib/errors";
 import * as ipc from "../lib/ipc";
 import { applyTheme } from "../lib/theme";
@@ -29,6 +30,9 @@ interface SettingsState {
   update: (patch: Partial<Settings>) => Promise<void>;
 }
 
+/** The UI never trusts a keymap entry the backend or a caller did not validate. */
+const cleaned = (s: Settings): Settings => ({ ...s, keymap: cleanKeymap(s.keymap) });
+
 // Updates reach the backend one at a time, in order. `latest` numbers the updates so a
 // superseded one never overwrites the optimistic state of a newer one; `confirmed` is
 // the last value the backend stored (a store field, so tests can reset it), which a failed latest update reverts to.
@@ -42,7 +46,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   confirmed: DEFAULT_SETTINGS,
   load: async () => {
     try {
-      const settings = await ipc.settingsGet();
+      const settings = cleaned(await ipc.settingsGet());
       applyTheme(settings.theme);
       set({ settings, confirmed: settings, loaded: true, error: null });
     } catch (e) {
@@ -51,12 +55,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
   },
   update: (patch) => {
     const seq = ++latest;
-    const next = { ...get().settings, ...patch };
+    const next = cleaned({ ...get().settings, ...patch });
     applyTheme(next.theme);
     set({ settings: next });
     const run = async () => {
       try {
-        const stored = await ipc.settingsSet(next);
+        const stored = cleaned(await ipc.settingsSet(next));
         set({ confirmed: stored });
         if (seq === latest) {
           applyTheme(stored.theme);

@@ -2,7 +2,9 @@
 //! Out-of-range values are clamped to their bounds; an unreadable file gives defaults and
 //! is never rewritten by `load`. An editor font family outside the safe grammar
 //! (`is_valid_font_family`) is reset to "" (the default font) by `clamped`, on load and on
-//! save alike, without touching the other fields.
+//! save alike, without touching the other fields. Keymap entries with an unknown action id
+//! or a spec outside the shortcut grammar (`is_valid_shortcut`) are dropped one by one; a
+//! malformed keymap never makes the load fail.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -47,6 +49,106 @@ pub fn is_valid_font_family(s: &str) -> bool {
     })
 }
 
+/// The action ids a keymap entry may name, in the order of `src/lib/keymap-actions.json`
+/// (a test checks both lists against that file; the frontend registry is src/lib/keymap.ts).
+pub const KEYMAP_ACTION_IDS: &[&str] = &[
+    "query.new",
+    "tab.close",
+    "tab.next",
+    "tab.previous",
+    "palette.all",
+    "palette.objects",
+    "settings.open",
+    "query.save",
+    "history.toggle",
+    "editor.run",
+    "editor.runAll",
+    "editor.format",
+    "editor.comment",
+    "grid.commit",
+    "grid.rowDetails",
+    "grid.viewData",
+    "grid.viewStructure",
+    "grid.back",
+];
+/// At most this many keymap entries are kept (defensive: one per known id fits well below).
+pub const KEYMAP_MAX_ENTRIES: usize = 64;
+/// Longest shortcut spec accepted.
+pub const KEYMAP_SPEC_MAX: usize = 32;
+
+/// The canonical shortcut grammar (mirrored by `isValidShortcut` in src/lib/keymap.ts):
+/// `Modifier+…+Key`, modifiers among `Mod`, `Ctrl`, `Meta`, `Alt`, `Shift`, each at most
+/// once, in any order; the key is one uppercase ASCII letter or digit, one of
+/// `` , . / ; - = [ ] \ ` ``, or a named key (`Enter`, `Tab`, `Escape`, `Space`,
+/// `Backspace`, `Delete`, `ArrowUp`/`Down`/`Left`/`Right`, `F1`–`F12`). At least one
+/// modifier unless the key is F1–F12; at most 32 characters, ASCII only.
+pub fn is_valid_shortcut(spec: &str) -> bool {
+    if spec.is_empty() || spec.len() > KEYMAP_SPEC_MAX || !spec.is_ascii() {
+        return false;
+    }
+    let mut parts: Vec<&str> = spec.split('+').collect();
+    let Some(key) = parts.pop() else {
+        return false;
+    };
+    let mut seen: Vec<&str> = Vec::new();
+    for m in parts {
+        if !matches!(m, "Mod" | "Ctrl" | "Meta" | "Alt" | "Shift") || seen.contains(&m) {
+            return false;
+        }
+        seen.push(m);
+    }
+    let function_key = key
+        .strip_prefix('F')
+        .and_then(|n| if n.starts_with('0') { None } else { n.parse::<u8>().ok() })
+        .is_some_and(|n| (1..=12).contains(&n));
+    let char_key = key.len() == 1
+        && key.chars().all(|c| {
+            c.is_ascii_uppercase() || c.is_ascii_digit() || ",./;-=[]\\`".contains(c)
+        });
+    let named_key = matches!(
+        key,
+        "Enter"
+            | "Tab"
+            | "Escape"
+            | "Space"
+            | "Backspace"
+            | "Delete"
+            | "ArrowUp"
+            | "ArrowDown"
+            | "ArrowLeft"
+            | "ArrowRight"
+    );
+    (function_key || char_key || named_key) && (function_key || !seen.is_empty())
+}
+
+/// The entries of `keymap` with a known action id and a valid spec, at most `max` of them.
+fn clean_keymap(keymap: BTreeMap<String, String>, max: usize) -> BTreeMap<String, String> {
+    keymap
+        .into_iter()
+        .filter(|(id, spec)| KEYMAP_ACTION_IDS.contains(&id.as_str()) && is_valid_shortcut(spec))
+        .take(max)
+        .collect()
+}
+
+/// Reads `keymap` leniently: an object keeps its string values (other values and any
+/// non-object give nothing), so one bad entry never makes the whole file unreadable.
+fn lenient_keymap<'de, D>(deserializer: D) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::Object(map) => map
+            .into_iter()
+            .filter_map(|(k, v)| match v {
+                serde_json::Value::String(s) => Some((k, s)),
+                _ => None,
+            })
+            .collect(),
+        _ => BTreeMap::new(),
+    })
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Theme {
@@ -68,7 +170,8 @@ pub struct Settings {
     pub exact_count_threshold: u64,
     pub auto_limit_default: bool,
     pub auto_limit_value: u32,
-    /// Action id to shortcut; empty = defaults.
+    /// Action id to shortcut; empty = defaults. Cleaned by `clamped` (`clean_keymap`).
+    #[serde(deserialize_with = "lenient_keymap")]
     pub keymap: BTreeMap<String, String>,
 }
 
@@ -89,10 +192,12 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Returns these settings with every numeric value brought into its bounds and an
-    /// unsafe editor font family replaced by "" (the default font).
+    /// Returns these settings with every numeric value brought into its bounds, an
+    /// unsafe editor font family replaced by "" (the default font) and the keymap entries
+    /// with an unknown action id or an invalid spec dropped (at most 64 kept).
     pub fn clamped(mut self) -> Self {
         self.version = SETTINGS_VERSION;
+        self.keymap = clean_keymap(std::mem::take(&mut self.keymap), KEYMAP_MAX_ENTRIES);
         if !is_valid_font_family(&self.editor_font_family) {
             self.editor_font_family = String::new();
         }
@@ -163,7 +268,7 @@ mod tests {
             editor_font_size: 16,
             ..Settings::default()
         };
-        s.keymap.insert("run".into(), "Mod-Enter".into());
+        s.keymap.insert("editor.run".into(), "Mod+Enter".into());
         save(&path(&dir), &s).unwrap();
         assert_eq!(load(&path(&dir)), s);
         let raw: serde_json::Value =
@@ -171,7 +276,7 @@ mod tests {
         assert_eq!(raw["version"], 1);
         assert_eq!(raw["theme"], "dark");
         assert_eq!(raw["editorFontSize"], 16);
-        assert_eq!(raw["keymap"]["run"], "Mod-Enter");
+        assert_eq!(raw["keymap"]["editor.run"], "Mod+Enter");
     }
 
     #[test]
@@ -323,5 +428,135 @@ mod tests {
         }
         .clamped();
         assert_eq!(kept.editor_font_family, "\"Fira Code\", monospace");
+    }
+
+    #[test]
+    fn keymap_action_ids_match_the_shared_fixture() {
+        // The frontend registry (src/lib/keymap.ts) is checked against the same file.
+        let fixture: Vec<String> =
+            serde_json::from_str(include_str!("../../src/lib/keymap-actions.json")).unwrap();
+        assert_eq!(KEYMAP_ACTION_IDS.to_vec(), fixture);
+    }
+
+    #[test]
+    fn shortcut_grammar() {
+        for ok in [
+            "Mod+K",
+            "Ctrl+Shift+Tab",
+            "Shift+Mod+F",
+            "Meta+Alt+Ctrl+Shift+Z",
+            "Mod+,",
+            "Mod+.",
+            "Mod+/",
+            "Mod+;",
+            "Mod+-",
+            "Mod+=",
+            "Mod+[",
+            "Mod+]",
+            "Mod+\\",
+            "Mod+`",
+            "Alt+1",
+            "Ctrl+0",
+            "Mod+Enter",
+            "Alt+Tab",
+            "Ctrl+Escape",
+            "Ctrl+Space",
+            "Mod+Backspace",
+            "Mod+Delete",
+            "Alt+ArrowUp",
+            "Alt+ArrowDown",
+            "Alt+ArrowLeft",
+            "Alt+ArrowRight",
+            "F5",
+            "F12",
+            "Shift+F1",
+            "Meta+Ctrl+Alt+Shift+Mod+ArrowUp",
+        ] {
+            assert!(is_valid_shortcut(ok), "should accept {ok:?}");
+        }
+        for bad in [
+            "",
+            "K",
+            "Enter",
+            "1",
+            "Mod",
+            "Mod+",
+            "+K",
+            "Mod++",
+            "Mod+k",
+            "mod+K",
+            "Cmd+K",
+            "Mod+Mod+K",
+            "Ctrl+Shift+Shift+K",
+            "Mod-Enter",
+            "Mod+KK",
+            "Mod+F13",
+            "Mod+F0",
+            "F",
+            "Mod+Home",
+            "Mod+\u{e9}",
+            "Mod+ K",
+            "Mod+K ",
+            "Mod+<",
+            "Mod+'",
+            "Mod+\"",
+            "Ctrl+Meta+Alt+Shift+Mod+ArrowRight+",
+            "Meta+Ctrl+Alt+Shift+Mod+Backspace",
+        ] {
+            assert!(!is_valid_shortcut(bad), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn clamped_drops_unknown_ids_and_invalid_specs() {
+        let mut s = Settings {
+            page_size: 100,
+            ..Settings::default()
+        };
+        s.keymap.insert("editor.run".into(), "Mod+Shift+R".into());
+        s.keymap.insert("grid.commit".into(), "Mod-S".into());
+        s.keymap.insert("unknown.action".into(), "Mod+U".into());
+        s.keymap.insert("query.new".into(), "Mod+<script>".into());
+        let c = s.clamped();
+        assert_eq!(
+            c.keymap,
+            BTreeMap::from([("editor.run".to_string(), "Mod+Shift+R".to_string())])
+        );
+        assert_eq!(c.page_size, 100);
+    }
+
+    #[test]
+    fn keymap_keeps_at_most_the_cap() {
+        let all: BTreeMap<String, String> = KEYMAP_ACTION_IDS
+            .iter()
+            .map(|id| (id.to_string(), "F5".to_string()))
+            .collect();
+        assert_eq!(clean_keymap(all.clone(), KEYMAP_MAX_ENTRIES).len(), KEYMAP_ACTION_IDS.len());
+        assert_eq!(clean_keymap(all, 2).len(), 2);
+        // Hundreds of junk entries cost nothing: none survive.
+        let junk: BTreeMap<String, String> =
+            (0..500).map(|i| (format!("x{i}"), "Mod+K".to_string())).collect();
+        assert!(clean_keymap(junk, KEYMAP_MAX_ENTRIES).is_empty());
+        assert!(KEYMAP_ACTION_IDS.len() <= KEYMAP_MAX_ENTRIES);
+    }
+
+    #[test]
+    fn a_bad_keymap_never_fails_the_load() {
+        let dir = tempfile::tempdir().unwrap();
+        for (raw, kept) in [
+            (r#"{"pageSize":100,"keymap":{"editor.run":"Mod+R","grid.commit":5}}"#, 1),
+            (r#"{"pageSize":100,"keymap":{"editor.run":"Mod+R","nope":"Mod+N","query.new":"Mod-N"}}"#, 1),
+            (r#"{"pageSize":100,"keymap":["editor.run"]}"#, 0),
+            (r#"{"pageSize":100,"keymap":"Mod+K"}"#, 0),
+            (r#"{"pageSize":100,"keymap":null}"#, 0),
+        ] {
+            std::fs::write(path(&dir), raw).unwrap();
+            let s = load(&path(&dir));
+            assert_eq!(s.page_size, 100, "{raw}");
+            assert_eq!(s.keymap.len(), kept, "{raw}");
+            if kept == 1 {
+                assert_eq!(s.keymap["editor.run"], "Mod+R");
+            }
+        }
     }
 }

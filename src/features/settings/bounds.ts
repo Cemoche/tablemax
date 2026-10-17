@@ -1,3 +1,5 @@
+import { KEYMAP_ACTIONS, isValidShortcut } from "../../lib/keymap";
+
 /** Inclusive bounds of the numeric settings. They mirror the constants of src-tauri/src/settings.rs. */
 export const SETTINGS_BOUNDS = {
   editorFontSize: { min: 10, max: 24 },
@@ -35,4 +37,28 @@ export function isValidFontFamily(text: string): boolean {
     const q = p[0];
     return (q === "'" || q === '"') && p.length >= 2 && p.endsWith(q) && FONT_NAME.test(p.slice(1, -1));
   });
+}
+
+/** Mirrors `KEYMAP_MAX_ENTRIES` in src-tauri/src/settings.rs. */
+export const KEYMAP_MAX_ENTRIES = 64;
+
+/**
+ * Mirrors the keymap cleaning of `Settings::clamped` in src-tauri/src/settings.rs: only
+ * entries with a known action id and a string value in the shortcut grammar
+ * (`isValidShortcut`), at most `max` of them; anything but a plain object gives `{}`.
+ */
+export function cleanKeymap(raw: unknown, max: number = KEYMAP_MAX_ENTRIES): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return out;
+  let kept = 0;
+  for (const { id } of KEYMAP_ACTIONS) {
+    if (kept >= max) break;
+    if (!Object.prototype.hasOwnProperty.call(raw, id)) continue;
+    const spec = (raw as Record<string, unknown>)[id];
+    if (typeof spec === "string" && isValidShortcut(spec)) {
+      out[id] = spec;
+      kept++;
+    }
+  }
+  return out;
 }

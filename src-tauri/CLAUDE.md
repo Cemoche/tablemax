@@ -22,7 +22,9 @@ Rust 1.96, edition 2024, Tauri 2, tokio. Library crate `tablemax_lib` (`src/lib.
   effective mode per connection (prod defaults to confirm writes), which statements of a
   batch need a confirmation.
 - `settings.rs` — user settings in `<app_data_dir>/settings.json` (versioned, written
-  atomically, values clamped, unsafe editor font family reset to "").
+  atomically, values clamped, unsafe editor font family reset to "", keymap entries with
+  an unknown action id or an invalid shortcut dropped; ids checked against
+  `src/lib/keymap-actions.json`).
 - `secrets.rs` — `SecretStore` trait, `KeyringSecretStore` (OS keyring),
   `MemorySecretStore` (tests).
 - `commands.rs` — Tauri commands, thin async wrappers over `SessionManager`. Their names

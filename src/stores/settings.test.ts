@@ -96,3 +96,20 @@ test("update reverts and exposes the error when the backend rejects", async () =
   expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
   expect(useSettings.getState().error).toBe("disk full");
 });
+
+test("load drops keymap entries the backend should not have sent", async () => {
+  vi.mocked(ipc.settingsGet).mockResolvedValue({
+    ...DEFAULT_SETTINGS,
+    keymap: { "editor.run": "Mod+R", nope: "Mod+N", "grid.commit": "Mod-S" },
+  });
+  await useSettings.getState().load();
+  expect(useSettings.getState().settings.keymap).toEqual({ "editor.run": "Mod+R" });
+  expect(useSettings.getState().confirmed.keymap).toEqual({ "editor.run": "Mod+R" });
+});
+
+test("update sends and keeps a cleaned keymap", async () => {
+  vi.mocked(ipc.settingsSet).mockImplementation(async (s) => ({ ...s, keymap: { ...s.keymap, bogus: "x" } }));
+  await useSettings.getState().update({ keymap: { "query.new": "Mod+Shift+N", "query.newer": "Mod+N" } });
+  expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+Shift+N" } });
+  expect(useSettings.getState().settings.keymap).toEqual({ "query.new": "Mod+Shift+N" });
+});
