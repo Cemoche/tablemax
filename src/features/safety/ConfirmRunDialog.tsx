@@ -25,16 +25,25 @@ export function ConfirmRunDialog({ connectionName, envTag, safeMode, statements,
   useRestoreFocus();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const runRef = useRef<HTMLButtonElement>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
 
   useEffect(() => {
     cancelRef.current?.focus();
+    // On the document so Escape cancels even when focus fell to the body (a click on the
+    // overlay); stopped there so window listeners never see it.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCancelRef.current();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   }, []);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.stopPropagation();
-      onCancel();
-    } else if (e.key === "Tab") {
+    if (e.key === "Tab") {
       // Keep focus inside the dialog: two buttons, so Tab just toggles between them.
       e.preventDefault();
       (document.activeElement === cancelRef.current ? runRef : cancelRef).current?.focus();

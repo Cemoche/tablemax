@@ -58,6 +58,51 @@ test("Escape cancels", async () => {
   expect(onRun).not.toHaveBeenCalled();
 });
 
+test("Escape cancels even after the focus fell to the body", async () => {
+  const { onRun, onCancel } = setup();
+  act(() => (document.activeElement as HTMLElement).blur());
+  expect(document.body).toHaveFocus();
+  await userEvent.keyboard("{Escape}");
+  expect(onCancel).toHaveBeenCalledTimes(1);
+  expect(onRun).not.toHaveBeenCalled();
+});
+
+test("Escape from inside the dialog cancels once and does not reach window listeners", async () => {
+  const onWindowKey = vi.fn();
+  window.addEventListener("keydown", onWindowKey);
+  try {
+    const { onCancel } = setup();
+    expect(screen.getByRole("button", { name: strings.safety.confirmCancel })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onWindowKey).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("keydown", onWindowKey);
+  }
+});
+
+test("Tab keeps toggling between the two buttons", async () => {
+  setup();
+  const cancel = screen.getByRole("button", { name: strings.safety.confirmCancel });
+  const run = screen.getByRole("button", { name: strings.safety.confirmRun });
+  await userEvent.keyboard("{Tab}");
+  expect(run).toHaveFocus();
+  await userEvent.keyboard("{Tab}");
+  expect(cancel).toHaveFocus();
+  await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+  expect(run).toHaveFocus();
+});
+
+test("Escape stops cancelling once the dialog is gone", async () => {
+  const onCancel = vi.fn();
+  const { unmount } = render(
+    <ConfirmRunDialog connectionName="Shop DB" envTag="prod" statements={stmts} flagged={[1]} onRun={vi.fn()} onCancel={onCancel} />,
+  );
+  unmount();
+  await userEvent.keyboard("{Escape}");
+  expect(onCancel).not.toHaveBeenCalled();
+});
+
 test("Run confirms", async () => {
   const { onRun, onCancel } = setup();
   await userEvent.click(screen.getByRole("button", { name: strings.safety.confirmRun }));
