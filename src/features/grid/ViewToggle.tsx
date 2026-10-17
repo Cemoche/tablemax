@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type RefObject, useState } from "react";
 import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import type { ShortcutOptions } from "../../lib/shortcuts";
@@ -25,14 +25,22 @@ export function useTableView() {
 }
 
 /** The « Data | Structure » switch at the top of a table tab. */
-export function ViewToggle({ view, onChange }: { view: TableView; onChange: (v: TableView) => void }) {
+export function ViewToggle({
+  view,
+  onChange,
+  listRef,
+}: {
+  view: TableView;
+  onChange: (v: TableView) => void;
+  listRef?: RefObject<HTMLDivElement | null>;
+}) {
   const v = strings.grid.view;
   const shortcuts: Record<TableView, string> = {
     data: useEffectiveShortcut("grid.viewData"),
     structure: useEffectiveShortcut("grid.viewStructure"),
   };
   return (
-    <div role="tablist" aria-label={v.label} className="flex border-b border-border bg-surface px-2 text-sm">
+    <div ref={listRef} role="tablist" aria-label={v.label} className="flex border-b border-border bg-surface px-2 text-sm">
       {VIEWS.map((k) => (
         <button
           key={k}

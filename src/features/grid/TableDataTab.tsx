@@ -84,9 +84,10 @@ export function TableDataTab(props: Props) {
   if (view === "structure" && !structureSeen) setStructureSeen(true);
   /** The commit confirmation closed: Commit gets the focus back once the tab is unlocked. */
   const refocusCommit = useRef(false);
+  const toggleRef = useRef<HTMLDivElement>(null);
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <ViewToggle view={view} onChange={setView} />
+      <ViewToggle view={view} onChange={setView} listRef={toggleRef} />
       <div hidden={view !== "data"} className="min-h-0 flex-1">
         {/* Another table (foreign key navigation) starts afresh: page, grid, selection, menus. */}
         <TableDataView
@@ -95,6 +96,7 @@ export function TableDataTab(props: Props) {
           detail={detail}
           active={view === "data"}
           refocusCommit={refocusCommit}
+          toggleRef={toggleRef}
         />
       </div>
       {structureSeen && (
@@ -121,7 +123,13 @@ function TableDataView({
   detail,
   active,
   refocusCommit,
-}: Props & { detail: ReturnType<typeof useRowDetail>; active: boolean; refocusCommit: RefObject<boolean> }) {
+  toggleRef,
+}: Props & {
+  detail: ReturnType<typeof useRowDetail>;
+  active: boolean;
+  refocusCommit: RefObject<boolean>;
+  toggleRef: RefObject<HTMLDivElement | null>;
+}) {
   const pageSizeSetting = useSettings((s) => s.settings.pageSize);
   const commitShortcut = useEffectiveShortcut("grid.commit");
   const rowDetailsShortcut = useEffectiveShortcut("grid.rowDetails");
@@ -149,9 +157,14 @@ function TableDataView({
   useEffect(() => {
     if (!refocusCommit.current || e.confirm || e.locked) return;
     refocusCommit.current = false;
+    if (!active) {
+      // The structure view is shown: Commit and + Row are hidden, the selected view tab is not.
+      toggleRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
+      return;
+    }
     const commitBtn = commitRef.current;
     (commitBtn && !commitBtn.disabled ? commitBtn : addRowRef.current)?.focus();
-  }, [e.confirm, e.locked, refocusCommit]);
+  }, [active, e.confirm, e.locked, refocusCommit, toggleRef]);
   const menuItems = target
     ? joinMenuGroups([links.menuItems(target.row, target.col), e.menuItems, copy.menuItems(target.block)])
     : [];

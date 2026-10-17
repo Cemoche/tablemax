@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { strings } from "../../lib/strings";
@@ -67,4 +68,34 @@ test("Run confirms", async () => {
 test("shows the safe mode being enforced", () => {
   setup();
   expect(screen.getByRole("dialog")).toHaveTextContent("Safe mode: confirm writes");
+});
+
+test("Cancel gives the focus back to the element that had it before the dialog", async () => {
+  function Host() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <textarea aria-label="editor" />
+        <button onClick={() => setOpen(true)}>open</button>
+        {open && (
+          <ConfirmRunDialog
+            connectionName="Shop DB"
+            envTag="prod"
+            statements={stmts}
+            flagged={[1]}
+            onRun={() => setOpen(false)}
+            onCancel={() => setOpen(false)}
+          />
+        )}
+      </>
+    );
+  }
+  render(<Host />);
+  const editor = screen.getByRole("textbox", { name: "editor" });
+  editor.focus();
+  act(() => screen.getByRole("button", { name: "open" }).click());
+  expect(screen.getByRole("button", { name: strings.safety.confirmCancel })).toHaveFocus();
+  await userEvent.click(screen.getByRole("button", { name: strings.safety.confirmCancel }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(editor).toHaveFocus();
 });

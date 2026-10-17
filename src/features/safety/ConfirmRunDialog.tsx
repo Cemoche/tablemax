@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { safeModeBannerText } from "../../lib/safeMode";
 import { strings } from "../../lib/strings";
+import { useRestoreFocus } from "../../lib/useRestoreFocus";
 import type { EnvTag, SafeMode } from "../../lib/types";
 import { ENV_BG } from "../workspace/envClasses";
 
@@ -21,6 +22,7 @@ const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2";
 
 /** Modal shown when a protected connection refused an unconfirmed batch (nothing ran yet). */
 export function ConfirmRunDialog({ connectionName, envTag, safeMode, statements, flagged, onRun, onCancel }: Props) {
+  useRestoreFocus();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const runRef = useRef<HTMLButtonElement>(null);
 

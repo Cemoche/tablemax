@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { DEFAULT_KEYMAP, KEYMAP_ACTIONS, type KeymapActionId, conflictFor, effectiveShortcut, isValidShortcut, sameCombination } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
+import { useRestoreFocus } from "../../lib/useRestoreFocus";
 import type { Settings, ThemeSetting } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
 import { type NumericSettingKey, SETTINGS_BOUNDS, isValidFontFamily, parseBounded } from "./bounds";
@@ -264,6 +265,7 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
 
 /** Modal settings editor; valid changes are saved through the settings store (the font family and numbers on Enter or blur). */
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
+  useRestoreFocus();
   const settings = useSettings((s) => s.settings);
   const error = useSettings((s) => s.error);
   const update = useSettings((s) => s.update);

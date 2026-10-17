@@ -371,3 +371,14 @@ test("a global shortcut does not fire while recording, and fires again after can
   await userEvent.keyboard("{Control>}t{/Control}");
   expect(onFire).toHaveBeenCalledTimes(2);
 });
+
+test("closing the dialog gives the focus back to the element that opened it", async () => {
+  const opener = document.createElement("button");
+  document.body.append(opener);
+  opener.focus();
+  const { unmount } = render(<SettingsDialog onClose={vi.fn()} />);
+  expect(opener).not.toHaveFocus();
+  unmount();
+  expect(opener).toHaveFocus();
+  opener.remove();
+});

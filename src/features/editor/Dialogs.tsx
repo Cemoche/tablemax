@@ -1,4 +1,5 @@
-import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
+import { useRestoreFocus } from "../../lib/useRestoreFocus";
 
 /**
  * Small in-app modal dialogs of the SQL tab (Plan 4 Task 8): `aria-modal` (so app
@@ -23,12 +24,7 @@ function Modal({
   const titleId = useId();
   const bodyId = useId();
   const ref = useRef<HTMLFormElement>(null);
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    return () => {
-      if (opener?.isConnected) opener.focus();
-    };
-  }, []);
+  useRestoreFocus();
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();

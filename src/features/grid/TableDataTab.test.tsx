@@ -1341,3 +1341,14 @@ test("after a successful Run the focus lands on + Row once the reload unlocks th
   await waitFor(() => expect(screen.getByRole("button", { name: strings.grid.addRow })).toHaveFocus());
   expect(screen.getByRole("button", { name: commitName })).toBeDisabled();
 });
+
+test("Cancel of the commit confirmation raised from the structure view focuses the view toggle", async () => {
+  await refusedCommit();
+  vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);
+  await userEvent.click(screen.getByRole("tab", { name: strings.grid.view.structure }));
+  await act(() => pending().commit("t1", "w1", obj));
+  const dialog = await screen.findByRole("dialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: strings.safety.confirmCancel }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await waitFor(() => expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveFocus());
+});
