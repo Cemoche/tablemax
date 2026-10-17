@@ -104,7 +104,9 @@ ensure_issue() { # title labels(comma-separated) milestone(or "") assignee(or ""
     IFS=',' read -ra _labels <<<"$labels"
     for l in "${_labels[@]}"; do args+=(--label "$l"); done
     [[ -z $assignee ]] || args+=(--assignee "$assignee")
-    echo "created issue           $(printf '%s' "$body" | gh "${args[@]}")  $title"
+    local url # on its own line: a failing gh inside echo "$(…)" would not stop set -e
+    url="$(printf '%s' "$body" | gh "${args[@]}")"
+    echo "created issue           $url  $title"
   fi
   echo "$title" >>"$TMP/issues"
   created=$((created + 1))
@@ -465,7 +467,7 @@ if [[ $WITH_PROJECT -eq 0 ]]; then
   echo "skipped (run with --project; needs the 'project' token scope: gh auth refresh -s project)"
 else
   scopes="$(gh auth status --active --json hosts --jq '.hosts[][] | select(.active) | .scopes' 2>/dev/null || true)"
-  if [[ $scopes != *project* ]]; then
+  if ! [[ ",$scopes," =~ ,[[:space:]]*project[[:space:]]*, ]]; then # not read:project
     echo "the gh token lacks the 'project' scope: run  gh auth refresh -s project  then re-run with --project"
   else
     number="$(gh project list --owner "$OWNER" --format json --jq ".projects[] | select(.title == \"$PROJECT_TITLE\") | .number" | head -1)"

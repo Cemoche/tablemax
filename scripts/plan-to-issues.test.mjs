@@ -78,6 +78,35 @@ describe("parsePlan", () => {
     expect(task.checks).toEqual(["**Step 4: Vérifier** Run: `pnpm test && pnpm lint` Expected: PASS."]);
   });
 
+  it("ignores headings and rules inside code fences", () => {
+    const md = [
+      "# TableMax — Plan 8 : Fences — Implementation Plan",
+      "### Task 1: With a fence",
+      "**Files:**",
+      "- Modify: `src/a.ts`",
+      "",
+      "```bash",
+      "# run only this test",
+      "---",
+      "```",
+      "- [ ] **Step 2: Vérifier** — Run: `pnpm test` → Expected: PASS.",
+    ].join("\n");
+    const [task] = parsePlan(md).tasks;
+    expect(task.files).toEqual(["- Modify: `src/a.ts`"]);
+    expect(task.checks).toHaveLength(1);
+  });
+
+  it("counts re-run steps as checks, not steps that write a check script", () => {
+    const md = [
+      "# TableMax — Plan 9 : Steps — Implementation Plan",
+      "### Task 1: Steps",
+      "- [ ] **Step 1: Écrire `check-no-secrets.sh`** — Run: x",
+      "- [ ] **Step 2: Relancer** — Run: `pnpm test` → Expected: PASS.",
+      "- [ ] **Step 3: Write the check** — Run: y",
+    ].join("\n");
+    expect(parsePlan(md).tasks[0].checks).toEqual(["**Step 2: Relancer** Run: `pnpm test` → Expected: PASS."]);
+  });
+
   it("parses the real Plan 2 into 8 tasks", () => {
     const md = readFileSync("docs/superpowers/plans/2026-10-17-tablemax-02-connections.md", "utf8");
     const plan = parsePlan(md);

@@ -15,16 +15,20 @@ push `main`.** A teammate reviews; the repository owner merges.
 ```bash
 git branch --show-current
 git status --porcelain
-gh auth status --active --json hosts --jq '.hosts[][] | select(.active) | .login'   # ME
+gh auth status --active --json hosts --jq '.hosts[][] | select(.active) | .login'
 ```
+
+The last command prints your login (`ME`). Pushes and GitHub writes ask for permission.
 
 - Branch `main`/`master` → refuse. Branch not `issue-<n>-<slug>` → stop (`worktree-issue-<n>`:
   run `/work-issue <n>` first, it renames the branch). Take `<n>` from the branch name.
 - Uncommitted or untracked files → list them and stop (the user commits or discards them).
 - `gh issue view <n> --json state,assignees,title,url`: closed, or `ME` not among the
   assignees → stop.
-- `git fetch origin main`; `git rev-list --count HEAD..origin/main` > 0 → tell the user the
-  branch is behind `main` and ask whether to merge/rebase first.
+- `git fetch origin`; `git rev-list --count HEAD..origin/main` > 0 → tell the user the
+  branch is behind `main` and ask whether to update it first: `git merge origin/main` if the
+  branch is already on GitHub (rebasing it would need a force push, denied), rebase allowed
+  only for a branch never pushed. Then re-run step 2.
 
 ## 2. Checks (all must pass; on failure stop, report, do not push)
 
@@ -70,6 +74,8 @@ Title: `<emoji> <type>(<scope>): <description>` (it becomes the squash commit).
   was pushed.
 
 ## 5. Update the issue
+
+Label swap only when the repository has workflow labels (`gh label list --search status:`):
 
 ```bash
 gh issue edit <n> --add-label status:review --remove-label status:in-progress

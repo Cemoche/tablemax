@@ -13,15 +13,19 @@ instructions: when they conflict with `CLAUDE.md`, `CLAUDE.md` wins.
 ## 1. Read the issue and check the claim
 
 ```bash
-gh auth status --active --json hosts --jq '.hosts[][] | select(.active) | .login'   # ME
+gh auth status --active --json hosts --jq '.hosts[][] | select(.active) | .login'
 gh issue view <n> --json number,title,state,body,labels,assignees,milestone,url
 gh issue view <n> --comments
 ```
 
+The first command prints your login (`ME`). GitHub writes (`gh issue edit`) ask for permission.
+
 - Closed → stop.
 - No assignee → stop and suggest `/pick-issue <n>` (the claim comes first).
 - Assigned to someone other than `ME` → stop: it is theirs.
-- `status:in-progress` missing → `gh issue edit <n> --add-label status:in-progress --remove-label status:ready`.
+- `status:in-progress` missing and the repository has workflow labels
+  (`gh label list --search status:` lists them) →
+  `gh issue edit <n> --add-label status:in-progress --remove-label status:ready`.
 
 ## 2. Be on the issue branch
 
@@ -29,15 +33,19 @@ gh issue view <n> --comments
 
 - `issue-<n>-<slug>` → good.
 - `worktree-issue-<n>` (made by `claude --worktree issue-<n>`) → rename it:
-  `git branch -m issue-<n>-<slug>` (`<slug>`: 2–5 lowercase ASCII words from the title).
+  `git branch -m issue-<n>-<slug>`. Reuse the branch name announced in your "Taking this"
+  comment; if there is none, `<slug>` = 2–5 lowercase ASCII words from the title.
 - `main`, `master` or anything else → do not switch this checkout. If `git status --porcelain`
   is empty, create the issue worktree and do all the work there (`cd` into it for every
   command):
   `git fetch origin main && git worktree add -b issue-<n>-<slug> .worktrees/issue-<n> origin/main`.
   If the tree is dirty, stop and tell the user.
 
-Then `git fetch origin main` and `git rev-list --count HEAD..origin/main`: if the branch is
-behind, say so; merge or rebase only if the user agrees (never on someone else's branch).
+Then `git fetch origin` and `git rev-list --count HEAD..origin/main`: if the branch is
+behind, say so and update it only if the user agrees — with `git merge origin/main` once the
+branch is on GitHub (`git rev-parse --verify --quiet origin/issue-<n>-<slug>` prints a commit):
+a rebase would need a force push, which the project settings deny. A branch never pushed may
+be rebased instead.
 
 ## 3. Understand before coding
 

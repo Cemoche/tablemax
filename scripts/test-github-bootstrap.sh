@@ -32,6 +32,7 @@ case "$1 $2" in
     echo "$t" >>"$S/milestones"
     echo "milestone|$t" >>"$S/writes" ;;
   "issue create")
+    [[ -z ${FAKE_GH_FAIL_CREATE:-} ]] || { echo "HTTP 422: could not add label" >&2; exit 1; }
     shift 2
     title="" milestone="" assignee="" labels=()
     while [[ $# -gt 0 ]]; do
@@ -85,6 +86,13 @@ run
 if [[ $code -eq 0 && ! -s $FAKE_GH_STATE/writes ]] && grep -q "0 item(s) created" "$TMP/out"; then
   ok "second run creates nothing"
 else fail "second run (code=$code, writes: $(wc -l <"$FAKE_GH_STATE/writes"))"; fi
+
+# 4. a failing issue creation stops the run instead of being reported as created
+: >"$FAKE_GH_STATE/issues"
+FAKE_GH_FAIL_CREATE=1 run
+if [[ $code -ne 0 ]] && ! grep -q "created issue" "$TMP/out"; then
+  ok "a failed issue creation stops the run"
+else fail "failed creation (code=$code)"; grep "created issue" "$TMP/out" | head -2; fi
 
 if [[ -s $FAKE_GH_STATE/unexpected ]]; then
   fail "unexpected gh calls:"; cat "$FAKE_GH_STATE/unexpected"

@@ -10,6 +10,7 @@
 // scripts/github-bootstrap.sh; a missing `plan:N` label is created here.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const USAGE =
@@ -39,7 +40,13 @@ export function parsePlan(markdown) {
 
   const tasks = [];
   let current = null;
+  let inFence = false;
   for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    if (inFence || /^\s*(```|~~~)/.test(line)) {
+      current?.lines.push(line);
+      continue;
+    }
     const heading = line.match(/^### (Task (\d+):\s*(.+))$/);
     if (heading) {
       current = { number: Number(heading[2]), title: heading[3].trim(), anchor: githubAnchor(heading[1]), lines: [] };
@@ -68,7 +75,8 @@ function filesOf(body) {
   return files;
 }
 
-/** Steps whose title says "verify/check", minus "verify it fails" (TDD red step). */
+/** Steps whose title says verify/check/re-run, minus "verify it fails" (TDD red step) and
+ *  steps that write or implement something. */
 function checksOf(body) {
   const steps = [];
   let step = null;
@@ -83,8 +91,9 @@ function checksOf(body) {
   return steps
     .map((s) => s.join(" ").replace(/\s+—\s+/, " "))
     .filter((s) => {
-      const title = s.match(/^\*\*(.+?)\*\*/)?.[1] ?? "";
-      return /v[ée]rifi|verify|check/i.test(title) && !/[ée]chec|fail/i.test(title);
+      const title = (s.match(/^\*\*(.+?)\*\*/)?.[1] ?? "").replace(/^Step \d+\s*:\s*/, "");
+      if (/^([ée]crire|write|impl[ée]ment|commit)/i.test(title) || /[ée]chec|fail/i.test(title)) return false;
+      return /v[ée]rifi|verify|check|relanc|re-?run/i.test(title);
     });
 }
 
@@ -201,6 +210,13 @@ function main() {
   if (plan.tasks.length === 0) {
     console.error(`no "### Task N:" heading in ${opts.planPath}`);
     process.exit(1);
+  }
+  // Links use the path from the repository root, whatever form was typed (./x, absolute).
+  try {
+    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+    opts.planPath = relative(top, resolve(opts.planPath));
+  } catch {
+    // not in a git checkout: keep the path as typed
   }
   let repo = null;
   try {
