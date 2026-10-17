@@ -106,10 +106,15 @@ export const changesPreview = (workspaceId: string, object: ObjectRef, changes: 
 
 /**
  * Applies every change in one transaction on the browse connection (all or nothing).
- * Rejects with invalid "change <i>: <reason>" before running anything, or cancelled.
+ * Rejects with invalid "change <i>: <reason>" before running anything, cancelled (rolled
+ * back), or connectionLost / connection (outcome unknown: COMMIT may have been sent).
  */
 export const changesApply = (workspaceId: string, object: ObjectRef, changes: RowChange[]) =>
   invoke<ApplyOutcome>("changes_apply", { workspaceId, object, changes });
+
+/** Cancels the workspace's commit in flight (no-op when none): it rejects with cancelled. */
+export const changesCancel = (workspaceId: string) =>
+  invoke<void>("changes_cancel", { workspaceId });
 
 /** The whole value of a cell (text/JSON never cut); notFound when the row is gone. */
 export const cellValue = (workspaceId: string, object: ObjectRef, key: RowKey, column: string) =>

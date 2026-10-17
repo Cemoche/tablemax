@@ -3,6 +3,7 @@ import { toCsv, toInsert, toJson, toTsv } from "../../lib/copyFormats";
 import { strings } from "../../lib/strings";
 import type { CellValue, Dialect, ObjectRef } from "../../lib/types";
 import type { GridModel } from "./editModel";
+import { isTruncated } from "./editing";
 import type { MenuItem } from "./GridContextMenu";
 import type { CellBlock } from "./gridSelection";
 
@@ -58,12 +59,18 @@ export function useSelectionCopy(model: GridModel | null, dialect: Dialect, obje
           : format === "json"
             ? toJson(columns, rows)
             : toInsert(dialect, object, columns, rows);
+    // TSV/CSV/JSON copy a truncated value's preview (INSERT skips its row, with a comment).
+    const truncated = format === "insert" ? 0 : rows.flat().filter(isTruncated).length;
+    const notes = [
+      ...(truncated > 0 ? [strings.grid.copyTruncated(truncated)] : []),
+      ...(skipped > 0 ? [strings.grid.copySkippedInserts(skipped)] : []),
+    ];
     setNotice(null);
     // Inside then(): a missing clipboard API rejects too.
     Promise.resolve()
       .then(() => navigator.clipboard.writeText(text))
       .then(
-        () => setNotice(skipped > 0 ? { error: false, text: strings.grid.copySkippedInserts(skipped) } : null),
+        () => setNotice(notes.length > 0 ? { error: false, text: notes.join(" ") } : null),
         (e: unknown) =>
           setNotice({ error: true, text: strings.grid.copyFailed(e instanceof Error ? e.message : String(e)) }),
       );

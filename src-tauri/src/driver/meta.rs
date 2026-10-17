@@ -17,7 +17,11 @@ pub struct ColumnInfo {
     /// the column itself enforces the modifier on write). PostgreSQL:
     /// `format_type(atttypid, -1)`, which names the type itself (`bpchar`, `"bit"`,
     /// `bpchar[]`): with NULL it prints `character` / `bit`, which parse back as `char(1)`
-    /// / `bit(1)` and would cut the value. MySQL/MariaDB and SQLite: same as `type_name`.
+    /// / `bit(1)` and would cut the value. A domain resolves (recursively, domain over
+    /// domain) to its underlying base type, also with `-1`: a cast to the domain itself
+    /// applies the domain's modifier and would cut too; writing to the column still
+    /// enforces the domain's modifier and CHECKs. MySQL/MariaDB and SQLite: same as
+    /// `type_name`.
     pub base_type: String,
     pub nullable: bool,
     /// The default as an SQL expression (string literals quoted, e.g. `'abc'`, `0`,

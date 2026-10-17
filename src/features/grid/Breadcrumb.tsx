@@ -11,6 +11,8 @@ interface Props {
   /** What the tab shows now (the last item). */
   object: ObjectRef;
   filters: Filter[];
+  /** Alt+← goes back only while the data view is shown (default true). */
+  shortcut?: boolean;
 }
 
 const EDITABLE = new Set(["INPUT", "TEXTAREA", "SELECT"]);
@@ -20,10 +22,11 @@ const EDITABLE = new Set(["INPUT", "TEXTAREA", "SELECT"]);
  * goes back to that table exactly as it was; Alt+← goes back one step (not while typing in
  * a field, where it moves the caret on macOS). Nothing is shown with an empty trail.
  */
-export function Breadcrumb({ workspaceId, tabId, object, filters }: Props) {
+export function Breadcrumb({ workspaceId, tabId, object, filters, shortcut = true }: Props) {
   const trail = useGridViews((s) => s.trails[tabId]) ?? [];
 
   useEffect(() => {
+    if (!shortcut) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.key !== "ArrowLeft") return;
       const t = e.target;
@@ -36,7 +39,7 @@ export function Breadcrumb({ workspaceId, tabId, object, filters }: Props) {
     // Capture: the grid handles arrow keys itself.
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [workspaceId, tabId]);
+  }, [workspaceId, tabId, shortcut]);
 
   if (trail.length === 0) return null;
   const crumb = (o: ObjectRef, f: Filter[]) => strings.grid.trail.crumb(o.name, formatQuickFilter(f));

@@ -32,6 +32,11 @@ export interface PendingTab {
   /** Apply failure not tied to one change (the commit itself, a cancel). */
   error: string | null;
   /**
+   * The last commit lost its connection: some or all changes may have been written. The
+   * changes stay, but no commit is sent until a page loaded after it (a reload) settles.
+   */
+  outcomeUnknown: boolean;
+  /**
    * The table the changes belong to: set by the first change, null when nothing is
    * pending. Changes and commits for another table are refused (a table tab can show
    * another table after a foreign key jump).
@@ -47,7 +52,18 @@ export interface ChangeEntry {
 
 export const rowKeyId = (key: RowKey) => JSON.stringify(key);
 
-const EMPTY: PendingTab = { edits: {}, inserts: [], deletes: {}, errors: {}, error: null, object: null };
+const EMPTY: PendingTab = {
+  edits: {},
+  inserts: [],
+  deletes: {},
+  errors: {},
+  error: null,
+  outcomeUnknown: false,
+  object: null,
+};
+
+/** Commit errors after which the outcome is unknown (COMMIT may have been sent). */
+const UNKNOWN_OUTCOME = new Set(["connectionLost", "connection", "io"]);
 
 const sameObject = (a: ObjectRef, b: ObjectRef) => a.schema === b.schema && a.name === b.name;
 
@@ -57,6 +73,13 @@ interface PendingState {
   blocked: Record<string, boolean>;
   /** A commit is running: the grid is locked and every mutation below is refused. */
   committing: Record<string, boolean>;
+  /**
+   * A commit succeeded and the page shown predates it: locked like `committing` until a
+   * page requested after the commit settles (pageSettled).
+   */
+  awaitingReload: Record<string, boolean>;
+  /** Bumped when a commit ends with a page to reload (success, unknown outcome). */
+  epoch: Record<string, number>;
   /** Bumped by every successful commit: the tab reloads its page and count. */
   applied: Record<string, number>;
   /** The grid's cell editor is open (Mod+S waits until it is closed). */
@@ -92,11 +115,24 @@ interface PendingState {
   count: (tabId: string) => number;
   /** True when nothing is pending; else flags the tab (strings.grid.commitOrDiscardFirst). */
   guardPending: (tabId: string) => boolean;
+  /** guardPending, but a reload is also allowed after a commit with an unknown outcome. */
+  guardReload: (tabId: string) => boolean;
+  /** The tab's commit epoch: read when a page request starts, passed to pageSettled. */
+  epochOf: (tabId: string) => number;
+  /**
+   * A page request started at `epoch` settled (`ok`: loaded). If it started after the last
+   * commit ended it unlocks the tab, and a loaded page clears `outcomeUnknown`.
+   */
+  pageSettled: (tabId: string, epoch: number, ok: boolean) => void;
+  /** Asks the backend to cancel the tab's running commit (no-op when none runs). */
+  cancelCommit: (tabId: string, workspaceId: string) => Promise<void>;
   /**
    * Applies every change in one transaction (never two at once for a tab); refused (false,
-   * tab error) when the changes belong to another table than `object`. Success:
-   * discard + `applied` bump, true. Failure: nothing is removed, the failing change (or
-   * the tab) gets the message, false.
+   * tab error) when the changes belong to another table than `object`, or while the last
+   * commit's outcome is unknown. Success: discard + `applied` bump + locked until the
+   * reload lands, true. Failure: nothing is removed, the failing change (or the tab) gets
+   * the message, false; a lost connection sets `outcomeUnknown` instead of claiming that
+   * nothing was written.
    */
   commit: (tabId: string, workspaceId: string, object: ObjectRef) => Promise<boolean>;
 }
@@ -117,7 +153,8 @@ export function refusedChange(err: AppError): { index: number; reason: string } 
 
 export const usePendingChanges = create<PendingState>((set, get) => {
   const tab = (tabId: string) => get().tabs[tabId] ?? EMPTY;
-  const locked = (tabId: string) => get().committing[tabId] === true;
+  const locked = (tabId: string) =>
+    get().committing[tabId] === true || get().awaitingReload[tabId] === true;
   /** The tab's changes belong to `object` (or nothing is pending). */
   const sameTable = (tabId: string, object: ObjectRef) => {
     const bound = tab(tabId).object;
@@ -156,6 +193,8 @@ export const usePendingChanges = create<PendingState>((set, get) => {
     tabs: {},
     blocked: {},
     committing: {},
+    awaitingReload: {},
+    epoch: {},
     applied: {},
     editorOpen: {},
 
@@ -272,6 +311,8 @@ export const usePendingChanges = create<PendingState>((set, get) => {
           tabs: omit(s.tabs),
           blocked: omit(s.blocked),
           committing: omit(s.committing),
+          awaitingReload: omit(s.awaitingReload),
+          epoch: omit(s.epoch),
           applied: omit(s.applied),
           editorOpen: omit(s.editorOpen),
         };
@@ -305,8 +346,27 @@ export const usePendingChanges = create<PendingState>((set, get) => {
       return false;
     },
 
+    guardReload: (tabId) => tab(tabId).outcomeUnknown || get().guardPending(tabId),
+
+    epochOf: (tabId) => get().epoch[tabId] ?? 0,
+
+    pageSettled: (tabId, epoch, ok) => {
+      if (epoch !== get().epochOf(tabId)) return;
+      set((s) => {
+        const t = s.tabs[tabId];
+        const tabs =
+          ok && t?.outcomeUnknown ? { ...s.tabs, [tabId]: { ...t, outcomeUnknown: false, error: null } } : s.tabs;
+        return { tabs, awaitingReload: { ...s.awaitingReload, [tabId]: false } };
+      });
+    },
+
+    cancelCommit: async (tabId, workspaceId) => {
+      if (get().committing[tabId] !== true) return;
+      await ipc.changesCancel(workspaceId);
+    },
+
     commit: async (tabId, workspaceId, object) => {
-      if (locked(tabId)) return false;
+      if (locked(tabId) || tab(tabId).outcomeUnknown) return false;
       const list = get().changeList(tabId);
       if (list.length === 0) return true;
       const bound = tab(tabId).object;
@@ -343,7 +403,12 @@ export const usePendingChanges = create<PendingState>((set, get) => {
         if (outcome.applied) {
           if (gone()) return true;
           clear(tabId);
-          set((s) => ({ applied: { ...s.applied, [tabId]: (s.applied[tabId] ?? 0) + 1 } }));
+          // Locked until the reload of the committed page lands (no edit on the old page).
+          set((s) => ({
+            applied: { ...s.applied, [tabId]: (s.applied[tabId] ?? 0) + 1 },
+            awaitingReload: { ...s.awaitingReload, [tabId]: true },
+            epoch: { ...s.epoch, [tabId]: (s.epoch[tabId] ?? 0) + 1 },
+          }));
           return true;
         }
         const failed = outcome.failedIndex === null ? null : (list[outcome.failedIndex]?.id ?? null);
@@ -353,6 +418,17 @@ export const usePendingChanges = create<PendingState>((set, get) => {
         const err = toAppError(e);
         if (err.kind === "cancelled") {
           fail(null, strings.grid.commitCancelled);
+          return false;
+        }
+        if (UNKNOWN_OUTCOME.has(err.kind)) {
+          set((s) => {
+            const t = s.tabs[tabId];
+            if (!t) return s;
+            return {
+              tabs: { ...s.tabs, [tabId]: { ...t, errors: {}, error: err.message, outcomeUnknown: true } },
+              epoch: { ...s.epoch, [tabId]: (s.epoch[tabId] ?? 0) + 1 },
+            };
+          });
           return false;
         }
         const refused = refusedChange(err);

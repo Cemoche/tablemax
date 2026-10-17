@@ -17,6 +17,11 @@
 //! connection, every SQL session and every cancel request dial its local end
 //! (`ConnectParams.dial`) while `host` stays the DB host as seen from the SSH server
 //! (also the TLS name). A SQL session opened after the tunnel died reopens it.
+//!
+//! Lost browse connection (any workspace): once the session reports it lost, a call on it
+//! saw `ConnectionLost`, or its tunnel died, the next `browse()` rebuilds it (once per
+//! loss, under the workspace's reconnect lock); reads (`on_browse`) retry once on the new
+//! connection, writes never do.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -105,8 +110,8 @@ impl std::fmt::Debug for HeldSecret {
 
 /// The workspace's SSH tunnel: `Some` from opening to closing for an SSH connection,
 /// `None` without SSH or once closed. Async lock, held while a dead tunnel is
-/// reopened (and while the browse connection is rebuilt on it), so concurrent
-/// callers open a single new one.
+/// reopened and while a lost browse connection is rebuilt (on it, or directly without
+/// SSH), so concurrent callers open a single new one: the per-workspace reconnect lock.
 type TunnelSlot = Arc<tokio::sync::Mutex<Option<Arc<SshTunnel>>>>;
 
 struct Workspace {
@@ -117,11 +122,55 @@ struct Workspace {
     browse: Arc<dyn Session>,
     /// The tunnel `browse` was connected through; once it is dead, `browse` is rebuilt.
     browse_tunnel: Option<Arc<SshTunnel>>,
+    /// A call on `browse` failed with `ConnectionLost`: rebuilt by the next `browse()`.
+    browse_lost: bool,
     sql_sessions: Vec<String>,
     /// Table metadata read through `browse`, by (schema, name); dropped with the workspace.
     table_info: HashMap<(Option<String>, String), Arc<TableInfo>>,
     /// Bumped by every invalidation: a read that started before one is not cached.
     table_info_gen: u64,
+    /// The commit (`changes_apply`) in flight on `browse`, if any.
+    applying: Option<Arc<ApplyCtl>>,
+}
+
+/// Control flags of one `changes_apply`, installed in its workspace while it runs.
+#[derive(Default)]
+struct ApplyCtl {
+    /// Cancel was requested: the transaction must not start, or is being interrupted.
+    cancel_requested: AtomicBool,
+    /// The browse connection's canceller, once the commit knows its connection.
+    canceller: Mutex<Option<Arc<dyn Canceller>>>,
+    /// The commit returned (applied, failed, cancelled or errored).
+    finished: AtomicBool,
+    /// A cancel loop is re-sending cancels for this commit.
+    cancelling: AtomicBool,
+}
+
+impl ApplyCtl {
+    fn canceller(&self) -> Option<Arc<dyn Canceller>> {
+        self.canceller
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+}
+
+/// Marks the commit finished and uninstalls its ctl (also on error, panic or drop).
+struct EndApply<'a> {
+    mgr: &'a SessionManager,
+    workspace_id: &'a str,
+    ctl: Arc<ApplyCtl>,
+}
+
+impl Drop for EndApply<'_> {
+    fn drop(&mut self) {
+        self.ctl.finished.store(true, SeqCst);
+        if let Some(ws) = self.mgr.state().workspaces.get_mut(self.workspace_id)
+            && ws.applying.as_ref().is_some_and(|c| Arc::ptr_eq(c, &self.ctl))
+        {
+            ws.applying = None;
+        }
+    }
 }
 
 /// A workspace's reconnect parameters (held secrets are copies, dropped after use).
@@ -317,6 +366,48 @@ async fn request_cancel(entry: &SqlSession) -> AppResult<()> {
 async fn shutdown_sql(entry: &SqlSession) -> AppResult<()> {
     let _ = request_cancel(entry).await;
     entry.session.close().await
+}
+
+/// The whole value of one cell through `browse` (see [`SessionManager::cell_value`]).
+async fn read_cell_value(
+    browse: &dyn Session,
+    info: &TableInfo,
+    key: &RowKey,
+    column: &str,
+) -> AppResult<CellValue> {
+    let d = browse.dialect();
+    let gone = || AppError::new(ErrorKind::NotFound, STALE_ROW);
+    // Binary columns: no size check (always a preview).
+    let bytes = match build_cell_size(d, info, key, column)? {
+        None => 0,
+        Some(stmt) => match browse
+            .query(&stmt)
+            .await?
+            .rows
+            .first()
+            .and_then(|r| r.first())
+        {
+            None => return Err(gone()),
+            Some(CellValue::Int(n)) => (*n).max(0) as u64,
+            Some(CellValue::BigInt(s) | CellValue::Decimal(s)) => s.parse().unwrap_or(u64::MAX),
+            // NULL: nothing to load.
+            Some(_) => 0,
+        },
+    };
+    if bytes > MAX_EDIT_BYTES {
+        return Err(AppError::new(
+            ErrorKind::Invalid,
+            format!("value too large to edit ({} MB)", bytes.div_ceil(1 << 20)),
+        ));
+    }
+    let rs = browse
+        .query_full(&build_cell_value(d, info, key, column)?)
+        .await?;
+    rs.rows
+        .into_iter()
+        .next()
+        .and_then(|r| r.into_iter().next())
+        .ok_or_else(gone)
 }
 
 impl SessionManager {
@@ -690,11 +781,13 @@ impl SessionManager {
                 held_password,
                 held_ssh_secret,
                 browse_tunnel: tunnel.clone(),
+                browse_lost: false,
                 tunnel: Arc::new(tokio::sync::Mutex::new(tunnel)),
                 browse,
                 sql_sessions: Vec::new(),
                 table_info: HashMap::new(),
                 table_info_gen: 0,
+                applying: None,
             },
         );
         Ok(info)
@@ -793,23 +886,36 @@ impl SessionManager {
         Ok(())
     }
 
-    /// The browse connection, unless the tunnel it went through has died.
+    /// The browse connection, unless it is lost or the tunnel it went through has died.
     fn usable_browse(&self, workspace_id: &str) -> AppResult<Option<Arc<dyn Session>>> {
         let st = self.state();
         let ws = st
             .workspaces
             .get(workspace_id)
             .ok_or_else(|| workspace_not_found(workspace_id))?;
-        let usable = ws.browse_tunnel.as_ref().is_none_or(|t| t.is_alive());
+        let usable = !ws.browse_lost
+            && !ws.browse.is_lost()
+            && ws.browse_tunnel.as_ref().is_none_or(|t| t.is_alive());
         Ok(usable.then(|| ws.browse.clone()))
+    }
+
+    /// Records that a call on `session` saw its connection gone, if it is still the
+    /// workspace's browse connection (a rebuilt one is left alone).
+    fn mark_browse_lost(&self, workspace_id: &str, session: &Arc<dyn Session>) {
+        if let Some(ws) = self.state().workspaces.get_mut(workspace_id)
+            && std::ptr::addr_eq(Arc::as_ptr(&ws.browse), Arc::as_ptr(session))
+        {
+            ws.browse_lost = true;
+        }
     }
 
     /// The workspace's shared browse connection (schemas, objects, pages, counts).
     ///
-    /// With SSH, once the tunnel it went through has died, the browse connection is
-    /// rebuilt (tunnel reopened if no SQL session did it yet, held secrets or keyring)
-    /// and swapped into the workspace, so browsing recovers without reopening the
-    /// workspace. Concurrent callers share one reopen (tunnel slot lock). Keyring
+    /// Once it is lost (the session reports it, a call saw `ConnectionLost`, or the SSH
+    /// tunnel it went through died), the browse connection is rebuilt (tunnel reopened
+    /// if no SQL session did it yet; held secrets or keyring) and swapped into the
+    /// workspace, so browsing recovers without reopening the workspace. Concurrent
+    /// callers share one rebuild per loss (the workspace's reconnect lock). Keyring
     /// secrets are only read while the saved connection still has the workspace's
     /// identity ([`Self::unbind_stale_keyring`]).
     pub async fn browse(&self, workspace_id: &str) -> AppResult<Arc<dyn Session>> {
@@ -823,15 +929,20 @@ impl SessionManager {
         if let Some(browse) = self.usable_browse(workspace_id)? {
             return Ok(browse);
         }
-        let tunnel = self
-            .revive_tunnel(workspace_id, &r.config, &mut current, r.ssh_secret)
-            .await?;
+        let tunnel = match ssh_of(&r.config) {
+            Some(_) => Some(
+                self.revive_tunnel(workspace_id, &r.config, &mut current, r.ssh_secret)
+                    .await?,
+            ),
+            None => None,
+        };
         let password = self.resolve_password(&r.config, r.password).await?;
-        let fresh = connect(&r.config, password, Some(&tunnel)).await?;
+        let fresh = connect(&r.config, password, tunnel.as_deref()).await?;
         let old = {
             let mut st = self.state();
             st.workspaces.get_mut(workspace_id).map(|ws| {
-                ws.browse_tunnel = Some(tunnel);
+                ws.browse_tunnel = tunnel;
+                ws.browse_lost = false;
                 std::mem::replace(&mut ws.browse, fresh.clone())
             })
         };
@@ -847,6 +958,24 @@ impl SessionManager {
                 let _ = fresh.close().await;
                 Err(workspace_not_found(workspace_id))
             }
+        }
+    }
+
+    /// Runs a read on the browse connection. When it fails because the connection is
+    /// gone, the connection is rebuilt ([`Self::browse`]) and the read retried once.
+    /// Reads only: a write whose outcome is unknown must never be replayed.
+    pub async fn on_browse<T, F, Fut>(&self, workspace_id: &str, read: F) -> AppResult<T>
+    where
+        F: Fn(Arc<dyn Session>) -> Fut,
+        Fut: Future<Output = AppResult<T>>,
+    {
+        let browse = self.browse(workspace_id).await?;
+        match read(browse.clone()).await {
+            Err(e) if e.kind == ErrorKind::ConnectionLost => {
+                self.mark_browse_lost(workspace_id, &browse);
+                read(self.browse(workspace_id).await?).await
+            }
+            other => other,
         }
     }
 
@@ -871,7 +1000,10 @@ impl SessionManager {
             }
             ws.table_info_gen
         };
-        let info = Arc::new(self.browse(workspace_id).await?.table_info(obj).await?);
+        let info = Arc::new(
+            self.on_browse(workspace_id, |b| async move { b.table_info(obj).await })
+                .await?,
+        );
         if let Some(ws) = self.state().workspaces.get_mut(workspace_id)
             && ws.table_info_gen == generation
         {
@@ -924,21 +1056,94 @@ impl SessionManager {
     }
 
     /// Applies `changes` in one transaction on the browse connection (the only write path
-    /// of the grid): all or nothing, each UPDATE / DELETE touching exactly one row. A
-    /// failure that hints at a schema change drops the table's cached metadata.
+    /// of the grid): all or nothing, each UPDATE / DELETE touching exactly one row, lock
+    /// waits bounded (`dml::apply_lock_timeout_secs`). A failure that hints at a schema
+    /// change drops the table's cached metadata. [`Self::changes_cancel`] interrupts it:
+    /// everything is rolled back and the result is `Cancelled`. A lost connection is
+    /// returned as `ConnectionLost` (outcome unknown if COMMIT was already sent) and the
+    /// browse connection is rebuilt by the next call; a write is never retried.
     pub async fn changes_apply(
         &self,
         workspace_id: &str,
         obj: &ObjectRef,
         changes: &[RowChange],
     ) -> AppResult<ApplyOutcome> {
+        let ctl = Arc::new(ApplyCtl::default());
+        self.state()
+            .workspaces
+            .get_mut(workspace_id)
+            .ok_or_else(|| workspace_not_found(workspace_id))?
+            .applying = Some(ctl.clone());
+        let _end = EndApply {
+            mgr: self,
+            workspace_id,
+            ctl: ctl.clone(),
+        };
         let (browse, stmts) = self.build_changes(workspace_id, obj, changes).await?;
+        *ctl.canceller.lock().unwrap_or_else(|e| e.into_inner()) = Some(browse.canceller());
+        if ctl.cancel_requested.load(SeqCst) {
+            return Err(AppError::new(ErrorKind::Cancelled, "commit cancelled"));
+        }
         let expect_one: Vec<bool> = changes.iter().map(RowChange::expects_one_row).collect();
-        let outcome = browse.apply(&stmts, &expect_one).await?;
+        let outcome = match browse.apply(&stmts, &expect_one).await {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                if e.kind == ErrorKind::ConnectionLost {
+                    self.mark_browse_lost(workspace_id, &browse);
+                }
+                return Err(e);
+            }
+        };
         if outcome.error.as_ref().is_some_and(suggests_schema_change) {
             self.invalidate_table_info(workspace_id, obj);
         }
         Ok(outcome)
+    }
+
+    /// Cancels the workspace's commit in flight (no-op when none): it stops before its
+    /// transaction starts, or the running statement (e.g. waiting for a row lock) is
+    /// interrupted and everything is rolled back. Re-sends the cancel every
+    /// [`CANCEL_RESEND_INTERVAL`] until the commit returns, for at most
+    /// [`CANCEL_TIMEOUT`]; returns once the commit ended (or at the deadline, with the
+    /// last canceller error if any).
+    pub async fn changes_cancel(&self, workspace_id: &str) -> AppResult<()> {
+        let ctl = self
+            .state()
+            .workspaces
+            .get(workspace_id)
+            .ok_or_else(|| workspace_not_found(workspace_id))?
+            .applying
+            .clone();
+        let Some(ctl) = ctl else {
+            return Ok(());
+        };
+        ctl.cancel_requested.store(true, SeqCst);
+        if ctl.cancelling.swap(true, SeqCst) {
+            return Ok(());
+        }
+        let deadline = Instant::now() + CANCEL_TIMEOUT;
+        let mut last_err = None;
+        while !ctl.finished.load(SeqCst) {
+            let now = Instant::now();
+            if now >= deadline {
+                return last_err.map_or(Ok(()), Err);
+            }
+            if let Some(canceller) = ctl.canceller() {
+                last_err = match tokio::time::timeout(deadline - now, canceller.cancel()).await {
+                    Ok(Ok(())) => None,
+                    Ok(Err(e)) => Some(e),
+                    Err(_) => Some(AppError::new(
+                        ErrorKind::Connection,
+                        "cancel request timed out",
+                    )),
+                };
+            }
+            let next = (now + CANCEL_RESEND_INTERVAL).min(deadline);
+            while !ctl.finished.load(SeqCst) && Instant::now() < next {
+                tokio::time::sleep(POLL).await;
+            }
+        }
+        Ok(())
     }
 
     /// The whole value of one cell (text and JSON never cut; bytes stay a preview), found
@@ -951,49 +1156,25 @@ impl SessionManager {
         column: &str,
     ) -> AppResult<CellValue> {
         let info = self.table_info(workspace_id, obj).await?;
-        let browse = self.browse(workspace_id).await?;
-        let d = browse.dialect();
-        let gone = || AppError::new(ErrorKind::NotFound, STALE_ROW);
-        // Binary columns: no size check (always a preview).
-        let bytes = match build_cell_size(d, &info, key, column)? {
-            None => 0,
-            Some(stmt) => match browse
-                .query(&stmt)
-                .await?
-                .rows
-                .first()
-                .and_then(|r| r.first())
-            {
-                None => return Err(gone()),
-                Some(CellValue::Int(n)) => (*n).max(0) as u64,
-                Some(CellValue::BigInt(s) | CellValue::Decimal(s)) => s.parse().unwrap_or(u64::MAX),
-                // NULL: nothing to load.
-                Some(_) => 0,
-            },
-        };
-        if bytes > MAX_EDIT_BYTES {
-            return Err(AppError::new(
-                ErrorKind::Invalid,
-                format!("value too large to edit ({} MB)", bytes.div_ceil(1 << 20)),
-            ));
-        }
-        let rs = browse
-            .query_full(&build_cell_value(d, &info, key, column)?)
-            .await?;
-        rs.rows
-            .into_iter()
-            .next()
-            .and_then(|r| r.into_iter().next())
-            .ok_or_else(gone)
+        self.on_browse(workspace_id, |browse| {
+            let info = info.clone();
+            async move { read_cell_value(&*browse, &info, key, column).await }
+        })
+        .await
     }
 
     /// One page of a table or view (filters, order, limit) through the browse connection,
     /// built from the cached metadata.
     pub async fn table_page(&self, workspace_id: &str, req: &PageRequest) -> AppResult<ResultSet> {
         let info = self.table_info(workspace_id, &req.object).await?;
-        let browse = self.browse(workspace_id).await?;
-        let stmt = build_page(browse.dialect(), &info, req)?;
-        browse.query(&stmt).await
+        self.on_browse(workspace_id, |browse| {
+            let info = info.clone();
+            async move {
+                let stmt = build_page(browse.dialect(), &info, req)?;
+                browse.query(&stmt).await
+            }
+        })
+        .await
     }
 
     /// Rows of a table or view. Without filters: the driver's count (estimated above
@@ -1007,15 +1188,21 @@ impl SessionManager {
     ) -> AppResult<RowCount> {
         if filters.is_empty() {
             return self
-                .browse(workspace_id)
-                .await?
-                .count_rows(obj, EXACT_COUNT_THRESHOLD)
+                .on_browse(workspace_id, |b| async move {
+                    b.count_rows(obj, EXACT_COUNT_THRESHOLD).await
+                })
                 .await;
         }
         let info = self.table_info(workspace_id, obj).await?;
-        let browse = self.browse(workspace_id).await?;
-        let stmt = build_filtered_count(browse.dialect(), &info, filters, FILTERED_COUNT_CAP)?;
-        read_count(&browse.query(&stmt).await?, FILTERED_COUNT_CAP)
+        self.on_browse(workspace_id, |browse| {
+            let info = info.clone();
+            async move {
+                let stmt =
+                    build_filtered_count(browse.dialect(), &info, filters, FILTERED_COUNT_CAP)?;
+                read_count(&browse.query(&stmt).await?, FILTERED_COUNT_CAP)
+            }
+        })
+        .await
     }
 
     /// Opens a dedicated connection with the workspace's parameters, through its
@@ -1365,6 +1552,41 @@ mod tests {
             .await
             .unwrap();
         assert!(objs.iter().any(|o| o.name == "items"), "{objs:?}");
+    }
+
+    #[tokio::test]
+    async fn lost_browse_is_rebuilt_once_for_concurrent_callers() {
+        let fx = fixture();
+        let ws = sqlite_ws(&fx).await;
+        let id = ws.workspace_id.clone();
+        let first = fx.mgr.browse(&id).await.unwrap();
+        first.close().await.unwrap();
+        assert!(first.is_lost());
+        let calls: Vec<_> = (0..5)
+            .map(|_| {
+                let (mgr, id) = (fx.mgr.clone(), id.clone());
+                tokio::spawn(async move { mgr.browse(&id).await.unwrap() })
+            })
+            .collect();
+        let mut got = Vec::new();
+        for c in calls {
+            got.push(c.await.unwrap());
+        }
+        assert!(!Arc::ptr_eq(&got[0], &first));
+        assert!(got.iter().all(|b| Arc::ptr_eq(b, &got[0])), "one rebuild per loss");
+        let objs = got[0].list_objects(None).await.unwrap();
+        assert!(objs.iter().any(|o| o.name == "items"));
+    }
+
+    #[tokio::test]
+    async fn changes_cancel_without_a_commit_is_a_no_op() {
+        let fx = fixture();
+        let ws = sqlite_ws(&fx).await;
+        fx.mgr.changes_cancel(&ws.workspace_id).await.unwrap();
+        assert_eq!(
+            fx.mgr.changes_cancel("nope").await.unwrap_err().kind,
+            ErrorKind::NotFound
+        );
     }
 
     #[tokio::test]
@@ -1786,9 +2008,11 @@ mod tests {
                 tunnel: Default::default(),
                 browse,
                 browse_tunnel: None,
+                browse_lost: false,
                 sql_sessions: Vec::new(),
                 table_info: HashMap::new(),
                 table_info_gen: 0,
+                applying: None,
             },
         );
         fx.mgr.close_workspace("w-stub").await.unwrap();
@@ -1876,9 +2100,11 @@ mod tests {
                 tunnel: Default::default(),
                 browse: Arc::new(MetaSession(calls.clone(), hold)),
                 browse_tunnel: None,
+                browse_lost: false,
                 sql_sessions: Vec::new(),
                 table_info: HashMap::new(),
                 table_info_gen: 0,
+                applying: None,
             },
         );
         calls

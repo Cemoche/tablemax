@@ -173,7 +173,7 @@ test("EditValue, RowChange and ApplyOutcome", () => {
   expect(changes.map((c) => c.kind)).toEqual(["update", "insert", "delete"]);
   const o: ApplyOutcome = JSON.parse(`{
     "applied":false,"affected":[1,0],"failedIndex":1,
-    "error":{"kind":"query","message":"the row changed or was deleted since it was loaded"}
+    "error":{"kind":"query","message":"the row was deleted or its key changed since it was loaded"}
   }`);
   expect(o.failedIndex).toBe(1);
   expect(o.error?.kind).toBe("query");

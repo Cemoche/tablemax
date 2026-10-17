@@ -18,7 +18,7 @@ const ordersView: GridView = { page: 2, sort: ["total", "desc"], filters: [eq("s
 const linesView: GridView = { page: 0, sort: null, filters: [eq("order_id", "7")] };
 
 beforeEach(() => {
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
   useWorkspaces.setState({
     workspaces: [
       {

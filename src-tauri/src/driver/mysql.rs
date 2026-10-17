@@ -42,7 +42,9 @@
 //! Sessions connect with CLIENT_FOUND_ROWS: an UPDATE reports the rows it matched, even
 //! those already holding the new value (same meaning as PostgreSQL and SQLite), which the
 //! exactly-one-row check of `apply` relies on. `apply` holds the connection lock from
-//! `START TRANSACTION` to `COMMIT` / `ROLLBACK`, so nothing else runs inside it.
+//! `START TRANSACTION` to `COMMIT` / `ROLLBACK`, so nothing else runs inside it, and bounds
+//! its lock waits (`innodb_lock_wait_timeout`, see `dml::apply_lock_timeout_secs`; the
+//! session's own value is restored afterwards).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -80,6 +82,8 @@ const HIDDEN_SCHEMAS: [&str; 4] = ["mysql", "information_schema", "performance_s
 /// Session variable holding the SQL of a parameterized statement, and the statement name.
 const SQL_VAR: &str = "@__tablemax_sql";
 const STMT_NAME: &str = "__tablemax_q";
+/// Session variable keeping the session's `innodb_lock_wait_timeout` during `apply`.
+const LOCK_WAIT_VAR: &str = "@__tablemax_lock_wait";
 
 /// SQL-mode flags that change how the server tokenizes string literals.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -892,6 +896,43 @@ impl MySession {
         my_seq: u64,
     ) -> AppResult<ApplyOutcome> {
         let live = |e: MyError| map_err(&e, true);
+        // Bounded lock waits for this transaction only: the session's value is restored.
+        conn.query_drop(format!(
+            "SET {LOCK_WAIT_VAR} = @@SESSION.innodb_lock_wait_timeout, \
+             SESSION innodb_lock_wait_timeout = {}",
+            dml::apply_lock_timeout_secs()
+        ))
+        .await
+        .map_err(live)?;
+        let out = self
+            .apply_tx(conn, json_cache, stmts, expect_one, my_seq)
+            .await;
+        let restore = format!(
+            "SET SESSION innodb_lock_wait_timeout = {LOCK_WAIT_VAR}, {LOCK_WAIT_VAR} = NULL"
+        );
+        // Retried once: a late `KILL QUERY` may interrupt the first attempt.
+        for _ in 0..2 {
+            if self.lost.load(Ordering::SeqCst) {
+                break;
+            }
+            match conn.query_drop(restore.as_str()).await {
+                Ok(()) => break,
+                Err(e) => self.note_loss(&live(e)),
+            }
+        }
+        out
+    }
+
+    /// `apply_on` between `START TRANSACTION` and `COMMIT` / `ROLLBACK`.
+    async fn apply_tx(
+        &self,
+        conn: &mut Conn,
+        json_cache: &mut HashMap<(String, String), HashSet<String>>,
+        stmts: &[Statement],
+        expect_one: &[bool],
+        my_seq: u64,
+    ) -> AppResult<ApplyOutcome> {
+        let live = |e: MyError| map_err(&e, true);
         conn.query_drop("START TRANSACTION").await.map_err(live)?;
         let mut affected = Vec::with_capacity(stmts.len());
         for (i, stmt) in stmts.iter().enumerate() {
@@ -1403,6 +1444,10 @@ impl Session for MySession {
             result,
             elapsed_ms: start.elapsed().as_millis() as u64,
         })
+    }
+
+    fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::SeqCst)
     }
 
     fn canceller(&self) -> Arc<dyn Canceller> {

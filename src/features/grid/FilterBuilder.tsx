@@ -30,8 +30,11 @@ const field =
 const btn =
   "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
 
+/** The applied filters as rows, else one blank row (ignored until it is touched). */
 const initialDrafts = (filters: Filter[], columns: string[]) =>
   filters.length > 0 ? draftsFromFilters(filters) : [newDraft(columns)];
+const blankIds = (filters: Filter[], drafts: FilterDraft[]) =>
+  new Set(filters.length > 0 ? [] : drafts.map((d) => d.id));
 
 // <select> values: column names are free text, so the two special choices cannot collide.
 const columnValue = (c: DraftColumn) => (c === ANY_COLUMN ? "any" : c === RAW_SQL ? "raw" : `c:${c}`);
@@ -43,15 +46,25 @@ export function FilterBuilder({ dialect, columns, filters, onApply, onClose }: P
   const appliedKey = JSON.stringify(filters);
   const [seen, setSeen] = useState(appliedKey);
   const [drafts, setDrafts] = useState(() => initialDrafts(filters, columns));
+  /** Rows added blank and never touched: Apply leaves them out (no `col = ''` by accident). */
+  const [blank, setBlank] = useState(() => blankIds(filters, drafts));
   const [errors, setErrors] = useState<Record<string, string>>({});
   if (seen !== appliedKey) {
+    const next = initialDrafts(filters, columns);
     setSeen(appliedKey);
-    setDrafts(initialDrafts(filters, columns));
+    setDrafts(next);
+    setBlank(blankIds(filters, next));
     setErrors({});
   }
 
   const update = (id: string, fn: (d: FilterDraft) => FilterDraft) => {
     setDrafts((ds) => ds.map((d) => (d.id === id ? fn(d) : d)));
+    setBlank((b) => {
+      if (!b.has(id)) return b;
+      const next = new Set(b);
+      next.delete(id);
+      return next;
+    });
     setErrors((es) => {
       if (!(id in es)) return es;
       const next = { ...es };
@@ -61,7 +74,7 @@ export function FilterBuilder({ dialect, columns, filters, onApply, onClose }: P
   };
 
   const apply = () => {
-    const r = filtersFromDrafts(drafts);
+    const r = filtersFromDrafts(drafts.filter((d) => !blank.has(d.id)));
     setErrors(r.errors);
     if (Object.keys(r.errors).length === 0) onApply(r.filters);
   };
@@ -181,7 +194,15 @@ export function FilterBuilder({ dialect, columns, filters, onApply, onClose }: P
         );
       })}
       <div className="flex items-center gap-2 pt-1">
-        <button type="button" className={btn} onClick={() => setDrafts((ds) => [...ds, newDraft(columns)])}>
+        <button
+          type="button"
+          className={btn}
+          onClick={() => {
+            const d = newDraft(columns);
+            setDrafts((ds) => [...ds, d]);
+            setBlank((b) => new Set(b).add(d.id));
+          }}
+        >
           {strings.filters.addRow}
         </button>
         <span className="flex-1" />

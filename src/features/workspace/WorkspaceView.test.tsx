@@ -43,7 +43,7 @@ const View = () => {
 beforeEach(() => {
   vi.resetAllMocks();
   useWorkspaces.setState({ workspaces: [base], activeWorkspaceId: "w1", closeRequest: null });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
   vi.mocked(ipc.changesApply).mockResolvedValue({
     applied: true,
     affected: [1],
@@ -112,4 +112,16 @@ test("closing the workspace with pending changes asks with the tab count", async
   await userEvent.click(screen.getByRole("button", { name: strings.grid.discardOk }));
   await waitFor(() => expect(useWorkspaces.getState().workspaces).toHaveLength(0));
   expect(ipc.workspaceClose).toHaveBeenCalledWith("w1");
+});
+
+test("while a commit runs the tab's close button waits (Committing…)", async () => {
+  usePendingChanges.getState().addInsert("t1", object);
+  usePendingChanges.setState({ committing: { t1: true } });
+  render(<View />);
+  const close = screen.getByRole("button", { name: strings.workspace.closeTab("users") });
+  expect(close).toBeDisabled();
+  expect(close).toHaveAttribute("title", strings.grid.closeWhileCommitting);
+  await userEvent.keyboard("{Control>}w{/Control}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(current().tabs).toHaveLength(2);
 });

@@ -36,8 +36,13 @@ interface WorkspacesState {
     sshSecret?: string | null,
     acceptFingerprint?: string | null,
   ) => Promise<void>;
-  /** Asks first (closeRequest) when tabs of the workspace have pending changes. */
+  /**
+   * Asks first (closeRequest) when tabs of the workspace have pending changes; does
+   * nothing while one of its tabs is committing (the commit must finish first).
+   */
   closeWorkspace: (id: string) => Promise<void>;
+  /** A commit is running in the tab (`tabId`), or in any tab of the workspace. */
+  isCommitting: (wsId: string, tabId?: string) => boolean;
   setActiveWorkspace: (id: string) => void;
   setSchema: (wsId: string, schema: string) => void;
   openTableTab: (wsId: string, object: ObjectRef) => void;
@@ -56,7 +61,7 @@ interface WorkspacesState {
   openQueryTab: (wsId: string) => void;
   /**
    * Closes a tab. A table tab with pending changes is not closed: `closeRequest` asks the
-   * user first (confirmClose / cancelClose).
+   * user first (confirmClose / cancelClose). A tab whose commit is running is not closed.
    */
   closeTab: (wsId: string, tabId: string) => void;
   /**
@@ -197,7 +202,15 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       return p;
     },
 
+    isCommitting: (wsId, tabId) => {
+      const committing = usePendingChanges.getState().committing;
+      if (tabId !== undefined) return committing[tabId] === true;
+      const tabs = get().workspaces.find((w) => w.id === wsId)?.tabs ?? [];
+      return tabs.some((t) => committing[t.id] === true);
+    },
+
     closeWorkspace: async (id) => {
+      if (get().isCommitting(id)) return;
       const tabs = get().workspaces.find((w) => w.id === id)?.tabs ?? [];
       const counts = tabs
         .filter((t) => t.kind === "table")
@@ -250,7 +263,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
 
     closeTab: (wsId, tabId) => {
       const tab = get().workspaces.find((w) => w.id === wsId)?.tabs.find((t) => t.id === tabId);
-      if (!tab) return;
+      if (!tab || get().isCommitting(wsId, tabId)) return;
       const count = tab.kind === "table" ? usePendingChanges.getState().count(tabId) : 0;
       if (count > 0) {
         set({ closeRequest: { wsId, tabId, count, tabs: 1 } });
@@ -264,7 +277,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     confirmClose: async () => {
       const req = get().closeRequest;
       set({ closeRequest: null });
-      if (!req) return;
+      if (!req || get().isCommitting(req.wsId, req.tabId ?? undefined)) return;
       if (req.tabId !== null) doCloseTab(req.wsId, req.tabId);
       else await doCloseWorkspace(req.wsId);
     },

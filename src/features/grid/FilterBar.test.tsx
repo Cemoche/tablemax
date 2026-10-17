@@ -161,3 +161,16 @@ test("bar and builder follow the applied filters; raw SQL shows the advanced bad
   expect(onApply).not.toHaveBeenCalled();
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+test("untouched blank builder rows are ignored on Apply", async () => {
+  setup();
+  await openBuilder();
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.apply }));
+  expect(onApply).toHaveBeenLastCalledWith([]);
+  // A second row filled in, the first left blank: only the second counts.
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.addRow }));
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.addRow }));
+  await userEvent.type(screen.getByRole("textbox", { name: strings.filters.valueLabel(2) }), "5");
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.apply }));
+  expect(onApply).toHaveBeenLastCalledWith([{ column: "status", op: "eq", values: ["5"] }]);
+});

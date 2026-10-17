@@ -271,8 +271,10 @@ const SYMBOL: Partial<Record<FilterOp, string>> = {
   contains: "CONTAINS", notContains: "NOT CONTAINS",
 };
 
-const ARITY: Partial<Record<FilterOp, number>> = { isNull: 0, isNotNull: 0, between: 2, notBetween: 2 };
-const ANY_OPS: FilterOp[] = ["eq", "contains", "notContains", "like"];
+/** Values an operator takes when not 1 (IN / NOT IN take a list of one or more). */
+export const ARITY: Readonly<Partial<Record<FilterOp, number>>> = { isNull: 0, isNotNull: 0, between: 2, notBetween: 2 };
+/** The operators an any-column filter may use (the backend allows these four). */
+export const ANY_OPS: readonly FilterOp[] = ["eq", "contains", "notContains", "like"];
 
 /**
  * True when `parseQuickFilter(formatQuickFilter(filters))` gives the same filters, i.e. the

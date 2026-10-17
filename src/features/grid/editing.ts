@@ -2,7 +2,7 @@
 // row, and how typed text becomes an EditValue. Pure functions (no store, no IPC).
 import { dict, hasKey } from "../../lib/records";
 import { strings } from "../../lib/strings";
-import type { CellValue, EditValue, RowKey, TableInfo } from "../../lib/types";
+import type { CellValue, ColumnInfo, EditValue, RowKey, TableInfo } from "../../lib/types";
 import { cellContent } from "./cellContent";
 
 /** The loaded value is a preview: long text / JSON cut, or bytes beyond the preview. */
@@ -61,6 +61,19 @@ export function cellEditability(info: TableInfo, column: string, value: CellValu
     return { editable: false, reason: strings.grid.binaryReadOnly };
   }
   return { editable: true };
+}
+
+/**
+ * An empty string is a value of the column: character types (char, varchar, text…,
+ * MySQL SET, SQLite TEXT affinity or no declared type), not numbers, booleans, dates,
+ * JSON, UUIDs, enums, arrays or bytes. Read from the base type (domains resolved).
+ */
+export function acceptsEmptyString(c: ColumnInfo): boolean {
+  if (c.binary) return false;
+  const t = c.baseType.trim().toLowerCase();
+  if (t === "") return true;
+  if (t.endsWith("]")) return false;
+  return /char|text|clob/.test(t) || t.startsWith("set(");
 }
 
 /** What the editor writes: NULL and DEFAULT are explicit choices, never parsed from text. */

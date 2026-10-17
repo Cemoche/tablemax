@@ -2,6 +2,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
+import { strings } from "../../lib/strings";
+import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
@@ -54,4 +56,17 @@ test("closing a workspace whose backend close fails leaves no unhandled rejectio
   await new Promise((r) => setTimeout(r, 10));
   expect(unhandled).toEqual([]);
   expect(useWorkspaces.getState().workspaces).toEqual([]);
+});
+
+test("a workspace with a running commit cannot be closed yet", () => {
+  const ws = useWorkspaces.getState().workspaces[0];
+  useWorkspaces.setState({
+    workspaces: [{ ...ws, tabs: [{ id: "t1", kind: "table", object: { schema: null, name: "x" }, title: "x" }] }],
+  });
+  usePendingChanges.setState({ committing: { t1: true } });
+  render(<WorkspaceSwitcher connectionsActive={false} onShowConnections={() => {}} onSelectWorkspace={() => {}} />);
+  const close = screen.getByRole("button", { name: strings.workspace.closeWorkspace("Local PG") });
+  expect(close).toBeDisabled();
+  expect(close).toHaveAttribute("title", strings.grid.closeWhileCommitting);
+  usePendingChanges.setState({ committing: {} });
 });

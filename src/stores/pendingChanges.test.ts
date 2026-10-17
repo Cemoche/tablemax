@@ -28,7 +28,7 @@ const obj = { schema: "public", name: "order_lines" };
 
 beforeEach(() => {
   vi.resetAllMocks();
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
 });
 
 test("setting a cell back to its original value removes the edit", () => {
@@ -145,14 +145,14 @@ test("a failed change is marked with its message and nothing is removed", async 
     applied: false,
     affected: [1, 0],
     failedIndex: 1,
-    error: { kind: "query", message: "the row changed or was deleted since it was loaded" },
+    error: { kind: "query", message: "the row was deleted or its key changed since it was loaded" },
   });
   s().setCell(T, obj, key(1), "note", { t: "text", v: "new" }, row(1, "old"), columns);
   s().toggleDelete(T, obj, key(2));
   await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
   expect(s().count(T)).toBe(2);
   expect(s().tabs[T].errors).toEqual({
-    [`delete:${rowKeyId(key(2))}`]: "the row changed or was deleted since it was loaded",
+    [`delete:${rowKeyId(key(2))}`]: "the row was deleted or its key changed since it was loaded",
   });
   expect(s().applied[T]).toBeUndefined();
   // Touching the failed change clears its error.
@@ -215,7 +215,83 @@ test("changes are refused while a commit runs, and a second commit is not sent",
   resolve({ applied: true, affected: [1], failedIndex: null, error: null });
   await expect(done).resolves.toBe(true);
   expect(s().count(T)).toBe(0);
+  // Still locked until the reload of the committed page lands.
+  expect(s().setCell(T, obj, key(2), "note", { t: "null" }, row(2, "old"), columns)).toBe(false);
+  s().pageSettled(T, s().epochOf(T), true);
   expect(s().setCell(T, obj, key(2), "note", { t: "null" }, row(2, "old"), columns)).toBe(true);
+});
+
+test("after a successful commit the tab stays locked until a page loaded after it settles", async () => {
+  vi.mocked(ipc.changesApply).mockResolvedValue({ applied: true, affected: [1], failedIndex: null, error: null });
+  s().toggleDelete(T, obj, key(1));
+  const before = s().epochOf(T);
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(true);
+  expect(s().committing[T]).toBeFalsy();
+  expect(s().awaitingReload[T]).toBe(true);
+  expect(s().addInsert(T, obj)).toBeNull();
+  // A page requested before the commit ended does not unlock.
+  s().pageSettled(T, before, true);
+  expect(s().addInsert(T, obj)).toBeNull();
+  // A failed reload unlocks too (the load error is shown instead).
+  s().pageSettled(T, s().epochOf(T), false);
+  expect(s().awaitingReload[T]).toBe(false);
+  expect(s().addInsert(T, obj)).not.toBeNull();
+});
+
+test("a lost connection during the commit leaves the outcome unknown until a reload", async () => {
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "connectionLost", message: "server gone" });
+  s().toggleDelete(T, obj, key(1));
+  const before = s().epochOf(T);
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
+  expect(s().tabs[T].outcomeUnknown).toBe(true);
+  // The changes stay, but no second commit until the page was reloaded.
+  expect(s().count(T)).toBe(1);
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  // Edits keep the warning; paging stays blocked, reloading is allowed.
+  s().setCell(T, obj, key(2), "note", { t: "null" }, row(2, "old"), columns);
+  expect(s().tabs[T].outcomeUnknown).toBe(true);
+  expect(guardPending(T)).toBe(false);
+  expect(s().guardReload(T)).toBe(true);
+  s().pageSettled(T, before, true);
+  expect(s().tabs[T].outcomeUnknown).toBe(true);
+  s().pageSettled(T, s().epochOf(T), false);
+  expect(s().tabs[T].outcomeUnknown).toBe(true);
+  s().pageSettled(T, s().epochOf(T), true);
+  expect(s().tabs[T].outcomeUnknown).toBe(false);
+  expect(s().guardReload(T)).toBe(false);
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce({ applied: true, affected: [1, 1], failedIndex: null, error: null });
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(true);
+});
+
+test("only a connection failure makes the outcome unknown", async () => {
+  s().toggleDelete(T, obj, key(1));
+  for (const kind of ["cancelled", "invalid", "notFound", "query"] as const) {
+    vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind, message: "x" });
+    await s().commit(T, "w1", obj);
+    expect(s().tabs[T].outcomeUnknown, kind).toBe(false);
+  }
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "connection", message: "refused" });
+  await s().commit(T, "w1", obj);
+  expect(s().tabs[T].outcomeUnknown).toBe(true);
+  // Discarding forgets it.
+  s().discard(T);
+  expect(s().tabs[T].outcomeUnknown).toBe(false);
+});
+
+test("cancelCommit cancels the workspace's commit only while one runs", async () => {
+  let resolve!: (o: Awaited<ReturnType<typeof ipc.changesApply>>) => void;
+  vi.mocked(ipc.changesApply).mockImplementation(() => new Promise((r) => (resolve = r)));
+  vi.mocked(ipc.changesCancel).mockResolvedValue(undefined);
+  await s().cancelCommit(T, "w1");
+  expect(ipc.changesCancel).not.toHaveBeenCalled();
+  s().toggleDelete(T, obj, key(1));
+  const done = s().commit(T, "w1", obj);
+  await s().cancelCommit(T, "w1");
+  expect(ipc.changesCancel).toHaveBeenCalledWith("w1");
+  vi.mocked(ipc.changesApply).mockReset();
+  resolve({ applied: false, affected: [], failedIndex: null, error: null });
+  await done;
 });
 
 test("columns named __proto__ and constructor are ordinary columns", () => {

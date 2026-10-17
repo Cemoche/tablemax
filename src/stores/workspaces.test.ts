@@ -38,7 +38,7 @@ const info = (over = {}) => ({
 beforeEach(() => {
   vi.resetAllMocks();
   useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null, closeRequest: null });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
   useConnections.setState({ items: [cfg()] });
   vi.mocked(ipc.workspaceOpen).mockResolvedValue(info());
   vi.mocked(ipc.schemasList).mockResolvedValue(["audit", "public"]);
@@ -239,6 +239,27 @@ test("closing a workspace with pending changes asks first, then drops them", asy
   expect(useWorkspaces.getState().workspaces).toHaveLength(0);
   expect(usePendingChanges.getState().tabs[t.id]).toBeUndefined();
   expect(usePendingChanges.getState().tabs[u.id]).toBeUndefined();
+});
+
+test("a tab or workspace whose commit is running is not closed (no discard offered)", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, { schema: "public", name: "t" });
+  const tab = ws().tabs[0];
+  usePendingChanges.getState().addInsert(tab.id, obj);
+  usePendingChanges.setState((p) => ({ committing: { ...p.committing, [tab.id]: true } }));
+  s.closeTab(id, tab.id);
+  expect(ws().tabs).toHaveLength(1);
+  expect(useWorkspaces.getState().closeRequest).toBeNull();
+  await s.closeWorkspace(id);
+  expect(useWorkspaces.getState().closeRequest).toBeNull();
+  expect(ipc.workspaceClose).not.toHaveBeenCalled();
+  expect(useWorkspaces.getState().isCommitting(id)).toBe(true);
+  expect(useWorkspaces.getState().isCommitting(id, tab.id)).toBe(true);
+  usePendingChanges.setState((p) => ({ committing: { ...p.committing, [tab.id]: false } }));
+  expect(useWorkspaces.getState().isCommitting(id)).toBe(false);
+  s.closeTab(id, tab.id);
+  expect(useWorkspaces.getState().closeRequest).toMatchObject({ tabId: tab.id });
 });
 
 test("navigateTableTab changes the object and title of a table tab, in place", async () => {

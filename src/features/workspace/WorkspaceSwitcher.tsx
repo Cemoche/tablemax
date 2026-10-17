@@ -1,5 +1,6 @@
 import { strings } from "../../lib/strings";
 import type { EnvTag } from "../../lib/types";
+import { usePendingChanges } from "../../stores/pendingChanges";
 import { useWorkspaces } from "../../stores/workspaces";
 
 export const ENV_BG: Record<EnvTag, string> = {
@@ -20,6 +21,7 @@ export function WorkspaceSwitcher({ connectionsActive, onShowConnections, onSele
   const workspaces = useWorkspaces((s) => s.workspaces);
   const activeId = useWorkspaces((s) => s.activeWorkspaceId);
   const closeWorkspace = useWorkspaces((s) => s.closeWorkspace);
+  const committing = usePendingChanges((s) => s.committing);
   return (
     <nav
       aria-label={strings.workspace.switcherLabel}
@@ -36,6 +38,8 @@ export function WorkspaceSwitcher({ connectionsActive, onShowConnections, onSele
       <ul className="flex min-w-0 flex-1 overflow-x-auto">
         {workspaces.map((w) => {
           const active = !connectionsActive && w.id === activeId;
+          // A running commit must finish before its workspace can close.
+          const busy = w.tabs.some((t) => committing[t.id] === true);
           return (
             <li
               key={w.id}
@@ -53,12 +57,14 @@ export function WorkspaceSwitcher({ connectionsActive, onShowConnections, onSele
               <button
                 type="button"
                 aria-label={strings.workspace.closeWorkspace(w.name)}
+                title={busy ? strings.grid.closeWhileCommitting : undefined}
+                disabled={busy}
                 onClick={() => {
                   // The workspace is already gone from the UI; a failed backend close
                   // (e.g. a lost connection) has nothing left to report to.
                   closeWorkspace(w.id).catch(() => {});
                 }}
-                className="mr-1 rounded-sm px-1.5 hover:bg-surface-2"
+                className="mr-1 rounded-sm px-1.5 hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent"
               >
                 ×
               </button>

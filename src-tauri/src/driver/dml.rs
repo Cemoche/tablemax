@@ -9,6 +9,8 @@
 //! (`TableInfo::row_key`) with the values the grid loaded; `Session::apply` then checks
 //! that each UPDATE / DELETE touched exactly one row.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use serde::{Deserialize, Serialize};
 
 use super::meta::{ColumnInfo, TableInfo};
@@ -19,7 +21,25 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{BYTES_PREVIEW, CellValue, decode_hex};
 
 /// `ApplyOutcome.error` message when an UPDATE / DELETE did not touch exactly one row.
-pub const STALE_ROW: &str = "the row changed or was deleted since it was loaded";
+pub const STALE_ROW: &str = "the row was deleted or its key changed since it was loaded";
+
+/// How long `Session::apply` lets a change wait for a row lock held by another session
+/// (PostgreSQL `lock_timeout`, MySQL/MariaDB `innodb_lock_wait_timeout`, spec §4): past
+/// it the change fails like any other database error and everything is rolled back.
+pub const APPLY_LOCK_TIMEOUT_SECS: u64 = 30;
+
+static LOCK_TIMEOUT_SECS: AtomicU64 = AtomicU64::new(APPLY_LOCK_TIMEOUT_SECS);
+
+/// The lock wait bound of `apply`, in seconds ([`APPLY_LOCK_TIMEOUT_SECS`]).
+pub fn apply_lock_timeout_secs() -> u64 {
+    LOCK_TIMEOUT_SECS.load(Ordering::Relaxed)
+}
+
+/// Tests only: shortens the process-wide lock wait bound.
+#[doc(hidden)]
+pub fn set_apply_lock_timeout_secs(secs: u64) {
+    LOCK_TIMEOUT_SECS.store(secs.max(1), Ordering::Relaxed);
+}
 
 /// A value written by a change. `Default` (the column's default) only in an insert.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

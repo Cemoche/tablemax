@@ -1,10 +1,12 @@
 import { strings } from "../../lib/strings";
+import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 
 export function TabBar({ workspace }: { workspace: Workspace }) {
   const activateTab = useWorkspaces((s) => s.activateTab);
   const closeTab = useWorkspaces((s) => s.closeTab);
   const openQueryTab = useWorkspaces((s) => s.openQueryTab);
+  const committing = usePendingChanges((s) => s.committing);
   const { id } = workspace;
   return (
     <div className="flex items-stretch border-b border-border bg-surface">
@@ -15,6 +17,8 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
       >
         {workspace.tabs.map((t) => {
           const active = t.id === workspace.activeTabId;
+          // A running commit must finish before its tab can close.
+          const busy = committing[t.id] === true;
           return (
             <div
               key={t.id}
@@ -43,8 +47,10 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
               <button
                 type="button"
                 aria-label={strings.workspace.closeTab(t.title)}
+                title={busy ? strings.grid.closeWhileCommitting : undefined}
+                disabled={busy}
                 onClick={() => closeTab(id, t.id)}
-                className="mr-1 rounded-sm px-1.5 hover:bg-surface-2"
+                className="mr-1 rounded-sm px-1.5 hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent"
               >
                 ×
               </button>
