@@ -510,13 +510,13 @@ impl SessionManager {
         let (st, sec, id) = (self.store.clone(), self.secrets.clone(), id.to_string());
         let queries = self.queries_dir.clone();
         blocking(move || {
-            store::delete_connection(&st, sec.as_ref(), &id)?;
-            // Its saved queries go with it; the connection is already gone, so a
-            // leftover folder is only logged-away clutter, not an error.
+            // Saved queries may hold sensitive values like the history: remove them
+            // first and keep the connection when that fails, so the user can retry
+            // (a missing folder is fine).
             if let Some(dir) = queries {
-                let _ = saved_queries::remove_connection_dir(&dir, &id);
+                saved_queries::remove_connection_dir(&dir, &id)?;
             }
-            Ok(())
+            store::delete_connection(&st, sec.as_ref(), &id)
         })
         .await
     }
@@ -1009,6 +1009,7 @@ impl SessionManager {
             .workspaces
             .get(&entry.workspace_id)
             .map(|ws| ws.config.id.clone());
+        let mut history_entries: Vec<NewHistoryEntry> = Vec::new();
         let mut cancelled = false;
         for (index, sql) in statements.iter().enumerate() {
             // Mark the statement in flight before checking the flag: `request_cancel`
@@ -1023,7 +1024,7 @@ impl SessionManager {
             let result = entry.session.execute(sql).await;
             ctl.in_statement.store(false, SeqCst);
             if let Some(conn_id) = &history_conn {
-                self.record_history(conn_id, sql, &result);
+                history_entries.push(history_entry(conn_id, sql, &result));
             }
             match result {
                 Ok(outcome) => {
@@ -1042,6 +1043,7 @@ impl SessionManager {
             }
         }
         sink(ExecEvent::BatchFinished { cancelled });
+        self.flush_history(history_entries);
         Ok(())
     }
 
@@ -1052,35 +1054,46 @@ impl SessionManager {
     }
 }
 
+fn history_entry(
+    connection_id: &str,
+    sql: &str,
+    result: &AppResult<StatementOutcome>,
+) -> NewHistoryEntry {
+    let (elapsed_ms, rows, error) = match result {
+        Ok(o) => (
+            Some(o.elapsed_ms),
+            o.result
+                .as_ref()
+                .map(|r| r.rows.len() as u64)
+                .or(o.rows_affected),
+            None,
+        ),
+        Err(e) => (None, None, Some(e.message.clone())),
+    };
+    NewHistoryEntry {
+        connection_id: connection_id.to_string(),
+        sql: sql.to_string(),
+        executed_at: history::now_ms(),
+        elapsed_ms,
+        rows,
+        error,
+    }
+}
+
 /// History, session and saved queries: thin blocking wrappers over the store and the
 /// queries folder.
 impl SessionManager {
-    /// Records one finished statement without ever failing or slowing the batch: the
-    /// write runs detached on the blocking pool and its errors are dropped (the SQL
-    /// text is never logged).
-    fn record_history(&self, connection_id: &str, sql: &str, result: &AppResult<StatementOutcome>) {
-        let (elapsed_ms, rows, error) = match result {
-            Ok(o) => (
-                Some(o.elapsed_ms),
-                o.result
-                    .as_ref()
-                    .map(|r| r.rows.len() as u64)
-                    .or(o.rows_affected),
-                None,
-            ),
-            Err(e) => (None, None, Some(e.message.clone())),
-        };
-        let entry = NewHistoryEntry {
-            connection_id: connection_id.to_string(),
-            sql: sql.to_string(),
-            executed_at: history::now_ms(),
-            elapsed_ms,
-            rows,
-            error,
-        };
+    /// Writes the batch's history in one transaction on one blocking task, in
+    /// statement order, after the batch is over: it never delays a statement, never
+    /// fails the batch, and queues at most one task per batch. Errors are dropped (the
+    /// SQL text is never logged).
+    fn flush_history(&self, entries: Vec<NewHistoryEntry>) {
+        if entries.is_empty() {
+            return;
+        }
         let store = self.store.clone();
         drop(tokio::task::spawn_blocking(move || {
-            let _ = history::record(&store, entry);
+            let _ = history::record_many(&store, entries, true);
         }));
     }
 

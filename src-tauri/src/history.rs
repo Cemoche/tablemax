@@ -48,28 +48,64 @@ pub fn now_ms() -> i64 {
 }
 
 pub fn record(store: &ConnectionStore, e: NewHistoryEntry) -> AppResult<()> {
+    record_many(store, vec![e], false)
+}
+
+/// Inserts `entries` in order, then prunes each touched connection once, all in ONE
+/// transaction. With `only_existing`, entries of a connection that is no longer saved
+/// are skipped (a batch finishing after its connection was deleted must not leave
+/// orphaned rows behind).
+pub fn record_many(
+    store: &ConnectionStore,
+    entries: Vec<NewHistoryEntry>,
+    only_existing: bool,
+) -> AppResult<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
     store.with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO query_history(connection_id, sql, executed_at, elapsed_ms, rows, error)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                e.connection_id,
-                e.sql,
-                e.executed_at,
-                e.elapsed_ms.map(|v| v as i64),
-                e.rows.map(|v| v as i64),
-                e.error
-            ],
-        )
-        .map_err(db_err)?;
-        conn.execute(
-            "DELETE FROM query_history WHERE connection_id = ?1 AND id NOT IN (
-                 SELECT id FROM query_history WHERE connection_id = ?1
-                 ORDER BY executed_at DESC, id DESC LIMIT ?2)",
-            params![e.connection_id, HISTORY_CAP as i64],
-        )
-        .map_err(db_err)?;
-        Ok(())
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let mut touched: Vec<&str> = Vec::new();
+        for e in &entries {
+            if only_existing {
+                let exists: bool = tx
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM connections WHERE id = ?1)",
+                        params![e.connection_id],
+                        |r| r.get(0),
+                    )
+                    .map_err(db_err)?;
+                if !exists {
+                    continue;
+                }
+            }
+            tx.execute(
+                "INSERT INTO query_history(connection_id, sql, executed_at, elapsed_ms, rows, error)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    e.connection_id,
+                    e.sql,
+                    e.executed_at,
+                    e.elapsed_ms.map(|v| v as i64),
+                    e.rows.map(|v| v as i64),
+                    e.error
+                ],
+            )
+            .map_err(db_err)?;
+            if !touched.contains(&e.connection_id.as_str()) {
+                touched.push(&e.connection_id);
+            }
+        }
+        for id in touched {
+            tx.execute(
+                "DELETE FROM query_history WHERE connection_id = ?1 AND id NOT IN (
+                     SELECT id FROM query_history WHERE connection_id = ?1
+                     ORDER BY executed_at DESC, id DESC LIMIT ?2)",
+                params![id, HISTORY_CAP as i64],
+            )
+            .map_err(db_err)?;
+        }
+        tx.commit().map_err(db_err)
     })
 }
 

@@ -192,8 +192,12 @@ pub fn rename(base: &Path, connection_id: &str, from: &str, to: &str) -> AppResu
     let src = file_path(base, connection_id, from)?;
     let dst = file_path(base, connection_id, to)?;
     plain_file(&src, from)?;
-    // A case-only rename targets the same file on a case-insensitive filesystem.
-    if from.to_lowercase() != to.to_lowercase() && fs::symlink_metadata(&dst).is_ok() {
+    // Refuse to overwrite another file. A case-only rename onto the same file (a
+    // case-insensitive filesystem) is fine; on a case-sensitive one `a` and `A` are
+    // different files and the check applies.
+    let same_file = matches!((fs::canonicalize(&src), fs::canonicalize(&dst)),
+        (Ok(a), Ok(b)) if a == b);
+    if fs::symlink_metadata(&dst).is_ok() && !same_file {
         return Err(AppError::new(
             ErrorKind::Invalid,
             "a query with that name already exists",

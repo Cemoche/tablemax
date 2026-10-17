@@ -285,6 +285,15 @@ fn saved_query_write_is_atomic_and_round_trips() {
         ErrorKind::Invalid,
         "no silent overwrite"
     );
+    // Case-variants are distinct files on a case-sensitive filesystem: never clobbered.
+    saved_queries::write(&base, "c1", "x", "lower").unwrap();
+    saved_queries::write(&base, "c1", "X", "upper").unwrap();
+    if base.join("c1").join("X.sql").exists() && base.join("c1").join("x.sql").exists() {
+        let err = saved_queries::rename(&base, "c1", "x", "X");
+        if std::fs::read_to_string(base.join("c1").join("X.sql")).unwrap() == "upper" {
+            assert_eq!(err.unwrap_err().kind, ErrorKind::Invalid);
+        }
+    }
     saved_queries::delete(&base, "c1", "c").unwrap();
     assert_eq!(
         saved_queries::delete(&base, "c1", "c").unwrap_err().kind,
@@ -529,4 +538,40 @@ fn wire_shapes_are_camel_case() {
         serde_json::to_string(&q).unwrap(),
         r#"{"name":"n","modifiedAt":7,"size":2}"#
     );
+}
+
+#[tokio::test]
+async fn failed_queries_cleanup_keeps_the_connection() {
+    let fx = fixture();
+    let a = fx
+        .mgr
+        .save_connection(sqlite_cfg(&fx), None, None)
+        .await
+        .unwrap();
+    fx.mgr
+        .saved_query_write(&a.id, "q", "select 1")
+        .await
+        .unwrap();
+    // Make the folder undeletable: a read-only parent (skipped when running as root).
+    use std::os::unix::fs::PermissionsExt;
+    let queries = fx.dir.path().join("queries");
+    std::fs::set_permissions(&queries, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let denied = std::fs::create_dir(queries.join("probe")).is_err();
+    let res = fx.mgr.delete_connection(&a.id).await;
+    std::fs::set_permissions(&queries, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if denied {
+        assert!(res.is_err());
+        assert_eq!(
+            fx.mgr
+                .list_connections()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>(),
+            [a.id.clone()]
+        );
+        fx.mgr.delete_connection(&a.id).await.unwrap();
+    }
+    assert!(!queries.join(&a.id).exists());
 }
