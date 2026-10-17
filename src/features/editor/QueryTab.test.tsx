@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
+import { strings } from "../../lib/strings";
 import type { ExecEvent } from "../../lib/types";
 import type { ConnectionConfig } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
@@ -293,8 +294,32 @@ describe("safe mode confirmation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(ipc.sqlExecute).toHaveBeenCalledTimes(1);
-    expect(useQueryRuns.getState().runs["t1"]?.running ?? false).toBe(false);
+    expect(useQueryRuns.getState().runs["t1"]).toBeUndefined();
+    expect(screen.getByText(strings.query.empty)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run all" })).toBeEnabled();
+  });
+
+  test("a cancelled confirmation keeps the previous results", async () => {
+    await setup("select 1");
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
+    act(() => {
+      emit({
+        event: "statementFinished",
+        data: { index: 0, outcome: { result: rs(3), rowsAffected: null, elapsedMs: 1 } },
+      });
+      emit({ event: "batchFinished", data: { cancelled: false } });
+    });
+    expect(await screen.findByTestId("grid")).toHaveAttribute("data-rows", "3");
+    const before = useQueryRuns.getState().runs["t1"];
+    refuse("0");
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await screen.findByRole("dialog");
+    expect(screen.getByTestId("grid")).toHaveAttribute("data-rows", "3");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("grid")).toHaveAttribute("data-rows", "3");
+    expect(useQueryRuns.getState().runs["t1"]).toEqual(before);
   });
 
   test("the dialog shows the live tag and the enforced mode", async () => {

@@ -24,6 +24,8 @@ interface QueryRunsState {
   /** The execute call itself rejected (unknown session, query already running...). */
   preflightFailed: (tabId: string, error: AppError) => void;
   drop: (tabId: string) => void;
+  /** Put back the run a refused `start` replaced (or none: the tab had no run). */
+  restore: (tabId: string, previous: QueryRun | undefined) => void;
 }
 
 /**
@@ -72,6 +74,13 @@ export const useQueryRuns = create<QueryRunsState>((set) => {
           ? { ...r, running: false, error: { index: null, kind: error.kind, message: error.message } }
           : r,
       ),
+    restore: (tabId, previous) =>
+      set((s) => {
+        const runs = { ...s.runs };
+        if (previous) runs[tabId] = previous;
+        else delete runs[tabId];
+        return { runs };
+      }),
     drop: (tabId) =>
       set((s) => {
         if (!(tabId in s.runs)) return s;

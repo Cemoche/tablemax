@@ -85,6 +85,7 @@ export function QueryTab({ workspace, tab }: Props) {
     const runs = useQueryRuns.getState();
     if (stmts.length === 0 || runs.runs[tabId]?.running) return;
     flush();
+    const previous = runs.runs[tabId];
     runs.start(tabId, stmts.length);
     let sessionId = currentSessionId(wsId, tabId);
     try {
@@ -114,8 +115,8 @@ export function QueryTab({ workspace, tab }: Props) {
     } catch (e) {
       const err = toAppError(e);
       if (isConfirmationRequired(err)) {
-        // Nothing ran: forget the run just started and ask first.
-        useQueryRuns.getState().drop(tabId);
+        // Nothing ran: put the previous results back and ask first.
+        useQueryRuns.getState().restore(tabId, previous);
         setPending({ stmts, flagged: parseConfirmationIndices(err.message, stmts.length) });
         return;
       }
