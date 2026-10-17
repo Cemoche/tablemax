@@ -14,6 +14,11 @@ Rust 1.96, edition 2024, Tauri 2, tokio. Library crate `tablemax_lib` (`src/lib.
 - `manager.rs` — `SessionManager`: open workspaces, dedicated SQL sessions, batches,
   cancellation, secret resolution.
 - `store.rs` — `ConnectionStore`: local SQLite `app.db` (connections without secrets).
+- `safety.rs` — safe mode: statement classification (read / write, strict and fail-safe),
+  effective mode per connection (prod defaults to confirm writes), which statements of a
+  batch need a confirmation.
+- `settings.rs` — user settings in `<app_data_dir>/settings.json` (versioned, written
+  atomically, values clamped, unsafe editor font family reset to "").
 - `secrets.rs` — `SecretStore` trait, `KeyringSecretStore` (OS keyring),
   `MemorySecretStore` (tests).
 - `commands.rs` — Tauri commands, thin async wrappers over `SessionManager`. Their names
@@ -30,8 +35,13 @@ A new command = function in `commands.rs` + entry in `tauri::generate_handler!` 
 - `AppError { kind, message }` (plus optional `host` for host key errors), serialized as
   `{"kind": "...", "message": "..."}`. Kinds (`ErrorKind`): `Connection`, `Auth`, `Query`,
   `Cancelled`, `ConnectionLost`, `NotFound`, `Secret`, `Io`, `Invalid`, `HostKeyUnknown`,
-  `HostKeyChanged`. Pick the kind the frontend should branch on; a new kind also goes into
-  `ErrorKind` in `src/lib/types.ts`.
+  `HostKeyChanged`, `ConfirmationRequired`. Pick the kind the frontend should branch on; a
+  new kind also goes into `ErrorKind` in `src/lib/types.ts`.
+- `ConfirmationRequired`: `execute_batch` refuses an unconfirmed batch on a protected
+  connection before anything of it runs (message: the indices to confirm). Future write
+  paths (grid commits…) must go through the same guard (`safety::effective_safe_mode` +
+  `needs_confirmation`, with the stricter-of-saved-and-opened resolution of
+  `workspace_safe_mode`).
 
 ## Async and I/O
 
