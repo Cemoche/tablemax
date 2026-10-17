@@ -283,6 +283,7 @@ export const strings = {
       allDefaults: "all defaults",
       keyPart: (column: string, value: string) => `${column} = ${value}`,
       keySeparator: ", ",
+      quoted: (value: string) => `'${value.replace(/'/g, "''")}'`,
       columnSeparator: ", ",
       undo: "Undo",
       undoLabel: (n: number) => `Undo change ${n}`,

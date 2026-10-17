@@ -164,3 +164,38 @@ test("cell actions come from the grid's menu rules", async () => {
   await userEvent.click(buttons[0]);
   expect(onAction).toHaveBeenCalledWith("setNull", 0, 3);
 });
+
+test("typing back to an empty string set on a NULL column keeps the empty string", async () => {
+  const d = data({ note: { t: "null" } });
+  const pending: PendingTab = {
+    edits: { [JSON.stringify(key)]: { key, set: { note: { t: "text", v: "" } }, original: d.rows[0] } },
+    inserts: [],
+    deletes: {},
+    errors: {},
+    error: null,
+  };
+  const { onChange, onAction } = renderPanel(d, { pending });
+  await userEvent.type(field("note"), "a");
+  expect(onChange).toHaveBeenLastCalledWith(0, 3, { t: "text", v: "a" });
+  await userEvent.type(field("note"), "{Backspace}");
+  expect(onChange).toHaveBeenLastCalledWith(0, 3, { t: "text", v: "" });
+  expect(onAction).not.toHaveBeenCalled();
+});
+
+test("a NULL typed into and erased again goes back to NULL", async () => {
+  const { onChange, onAction } = renderPanel(data({ note: { t: "null" } }));
+  await userEvent.type(field("note"), "a{Backspace}");
+  expect(onChange).toHaveBeenCalledWith(0, 3, { t: "text", v: "a" });
+  expect(onAction).toHaveBeenLastCalledWith("revertCell", 0, 3);
+});
+
+test("a failed full-value load can be retried", async () => {
+  vi.mocked(ipc.cellValue)
+    .mockRejectedValueOnce({ kind: "connectionLost", message: "gone" })
+    .mockResolvedValue({ t: "text", v: "full now" });
+  renderPanel(data({ note: { t: "longText", v: { preview: "x", len: 20000 } } }));
+  expect(await screen.findByText(strings.grid.editorLoadFailed("gone"))).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.retry }));
+  await waitFor(() => expect(field("note").value).toBe("full now"));
+  expect(ipc.cellValue).toHaveBeenCalledTimes(2);
+});

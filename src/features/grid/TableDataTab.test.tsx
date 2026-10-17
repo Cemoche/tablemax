@@ -299,3 +299,66 @@ test("Row details shows the selected row, follows it and edits it through the st
   await userEvent.keyboard("{Control>}i{/Control}");
   expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
 });
+
+/** `lines(n)` with the given `line` values (in that order) and notes. */
+const linesWith = (keys: number[], note = (l: number) => `note ${l}`): ResultSet => ({
+  columns: names.map((name) => ({ name, typeName: "x" })),
+  rows: keys.map((l) => [int(100 + l), int(42), int(l), { t: "text", v: note(l) }, { t: "decimal", v: "1.50" }, { t: "null" }]),
+  truncated: false,
+});
+
+test("a commit and a reload with shifted rows keep the details on the same record", async () => {
+  vi.mocked(ipc.tablePage)
+    .mockResolvedValueOnce(linesWith([0, 1, 2]))
+    .mockResolvedValue(linesWith([7, 8, 0, 1, 2], (l) => (l === 1 ? "note 1 saved" : `note ${l}`)));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  vi.mocked(ipc.changesApply).mockResolvedValue({ applied: true, affected: [1], failedIndex: null, error: null });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
+  act(() => grid!.editing!.onSelect(1));
+  const note = () => screen.getByLabelText("note") as HTMLTextAreaElement;
+  await userEvent.type(note(), "!");
+  expect(note()).toHaveFocus();
+  // Mod+S while the field still has the focus: the typed text is already pending.
+  await act(() => pending().commit("t1", "w1", obj));
+  expect(ipc.changesApply).toHaveBeenCalledWith("w1", obj, [
+    { kind: "update", key: key(1), set: [["note", { t: "text", v: "note 1!" }]] },
+  ]);
+  await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
+  // line 1 is now the 4th row: the panel follows it and shows the reloaded value.
+  await waitFor(() => expect(note().value).toBe("note 1 saved"));
+  expect(grid!.editing!.selectedRow).toBe(3);
+  await userEvent.type(note(), "?");
+  expect(pending().toChanges("t1")).toEqual([
+    { kind: "update", key: key(1), set: [["note", { t: "text", v: "note 1 saved?" }]] },
+  ]);
+});
+
+test("a record missing from the new page leaves the details empty", async () => {
+  vi.mocked(ipc.tablePage)
+    .mockResolvedValueOnce(linesWith([0, 1, 2]))
+    .mockResolvedValue(linesWith([300, 301]));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
+  act(() => grid!.editing!.onSelect(1));
+  expect((screen.getByLabelText("note") as HTMLTextAreaElement).value).toBe("note 1");
+  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+  await waitFor(() => expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument());
+  expect(grid!.editing!.selectedRow).toBeNull();
+});
+
+test("+ Row moves the grid selection with the selected record", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
+  act(() => grid!.editing!.onSelect(1));
+  expect(grid!.editing!.selectedRow).toBe(1);
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.addRow }));
+  expect(grid!.editing!.selectedRow).toBe(2);
+  expect((screen.getByLabelText("note") as HTMLTextAreaElement).value).toBe("note 1");
+});

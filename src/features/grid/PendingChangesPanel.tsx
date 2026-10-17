@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
-import type { ObjectRef, RowChange, RowKey } from "../../lib/types";
+import type { CellValue, ObjectRef, RowChange, RowKey } from "../../lib/types";
 import { type ChangeEntry, refusedChange, usePendingChanges } from "../../stores/pendingChanges";
 import { cellText } from "./editing";
 
@@ -26,9 +26,23 @@ const KIND = {
 const btn =
   "rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
 
-/** `id = 42, line = 1`. */
+/** A key value as it reads in SQL: numbers and booleans bare, anything else quoted. */
+function keyValueText(v: CellValue): string {
+  switch (v.t) {
+    case "int":
+    case "bigInt":
+    case "float":
+    case "decimal":
+    case "bool":
+      return cellText(v);
+    default:
+      return s.quoted(cellText(v));
+  }
+}
+
+/** `id = 42, name = 'a, b'`. */
 const keyText = (key: RowKey) =>
-  key.map(([column, value]) => s.keyPart(column, cellText(value))).join(s.keySeparator);
+  key.map(([column, value]) => s.keyPart(column, keyValueText(value))).join(s.keySeparator);
 
 /** The row a change targets, and the columns it sets. */
 function describe(change: RowChange): { target: string; columns: string | null } {
@@ -50,6 +64,8 @@ function describe(change: RowChange): { target: string; columns: string | null }
 }
 
 interface Preview {
+  /** Each change id as it was asked (JSON): a line that changed since shows nothing. */
+  asked: Record<string, string>;
   /** SQL per change id. */
   sql: Record<string, string>;
   /** The change changes_preview refused, with the reason. */
@@ -58,7 +74,10 @@ interface Preview {
   error: string | null;
 }
 
-const NO_PREVIEW: Preview = { sql: {}, invalid: {}, error: null };
+const NO_PREVIEW: Preview = { asked: {}, sql: {}, invalid: {}, error: null };
+
+const signature = (list: ChangeEntry[]) =>
+  Object.fromEntries(list.map((c) => [c.id, JSON.stringify(c.change)]));
 
 /**
  * The SQL of `list`, asked PREVIEW_DELAY_MS after the last change; an answer to an older
@@ -71,6 +90,7 @@ function useChangesPreview(workspaceId: string, object: ObjectRef, list: ChangeE
     const mine = ++seq.current;
     if (list.length === 0) return;
     const timer = setTimeout(() => {
+      const asked = signature(list);
       ipc
         .changesPreview(
           workspaceId,
@@ -81,6 +101,7 @@ function useChangesPreview(workspaceId: string, object: ObjectRef, list: ChangeE
           (sql) => {
             if (mine !== seq.current) return;
             setPreview({
+              asked,
               sql: Object.fromEntries(list.map((c, i) => [c.id, sql[i] ?? ""])),
               invalid: {},
               error: null,
@@ -93,8 +114,8 @@ function useChangesPreview(workspaceId: string, object: ObjectRef, list: ChangeE
             const entry = refused ? list[refused.index] : undefined;
             setPreview(
               refused && entry
-                ? { sql: {}, invalid: { [entry.id]: refused.reason }, error: null }
-                : { sql: {}, invalid: {}, error: err.message },
+                ? { asked, sql: {}, invalid: { [entry.id]: refused.reason }, error: null }
+                : { asked, sql: {}, invalid: {}, error: err.message },
             );
           },
         );
@@ -125,6 +146,11 @@ export function PendingChangesPanel({ workspaceId, tabId, object }: Props) {
     [tabId, edits, inserts, deletes],
   );
   const preview = useChangesPreview(workspaceId, object, list);
+  const current = useMemo(() => signature(list), [list]);
+  // Only what was asked for the changes as they are now (no stale SQL while a new preview runs).
+  const fresh = (id: string) => preview.asked[id] === current[id];
+  const allFresh =
+    list.every((c) => fresh(c.id)) && Object.keys(preview.asked).length === list.length;
 
   const [open, setOpen] = useState(true);
   const [empty, setEmpty] = useState(list.length === 0);
@@ -151,15 +177,15 @@ export function PendingChangesPanel({ workspaceId, tabId, object }: Props) {
       </button>
       {open && (
         <>
-          {preview.error && (
+          {preview.error && allFresh && (
             <p className="border-t border-border px-3 py-1 text-danger">{s.previewFailed(preview.error)}</p>
           )}
           <ol aria-label={s.label} className="min-h-0 overflow-auto">
             {list.map((c, i) => {
               const { target, columns } = describe(c.change);
               const kind = KIND[c.change.kind];
-              const sql = preview.sql[c.id];
-              const invalid = preview.invalid[c.id];
+              const sql = fresh(c.id) ? preview.sql[c.id] : undefined;
+              const invalid = fresh(c.id) ? preview.invalid[c.id] : undefined;
               const failed = errors[c.id];
               return (
                 <li key={c.id} className="border-t border-border px-3 py-1">

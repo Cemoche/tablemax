@@ -37,8 +37,13 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
   );
   /** Why the cell the user tried to edit is read-only, or a failed load. */
   const [hint, setHint] = useState<string | null>(null);
-  /** The grid's selected row, by identity (display indexes move when rows are inserted). */
-  const [selected, setSelected] = useState<{ tempId: string } | { index: number } | null>(null);
+  /**
+   * The grid's selected record, by identity (display indexes move with inserts, reloads and
+   * pages): an insert's temp id, a loaded row's key, else its index in that very page.
+   */
+  const [selected, setSelected] = useState<
+    { tempId: string } | { keyId: string } | { index: number; page: ResultSet } | null
+  >(null);
 
   const editable = info !== null && readOnlyReason(info) === null;
   const readOnly = infoError
@@ -64,17 +69,23 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
 
   const selectedRow = (() => {
     if (!model || !selected) return null;
+    if ("page" in selected && selected.page !== result) return null;
     const i = model.rows.findIndex((r) =>
       "tempId" in selected
         ? r.kind === "insert" && r.tempId === selected.tempId
-        : r.kind === "row" && r.index === selected.index,
+        : "keyId" in selected
+          ? r.kind === "row" && r.keyId === selected.keyId
+          : r.kind === "row" && r.index === selected.index,
     );
     return i < 0 ? null : i;
   })();
 
   const select = (row: number | null) => {
     const r = row === null ? undefined : model?.rows[row];
-    setSelected(!r ? null : r.kind === "insert" ? { tempId: r.tempId } : { index: r.index });
+    if (!r || !result) setSelected(null);
+    else if (r.kind === "insert") setSelected({ tempId: r.tempId });
+    else if (r.keyId !== null) setSelected({ keyId: r.keyId });
+    else setSelected({ index: r.index, page: result });
   };
 
   const setValue = (row: number, col: number, value: EditValue) => {
@@ -155,6 +166,7 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
         onContextMenu: (row, col, x, y) => setMenuAt({ row, col, x, y }),
         onActivate: (row, col) => setHint(model.cell(row, col).reason),
         onEditorOpen: (open) => store().setEditorOpen(tabId, open),
+        selectedRow,
         onSelect: select,
       }
     : undefined;

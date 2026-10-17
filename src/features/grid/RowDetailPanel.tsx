@@ -29,7 +29,8 @@ type Full = { s: "loading" } | { s: "ready"; value: CellValue } | { s: "failed";
 
 /**
  * The whole values of the long-text cells of a loaded row (cell_value), per
- * `<rowKeyId>\0<column>`; forgotten when the page is reloaded.
+ * `<rowKeyId>\0<column>`; forgotten when the page is reloaded. A failed load is tried
+ * again by `retry` (or when the row is selected again).
  */
 function useFullValues(
   workspaceId: string,
@@ -37,7 +38,8 @@ function useFullValues(
   data: ResultSet,
   model: GridModel,
   row: number | null,
-): Record<string, Full> {
+): { values: Record<string, Full>; retry: () => void } {
+  const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{ data: ResultSet; values: Record<string, Full> }>({
     data,
     values: {},
@@ -66,13 +68,19 @@ function useFullValues(
       put(id, { s: "loading" });
       ipc.cellValue(workspaceId, object, key, c.name).then(
         (value) => put(id, { s: "ready", value }),
-        (e) => put(id, { s: "failed", message: toAppError(e).message }),
+        (e) => {
+          if (started.current.data === data) started.current.ids.delete(id);
+          put(id, { s: "failed", message: toAppError(e).message });
+        },
       );
     });
     // `key` is identified by keyId.
-  }, [workspaceId, object, data, keyId, index]);
+  }, [workspaceId, object, data, keyId, index, attempt]);
 
-  return state.data === data ? state.values : {};
+  return {
+    values: state.data === data ? state.values : {},
+    retry: () => setAttempt((n) => n + 1),
+  };
 }
 
 /** What a field shows for `value`: JSON indented, NULL as an empty field with a placeholder. */
@@ -94,6 +102,9 @@ function shown(value: CellValue | "default", full: Full | undefined): { text: st
  */
 export function RowDetailPanel(p: Props) {
   const full = useFullValues(p.workspaceId, p.object, p.data, p.model, p.row);
+  // Fields are keyed by record and page: a reload starts them afresh (no draft carried over).
+  const [page, setPage] = useState({ data: p.data, n: 0 });
+  if (page.data !== p.data) setPage({ data: p.data, n: page.n + 1 });
   const r = p.row === null ? undefined : p.model.rows[p.row];
   const tableEditable = p.info !== null && readOnlyReason(p.info) === null;
   const keyIssue = r?.kind === "row" ? r.keyIssue : null;
@@ -121,16 +132,21 @@ export function RowDetailPanel(p: Props) {
           <>
             {keyIssue && <p className="mb-2 text-muted">{keyIssue}</p>}
             {p.model.columns.map((name, col) => {
-              const id = r.kind === "insert" ? `insert:${r.tempId}` : `row:${r.index}`;
               const rowKeyId = r.kind === "row" ? r.keyId : null;
+              const id =
+                r.kind === "insert"
+                  ? `insert:${r.tempId}`
+                  : rowKeyId !== null
+                    ? `key:${rowKeyId}`
+                    : `index:${r.index}`;
               return (
                 <Field
-                  key={`${id}\u0000${name}`}
+                  key={`${page.n}\u0000${id}\u0000${name}`}
                   name={name}
                   type={p.info?.columns.find((c) => c.name === name)?.typeName ?? p.data.columns[col]?.typeName ?? ""}
                   cell={p.model.cell(p.row!, col)}
-                  loaded={r.kind === "row" ? (p.data.rows[r.index]?.[col] ?? null) : null}
-                  full={rowKeyId === null ? undefined : full[`${rowKeyId}\u0000${name}`]}
+                  full={rowKeyId === null ? undefined : full.values[`${rowKeyId}\u0000${name}`]}
+                  onRetry={full.retry}
                   actions={menuActions(p.model, p.row!, col).filter((a) => FIELD_ACTIONS.includes(a))}
                   showReason={tableEditable && !keyIssue}
                   onChange={(v) => p.onChange(p.row!, col, v)}
@@ -149,23 +165,26 @@ interface FieldProps {
   name: string;
   type: string;
   cell: EditCell;
-  /** The loaded value (null for an inserted row). */
-  loaded: CellValue | null;
   full: Full | undefined;
   actions: MenuAction[];
   /** Say why this column is read-only (not when the whole table or row is). */
   showReason: boolean;
   onChange: (value: EditValue) => void;
   onAction: (action: MenuAction) => void;
+  onRetry: () => void;
 }
 
-function Field({ name, type, cell, loaded, full, actions, showReason, onChange, onAction }: FieldProps) {
+/** The pending value a field shows, as written back. */
+const editValueOf = (v: CellValue | "default"): EditValue =>
+  v === "default" ? { t: "default" } : v.t === "null" ? { t: "null" } : { t: "text", v: cellText(v) };
+
+function Field({ name, type, cell, full, actions, showReason, onChange, onAction, onRetry }: FieldProps) {
   const id = useId();
   /** What the user typed, while the field has the focus (the store has it too). */
   const [draft, setDraft] = useState<string | null>(null);
+  /** What the field held before this round of typing: typing that text back restores it. */
+  const start = useRef<{ text: string; value: EditValue | null } | null>(null);
   const view = shown(cell.value, full);
-  // What the field shows without a pending value: typing it back reverts the cell.
-  const base = loaded ? shown(loaded, full).text : null;
   const waiting = cell.truncated && full?.s !== "ready";
   const editable = cell.editable && !waiting;
   const noValue = cell.value === "default" || cell.value.t === "null";
@@ -175,9 +194,15 @@ function Field({ name, type, cell, loaded, full, actions, showReason, onChange, 
   );
 
   const change = (text: string) => {
+    start.current ??= { text: draft ?? view.text, value: cell.edited ? editValueOf(cell.value) : null };
+    const from = start.current;
     setDraft(text);
-    if (base !== null && text === base) onAction("revertCell");
-    else onChange({ t: "text", v: text });
+    if (from && text === from.text) {
+      // Back to the start: the loaded value (revert, so JSON is never rewritten) or the
+      // pending value it had (e.g. an empty string set on a NULL column stays '').
+      if (from.value) onChange(from.value);
+      else onAction("revertCell");
+    } else onChange({ t: "text", v: text });
   };
 
   const text = draft ?? view.text;
@@ -198,14 +223,26 @@ function Field({ name, type, cell, loaded, full, actions, showReason, onChange, 
         rows={Math.min(12, Math.max(1, text.split("\n").length))}
         spellCheck={false}
         onChange={(e) => change(e.target.value)}
-        onBlur={() => setDraft(null)}
+        onBlur={() => {
+          setDraft(null);
+          start.current = null;
+        }}
         className={`mt-1 block w-full resize-y rounded-sm border border-border px-2 py-1 font-mono outline-none focus:border-accent ${
           cell.edited ? "bg-pending-edit" : "bg-surface"
         } ${editable ? "text-fg" : "text-muted"}`}
       />
       {full?.s === "loading" && <p className="text-xs text-muted">{strings.grid.editorLoading}</p>}
       {full?.s === "failed" && (
-        <p className="text-xs text-danger">{strings.grid.editorLoadFailed(full.message)}</p>
+        <p className="flex items-baseline gap-2 text-xs text-danger">
+          <span className="min-w-0 break-words">{strings.grid.editorLoadFailed(full.message)}</span>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="shrink-0 rounded-sm border border-border px-1.5 text-fg hover:bg-surface-2"
+          >
+            {strings.grid.retry}
+          </button>
+        </p>
       )}
       {showReason && cell.reason && <p className="text-xs text-muted">{cell.reason}</p>}
       {offered.length > 0 && (

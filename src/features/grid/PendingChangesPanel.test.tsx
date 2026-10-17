@@ -168,3 +168,31 @@ test("Undo is disabled while a commit runs", async () => {
     await done;
   });
 });
+
+test("a changed line hides its old SQL until the new preview arrives", async () => {
+  const second = deferred<string[]>();
+  vi.mocked(ipc.changesPreview)
+    .mockResolvedValueOnce(["OLD UPDATE", "DELETE 2"])
+    .mockReturnValueOnce(second.promise);
+  pending().setCell("t1", key(1), "note", text("x"), row(1), names);
+  pending().toggleDelete("t1", key(2));
+  render(<PendingChangesPanel workspaceId="w1" tabId="t1" object={obj} />);
+  await screen.findByText("OLD UPDATE");
+  act(() => void pending().setCell("t1", key(1), "qty", text("9"), row(1), names));
+  // The update changed: its SQL is stale; the delete did not.
+  expect(screen.queryByText("OLD UPDATE")).toBeNull();
+  expect(screen.getByText("DELETE 2")).toBeInTheDocument();
+  await waitFor(() => expect(ipc.changesPreview).toHaveBeenCalledTimes(2));
+  await act(async () => second.resolve(["NEW UPDATE", "DELETE 2"]));
+  expect(screen.getByText("NEW UPDATE")).toBeInTheDocument();
+});
+
+test("text key values are quoted", () => {
+  vi.mocked(ipc.changesPreview).mockResolvedValue([]);
+  pending().toggleDelete("t1", [
+    ["name", { t: "text", v: "O'Brien, a" }],
+    ["n", int(3)],
+  ]);
+  render(<PendingChangesPanel workspaceId="w1" tabId="t1" object={obj} />);
+  expect(items()[0]).toHaveTextContent("name = 'O''Brien, a', n = 3");
+});

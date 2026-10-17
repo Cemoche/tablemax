@@ -20,6 +20,7 @@ import type { ResultSet, SortDir } from "../../lib/types";
 import { CellEditorOverlay } from "./CellEditorOverlay";
 import { type CellContent, cellContent } from "./cellContent";
 import type { GridModel } from "./editModel";
+import { selectedRowOf, withSelectedRow } from "./gridSelection";
 import { useGridTheme } from "./gridTheme";
 
 const ROW_HEIGHT = 24;
@@ -41,6 +42,8 @@ export interface GridEditing {
   onEditorOpen: (open: boolean) => void;
   /** The selected row changed (the current cell's row; null when nothing is selected). */
   onSelect: (row: number | null) => void;
+  /** Where the selected record is now (it moves with inserts, reloads and pages). */
+  selectedRow: number | null;
 }
 
 export interface DataGridProps {
@@ -70,11 +73,15 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
   const activated = useRef<Item | null>(null);
   /** Cancels the open cell editor (set while one is open). */
   const closeEditor = useRef<(() => void) | null>(null);
-  /** Controlled for table grids, to report the selected row. */
+  /** Controlled for table grids: reports the selected row and follows the selected record. */
   const [selection, setSelection] = useState<GridSelection>(() => ({
     columns: CompactSelection.empty(),
     rows: CompactSelection.empty(),
   }));
+  if (editing) {
+    const moved = withSelectedRow(selection, editing.selectedRow);
+    if (moved !== selection) setSelection(moved);
+  }
 
   // New data (a reload) closes an open editor: its row index may now be another row.
   const shownData = useRef(data);
@@ -239,7 +246,7 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
         gridSelection: selection,
         onGridSelectionChange: (s: GridSelection) => {
           setSelection(s);
-          editingRef.current?.onSelect(s.current?.cell[1] ?? s.rows.first() ?? null);
+          editingRef.current?.onSelect(selectedRowOf(s));
         },
         onCellActivated: ([col, row]: Item) => {
           activated.current = [col, row];
