@@ -27,8 +27,10 @@
 //! that sees through string literals, quoted identifiers and comments, and rejects any
 //! input with more than one statement as `Invalid` BEFORE anything reaches the server.
 //! Executable comments (`/*! ... */`, `/*M! ... */`) are scanned as code since the server
-//! runs their content. The lexer follows the session's `sql_mode` (NO_BACKSLASH_ESCAPES,
-//! ANSI_QUOTES): it is read at connect and re-read after any statement that may change it.
+//! runs their content, and also as plain comments (a server below their version skips
+//! them): either reading finding a second statement rejects the input. The lexer follows
+//! the session's `sql_mode` (NO_BACKSLASH_ESCAPES, ANSI_QUOTES): it is read at connect and
+//! re-read after any statement that may change it.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -310,7 +312,18 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
 /// True when `sql` holds more than one statement (a `;` followed by anything other than
 /// whitespace or comments). Sees through '...', "...", `...`, `-- `, `#` and `/* */`,
 /// honouring the session's NO_BACKSLASH_ESCAPES / ANSI_QUOTES modes.
+///
+/// Executable comments are read both ways: content as code (what the server runs), and
+/// as a plain comment ending at the first `*/` (what a server below a `/*!50000`
+/// version, or MySQL for MariaDB's `/*M!`, reads). Either reading finding a second
+/// statement is enough.
 fn has_multiple_statements(sql: &str, modes: Modes) -> bool {
+    scan_multiple_statements(sql, modes, false) || scan_multiple_statements(sql, modes, true)
+}
+
+/// One reading of [`has_multiple_statements`]; `exec_as_comment` reads executable
+/// comments as plain comments.
+fn scan_multiple_statements(sql: &str, modes: Modes, exec_as_comment: bool) -> bool {
     let b = sql.as_bytes();
     let n = b.len();
     let mut i = 0;
@@ -339,10 +352,10 @@ fn has_multiple_statements(sql: &str, modes: Modes) -> bool {
             continue;
         }
         if b[i..].starts_with(b"/*") {
-            if b[i..].starts_with(b"/*!") {
+            if b[i..].starts_with(b"/*!") && !exec_as_comment {
                 in_exec_comment = true;
                 i += 3;
-            } else if b[i..].starts_with(b"/*M!") {
+            } else if b[i..].starts_with(b"/*M!") && !exec_as_comment {
                 in_exec_comment = true;
                 i += 4;
             } else {
@@ -1008,6 +1021,30 @@ mod tests {
             "select 1 -- c\n; select 2",
         ] {
             assert!(has_multiple_statements(multi, DEFAULT), "{multi}");
+        }
+    }
+
+    /// A server below an executable comment's version (or MySQL, for MariaDB's `/*M!`)
+    /// reads it as a plain comment ending at the first `*/`: both readings are checked.
+    #[test]
+    fn executable_comments_are_read_both_ways() {
+        for multi in [
+            "select 1 /*!99999 ' */ ; delete from t -- ' */",
+            "select 1 /*M! ' */ ; delete from t -- ' */",
+            "select 1 /*M!100100 \" */ ; delete from t -- \" */",
+            "select 1 /*!80000 ` */ ; delete from t -- ` */",
+            "select 1 /*! ' */ ; delete from t -- ' */",
+        ] {
+            for modes in [DEFAULT, NBE, ANSI] {
+                assert!(has_multiple_statements(multi, modes), "{multi}");
+            }
+        }
+        for single in [
+            "select 1 /*!50000 , 2 */",
+            "select /*!50000 STRAIGHT_JOIN */ 1",
+            "select 1 /*M!100100 , 2 */ ;",
+        ] {
+            assert!(!has_multiple_statements(single, DEFAULT), "{single}");
         }
     }
 

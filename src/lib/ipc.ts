@@ -95,10 +95,9 @@ export const sqlSessionClose = (sessionId: string) =>
  * resolving. The promise settles after the backend sent `batchFinished` (or rejects
  * on a pre-flight error such as an unknown session or a query already running);
  * UI state must be driven by the events.
- */
-/**
- * Runs a batch. Without `confirmed`, a batch the connection's safe mode wants confirmed
- * rejects with `confirmationRequired` before anything runs (no event is sent).
+ * Safe mode: without `confirmed`, a batch the connection's safe mode wants confirmed
+ * rejects with `confirmationRequired` before anything runs (no event is sent, not even
+ * `batchFinished`); re-run it with `confirmed = true` once the user confirmed.
  */
 export const sqlExecute = (
   sessionId: string,

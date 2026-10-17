@@ -46,21 +46,28 @@ pub fn needs_confirmation(mode: SafeMode, classes: &[StatementClass]) -> Vec<usi
         .collect()
 }
 
-/// Classifies one statement, strictly: it is a `Read` only when its first significant
-/// word (after comments and opening parentheses) is `SELECT`, `WITH`, `VALUES`, `SHOW`,
-/// `TABLE` (PostgreSQL), or `EXPLAIN` / `DESCRIBE` / `DESC` without `ANALYZE`, and
-/// nothing in it (outside strings, quoted identifiers and comments) writes or locks:
+/// Classifies one statement, strictly: it is a `Read` only when it is
+/// - a query: first significant word (after comments and opening parentheses) `SELECT`,
+///   `WITH`, `VALUES` or `TABLE` (PostgreSQL);
+/// - `SHOW …`;
+/// - `EXPLAIN` / `DESCRIBE` / `DESC` without `ANALYZE` (it runs the statement) whose
+///   explained statement is itself a read query (an allow-list, see [`explain_is_read`]),
+///   or in MySQL a bare table name (`DESCRIBE t [col]`);
+///
+/// and nothing in it (outside strings, quoted identifiers and comments) writes or locks:
 /// `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `INTO`, `LOCK`, a `REPLACE` that is not a
 /// function call, `FOR UPDATE | SHARE | NO KEY UPDATE | KEY SHARE`. Everything else is a
 /// `Write`: other statements, more code after a `;`, empty input, and anything the lexer
 /// cannot read (unterminated string, quoted identifier or comment).
 ///
 /// The keyword checks look at every depth, not only the top level (PostgreSQL also
-/// locks rows for a `FOR UPDATE` in a subquery). MySQL executable comments
-/// (`/*! … */`, `/*!50000 … */`, MariaDB `/*M! … */`) are read as code. Server settings
-/// that change how strings end (MySQL `NO_BACKSLASH_ESCAPES` / `ANSI_QUOTES`,
-/// PostgreSQL `standard_conforming_strings`) are unknown here: the statement is lexed
-/// under each of them and is a `Read` only when it is one under all.
+/// locks rows for a `FOR UPDATE` in a subquery). What is unknown here is lexed every
+/// way, and the statement is a `Read` only when it is one under all readings:
+/// - server settings that change how strings end (MySQL `NO_BACKSLASH_ESCAPES` /
+///   `ANSI_QUOTES`, PostgreSQL `standard_conforming_strings`);
+/// - MySQL / MariaDB executable comments (`/*! … */`, `/*!50000 … */`, `/*M! … */`):
+///   content as code, and as a plain comment ending at the first `*/` (a server below
+///   the version, or MySQL for `/*M!`, skips it).
 ///
 /// A `SELECT` calling a function that writes (a user function, `nextval`, …) is still a
 /// `Read`: functions are not inspected.
@@ -82,8 +89,12 @@ enum Tok {
     Open,
     Close,
     Semi,
-    /// Anything else: literals, quoted identifiers, parameters, operators.
-    Other,
+    /// A string literal or a quoted identifier (never a keyword).
+    Quoted,
+    /// A number or a parameter (`$1`).
+    Literal,
+    /// Any other character (operators, `,`, `.`, `=`…).
+    Punct(char),
 }
 
 /// One reading of the string syntax (see [`classify`]).
@@ -95,27 +106,42 @@ struct Lexing {
     single_backslash: bool,
     /// Backslash escapes in `"…"` (MySQL without `ANSI_QUOTES`).
     double_backslash: bool,
+    /// MySQL / MariaDB: executable comments are plain comments ending at the first `*/`
+    /// (what a server below a `/*!50000` version, or MySQL for MariaDB's `/*M!`, reads);
+    /// otherwise their content is code. Unversioned `/*! … */` is always run, but is
+    /// read both ways too: a statement whose two readings differ is not worth trusting.
+    exec_as_comment: bool,
 }
 
 fn lexings(dialect: Dialect) -> &'static [Lexing] {
-    const fn l(dialect: Dialect, single_backslash: bool, double_backslash: bool) -> Lexing {
+    const fn l(
+        dialect: Dialect,
+        single_backslash: bool,
+        double_backslash: bool,
+        exec_as_comment: bool,
+    ) -> Lexing {
         Lexing {
             dialect,
             single_backslash,
             double_backslash,
+            exec_as_comment,
         }
     }
     const PG: &[Lexing] = &[
-        l(Dialect::Postgres, false, false),
-        l(Dialect::Postgres, true, false),
+        l(Dialect::Postgres, false, false, false),
+        l(Dialect::Postgres, true, false, false),
     ];
     const MYSQL: &[Lexing] = &[
-        // Default, NO_BACKSLASH_ESCAPES, ANSI_QUOTES.
-        l(Dialect::MySql, true, true),
-        l(Dialect::MySql, false, false),
-        l(Dialect::MySql, true, false),
+        // Default, NO_BACKSLASH_ESCAPES, ANSI_QUOTES; each with executable comments
+        // read as code, then as comments.
+        l(Dialect::MySql, true, true, false),
+        l(Dialect::MySql, false, false, false),
+        l(Dialect::MySql, true, false, false),
+        l(Dialect::MySql, true, true, true),
+        l(Dialect::MySql, false, false, true),
+        l(Dialect::MySql, true, false, true),
     ];
-    const SQLITE: &[Lexing] = &[l(Dialect::Sqlite, false, false)];
+    const SQLITE: &[Lexing] = &[l(Dialect::Sqlite, false, false, false)];
     match dialect {
         Dialect::Postgres => PG,
         Dialect::MySql => MYSQL,
@@ -192,7 +218,8 @@ fn tokens(chars: &[char], lx: Lexing) -> Option<Vec<Tok>> {
                 i += 1;
             }
         } else if c == '/' && next == Some('*') {
-            if mysql && (starts_with(chars, i, "/*!") || starts_with(chars, i, "/*M!")) {
+            let exec = mysql && (starts_with(chars, i, "/*!") || starts_with(chars, i, "/*M!"));
+            if exec && !lx.exec_as_comment {
                 if in_exec {
                     return None;
                 }
@@ -203,7 +230,8 @@ fn tokens(chars: &[char], lx: Lexing) -> Option<Vec<Tok>> {
                     i += 1;
                 }
             } else {
-                // PostgreSQL comments nest; MySQL and SQLite ones end at the first `*/`.
+                // PostgreSQL comments nest; MySQL and SQLite ones end at the first `*/`
+                // (a nested `/*` inside an executable comment is not looked at here).
                 let mut depth = 1;
                 i += 2;
                 while depth > 0 {
@@ -226,16 +254,16 @@ fn tokens(chars: &[char], lx: Lexing) -> Option<Vec<Tok>> {
             i += 2;
         } else if c == '\'' {
             i = skip_quoted(chars, i + 1, '\'', lx.single_backslash)?;
-            out.push(Tok::Other);
+            out.push(Tok::Quoted);
         } else if c == '"' {
             i = skip_quoted(chars, i + 1, '"', mysql && lx.double_backslash)?;
-            out.push(Tok::Other);
+            out.push(Tok::Quoted);
         } else if c == '`' && !pg {
             i = skip_quoted(chars, i + 1, '`', false)?;
-            out.push(Tok::Other);
+            out.push(Tok::Quoted);
         } else if c == '[' && lx.dialect == Dialect::Sqlite {
             i += 1 + chars[i + 1..].iter().position(|&c| c == ']')? + 1;
-            out.push(Tok::Other);
+            out.push(Tok::Quoted);
         } else if c == '$' && pg {
             i += 1;
             if next.is_some_and(|c| c.is_ascii_digit()) {
@@ -243,6 +271,7 @@ fn tokens(chars: &[char], lx: Lexing) -> Option<Vec<Tok>> {
                 while i < n && chars[i].is_ascii_digit() {
                     i += 1;
                 }
+                out.push(Tok::Literal);
             } else {
                 let mut j = i;
                 while j < n && is_word_char(chars[j]) && chars[j] != '$' {
@@ -253,9 +282,11 @@ fn tokens(chars: &[char], lx: Lexing) -> Option<Vec<Tok>> {
                     let delim = &chars[i - 1..=j];
                     let end = find(chars, j + 1, delim)?;
                     i = end + delim.len();
+                    out.push(Tok::Quoted);
+                } else {
+                    out.push(Tok::Punct('$'));
                 }
             }
-            out.push(Tok::Other);
         } else if is_word_start(c, lx.dialect) {
             let start = i;
             while i < n && is_word_char(chars[i]) {
@@ -268,7 +299,7 @@ fn tokens(chars: &[char], lx: Lexing) -> Option<Vec<Tok>> {
             if pg && word == "E" && chars.get(i) == Some(&'\'') {
                 // PostgreSQL escape string: E'…' always takes backslash escapes.
                 i = skip_quoted(chars, i + 1, '\'', true)?;
-                out.push(Tok::Other);
+                out.push(Tok::Quoted);
             } else {
                 out.push(Tok::Word(word));
             }
@@ -276,13 +307,13 @@ fn tokens(chars: &[char], lx: Lexing) -> Option<Vec<Tok>> {
             while i < n && (chars[i].is_ascii_digit() || chars[i] == '.') {
                 i += 1;
             }
-            out.push(Tok::Other);
+            out.push(Tok::Literal);
         } else {
             out.push(match c {
                 '(' => Tok::Open,
                 ')' => Tok::Close,
                 ';' => Tok::Semi,
-                _ => Tok::Other,
+                c => Tok::Punct(c),
             });
             i += 1;
         }
@@ -314,24 +345,152 @@ fn classify_tokens(dialect: Dialect, toks: &[Tok]) -> StatementClass {
     if toks[end..].iter().any(|t| *t != Tok::Semi) {
         return StatementClass::Write;
     }
-    let toks = &toks[..end];
-    let Some(Tok::Word(first)) = toks.iter().find(|t| **t != Tok::Open) else {
-        return StatementClass::Write;
-    };
-    let read = match first.as_str() {
-        "SELECT" | "WITH" | "VALUES" | "SHOW" => true,
-        "TABLE" => dialect == Dialect::Postgres,
-        // `EXPLAIN ANALYZE` runs the statement (PostgreSQL, MySQL `EXPLAIN|DESCRIBE ANALYZE`).
-        "EXPLAIN" | "DESCRIBE" | "DESC" => {
-            !toks.iter().any(|t| is_word(t, &["ANALYZE", "ANALYSE"]))
-        }
-        _ => false,
-    };
-    if read && !writes_or_locks(toks) {
+    if is_read(dialect, &toks[..end]) {
         StatementClass::Read
     } else {
         StatementClass::Write
     }
+}
+
+fn is_read(dialect: Dialect, toks: &[Tok]) -> bool {
+    match toks.first() {
+        Some(Tok::Word(w)) if w == "SHOW" => !writes_or_locks(toks),
+        Some(Tok::Word(w)) if matches!(w.as_str(), "EXPLAIN" | "DESCRIBE" | "DESC") => {
+            explain_is_read(dialect, &toks[1..])
+        }
+        _ => query_is_read(dialect, toks),
+    }
+}
+
+/// A query that only reads: `SELECT`, `WITH`, `VALUES` or (PostgreSQL) `TABLE`, possibly
+/// parenthesized, with nothing in it that writes or locks.
+fn query_is_read(dialect: Dialect, toks: &[Tok]) -> bool {
+    let Some(Tok::Word(first)) = toks.iter().find(|t| **t != Tok::Open) else {
+        return false;
+    };
+    let read = match first.as_str() {
+        "SELECT" | "WITH" | "VALUES" => true,
+        "TABLE" => dialect == Dialect::Postgres,
+        _ => false,
+    };
+    read && !writes_or_locks(toks)
+}
+
+/// What follows `EXPLAIN` / `DESCRIBE` / `DESC`. A read only without `ANALYZE` (it runs
+/// the statement) and when, past the options, what is explained is itself a read query
+/// (an allow-list: `EXPLAIN (…) CREATE TABLE … AS`, `EXECUTE …` are writes), or, in
+/// MySQL, a bare table name with an optional column (`DESCRIBE t [col]`).
+///
+/// PostgreSQL takes any identifier as an option name, quoted ones included
+/// (`("analyze")`, `U&"…"`): its option list may only hold unquoted words, numbers and
+/// commas.
+fn explain_is_read(dialect: Dialect, rest: &[Tok]) -> bool {
+    if rest.iter().any(|t| is_word(t, &["ANALYZE", "ANALYSE"])) {
+        return false;
+    }
+    let mut rest = rest;
+    if dialect == Dialect::Postgres && rest.first() == Some(&Tok::Open) {
+        let Some(close) = matching_close(rest) else {
+            return false;
+        };
+        let plain = |t: &Tok| matches!(t, Tok::Word(_) | Tok::Literal | Tok::Punct(','));
+        if !rest[1..close].iter().all(plain) {
+            return false;
+        }
+        rest = &rest[close + 1..];
+    } else {
+        loop {
+            rest = match rest {
+                [Tok::Word(w), tail @ ..]
+                    if matches!(w.as_str(), "VERBOSE" | "EXTENDED" | "PARTITIONS") =>
+                {
+                    tail
+                }
+                [Tok::Word(q), Tok::Word(p), tail @ ..] if q == "QUERY" && p == "PLAN" => tail,
+                [Tok::Word(f), Tok::Punct('='), Tok::Word(_), tail @ ..] if f == "FORMAT" => tail,
+                _ => break,
+            };
+        }
+    }
+    query_is_read(dialect, rest) || (dialect == Dialect::MySql && is_bare_name(rest))
+}
+
+/// Index of the `)` closing the `(` at `toks[0]`.
+fn matching_close(toks: &[Tok]) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, t) in toks.iter().enumerate() {
+        match t {
+            Tok::Open => depth += 1,
+            Tok::Close => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Statement keywords never taken for a table name in [`is_bare_name`] (a table named
+/// like one has to be quoted there).
+const STATEMENT_WORDS: &[&str] = &[
+    "SELECT",
+    "WITH",
+    "VALUES",
+    "TABLE",
+    "SHOW",
+    "EXPLAIN",
+    "DESCRIBE",
+    "DESC",
+    "EXECUTE",
+    "CREATE",
+    "ALTER",
+    "DROP",
+    "TRUNCATE",
+    "RENAME",
+    "CALL",
+    "DO",
+    "SET",
+    "DECLARE",
+    "PREPARE",
+    "DEALLOCATE",
+    "GRANT",
+    "REVOKE",
+    "LOAD",
+    "HANDLER",
+    "OPTIMIZE",
+    "REPAIR",
+    "CHECK",
+    "FLUSH",
+    "KILL",
+    "RESET",
+    "PURGE",
+    "INSTALL",
+    "UNINSTALL",
+    "COPY",
+];
+
+/// `name`, `schema.name` (each part an unquoted non-keyword word or a quoted name), then
+/// at most one more such part (a column) or a pattern string, and nothing else.
+fn is_bare_name(toks: &[Tok]) -> bool {
+    let part = |t: Option<&Tok>| match t {
+        Some(Tok::Word(w)) => !STATEMENT_WORDS.contains(&w.as_str()),
+        Some(Tok::Quoted) => true,
+        _ => false,
+    };
+    if !part(toks.first()) || writes_or_locks(toks) {
+        return false;
+    }
+    let mut i = 1;
+    while toks.get(i) == Some(&Tok::Punct('.')) && part(toks.get(i + 1)) {
+        i += 2;
+    }
+    if part(toks.get(i)) {
+        i += 1;
+    }
+    i == toks.len()
 }
 
 #[cfg(test)]
@@ -366,8 +525,6 @@ mod tests {
                 "select 1 ;  \n",
                 "show tables",
                 "SHOW COLUMNS FROM t",
-                "describe t",
-                "desc t",
                 "explain select * from t",
                 "explain select 'analyze'",
                 "with a as (select 1) select * from a",
@@ -401,6 +558,8 @@ mod tests {
                 "select a$b$ from t",
                 "select $1",
                 "explain (format json) select 1",
+                "explain (verbose, costs 0, format json) select * from t",
+                "explain verbose select 1",
                 "select 1 # 2",
                 "select 1 --x; delete from t",
                 "select 1 /* a /* b */ ; delete from t */",
@@ -410,6 +569,15 @@ mod tests {
         check(
             &[Dialect::MySql],
             &[
+                "describe t",
+                "desc t",
+                "DESCRIBE db.t",
+                "describe `t` `col`",
+                "describe t 'a%'",
+                "explain t",
+                "explain format=json select 1",
+                "explain extended select 1",
+                "select 1 /*!50000 , 2 */",
                 "select `delete` from t",
                 "select `a``; delete from t` from t",
                 "select 1 # ; delete from t",
@@ -424,6 +592,8 @@ mod tests {
         check(
             &[Dialect::Sqlite],
             &[
+                "explain query plan select * from t",
+                "explain select 1",
                 "select [delete] from t",
                 "select [a;delete from t] from t",
                 "select `a; delete` from t",
@@ -515,6 +685,49 @@ mod tests {
             (&ALL, "explain (analyze, buffers) update t set a = 1"),
             (&[Dialect::MySql], "describe analyze select 1"),
             (&[Dialect::MySql], "desc analyze select 1"),
+            // PostgreSQL takes any identifier as an EXPLAIN option name, quoted ones too,
+            // and EXPLAIN ANALYZE runs the statement.
+            (
+                &ALL,
+                "EXPLAIN (\"analyze\") CREATE TABLE stolen AS SELECT * FROM users",
+            ),
+            (
+                &ALL,
+                "EXPLAIN (\"analyze\") CREATE MATERIALIZED VIEW mv AS SELECT 1",
+            ),
+            (&ALL, "EXPLAIN (\"analyze\") EXECUTE p"),
+            (&ALL, "EXPLAIN (\"analyze\") SELECT 1"),
+            (&ALL, "explain (verbose, \"analyze\" true) select 1"),
+            (
+                &ALL,
+                "EXPLAIN (U&\"analyze\") CREATE TABLE stolen AS SELECT * FROM users",
+            ),
+            (&ALL, "EXPLAIN (U&\"\\0061nalyze\") EXECUTE p"),
+            (&ALL, "explain (format 'json', \"analyze\") execute p"),
+            (&ALL, "explain (\"ANALYZE\") select 1"),
+            // Allow-list of explained statements: only read queries.
+            (&ALL, "explain create table x as select 1"),
+            (
+                &ALL,
+                "explain (verbose) create materialized view mv as select 1",
+            ),
+            (&ALL, "explain execute p"),
+            (&ALL, "explain verbose execute p"),
+            (&ALL, "explain declare c cursor for select 1"),
+            (&ALL, "explain show tables"),
+            (&ALL, "explain"),
+            (&ALL, "explain ()"),
+            (&ALL, "explain (verbose select 1"),
+            (&[Dialect::Postgres, Dialect::Sqlite], "explain t"),
+            (&[Dialect::Postgres, Dialect::Sqlite], "describe t"),
+            (&[Dialect::MySql], "explain t; delete from t"),
+            (&[Dialect::MySql], "describe t col extra"),
+            (&[Dialect::MySql], "explain format=json delete from t"),
+            (&[Dialect::Sqlite], "explain query plan delete from t"),
+            (
+                &[Dialect::Sqlite],
+                "explain query plan insert into t values (1)",
+            ),
             (&ALL, "SELECT * INTO new_table FROM t"),
             (&ALL, "select a into @x from t"),
             (&[Dialect::MySql], "select * from t into outfile '/tmp/x'"),
@@ -546,6 +759,36 @@ mod tests {
             (
                 &[Dialect::MySql],
                 "select 1 /*!50000 , (select 1 for update) */",
+            ),
+            // A server below the version (or MySQL, for /*M!) reads an executable comment
+            // as a plain comment ending at the first `*/`.
+            (
+                &[Dialect::MySql],
+                "select 1 /*!99999 ' */ ; delete from t -- ' */",
+            ),
+            (
+                &[Dialect::MySql],
+                "select 1 /*M! ' */ ; delete from t -- ' */",
+            ),
+            (
+                &[Dialect::MySql],
+                "select 1 /*M!100100 ' */ ; delete from t -- ' */",
+            ),
+            (
+                &[Dialect::MySql],
+                "select 1 /*!80000 ' */ into outfile '/tmp/x' -- ' */",
+            ),
+            (
+                &[Dialect::MySql],
+                "select 1 /*!99999 \" */ for update -- \" */",
+            ),
+            (
+                &[Dialect::MySql],
+                "select 1 /*!99999 ` */ ; delete from t -- ` */",
+            ),
+            (
+                &[Dialect::MySql],
+                "select 1 /*! ' */ ; delete from t -- ' */",
             ),
             // A statement hidden after a `;` (one driver call may run several).
             (&ALL, "select 1; delete from t"),
@@ -630,13 +873,9 @@ mod tests {
             Write,
         );
         check(&[Dialect::Sqlite], &["select [x"], Write);
-        // A MySQL executable comment is code, but it is just a comment elsewhere.
-        check(
-            &[Dialect::Postgres, Dialect::Sqlite],
-            &["/*!50000 select 1 */"],
-            Write,
-        );
-        check(&[Dialect::MySql], &["/*!50000 select 1 */"], Read);
+        // Just a comment outside MySQL; in MySQL also read as a comment (a server below
+        // the version runs nothing), so not a recognised read either.
+        check(&ALL, &["/*!50000 select 1 */", "/*!select 1*/"], Write);
     }
 
     #[test]
