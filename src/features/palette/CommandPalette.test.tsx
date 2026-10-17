@@ -7,6 +7,7 @@ import type { Catalog, ConnectionConfig } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
 import { useConnections } from "../../stores/connections";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { registerEditorCommands } from "../editor/editorCommands";
 import { CommandPalette } from "./CommandPalette";
 
 vi.mock("../../lib/ipc");
@@ -211,4 +212,44 @@ test("selecting a tab activates it", async () => {
   const user = await open(MOD_K);
   await user.click(await screen.findByText("Report"));
   expect(useWorkspaces.getState().workspaces[0].activeTabId).toBe("q2");
+});
+
+test("Escape returns focus to the element focused before opening", async () => {
+  const btn = document.createElement("button");
+  document.body.appendChild(btn);
+  btn.focus();
+  const user = await open(MOD_K);
+  await screen.findByRole("dialog");
+  await user.keyboard("{Escape}");
+  expect(btn).toHaveFocus();
+  btn.remove();
+});
+
+test("an action that focuses its own target keeps that focus", async () => {
+  const btn = document.createElement("button");
+  const editor = document.createElement("textarea");
+  document.body.append(btn, editor);
+  btn.focus();
+  const off = registerEditorCommands("q1", { toggleComment: () => editor.focus() });
+  const user = await open(MOD_K);
+  await user.click(await screen.findByText(strings.palette.action.toggleComment));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  await new Promise((r) => setTimeout(r, 10));
+  expect(editor).toHaveFocus();
+  off();
+  btn.remove();
+  editor.remove();
+});
+
+test("after selecting an object, focus is not left inside the removed dialog", async () => {
+  const btn = document.createElement("button");
+  document.body.appendChild(btn);
+  btn.focus();
+  const user = await open(MOD_P);
+  await user.click(await screen.findByText("users"));
+  await new Promise((r) => setTimeout(r, 10));
+  expect(document.body.contains(document.activeElement)).toBe(true);
+  expect(document.activeElement?.closest('[role="dialog"]')).toBeNull();
+  expect(btn).toHaveFocus();
+  btn.remove();
 });

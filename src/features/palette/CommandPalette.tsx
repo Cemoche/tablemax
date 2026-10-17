@@ -67,6 +67,22 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
     returnFocus.current = null;
     if (el instanceof HTMLElement) el.focus();
   };
+  /**
+   * Closes, runs the action (palette still mounted, so an action may focus its own
+   * target), then gives focus back to the opener only if nothing else holds it and the
+   * opener still exists: a tab or object the action opened keeps its own focus.
+   */
+  const closeAfter = (fn: () => void) => {
+    const el = returnFocus.current;
+    returnFocus.current = null;
+    setMode(null);
+    setSub(null);
+    fn();
+    setTimeout(() => {
+      const active = document.activeElement;
+      if ((!active || active === document.body) && el instanceof HTMLElement && el.isConnected) el.focus();
+    }, 0);
+  };
   const toggle = (m: Mode) => {
     if (mode === null) {
       if (!isModalOpen()) openPalette(m);
@@ -131,10 +147,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
 
   if (!open) return null;
 
-  const run = (fn: () => void) => () => {
-    fn();
-    close();
-  };
+  const run = (fn: () => void) => () => closeAfter(fn);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
@@ -197,8 +210,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
             onSelect={() => {
               if (!workspace) return;
               if (sub === "schema") {
-                useWorkspaces.getState().setSchema(workspace.id, name);
-                close();
+                closeAfter(() => useWorkspaces.getState().setSchema(workspace.id, name));
               } else {
                 setSubError(null);
                 useWorkspaces
@@ -268,20 +280,23 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
                 value={`action:${a.id}`}
                 className={itemClass}
                 onSelect={() => {
-                  let stay = false;
+                  const el = returnFocus.current;
                   const c: ActionCtx = {
                     ...ctx,
                     pickSchema: () => {
-                      stay = true;
                       enterSub("schema");
                     },
                     pickDatabase: () => {
-                      stay = true;
                       enterSub("database");
                     },
                   };
-                  a.run(c);
-                  if (!stay) close();
+                  if (a.id === "schema.change" || a.id === "database.change") {
+                    // Opens a sub-list: the palette stays.
+                    a.run(c);
+                  } else {
+                    returnFocus.current = el;
+                    closeAfter(() => a.run(c));
+                  }
                 }}
               >
                 <span>{a.title}</span>
