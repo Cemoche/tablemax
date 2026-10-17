@@ -104,14 +104,56 @@ fn io_err(e: impl std::fmt::Display) -> AppError {
     AppError::new(ErrorKind::Io, format!("connection store: {e}"))
 }
 
+/// `create_dir_all` whose new folders are owner-only (0700) on Unix.
+pub(crate) fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
+    let mut b = std::fs::DirBuilder::new();
+    b.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    b.create(path)
+}
+
+/// Makes `path` owner-only (0600) on Unix; a no-op elsewhere.
+pub(crate) fn make_file_private(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
 impl ConnectionStore {
+    /// Opens (creating it if needed) the store at `path`. On Unix the file is owner-only
+    /// (0600) and a missing folder is created owner-only (0700): app.db holds the
+    /// history and the session, which may contain values the user typed. Deleted rows
+    /// are overwritten (`secure_delete`), so clearing the history really erases it.
     pub fn open(path: &Path) -> AppResult<Self> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(parent).map_err(io_err)?;
+            create_private_dir_all(parent).map_err(io_err)?;
         }
+        if !path.exists() {
+            // Created empty first so that it never exists with the default mode.
+            let mut o = std::fs::OpenOptions::new();
+            o.write(true).create(true).truncate(false);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                o.mode(0o600);
+            }
+            o.open(path).map_err(io_err)?;
+        }
+        make_file_private(path).map_err(io_err)?;
         let conn = Connection::open(path).map_err(io_err)?;
+        conn.execute_batch("PRAGMA secure_delete = ON;")
+            .map_err(io_err)?;
         Self::migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),

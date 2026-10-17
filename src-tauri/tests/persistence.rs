@@ -579,3 +579,80 @@ async fn failed_queries_cleanup_keeps_the_connection() {
     }
     assert!(!queries.join(&a.id).exists());
 }
+
+/// Statements that carry a password (CREATE/ALTER USER … IDENTIFIED BY, SET PASSWORD,
+/// PostgreSQL … PASSWORD '…') are never written to the history.
+#[test]
+fn history_skips_statements_with_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open_store(&dir);
+    let secret = [
+        "CREATE USER 'bob'@'%' IDENTIFIED BY 's3cret'",
+        "alter user bob identified with mysql_native_password by 'x'",
+        "SET PASSWORD FOR 'bob'@'%' = 'x'",
+        "ALTER ROLE app WITH PASSWORD 'x'",
+        "create role app login password 'x'",
+        "select 1 -- Password: x",
+    ];
+    let kept = [
+        "select password_hash from users",
+        "select old_password from t",
+        "select 1",
+    ];
+    let entries = secret
+        .iter()
+        .chain(kept.iter())
+        .enumerate()
+        .map(|(i, s)| entry("c1", s, i as i64))
+        .collect();
+    history::record_many(&store, entries, false).unwrap();
+    history::record(&store, entry("c1", "SET PASSWORD = 'y'", 100)).unwrap();
+    let mut got: Vec<String> = history::list(&store, "c1", None, 100)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.sql)
+        .collect();
+    got.sort();
+    let mut want: Vec<String> = kept.iter().map(|s| s.to_string()).collect();
+    want.sort();
+    assert_eq!(got, want);
+}
+
+/// Clear history really erases: deleted rows are overwritten in app.db.
+#[test]
+fn app_db_uses_secure_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open_store(&dir);
+    let on: i64 = store
+        .with_conn(|c| {
+            Ok(c.query_row("PRAGMA secure_delete", [], |r| r.get(0))
+                .unwrap())
+        })
+        .unwrap();
+    assert_eq!(on, 1);
+}
+
+/// app.db, its folder and the saved queries are readable by their owner only.
+#[cfg(unix)]
+#[test]
+fn app_files_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let dir = tempfile::tempdir().unwrap();
+    let app_dir = dir.path().join("data").join("tablemax");
+    let db = app_dir.join("app.db");
+    let store = ConnectionStore::open(&db).unwrap();
+    assert_eq!(mode(&app_dir), 0o700);
+    assert_eq!(mode(&db), 0o600);
+    drop(store);
+    // An app.db created by an older version with the default mode is tightened.
+    std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o644)).unwrap();
+    drop(ConnectionStore::open(&db).unwrap());
+    assert_eq!(mode(&db), 0o600);
+
+    let queries = app_dir.join("queries");
+    saved_queries::write(&queries, "c1", "report", "select 1").unwrap();
+    assert_eq!(mode(&queries), 0o700);
+    assert_eq!(mode(&queries.join("c1")), 0o700);
+    assert_eq!(mode(&queries.join("c1").join("report.sql")), 0o600);
+}
