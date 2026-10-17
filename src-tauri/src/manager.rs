@@ -914,6 +914,16 @@ impl SessionManager {
         slot.lock().await.clone()
     }
 
+    /// The workspace's switched-to database (`None`: the connection's own).
+    fn workspace_database(&self, workspace_id: &str) -> AppResult<Option<String>> {
+        let st = self.state();
+        let ws = st
+            .workspaces
+            .get(workspace_id)
+            .ok_or_else(|| workspace_not_found(workspace_id))?;
+        Ok(ws.database.clone())
+    }
+
     /// What reconnecting a workspace needs, copied out of the state lock.
     fn reconnect_material(&self, workspace_id: &str) -> AppResult<Reconnect> {
         let st = self.state();
@@ -1004,11 +1014,18 @@ impl SessionManager {
         }
         let mut r = self.reconnect_material(workspace_id)?;
         self.unbind_stale_keyring(&mut r).await?;
-        r.apply_database();
         let mut current = r.slot.lock().await;
         // Another caller may have rebuilt it while we waited for the lock.
         if let Some(browse) = self.usable_browse(workspace_id)? {
             return Ok(browse);
+        }
+        // The switched-to database, read under the slot lock: `switch_database` holds it
+        // too, so a switch that ran while we waited is seen, and none can run until the
+        // swap below.
+        let database = self.workspace_database(workspace_id)?;
+        let mut cfg = r.config.clone();
+        if let Some(db) = &database {
+            cfg.database = Some(db.clone());
         }
         let tunnel = match ssh_of(&r.config) {
             Some(_) => Some(
@@ -1018,12 +1035,19 @@ impl SessionManager {
             None => None,
         };
         let password = self.resolve_password(&r.config, r.password).await?;
-        let fresh = connect(&r.config, password, tunnel.as_deref()).await?;
+        let fresh = connect(&cfg, password, tunnel.as_deref()).await?;
         let old = {
             let mut st = self.state();
             st.workspaces.get_mut(workspace_id).map(|ws| {
                 ws.browse_tunnel = tunnel;
                 ws.browse_lost = false;
+                if ws.database != database {
+                    // Not expected under the slot lock; if the effective database ever
+                    // changes here, the metadata of the previous one must go.
+                    ws.database = database;
+                    ws.table_info.clear();
+                    ws.table_info_gen += 1;
+                }
                 std::mem::replace(&mut ws.browse, fresh.clone())
             })
         };
@@ -1551,7 +1575,12 @@ impl SessionManager {
             let mut st = self.state();
             st.workspaces.get_mut(workspace_id).map(|ws| {
                 ws.browse_tunnel = tunnel;
+                ws.browse_lost = false;
                 ws.database = Some(database.to_string());
+                // Table metadata is keyed by (schema, name) only: another database's
+                // `public.users` must not reuse this one's columns and row key.
+                ws.table_info.clear();
+                ws.table_info_gen += 1;
                 (
                     std::mem::replace(&mut ws.browse, fresh.clone()),
                     ws.config.id.clone(),

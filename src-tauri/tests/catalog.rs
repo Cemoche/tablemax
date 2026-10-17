@@ -11,7 +11,8 @@ use tablemax_lib::driver::mysql::connect_mysql;
 use tablemax_lib::driver::postgres::connect_postgres;
 use tablemax_lib::driver::sqlite::connect_sqlite;
 use tablemax_lib::driver::tls::SslConfig;
-use tablemax_lib::driver::{ConnectParams, DriverKind, ObjectKind, Session};
+use tablemax_lib::driver::query::Statement;
+use tablemax_lib::driver::{ConnectParams, DriverKind, ObjectKind, ObjectRef, Session};
 use tablemax_lib::error::ErrorKind;
 use tablemax_lib::manager::SessionManager;
 use tablemax_lib::secrets::MemorySecretStore;
@@ -646,4 +647,119 @@ async fn sqlite_catalog_survives_a_dangling_view() {
     assert_eq!(d.kind, ObjectKind::View);
     assert!(d.columns.is_empty());
     assert_eq!(col_names(table(&c, "b")), ["k"]);
+}
+
+/// Server-side id of the workspace's browse connection, and its current database.
+async fn browse_backend(mgr: &SessionManager, ws: &str) -> (String, String) {
+    let stmt = Statement {
+        sql: "select pg_backend_pid()::text, current_database()::text".into(),
+        params: vec![],
+    };
+    let rs = mgr.browse(ws).await.unwrap().query(&stmt).await.unwrap();
+    match (&rs.rows[0][0], &rs.rows[0][1]) {
+        (CellValue::Text(pid), CellValue::Text(db)) => (pid.clone(), db.clone()),
+        other => panic!("unexpected row {other:?}"),
+    }
+}
+
+/// Plan 3's table metadata cache is keyed by (schema, name) without the database: after
+/// a switch, `s.users` of the new database must not reuse the old one's columns and row
+/// key (they build the WHERE of grid UPDATE / DELETE). And a browse connection rebuilt
+/// after a drop must stay on the switched database.
+#[tokio::test]
+async fn pg_switch_database_refreshes_table_info_and_rebuilds_on_the_new_database() {
+    for url in pg_urls() {
+        let params = params_from_url(&url, DriverKind::Postgres);
+        let original_db = params.database.clone().unwrap();
+        let admin = connect_postgres(&params).await.unwrap();
+        let other = "tablemax_int_switch";
+        admin
+            .execute(&format!("DROP DATABASE IF EXISTS {other} WITH (FORCE)"))
+            .await
+            .unwrap();
+        admin
+            .execute(&format!("CREATE DATABASE {other}"))
+            .await
+            .unwrap();
+        let schema = unique_schema();
+        let _cleanup = Cleanup {
+            params: params.clone(),
+            sql: vec![
+                format!("DROP DATABASE IF EXISTS {other} WITH (FORCE)"),
+                format!("DROP SCHEMA IF EXISTS \"{schema}\" CASCADE"),
+            ],
+        };
+        // Same schema and table name in both databases, different columns and keys.
+        admin
+            .execute(&format!("CREATE SCHEMA \"{schema}\""))
+            .await
+            .unwrap();
+        admin
+            .execute(&format!(
+                "CREATE TABLE \"{schema}\".users (id int PRIMARY KEY, a text)"
+            ))
+            .await
+            .unwrap();
+        let mut other_params = params.clone();
+        other_params.database = Some(other.into());
+        let o = connect_postgres(&other_params).await.unwrap();
+        o.execute(&format!("CREATE SCHEMA \"{schema}\""))
+            .await
+            .unwrap();
+        o.execute(&format!(
+            "CREATE TABLE \"{schema}\".users (code text PRIMARY KEY, b text, c int)"
+        ))
+        .await
+        .unwrap();
+        o.close().await.unwrap();
+
+        let m = manager();
+        let id = save(&m, &url, DriverKind::Postgres).await;
+        let ws = m.mgr.open_workspace(&id, None, None, None).await.unwrap();
+        let w = ws.workspace_id.as_str();
+        let users = ObjectRef {
+            schema: Some(schema.clone()),
+            name: "users".into(),
+        };
+        let names = |info: &tablemax_lib::driver::meta::TableInfo| {
+            info.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>()
+        };
+        let before = m.mgr.table_info(w, &users).await.unwrap();
+        assert_eq!(names(&before), ["id", "a"]);
+        assert_eq!(before.row_key.as_deref(), Some(&["id".to_string()][..]));
+
+        m.mgr.switch_database(w, other).await.unwrap();
+        let after = m.mgr.table_info(w, &users).await.unwrap();
+        assert_eq!(names(&after), ["code", "b", "c"], "{url}: stale table_info");
+        assert_eq!(after.row_key.as_deref(), Some(&["code".to_string()][..]));
+
+        // The browse connection dies on the server: the next browse read rebuilds it,
+        // on the switched database, and the metadata stays the new database's.
+        let (pid, db) = browse_backend(&m.mgr, w).await;
+        assert_eq!(db, other);
+        admin
+            .execute(&format!("select pg_terminate_backend({pid})"))
+            .await
+            .unwrap();
+        let schemas = m
+            .mgr
+            .on_browse(w, |b| async move { b.list_schemas().await })
+            .await
+            .unwrap();
+        assert!(schemas.contains(&schema), "{schemas:?}");
+        let (new_pid, db) = browse_backend(&m.mgr, w).await;
+        assert_ne!(new_pid, pid, "{url}: browse connection not rebuilt");
+        assert_eq!(db, other, "{url}: rebuilt on {db}, not on the switched database");
+        m.mgr.invalidate_table_info(w, &users);
+        let rebuilt = m.mgr.table_info(w, &users).await.unwrap();
+        assert_eq!(names(&rebuilt), ["code", "b", "c"]);
+
+        // Switching back: the original table again, not the cached one of `other`.
+        m.mgr.switch_database(w, &original_db).await.unwrap();
+        let back = m.mgr.table_info(w, &users).await.unwrap();
+        assert_eq!(names(&back), ["id", "a"]);
+
+        m.mgr.close_workspace(w).await.unwrap();
+        admin.close().await.unwrap();
+    }
 }
