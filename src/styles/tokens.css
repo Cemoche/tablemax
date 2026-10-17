@@ -39,9 +39,12 @@
   --env-prod: #c62828;
 }
 
-/* dark-first: applies unless the OS explicitly asks for light */
+/* Dark values apply when the OS asks for dark, unless the user forced light with
+   data-theme="light"; data-theme="dark" forces them whatever the OS says. The values
+   are written twice because CSS cannot share a declaration block between a media
+   query and an attribute selector. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #14161a;
     --surface: #1b1e24;
     --surface-2: #242830;
@@ -58,4 +61,27 @@
     --env-staging: #f0b429;
     --env-prod: #ff6b6b;
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #14161a;
+  --surface: #1b1e24;
+  --surface-2: #242830;
+  --text: #e4e7ec;
+  --text-muted: #8c93a3;
+  --border: #2f343e;
+  --accent: #4f8cff;
+  --accent-contrast: #0b1020;
+  --danger: #ff6b6b;
+  --success: #4cc38a;
+  --warning: #f0b429;
+  --env-local: #4cc38a;
+  --env-dev: #4f8cff;
+  --env-staging: #f0b429;
+  --env-prod: #ff6b6b;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }

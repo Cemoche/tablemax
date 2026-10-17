@@ -196,3 +196,20 @@ export type ExecEvent =
   | { event: "statementFinished"; data: { index: number; outcome: StatementOutcome } }
   | { event: "statementFailed"; data: { index: number; error: AppError } }
   | { event: "batchFinished"; data: { cancelled: boolean } };
+
+// settings.rs (camelCase on the wire).
+export type ThemeSetting = "system" | "light" | "dark";
+
+export interface Settings {
+  version: number;
+  theme: ThemeSetting;
+  /** "" = use the --font-mono token. */
+  editorFontFamily: string;
+  editorFontSize: number;
+  pageSize: number;
+  exactCountThreshold: number;
+  autoLimitDefault: boolean;
+  autoLimitValue: number;
+  /** Action id to shortcut; empty = defaults. */
+  keymap: Record<string, string>;
+}

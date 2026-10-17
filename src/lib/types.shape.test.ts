@@ -8,6 +8,7 @@ import type {
   ImportPreview,
   ImportResult,
   ResultSet,
+  Settings,
   RowCount,
   SshAuth,
   SslMode,
@@ -108,4 +109,26 @@ test("ImportPreview and ImportResult", () => {
   expect(p.warnings[0].entry).toBe("k");
   const r: ImportResult = JSON.parse('{"saved":[],"warnings":[]}');
   expect(r.saved).toEqual([]);
+});
+
+// settings.rs Settings (camelCase; theme is "system" | "light" | "dark").
+test("Settings", () => {
+  const s: Settings = JSON.parse(`{
+    "version":1,"theme":"dark","editorFontFamily":"","editorFontSize":13,"pageSize":300,
+    "exactCountThreshold":500000,"autoLimitDefault":false,"autoLimitValue":1000,
+    "keymap":{"run":"Mod-Enter"}
+  }`);
+  expect(s.theme).toBe("dark");
+  expect(s.keymap.run).toBe("Mod-Enter");
+  expect(Object.keys(s).sort()).toEqual([
+    "autoLimitDefault",
+    "autoLimitValue",
+    "editorFontFamily",
+    "editorFontSize",
+    "exactCountThreshold",
+    "keymap",
+    "pageSize",
+    "theme",
+    "version",
+  ]);
 });

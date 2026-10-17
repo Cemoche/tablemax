@@ -5,9 +5,11 @@ import { Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import CodeMirror from "@uiw/react-codemirror";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import { strings } from "../../lib/strings";
+import { useResolvedDark } from "../../lib/theme";
 import type { Dialect } from "../../lib/types";
+import { useSettings } from "../../stores/settings";
 
 export type RunMode = "current" | "all";
 export interface EditorSelection {
@@ -27,7 +29,7 @@ interface Props {
 
 const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
 
-// All colors come from the design tokens (they follow the system color scheme).
+// All colors come from the design tokens (they follow data-theme / the system color scheme).
 export const editorThemeSpec = {
   "&": {
     height: "100%",
@@ -64,20 +66,12 @@ export const editorThemeSpec = {
 /** `dark` only selects CodeMirror's base theme; every color comes from the tokens. */
 export const buildEditorTheme = (dark: boolean) => EditorView.theme(editorThemeSpec, { dark });
 
-function usePrefersDark() {
-  const mq = () =>
-    typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-  const [dark, setDark] = useState(() => mq()?.matches ?? false);
-  useEffect(() => {
-    const m = mq();
-    if (!m) return;
-    const on = () => setDark(m.matches);
-    on();
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, []);
-  return dark;
-}
+/** User font settings; an empty family keeps the `--font-mono` token. */
+export const buildEditorFont = (family: string, size: number) =>
+  EditorView.theme({
+    "&": { fontSize: `${size}px` },
+    ...(family ? { ".cm-scroller": { fontFamily: family } } : {}),
+  });
 
 const highlight = syntaxHighlighting(
   HighlightStyle.define([
@@ -95,11 +89,14 @@ export function SqlEditor({ value, onChange, dialect, onRun, onSelectionChange }
   const runRef = useRef(onRun);
   runRef.current = onRun;
 
-  const dark = usePrefersDark();
+  const dark = useResolvedDark();
+  const fontFamily = useSettings((s) => s.settings.editorFontFamily);
+  const fontSize = useSettings((s) => s.settings.editorFontSize);
   const extensions = useMemo(
     () => [
       sql({ dialect: DIALECTS[dialect] }),
       buildEditorTheme(dark),
+      buildEditorFont(fontFamily, fontSize),
       highlight,
       EditorView.lineWrapping,
       Prec.highest(
@@ -122,7 +119,7 @@ export function SqlEditor({ value, onChange, dialect, onRun, onSelectionChange }
       ),
       keymap.of(defaultKeymap),
     ],
-    [dialect, dark],
+    [dialect, dark, fontFamily, fontSize],
   );
 
   return (

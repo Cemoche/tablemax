@@ -50,15 +50,20 @@ export function buildGridTheme(readVar: ReadVar = readCssVar): Partial<Theme> {
   };
 }
 
-/** Theme + muted-cell override, rebuilt whenever the OS color scheme changes. */
+/** Theme + muted-cell override, rebuilt when the OS color scheme or `data-theme` changes. */
 export function useGridTheme(readVar: ReadVar = readCssVar) {
   const [rev, setRev] = useState(0);
   useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => setRev((r) => r + 1);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    const observer = new MutationObserver(onChange);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    const mq =
+      typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    mq?.addEventListener("change", onChange);
+    return () => {
+      observer.disconnect();
+      mq?.removeEventListener("change", onChange);
+    };
   }, []);
   return useMemo(() => {
     const theme = buildGridTheme(readVar);

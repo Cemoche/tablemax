@@ -12,6 +12,7 @@ use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::import::{ImportPreview, ImportResult};
 use crate::manager::{ExecEvent, SessionManager, WorkspaceInfo};
+use crate::settings::{self, Settings};
 use crate::store::ConnectionConfig;
 use crate::value::EXACT_COUNT_THRESHOLD;
 
@@ -291,4 +292,33 @@ mod tests {
         );
         assert!(!picker_spec(FilePurpose::CaCert).1);
     }
+}
+
+fn settings_path(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?;
+    Ok(dir.join("settings.json"))
+}
+
+#[tauri::command]
+pub async fn settings_get(app: AppHandle) -> AppResult<Settings> {
+    let path = settings_path(&app)?;
+    tokio::task::spawn_blocking(move || settings::load(&path))
+        .await
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))
+}
+
+/// Saves the settings and returns the stored value (out-of-range numbers clamped).
+#[tauri::command]
+pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Settings> {
+    let path = settings_path(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let clamped = settings.clamped();
+        settings::save(&path, &clamped)?;
+        Ok(clamped)
+    })
+    .await
+    .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
 }

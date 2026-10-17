@@ -12,6 +12,7 @@ import type {
   PageRequest,
   ResultSet,
   RowCount,
+  Settings,
   WorkspaceInfo,
 } from "./types";
 
@@ -106,3 +107,8 @@ export const sqlExecute = (
 };
 
 export const sqlCancel = (sessionId: string) => invoke<void>("sql_cancel", { sessionId });
+
+export const settingsGet = () => invoke<Settings>("settings_get");
+
+/** Saves the settings; resolves with the stored value (out-of-range numbers clamped). */
+export const settingsSet = (settings: Settings) => invoke<Settings>("settings_set", { settings });

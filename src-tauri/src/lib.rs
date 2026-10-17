@@ -4,6 +4,7 @@ pub mod error;
 pub mod import;
 pub mod manager;
 pub mod secrets;
+pub mod settings;
 pub mod ssh;
 pub mod store;
 pub mod value;
@@ -62,6 +63,8 @@ pub fn run() {
             commands::sql_session_close,
             commands::sql_execute,
             commands::sql_cancel,
+            commands::settings_get,
+            commands::settings_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { buildGridTheme, useGridTheme } from "./gridTheme";
 
@@ -34,4 +34,21 @@ test("theme is rebuilt on a color-scheme media change and listener is removed", 
   expect(result.current.theme.bgCell).toBe("#000");
   unmount();
   expect(removeEventListener).toHaveBeenCalled();
+});
+
+test("theme is rebuilt when data-theme changes while the OS stays light", async () => {
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+  const read = (n: string) =>
+    n === "--surface" ? (document.documentElement.dataset.theme === "dark" ? "#000" : "#fff") : "";
+  const { result } = renderHook(() => useGridTheme(read));
+  expect(result.current.theme.bgCell).toBe("#fff");
+  act(() => {
+    document.documentElement.dataset.theme = "dark";
+  });
+  await waitFor(() => expect(result.current.theme.bgCell).toBe("#000"));
+  delete document.documentElement.dataset.theme;
 });
