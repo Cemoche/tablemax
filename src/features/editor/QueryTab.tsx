@@ -3,6 +3,7 @@ import * as ipc from "../../lib/ipc";
 import { isConfirmationRequired, parseConfirmationIndices, toAppError } from "../../lib/errors";
 import { strings } from "../../lib/strings";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
+import { useLiveEnv } from "../workspace/useLiveEnv";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { ResultsPanel } from "./ResultsPanel";
@@ -47,6 +48,7 @@ export function QueryTab({ workspace, tab }: Props) {
   const [pending, setPending] = useState<{ stmts: Statement[]; flagged: number[] } | null>(null);
   const run = useQueryRuns((s) => s.runs[tabId]);
   const running = run?.running ?? false;
+  const env = useLiveEnv(workspace);
 
   const flush = useCallback(() => {
     if (saveTimer.current) {
@@ -172,7 +174,8 @@ export function QueryTab({ workspace, tab }: Props) {
       {pending && (
         <ConfirmRunDialog
           connectionName={workspace.name}
-          envTag={workspace.envTag}
+          envTag={env.envTag}
+          safeMode={env.mode}
           statements={pending.stmts.map((s) => s.text)}
           flagged={pending.flagged}
           onCancel={() => setPending(null)}

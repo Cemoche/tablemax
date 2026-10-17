@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import type { ExecEvent } from "../../lib/types";
+import type { ConnectionConfig } from "../../lib/types";
+import { useConnections } from "../../stores/connections";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "./QueryTab";
@@ -65,6 +67,7 @@ const setup = async (sql = "select 1; select 2") => {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  useConnections.setState({ items: [] });
   useQueryRuns.setState({ runs: {} });
   vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s1");
   vi.mocked(ipc.sqlCancel).mockResolvedValue(undefined);
@@ -292,6 +295,17 @@ describe("safe mode confirmation", () => {
     expect(ipc.sqlExecute).toHaveBeenCalledTimes(1);
     expect(useQueryRuns.getState().runs["t1"]?.running ?? false).toBe(false);
     expect(screen.getByRole("button", { name: "Run all" })).toBeEnabled();
+  });
+
+  test("the dialog shows the live tag and the enforced mode", async () => {
+    // Opened as dev (setup), saved as prod since: protection applies at once.
+    useConnections.setState({ items: [{ id: "c1", envTag: "prod", safeMode: null } as ConnectionConfig] });
+    await setup("delete from t");
+    refuse("0");
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("n · PROD");
+    expect(dialog).toHaveTextContent("Safe mode: confirm writes");
   });
 
   test("an unparsable refusal flags every statement", async () => {

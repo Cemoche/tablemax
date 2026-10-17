@@ -254,6 +254,49 @@ async fn stricter_setting_applies_to_an_open_workspace() {
     assert_eq!(names(&fx.db_path), ["x", "x"]);
 }
 
+/// Ruling R16: loosening a connection while its workspace is open (retag prod → dev, or
+/// switch the mode off) only applies at the next open; until then the stricter of the
+/// saved and the opened settings is enforced.
+#[tokio::test]
+async fn looser_setting_waits_for_the_next_open() {
+    for loosened in [
+        (EnvTag::Dev, None),
+        (EnvTag::Dev, Some(SafeMode::Off)),
+        (EnvTag::Prod, Some(SafeMode::Off)),
+    ] {
+        let fx = fixture();
+        let (saved, sid) = session(&fx, EnvTag::Prod, None).await;
+        let looser = ConnectionConfig {
+            env_tag: loosened.0,
+            safe_mode: loosened.1,
+            ..saved.clone()
+        };
+        fx.mgr.save_connection(looser, None, None).await.unwrap();
+        let events = Events::default();
+        let err = fx
+            .mgr
+            .execute_batch(&sid, sql(&["delete from items"]), false, events.sink())
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::ConfirmationRequired, "{loosened:?}");
+        assert!(events.all().is_empty(), "nothing ran: {:?}", events.all());
+        assert_eq!(names(&fx.db_path), ["a", "b"], "{loosened:?}");
+
+        // A workspace opened after the change uses the looser setting.
+        let ws = fx
+            .mgr
+            .open_workspace(&saved.id, None, None, None)
+            .await
+            .unwrap();
+        let fresh = fx.mgr.open_sql_session(&ws.workspace_id).await.unwrap();
+        fx.mgr
+            .execute_batch(&fresh, sql(&["delete from items"]), false, |_| {})
+            .await
+            .unwrap();
+        assert!(names(&fx.db_path).is_empty(), "{loosened:?}");
+    }
+}
+
 /// A deleted connection keeps the protection of the config the workspace was opened with.
 #[tokio::test]
 async fn deleted_connection_keeps_the_opened_config() {

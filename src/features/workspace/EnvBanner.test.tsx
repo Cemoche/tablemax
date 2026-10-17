@@ -24,7 +24,8 @@ const cfg = (envTag: EnvTag, safeMode?: SafeMode | null): ConnectionConfig => ({
 
 const setup = (envTag: EnvTag, safeMode?: SafeMode | null) => {
   useConnections.setState({ items: [cfg(envTag, safeMode)] });
-  render(<EnvBanner workspace={{ connectionId: "c1", name: "Shop", envTag }} />);
+  // Opened with the same config as the saved one.
+  render(<EnvBanner workspace={{ connectionId: "c1", name: "Shop", envTag, safeMode }} />);
   return screen.getByRole("status");
 };
 
@@ -50,4 +51,35 @@ test("dev without a mode has no safe mode text", () => {
 
 test("prod switched off says so", () => {
   expect(setup("prod", "off")).toHaveTextContent("Safe mode: off");
+});
+
+test("after a retag while open: live tag, enforced (stricter) mode", () => {
+  // Opened as prod with the default mode, then saved as dev: still confirm writes until reopened.
+  useConnections.setState({ items: [cfg("dev")] });
+  render(<EnvBanner workspace={{ connectionId: "c1", name: "Shop", envTag: "prod", safeMode: null }} />);
+  const banner = screen.getByRole("status");
+  expect(banner).toHaveTextContent("Shop · DEV");
+  expect(banner.className).toContain("bg-env-dev");
+  expect(banner).toHaveTextContent("Safe mode: confirm writes");
+});
+
+test("prod switched off while open still shows the enforced mode", () => {
+  useConnections.setState({ items: [cfg("prod", "off")] });
+  render(<EnvBanner workspace={{ connectionId: "c1", name: "Shop", envTag: "prod", safeMode: null }} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Safe mode: confirm writes");
+});
+
+test("a retag to prod while open applies at once", () => {
+  useConnections.setState({ items: [cfg("prod")] });
+  render(<EnvBanner workspace={{ connectionId: "c1", name: "Shop", envTag: "dev", safeMode: null }} />);
+  const banner = screen.getByRole("status");
+  expect(banner).toHaveTextContent("Shop · PROD");
+  expect(banner).toHaveTextContent("Safe mode: confirm writes");
+});
+
+test("a deleted connection falls back to the opened config", () => {
+  render(<EnvBanner workspace={{ connectionId: "c1", name: "Shop", envTag: "prod", safeMode: null }} />);
+  const banner = screen.getByRole("status");
+  expect(banner).toHaveTextContent("Shop · PROD");
+  expect(banner).toHaveTextContent("Safe mode: confirm writes");
 });

@@ -953,11 +953,14 @@ impl SessionManager {
         shutdown_sql(&entry).await
     }
 
-    /// The workspace's effective safe mode, re-read from the store so a setting saved
-    /// while the workspace is open applies to its next batch. The workspace stays on
-    /// the database it was opened on: when the saved connection now has another
-    /// identity, the stricter of both settings applies; when it was deleted, the opened
-    /// config's. Fails closed: a store error yields `ConfirmAll`.
+    /// The workspace's effective safe mode (Ruling R16): the stricter of the saved
+    /// connection's (re-read from the store at each batch) and the config the workspace
+    /// was opened with. Tightening (a stricter mode, a retag to prod) applies to the next
+    /// batch at once; loosening (a looser mode, a retag away from prod, or an identity
+    /// change pointing the saved connection elsewhere) only at the next workspace open.
+    /// A deleted connection keeps the opened config's mode. Fails closed: a store error
+    /// yields `ConfirmAll`. The frontend shows the same rule (`enforcedSafeMode` in
+    /// src/lib/safeMode.ts).
     async fn workspace_safe_mode(&self, workspace_id: &str) -> AppResult<SafeMode> {
         let opened = {
             let st = self.state();
@@ -970,7 +973,6 @@ impl SessionManager {
         let store = self.store.clone();
         let id = opened.id.clone();
         Ok(match blocking(move || store.get(&id)).await {
-            Ok(saved) if same_identity(&saved, &opened) => safety::effective_safe_mode(&saved),
             Ok(saved) => safety::stricter(
                 safety::effective_safe_mode(&saved),
                 safety::effective_safe_mode(&opened),

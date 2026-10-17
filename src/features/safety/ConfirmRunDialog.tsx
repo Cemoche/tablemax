@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
+import { safeModeBannerText } from "../../lib/safeMode";
 import { strings } from "../../lib/strings";
-import type { EnvTag } from "../../lib/types";
+import type { EnvTag, SafeMode } from "../../lib/types";
 
 const ENV_BG: Record<EnvTag, string> = {
   local: "bg-env-local",
@@ -12,6 +13,8 @@ const ENV_BG: Record<EnvTag, string> = {
 interface Props {
   connectionName: string;
   envTag: EnvTag;
+  /** The mode the backend enforces (stricter of saved and opened, Ruling R16). */
+  safeMode?: SafeMode;
   /** Every statement of the refused batch, in order. */
   statements: string[];
   /** Indices (into `statements`) the backend wants confirmed. */
@@ -23,7 +26,7 @@ interface Props {
 const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2";
 
 /** Modal shown when a protected connection refused an unconfirmed batch (nothing ran yet). */
-export function ConfirmRunDialog({ connectionName, envTag, statements, flagged, onRun, onCancel }: Props) {
+export function ConfirmRunDialog({ connectionName, envTag, safeMode, statements, flagged, onRun, onCancel }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const runRef = useRef<HTMLButtonElement>(null);
 
@@ -56,6 +59,7 @@ export function ConfirmRunDialog({ connectionName, envTag, statements, flagged, 
           {strings.safety.dialogTitle}
         </h2>
         <p className="text-muted">{strings.safety.dialogIntro(connectionName, tag)}</p>
+        {safeMode && <p className="text-muted">{strings.safety.bannerMode(safeModeBannerText(safeMode))}</p>}
         <ol className="flex min-h-0 flex-col gap-1 overflow-auto">
           {statements.map((s, i) => {
             const isFlagged = flagged.includes(i);

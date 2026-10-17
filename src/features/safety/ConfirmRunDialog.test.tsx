@@ -13,6 +13,7 @@ const setup = () => {
     <ConfirmRunDialog
       connectionName="Shop DB"
       envTag="prod"
+      safeMode="confirmWrites"
       statements={stmts}
       flagged={[1]}
       onRun={onRun}
@@ -61,4 +62,9 @@ test("Run confirms", async () => {
   await userEvent.click(screen.getByRole("button", { name: strings.safety.confirmRun }));
   expect(onRun).toHaveBeenCalledTimes(1);
   expect(onCancel).not.toHaveBeenCalled();
+});
+
+test("shows the safe mode being enforced", () => {
+  setup();
+  expect(screen.getByRole("dialog")).toHaveTextContent("Safe mode: confirm writes");
 });

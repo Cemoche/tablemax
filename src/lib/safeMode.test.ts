@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { parseConfirmationIndices } from "./errors";
-import { effectiveSafeMode } from "./safeMode";
+import { effectiveSafeMode, enforcedSafeMode, stricterSafeMode } from "./safeMode";
 import { windowTitle } from "./windowTitle";
 
 test("effective safe mode: prod confirms writes, others are off, explicit wins", () => {
@@ -29,4 +29,24 @@ test("window title shows the tag for prod and staging only", () => {
   expect(windowTitle({ name: "Shop", envTag: "staging" })).toBe("TableMax — Shop [STAGING]");
   expect(windowTitle({ name: "Shop", envTag: "dev" })).toBe("TableMax — Shop");
   expect(windowTitle({ name: "Shop", envTag: "local" })).toBe("TableMax — Shop");
+});
+
+test("stricter safe mode orders off < confirmWrites < confirmAll", () => {
+  expect(stricterSafeMode("off", "confirmWrites")).toBe("confirmWrites");
+  expect(stricterSafeMode("confirmAll", "confirmWrites")).toBe("confirmAll");
+  expect(stricterSafeMode("off", "off")).toBe("off");
+});
+
+test("enforced mode (R16): stricter of saved and opened, opened alone when deleted", () => {
+  const prod = { envTag: "prod" as const, safeMode: null };
+  const dev = { envTag: "dev" as const, safeMode: null };
+  // Loosening waits for the next open.
+  expect(enforcedSafeMode(dev, prod)).toBe("confirmWrites");
+  expect(enforcedSafeMode({ envTag: "prod", safeMode: "off" }, prod)).toBe("confirmWrites");
+  // Tightening applies at once.
+  expect(enforcedSafeMode(prod, dev)).toBe("confirmWrites");
+  expect(enforcedSafeMode({ envTag: "dev", safeMode: "confirmAll" }, prod)).toBe("confirmAll");
+  // Deleted connection: the opened config.
+  expect(enforcedSafeMode(undefined, prod)).toBe("confirmWrites");
+  expect(enforcedSafeMode(undefined, dev)).toBe("off");
 });
