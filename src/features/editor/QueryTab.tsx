@@ -147,6 +147,7 @@ export function QueryTab({ workspace, tab }: Props) {
       </div>
       <div className="min-h-0 flex-1 basis-1/2">
         <SqlEditor
+          tabId={tab.id}
           value={text}
           onChange={onChange}
           dialect={dialect}

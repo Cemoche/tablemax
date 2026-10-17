@@ -4,6 +4,7 @@ import * as ipc from "../../lib/ipc";
 import { qualifiedName } from "../../lib/sqlIdent";
 import { strings } from "../../lib/strings";
 import type { DbObject, DbRoutine } from "../../lib/types";
+import { useCatalog } from "../../stores/catalog";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 
 type Entry =
@@ -122,8 +123,8 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
 
   const refresh = () => {
     setReload((n) => n + 1);
-    // Rebuild the backend catalog cache; best effort, never blocks the UI.
-    void Promise.resolve(ipc.catalogGet(id, currentSchema, true)).catch(() => {});
+    // Rebuild the catalog (backend cache and palette store); never blocks the UI.
+    void useCatalog.getState().refreshCatalog(id, currentSchema);
   };
 
   const changeDatabase = async (name: string) => {

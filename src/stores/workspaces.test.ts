@@ -492,3 +492,11 @@ test("switchDatabase failure leaves the workspace untouched; concurrent calls ar
   await first;
   expect(ipc.workspaceSwitchDatabase).toHaveBeenCalledTimes(2);
 });
+
+test("toggleSidebar flips the app-level sidebar flag", () => {
+  useWorkspaces.setState({ sidebarVisible: true });
+  useWorkspaces.getState().toggleSidebar();
+  expect(useWorkspaces.getState().sidebarVisible).toBe(false);
+  useWorkspaces.getState().toggleSidebar();
+  expect(useWorkspaces.getState().sidebarVisible).toBe(true);
+});

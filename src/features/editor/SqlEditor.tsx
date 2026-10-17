@@ -1,4 +1,4 @@
-import { defaultKeymap } from "@codemirror/commands";
+import { defaultKeymap, toggleComment } from "@codemirror/commands";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
 import { Prec } from "@codemirror/state";
@@ -7,6 +7,7 @@ import { tags as t } from "@lezer/highlight";
 import CodeMirror from "@uiw/react-codemirror";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
+import { registerEditorCommands } from "./editorCommands";
 import type { Dialect } from "../../lib/types";
 
 export type RunMode = "current" | "all";
@@ -23,6 +24,8 @@ interface Props {
   /** Ctrl+Enter ("current") / Ctrl+Shift+Enter ("all"), bound while the editor has focus. */
   onRun: (mode: RunMode) => void;
   onSelectionChange?: (sel: EditorSelection) => void;
+  /** Registers this editor's commands (toggle comment…) for the command palette. */
+  tabId?: string;
 }
 
 const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
@@ -90,10 +93,23 @@ const highlight = syntaxHighlighting(
   ]),
 );
 
-export function SqlEditor({ value, onChange, dialect, onRun, onSelectionChange }: Props) {
+export function SqlEditor({ value, onChange, dialect, onRun, onSelectionChange, tabId }: Props) {
   // Latest callbacks, so the keymap extension never has to be rebuilt.
   const runRef = useRef(onRun);
   runRef.current = onRun;
+
+  const viewRef = useRef<EditorView | null>(null);
+  useEffect(() => {
+    if (!tabId) return;
+    return registerEditorCommands(tabId, {
+      toggleComment: () => {
+        const view = viewRef.current;
+        if (!view) return;
+        view.focus();
+        toggleComment(view);
+      },
+    });
+  }, [tabId]);
 
   const dark = usePrefersDark();
   const extensions = useMemo(
@@ -135,6 +151,9 @@ export function SqlEditor({ value, onChange, dialect, onRun, onSelectionChange }
       extensions={extensions}
       basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true }}
       onChange={onChange}
+      onCreateEditor={(view) => {
+        viewRef.current = view;
+      }}
       onUpdate={(u) => {
         if (onSelectionChange && (u.selectionSet || u.docChanged)) {
           const r = u.state.selection.main;

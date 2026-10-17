@@ -7,6 +7,7 @@ import { blankConnection } from "./features/connections/connectionDraft";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlow";
 import { toAppError } from "./lib/errors";
+import { CommandPalette } from "./features/palette/CommandPalette";
 import { WorkspaceSwitcher } from "./features/workspace/WorkspaceSwitcher";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import type { ConnectionConfig } from "./lib/types";
@@ -168,6 +169,14 @@ function App() {
         />
       )}
       {importDialog && <ImportDialog onClose={() => setImportDialog(false)} />}
+      <CommandPalette
+        onOpenConnection={(cfg) => void open(cfg)}
+        onNewConnection={() => {
+          select(null);
+          setView("connections");
+        }}
+        onShowWorkspace={() => setView("workspace")}
+      />
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />
     </div>
   );

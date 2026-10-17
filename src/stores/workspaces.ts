@@ -90,6 +90,9 @@ interface WorkspacesState {
   /** Asks App to connect a disconnected workspace (no-op otherwise). */
   requestConnect: (wsId: string) => void;
   clearConnectRequest: () => void;
+  /** App-level: is the object sidebar shown? (the palette's "Toggle sidebar") */
+  sidebarVisible: boolean;
+  toggleSidebar: () => void;
 }
 
 /** Per-workspace query counter: never reused, even after tabs close. */
@@ -439,6 +442,9 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     },
 
     clearConnectRequest: () => set({ connectRequest: null }),
+
+    sidebarVisible: true,
+    toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   };
 });
 

@@ -52,6 +52,7 @@ interface Props {
 export function WorkspaceView({ workspace, connectError = null }: Props) {
   const openQueryTab = useWorkspaces((s) => s.openQueryTab);
   const closeTab = useWorkspaces((s) => s.closeTab);
+  const sidebarVisible = useWorkspaces((s) => s.sidebarVisible);
   const { id, activeTabId } = workspace;
   // A restored workspace has a placeholder id until it connects: nothing below may
   // reach the backend with it.
@@ -65,7 +66,7 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   const active = workspace.tabs.find((t) => t.id === activeTabId) ?? null;
   return (
     <div className={`flex h-full min-h-0 border-t-2 ${ENV_BORDER[workspace.envTag]}`}>
-      {connected && <ObjectSidebar workspace={workspace} />}
+      {connected && sidebarVisible && <ObjectSidebar workspace={workspace} />}
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar workspace={workspace} />
         <TabSwitcher workspace={workspace} />
