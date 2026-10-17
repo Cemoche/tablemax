@@ -5,6 +5,8 @@ import type {
   ErrorKind,
   ExecEvent,
   FilePurpose,
+  ImportPreview,
+  ImportResult,
   ResultSet,
   RowCount,
   SshAuth,
@@ -89,4 +91,21 @@ test("ResultSet carries the truncated flag", () => {
     '{"columns":[{"name":"g","typeName":"int8"}],"rows":[[{"t":"int","v":1}]],"truncated":true}',
   );
   expect(r.truncated).toBe(true);
+});
+
+// import/mod.rs ImportPreview / ImportResult (camelCase; tests/tableplus_import.rs checks
+// "importId" and "hasPassword" on the wire).
+test("ImportPreview and ImportResult", () => {
+  const p: ImportPreview = JSON.parse(`{
+    "importId":"i","warnings":[{"entry":"k","message":"m"}],
+    "items":[{"index":0,"hasPassword":true,"hasSshSecret":false,"duplicateOf":null,
+      "config":{"id":"","name":"n","color":"swatch-1","envTag":"local","kind":"sqlite",
+        "host":"","port":0,"user":"","database":null,"sqlitePath":"/x.db",
+        "passwordMode":"none","group":null,
+        "ssl":{"mode":"prefer","caFile":null,"certFile":null,"keyFile":null},"ssh":null}}]
+  }`);
+  expect(p.items[0].hasPassword).toBe(true);
+  expect(p.warnings[0].entry).toBe("k");
+  const r: ImportResult = JSON.parse('{"saved":[],"warnings":[]}');
+  expect(r.saved).toEqual([]);
 });

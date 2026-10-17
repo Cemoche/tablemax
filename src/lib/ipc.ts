@@ -6,6 +6,8 @@ import type {
   DbObject,
   ExecEvent,
   FilePurpose,
+  ImportPreview,
+  ImportResult,
   ObjectRef,
   PageRequest,
   ResultSet,
@@ -47,6 +49,23 @@ export const sshHostsList = () => invoke<string[]>("ssh_hosts_list");
 
 /** Opens the native file picker (from Rust); null when cancelled. */
 export const filePick = (purpose: FilePurpose) => invoke<string | null>("file_pick", { purpose });
+
+/**
+ * Reads a TablePlus export with `password`; null when the picker is cancelled. The file
+ * is picked in Rust; `reusePick` re-reads the last picked file instead (a retry after a
+ * wrong password). Rejects with invalid "wrong password or corrupted file" or
+ * "not a TablePlus export".
+ */
+export const importTablePlusPreview = (password: string, reusePick: boolean) =>
+  invoke<ImportPreview | null>("import_tableplus_preview", { password, reusePick });
+
+/** Saves the previewed items at `indexes`; rejects with notFound "import expired". */
+export const importTablePlusCommit = (importId: string, indexes: number[]) =>
+  invoke<ImportResult>("import_tableplus_commit", { importId, indexes });
+
+/** Drops a previewed import that will not be committed (and its secrets). */
+export const importTablePlusDiscard = (importId: string) =>
+  invoke<void>("import_tableplus_discard", { importId });
 
 export const workspaceClose = (workspaceId: string) =>
   invoke<void>("workspace_close", { workspaceId });

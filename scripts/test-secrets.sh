@@ -17,6 +17,9 @@
 #   id_ed25519_enc    ed25519, passphrase `key-pass`
 #   id_rsa_pem        RSA 2048 in the legacy PEM (PKCS#1) format, no passphrase
 #   authorized_keys   the three public keys (mounted into the sshd container)
+#   host/ssh_host_ed25519_key[.pub]
+#                     host key of the test sshd, generated once so its fingerprint survives
+#                     image rebuilds (the app's known_hosts entry stays valid)
 #
 # These files are test-only and gitignored; never reuse them anywhere else.
 set -euo pipefail
@@ -26,6 +29,8 @@ TLS_DIR=.test-secrets/tls
 TLS_FILES=(ca.pem ca.key server.pem server.key foreign-ca.pem foreign-ca.key client.pem client.key)
 SSH_DIR=.test-secrets/ssh
 SSH_FILES=(id_ed25519 id_ed25519_enc id_rsa_pem authorized_keys)
+HOST_DIR=$SSH_DIR/host
+HOST_FILES=(ssh_host_ed25519_key ssh_host_ed25519_key.pub)
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -98,5 +103,14 @@ ssh_material() {
   echo "test SSH keys written to $SSH_DIR"
 }
 
+host_key() {
+  ssh-keygen -q -t ed25519 -N '' -C tablemax-test-sshd -f "$TMP/ssh_host_ed25519_key"
+  install -d -m 0700 "$SSH_DIR" "$HOST_DIR"
+  install -m 0600 "$TMP/ssh_host_ed25519_key" "$HOST_DIR/ssh_host_ed25519_key"
+  install -m 0644 "$TMP/ssh_host_ed25519_key.pub" "$HOST_DIR/ssh_host_ed25519_key.pub"
+  echo "test sshd host key written to $HOST_DIR"
+}
+
 complete "$TLS_DIR" "${TLS_FILES[@]}" || tls_material
 complete "$SSH_DIR" "${SSH_FILES[@]}" || ssh_material
+complete "$HOST_DIR" "${HOST_FILES[@]}" || host_key

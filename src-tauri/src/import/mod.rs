@@ -10,8 +10,9 @@ pub mod tableplus;
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::future::Future;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -258,5 +259,146 @@ impl PendingImports {
         let pending = map.remove(import_id).ok_or_else(import_expired)?;
         let mut slots: Vec<_> = pending.entries.into_iter().map(Some).collect();
         Ok(indexes.iter().filter_map(|&i| slots[i].take()).collect())
+    }
+
+    /// Drops the import and its secrets now (an unknown or expired id is a no-op).
+    pub fn discard(&self, import_id: &str) {
+        self.live().remove(import_id);
+    }
+}
+
+/// The export file the user last picked in the native picker. Kept server-side (the
+/// webview never sends a path) so a retry with another password re-reads the same file.
+#[derive(Debug, Default)]
+pub struct LastPick(Mutex<Option<PathBuf>>);
+
+impl LastPick {
+    /// The file to read: the remembered one when `reuse` is set and one exists, else the
+    /// one `pick` returns, which becomes the remembered one. `None` = picker cancelled
+    /// (the previous pick is kept).
+    pub async fn resolve<F, Fut>(&self, reuse: bool, pick: F) -> AppResult<Option<PathBuf>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = AppResult<Option<PathBuf>>>,
+    {
+        if reuse && let Some(path) = self.get() {
+            return Ok(Some(path));
+        }
+        let picked = pick().await?;
+        if let Some(path) = &picked {
+            *self.lock() = Some(path.clone());
+        }
+        Ok(picked)
+    }
+
+    fn get(&self) -> Option<PathBuf> {
+        self.lock().clone()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Option<PathBuf>> {
+        // A plain assignment never panics half-way: a poisoned lock still holds a path.
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// A picker that counts its calls and returns `path`.
+    fn picker<'a>(
+        calls: &'a Cell<u32>,
+        path: Option<&'a str>,
+    ) -> impl FnOnce() -> std::future::Ready<AppResult<Option<PathBuf>>> + 'a {
+        move || {
+            calls.set(calls.get() + 1);
+            std::future::ready(Ok(path.map(PathBuf::from)))
+        }
+    }
+
+    #[tokio::test]
+    async fn last_pick_reuses_the_remembered_file() {
+        let last = LastPick::default();
+        let calls = Cell::new(0);
+        // Nothing remembered yet: the picker opens even when reuse is asked.
+        let got = last
+            .resolve(true, picker(&calls, Some("/a")))
+            .await
+            .unwrap();
+        assert_eq!((got, calls.get()), (Some(PathBuf::from("/a")), 1));
+        // Reuse: no picker.
+        let got = last
+            .resolve(true, picker(&calls, Some("/b")))
+            .await
+            .unwrap();
+        assert_eq!((got, calls.get()), (Some(PathBuf::from("/a")), 1));
+        // No reuse: the picker opens and its choice replaces the remembered one.
+        let got = last
+            .resolve(false, picker(&calls, Some("/b")))
+            .await
+            .unwrap();
+        assert_eq!((got, calls.get()), (Some(PathBuf::from("/b")), 2));
+        let got = last.resolve(true, picker(&calls, None)).await.unwrap();
+        assert_eq!((got, calls.get()), (Some(PathBuf::from("/b")), 2));
+    }
+
+    #[tokio::test]
+    async fn last_pick_keeps_the_file_when_the_picker_is_cancelled_or_fails() {
+        let last = LastPick::default();
+        let calls = Cell::new(0);
+        assert_eq!(
+            last.resolve(false, picker(&calls, None)).await.unwrap(),
+            None
+        );
+        // A cancel remembers nothing.
+        assert_eq!(
+            last.resolve(true, picker(&calls, None)).await.unwrap(),
+            None
+        );
+        assert_eq!(calls.get(), 2);
+        last.resolve(false, picker(&calls, Some("/a")))
+            .await
+            .unwrap();
+        assert_eq!(
+            last.resolve(false, picker(&calls, None)).await.unwrap(),
+            None
+        );
+        let failing = || std::future::ready(Err(AppError::new(ErrorKind::Io, "no dialog")));
+        assert_eq!(
+            last.resolve(false, failing).await.unwrap_err().kind,
+            ErrorKind::Io
+        );
+        let got = last.resolve(true, picker(&calls, None)).await.unwrap();
+        assert_eq!(got, Some(PathBuf::from("/a")));
+    }
+
+    fn entry(name: &str) -> ImportedConnection {
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "", "name": name, "color": "swatch-1", "envTag": "local", "kind": "sqlite",
+            "host": "", "port": 0, "user": "", "database": null, "sqlitePath": "/x.db",
+            "passwordMode": "keyring", "group": null,
+        }))
+        .unwrap();
+        ImportedConnection {
+            config,
+            password: Some("pw".into()),
+            ssh_secret: None,
+        }
+    }
+
+    #[test]
+    fn discard_drops_the_pending_import() {
+        let pending = PendingImports::new(IMPORT_TTL);
+        let kept = pending.insert(vec![entry("kept")]);
+        let dropped = pending.insert(vec![entry("dropped")]);
+        pending.discard(&dropped);
+        pending.discard("unknown");
+        let err = pending.take(&dropped, &[0]).unwrap_err();
+        assert_eq!(
+            (err.kind, err.message.as_str()),
+            (ErrorKind::NotFound, "import expired")
+        );
+        assert_eq!(pending.take(&kept, &[0]).unwrap()[0].config.name, "kept");
     }
 }

@@ -9,6 +9,7 @@ interface Props {
   onOpen: (cfg: ConnectionConfig) => void;
   onNew: () => void;
   onNewFromUrl: () => void;
+  onImport: () => void;
 }
 
 const COLLAPSED_KEY = "tablemax.collapsedGroups";
@@ -39,7 +40,15 @@ const ENV_CLASS: Record<ConnectionConfig["envTag"], string> = {
   prod: "text-env-prod border-env-prod",
 };
 
-export function ConnectionList({ items, selectedId, onSelect, onOpen, onNew, onNewFromUrl }: Props) {
+export function ConnectionList({
+  items,
+  selectedId,
+  onSelect,
+  onOpen,
+  onNew,
+  onNewFromUrl,
+  onImport,
+}: Props) {
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -134,12 +143,13 @@ export function ConnectionList({ items, selectedId, onSelect, onOpen, onNew, onN
           {menuOpen && (
             <div
               role="menu"
-              className="absolute right-0 z-10 mt-1 w-48 rounded-sm border border-border bg-surface py-1 shadow-lg"
+              className="absolute right-0 z-10 mt-1 w-56 rounded-sm border border-border bg-surface py-1 shadow-lg"
             >
               {(
                 [
                   [strings.connections.new, onNew],
                   [strings.connections.newFromUrl, onNewFromUrl],
+                  [strings.connections.importTablePlus, onImport],
                 ] as const
               ).map(([label, action]) => (
                 <button

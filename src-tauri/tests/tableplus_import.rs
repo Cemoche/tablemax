@@ -603,6 +603,61 @@ async fn pending_import_expires() {
     assert!(fx.mgr.list_connections().await.unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn retry_rereads_the_picked_file_without_the_picker() {
+    let fx = memory_manager();
+    let picks = Mutex::new(0);
+    let pick = || async {
+        *picks.lock().unwrap() += 1;
+        Ok(Some(fixture("group")))
+    };
+    let err = fx
+        .mgr
+        .import_tableplus_preview_picked("nope".into(), false, pick)
+        .await
+        .unwrap_err();
+    assert_eq!(err.message, "wrong password or corrupted file");
+    let preview = fx
+        .mgr
+        .import_tableplus_preview_picked(PASSWORD.into(), true, || async {
+            panic!("the picker must not reopen on a retry")
+        })
+        .await
+        .unwrap()
+        .expect("the remembered file is read");
+    assert_eq!(preview.items.len(), 2);
+    assert_eq!(*picks.lock().unwrap(), 1);
+
+    let cancelled = fx
+        .mgr
+        .import_tableplus_preview_picked(PASSWORD.into(), false, || async { Ok(None) })
+        .await
+        .unwrap();
+    assert!(cancelled.is_none());
+}
+
+#[tokio::test]
+async fn discard_drops_the_pending_import() {
+    let fx = memory_manager();
+    let preview = fx
+        .mgr
+        .import_tableplus_preview(fixture("group"), PASSWORD.into())
+        .await
+        .unwrap();
+    fx.mgr.import_tableplus_discard(&preview.import_id);
+    fx.mgr.import_tableplus_discard("not-an-import");
+    let err = fx
+        .mgr
+        .import_tableplus_commit(&preview.import_id, &[0])
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::NotFound, "import expired")
+    );
+    assert!(fx.mgr.list_connections().await.unwrap().is_empty());
+}
+
 /// A keyring that is unavailable: every call fails.
 struct NoKeyring;
 

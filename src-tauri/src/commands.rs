@@ -1,6 +1,8 @@
 //! Tauri commands: thin async wrappers over [`SessionManager`]. Names and parameter
 //! names are the frontend contract (Tauri exposes snake_case params as camelCase).
 
+use std::path::PathBuf;
+
 use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -98,21 +100,34 @@ pub async fn file_pick(app: AppHandle, purpose: FilePurpose) -> AppResult<Option
     pick_file(&app, purpose).await
 }
 
-/// Lets the user pick a TablePlus export, then reads it with `password` (`None` when the
-/// picker is cancelled). Secrets stay in the backend until `import_tableplus_commit`.
+/// Reads a TablePlus export with `password` (`None` when the picker is cancelled). The
+/// file comes from the native picker, or with `reuse_pick` (a retry after a wrong
+/// password) from the last pick, remembered server-side. Secrets stay in the backend
+/// until `import_tableplus_commit`.
 #[tauri::command]
 pub async fn import_tableplus_preview(
     app: AppHandle,
     state: State<'_, SessionManager>,
     password: String,
+    reuse_pick: bool,
 ) -> AppResult<Option<ImportPreview>> {
-    let Some(path) = pick_file(&app, FilePurpose::TableplusExport).await? else {
-        return Ok(None);
+    let pick = || async {
+        let path = pick_file(&app, FilePurpose::TableplusExport).await?;
+        Ok(path.map(PathBuf::from))
     };
     state
-        .import_tableplus_preview(path.into(), password)
+        .import_tableplus_preview_picked(password, reuse_pick, pick)
         .await
-        .map(Some)
+}
+
+/// Drops a previewed import that will not be committed (its secrets with it).
+#[tauri::command]
+pub async fn import_tableplus_discard(
+    state: State<'_, SessionManager>,
+    import_id: String,
+) -> AppResult<()> {
+    state.import_tableplus_discard(&import_id);
+    Ok(())
 }
 
 /// Saves the previewed entries at `indexes` (positions in the preview's `items`).

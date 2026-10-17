@@ -31,3 +31,13 @@ export function isHostKeyUnknown(e: AppError): boolean {
 export function isHostKeyChanged(e: AppError): boolean {
   return e.kind === "hostKeyChanged";
 }
+
+/** A TablePlus export read with the wrong password (or a damaged file). */
+export function isWrongExportPassword(e: AppError): boolean {
+  return e.kind === "invalid" && e.message === "wrong password or corrupted file";
+}
+
+/** A previewed import that timed out or was already used. */
+export function isImportExpired(e: AppError): boolean {
+  return e.kind === "notFound" && e.message === "import expired";
+}

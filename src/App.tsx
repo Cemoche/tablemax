@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ConnectPrompt } from "./features/connections/ConnectPrompt";
 import { ConnectionForm } from "./features/connections/ConnectionForm";
+import { ImportDialog } from "./features/connections/ImportDialog";
 import { UrlImportDialog } from "./features/connections/UrlImportDialog";
 import { blankConnection } from "./features/connections/connectionDraft";
 import { ConnectionList } from "./features/connections/ConnectionList";
@@ -22,6 +23,7 @@ function App() {
   const [draftPassword, setDraftPassword] = useState<string | null>(null);
   const [draftSslExplicit, setDraftSslExplicit] = useState(false);
   const [urlDialog, setUrlDialog] = useState(false);
+  const [importDialog, setImportDialog] = useState(false);
   const select = (cfg: ConnectionConfig | null, password: string | null = null, sslExplicit = false) => {
     setSelected(cfg);
     setDraftPassword(password);
@@ -87,6 +89,7 @@ function App() {
               onOpen={(cfg) => open(cfg)}
               onNew={() => select(null)}
               onNewFromUrl={() => setUrlDialog(true)}
+              onImport={() => setImportDialog(true)}
             />
             <main className="min-w-0 flex-1 overflow-y-auto">
               {loadError && <p className="p-3 text-danger">{loadError}</p>}
@@ -116,6 +119,7 @@ function App() {
           }}
         />
       )}
+      {importDialog && <ImportDialog onClose={() => setImportDialog(false)} />}
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />
     </div>
   );

@@ -52,6 +52,7 @@ pub fn run() {
             commands::file_pick,
             commands::import_tableplus_preview,
             commands::import_tableplus_commit,
+            commands::import_tableplus_discard,
             commands::workspace_close,
             commands::schemas_list,
             commands::objects_list,

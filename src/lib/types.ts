@@ -1,5 +1,6 @@
 // TypeScript mirrors of the Rust serde types (all camelCase on the wire).
-// Sources: src-tauri/src/{value,error,store,manager,commands}.rs and driver/{mod,tls}.rs.
+// Sources: src-tauri/src/{value,error,store,manager,commands}.rs, driver/{mod,tls}.rs and
+// import/{mod,tableplus}.rs.
 // Pinned by types.shape.test.ts.
 
 export type DriverKind = "postgres" | "mySql" | "mariaDb" | "sqlite";
@@ -91,6 +92,37 @@ export interface ConnectionConfig {
   ssl: SslConfig;
   /** Database reached through this SSH server (host/port as seen from it). */
   ssh: SshSettings | null;
+}
+
+/** Something an import could not carry over as is (import/tableplus.rs ImportWarning). */
+export interface ImportWarning {
+  /** Name of the connection (or group) concerned. */
+  entry: string;
+  message: string;
+}
+
+/** One connection of a previewed import (import/mod.rs); never carries a secret. */
+export interface ImportItem {
+  /** Position in the pending import: what importTablePlusCommit takes. */
+  index: number;
+  /** `id` is "". */
+  config: ConnectionConfig;
+  hasPassword: boolean;
+  hasSshSecret: boolean;
+  /** Id of an existing connection with the same identity or the same name. */
+  duplicateOf: string | null;
+}
+
+export interface ImportPreview {
+  importId: string;
+  items: ImportItem[];
+  warnings: ImportWarning[];
+}
+
+export interface ImportResult {
+  saved: ConnectionConfig[];
+  /** E.g. secrets kept out of an unavailable keyring (saved in Ask mode). */
+  warnings: ImportWarning[];
 }
 
 export const SWATCHES = [

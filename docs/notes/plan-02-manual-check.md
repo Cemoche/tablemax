@@ -37,3 +37,74 @@ check above ran with `HOME` pointing at an empty scratch home (so `~/.ssh` was e
 ### Not manually verified
 - Key and agent authentication, passphrase prompt, SSL file pickers (native dialog) and
   MySQL/MariaDB through the UI — covered by Vitest component tests and backend tests.
+
+## Task 8 — final check (TLS, SSH, groups, URL, TablePlus import)
+
+Debug build (`cargo build`, `pnpm web` + `src-tauri/target/debug/tablemax`) on a private
+Xvfb display (`GDK_BACKEND=x11`), driven with xdotool, checked on screenshots. Fully
+isolated session: `HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and
+`XDG_RUNTIME_DIR` in a scratch directory, a private D-Bus (`dbus-run-session`) with its
+own unlocked `gnome-keyring-daemon`, no `SSH_AUTH_SOCK`. Nothing was written to the real
+`~/.local/share/dev.tablemax.app`, `~/.ssh/known_hosts` or the user's keyring. Test
+containers from `scripts/test-dbs.sh up`, with the sshd host key now generated once by
+`scripts/test-secrets.sh` (`SHA256:hUMmwhvJd6o+rIX9A9IzS/ufX9vxzq/kXT0eCIHmtUA`; the same
+fingerprint before and after `docker compose build --no-cache sshd` + recreate).
+`pnpm demo:db` was not run (the check uses `tablemax_test`).
+
+### Verified
+- **TLS verify-full**: "Check · PG TLS" = PostgreSQL `localhost:54321`, mode "Verify CA and
+  host name", CA picked through the native GTK picker (`.test-secrets/tls/ca.pem`).
+  Test → "Connected — server 16.13"; Connect opens the workspace. Same settings with host
+  `127.0.0.1` → "certificate not valid for name "127.0.0.1"; certificate is only valid
+  for DnsName("localhost"), …" (the test cert has no IP SAN), as expected.
+- **SSH, password auth**: "Check · PG via SSH" = PostgreSQL `pg16:5432` through
+  `tunnel@127.0.0.1:2222`, SSH password in the keyring. Connect → "Unknown SSH host"
+  `127.0.0.1:2222` with the fingerprint above → "Trust and connect" opens the workspace;
+  the app's `known_hosts` holds the `[127.0.0.1]:2222 ssh-ed25519 …` line. Close +
+  double-click → opens with no prompt (known key).
+- **SSH, encrypted key**: same connection switched to "Private key", key file
+  `.test-secrets/ssh/id_ed25519_enc` picked through the native picker, storage "Ask each
+  time". Connect first asked to re-enter the DB password (identity changed, Plan-1
+  inline message); then the "Key passphrase required" dialog; a wrong passphrase →
+  "Wrong passphrase — try again"; `key-pass` → workspace opens.
+- **Groups**: group "Checks" → sidebar sections CHECKS / UNGROUPED with counts; clicking
+  the header folds it (▸, rows hidden) and unfolds it (▾).
+- **Copy URL → New from URL…**: "URL copied (without the password)"; the clipboard held
+  `postgresql://postgres@pg16:5432/tablemax_test?ssh=tunnel%40127.0.0.1%3A2222&ssh-auth=key`.
+  Pasted into "New from URL…" → "Open form" prefilled PostgreSQL `pg16:5432`, user,
+  database, SSL Prefer and the SSH tunnel `127.0.0.1:2222` (draft not saved).
+- **Import TablePlus export…** ("+" menu, third item; fixtures in
+  `src-tauri/tests/fixtures/tableplus/`, password `fixture-pass`):
+  - `single-grouped`, password `wrong-password` → native picker (filter "TablePlus
+    export") → "wrong password or corrupted file" on the first step with "Choose another
+    file…" and "Try again". Retyped `fixture-pass` + "Try again" → no picker, preview of
+    `fixture-grouped-mysql` (MySQL `127.0.0.1:3306`, "password" pill) → "Import 1
+    connection" → "Imported 1 connection", the list reloaded.
+  - `all-with-passwords` → 9 rows: `fixture-grouped-mysql` flagged "duplicate of
+    fixture-grouped-mysql" (same name + identity) and `fixture-mysql` flagged "duplicate
+    of fixture-grouped-mysql" (same identity: MySQL demo@127.0.0.1:3306), both unchecked;
+    "password" / "SSH" pills, "via bastion.example.test", group "Fixture Group / Nested
+    Group"; warning "fixture-ssh-key: SSH key file not included in the export: choose it
+    in the connection settings". "Import 7 connections" → "Imported 7 connections"; the
+    sidebar shows the new group "Fixture Group / Nested Group".
+  - `all-without-passwords` → every row flagged as a duplicate and unchecked, "Import 0
+    connections" disabled, two SSH key warnings; Cancel closes the dialog (the pending
+    import is discarded; covered by Vitest and `discard_drops_the_pending_import`).
+- **No secret in `app.db`**: `sqlite3 <scratch>/dev.tablemax.app/app.db .dump` (10
+  connections) → `grep -c` = 0 for `tunnel-pass`, `key-pass`, `wrong-pass`,
+  `fixture-pass`, `demo-pass`, `ssh-demo-pass`, `key-demo-pass` and for the quoted DB
+  password `"tablemax"` / `'tablemax'` (the bare word also occurs in paths and database
+  names). No file of the app data dir contains any of these secrets.
+
+### Not manually verified
+- MySQL/MariaDB through the UI, client certificates, agent auth: covered by backend tests.
+- Keyring-unavailable import fallback (Ask mode + warning): covered by
+  `unavailable_keyring_saves_in_ask_mode_with_warning` and the dialog test.
+
+### Note for the real app data dir
+The real `~/.local/share/dev.tablemax.app/known_hosts` (written during the Task 5 check)
+still trusts the previous sshd key (`SHA256:qHEM/…`). With the new stable host key, the
+demo SSH connection reports "The SSH host key has changed" once: remove the
+`[127.0.0.1]:2222` line of that file (and the stale `~/.ssh/known_hosts` entries:
+`ssh-keygen -R "[127.0.0.1]:2222"`), then trust the new key. From now on the key survives
+image rebuilds.

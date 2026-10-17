@@ -37,6 +37,7 @@ const renderList = () =>
       onOpen={vi.fn()}
       onNew={vi.fn()}
       onNewFromUrl={vi.fn()}
+      onImport={vi.fn()}
     />,
   );
 
@@ -86,19 +87,37 @@ test("search also matches the host", async () => {
   expect(screen.queryByText("scratch")).toBeNull();
 });
 
-test("the + menu offers New connection and New from URL", async () => {
+test("the + menu offers New connection, New from URL and the TablePlus import", async () => {
   const user = userEvent.setup();
   const onNew = vi.fn();
   const onNewFromUrl = vi.fn();
+  const onImport = vi.fn();
   render(
-    <ConnectionList items={[]} selectedId={null} onSelect={vi.fn()} onOpen={vi.fn()} onNew={onNew} onNewFromUrl={onNewFromUrl} />,
+    <ConnectionList
+      items={[]}
+      selectedId={null}
+      onSelect={vi.fn()}
+      onOpen={vi.fn()}
+      onNew={onNew}
+      onNewFromUrl={onNewFromUrl}
+      onImport={onImport}
+    />,
   );
   await user.click(screen.getByRole("button", { name: "New…" }));
+  expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+    "New connection",
+    "New from URL…",
+    "Import TablePlus export…",
+  ]);
   await user.click(screen.getByRole("menuitem", { name: "New from URL…" }));
   expect(onNewFromUrl).toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "New…" }));
   await user.click(screen.getByRole("menuitem", { name: "New connection" }));
   expect(onNew).toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "New…" }));
+  await user.click(screen.getByRole("menuitem", { name: "Import TablePlus export…" }));
+  expect(onImport).toHaveBeenCalled();
+  expect(screen.queryByRole("menu")).toBeNull();
 });
 
 test("Escape closes the + menu and so does a click outside", async () => {

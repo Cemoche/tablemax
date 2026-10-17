@@ -19,6 +19,7 @@
 //! (also the TLS name). A SQL session opened after the tunnel died reopens it.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -31,7 +32,7 @@ use crate::driver::{
     self, Canceller, ConnectParams, Dialect, DriverKind, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::import::{self, IMPORT_TTL, ImportPreview, ImportResult, PendingImports};
+use crate::import::{self, IMPORT_TTL, ImportPreview, ImportResult, LastPick, PendingImports};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
 use crate::ssh::config::{SshConfigFile, user_config};
 use crate::ssh::known_hosts::KnownHosts;
@@ -193,6 +194,8 @@ pub struct SessionManager {
     ssh_config: Option<Arc<SshConfigFile>>,
     /// Previewed imports (with their secrets) waiting for a commit.
     imports: PendingImports,
+    /// The export file last picked for an import, re-read by a retry.
+    import_pick: LastPick,
     state: Mutex<State>,
 }
 
@@ -378,6 +381,7 @@ impl SessionManager {
             known_hosts,
             ssh_config: None,
             imports: PendingImports::new(IMPORT_TTL),
+            import_pick: LastPick::default(),
             state: Mutex::new(State::default()),
         }
     }
@@ -444,6 +448,32 @@ impl SessionManager {
             items,
             warnings,
         })
+    }
+
+    /// [`Self::import_tableplus_preview`] of the file [`LastPick::resolve`] gives: the
+    /// last picked one when `reuse_pick` (a retry with another password), else the one
+    /// `pick` returns. `None` when the picker is cancelled.
+    pub async fn import_tableplus_preview_picked<F, Fut>(
+        &self,
+        password: String,
+        reuse_pick: bool,
+        pick: F,
+    ) -> AppResult<Option<ImportPreview>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = AppResult<Option<PathBuf>>>,
+    {
+        let Some(path) = self.import_pick.resolve(reuse_pick, pick).await? else {
+            return Ok(None);
+        };
+        self.import_tableplus_preview(path, password)
+            .await
+            .map(Some)
+    }
+
+    /// Drops a pending import and its secrets (unknown or expired id: nothing to do).
+    pub fn import_tableplus_discard(&self, import_id: &str) {
+        self.imports.discard(import_id);
     }
 
     /// Saves the entries of a pending import at `indexes` and drops the import (NotFound
