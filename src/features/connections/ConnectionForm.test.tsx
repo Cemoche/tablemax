@@ -178,10 +178,35 @@ test("the default SSL mode follows host and SSH until the user picks one", () =>
   expect(sslMode()).toBe("require");
 });
 
-test("an existing connection keeps its stored SSL mode", () => {
-  render(<ConnectionForm connection={saved} onConnect={vi.fn()} />);
+test("an existing connection whose mode is the default keeps following host and SSH", () => {
+  render(<ConnectionForm connection={saved} onConnect={vi.fn()} />); // localhost, prefer
   fireEvent.change(screen.getByLabelText("Host"), { target: { value: "db.example.com" } });
+  expect(sslMode()).toBe("verifyFull");
+});
+
+test("an existing connection with a mode picked by the user keeps it", () => {
+  const remote: ConnectionConfig = {
+    ...saved,
+    host: "db.example.com",
+    ssl: { ...saved.ssl, mode: "require" },
+  };
+  render(<ConnectionForm connection={remote} onConnect={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Host"), { target: { value: "db2.example.com" } });
+  expect(sslMode()).toBe("require");
+  fireEvent.change(screen.getByLabelText("Host"), { target: { value: "localhost" } });
+  expect(sslMode()).toBe("require");
+});
+
+test("an existing tunnelled connection in prefer verifies once the tunnel is removed", () => {
+  const tunnelled: ConnectionConfig = {
+    ...saved,
+    host: "db.internal",
+    ssh: { host: "bastion", port: null, user: "me", auth: "agent", keyFile: null, secretMode: "none" },
+  };
+  render(<ConnectionForm connection={tunnelled} onConnect={vi.fn()} />);
   expect(sslMode()).toBe("prefer");
+  fireEvent.click(screen.getByLabelText("SSH tunnel"));
+  expect(sslMode()).toBe("verifyFull");
 });
 
 test("Browse… picks the CA file and Clear removes it", async () => {
@@ -226,6 +251,18 @@ test("cleartext warning for a remote host in prefer mode, gone with SSH", () => 
   expect(warning()).toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("SSH tunnel"));
   expect(warning()).toBeNull();
+});
+
+test("require on a remote host warns that the certificate is not verified", () => {
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+  const unverified = () => screen.queryByText(strings.ssl.unverifiedWarning);
+  fireEvent.change(screen.getByLabelText("SSL mode"), { target: { value: "require" } });
+  expect(unverified()).toBeNull(); // localhost
+  fireEvent.change(screen.getByLabelText("Host"), { target: { value: "db.example.com" } });
+  expect(unverified()).toBeInTheDocument();
+  expect(screen.queryByText(strings.ssl.cleartextWarning)).toBeNull();
+  fireEvent.change(screen.getByLabelText("SSL mode"), { target: { value: "verifyFull" } });
+  expect(unverified()).toBeNull();
 });
 
 test("checking SSH tunnel shows its fields with the ~/.ssh/config aliases", async () => {

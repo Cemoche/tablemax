@@ -5,7 +5,7 @@ import { ImportDialog } from "./features/connections/ImportDialog";
 import { UrlImportDialog } from "./features/connections/UrlImportDialog";
 import { blankConnection } from "./features/connections/connectionDraft";
 import { ConnectionList } from "./features/connections/ConnectionList";
-import { hostKeyLabel, useConnectFlow } from "./features/connections/useConnectFlow";
+import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlow";
 import { toAppError } from "./lib/errors";
 import { WorkspaceSwitcher } from "./features/workspace/WorkspaceSwitcher";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
@@ -57,7 +57,7 @@ function App() {
     setLoadError(null);
     try {
       const initial = { password, sshSecret, acceptFingerprint: null };
-      if (await openFlow.start(initial, cfg, hostKeyLabel(cfg))) setView("workspace");
+      if (await openFlow.start(initial, cfg, flowTarget(cfg))) setView("workspace");
     } catch (e) {
       setLoadError(toAppError(e).message);
     }

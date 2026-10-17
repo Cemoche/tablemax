@@ -111,7 +111,7 @@ export const strings = {
       title: "SSH password required",
       label: "SSH password",
       body: (name: string) => `Enter the SSH password for “${name}”.`,
-      retry: "Enter the SSH password",
+      retry: "The SSH password was not accepted",
     },
     sshPassphrase: {
       title: "Key passphrase required",
@@ -141,6 +141,8 @@ export const strings = {
     clearFor: (what: string) => `Clear ${what}`,
     cleartextWarning:
       "Traffic to this host may be unencrypted and its certificate is not checked: use a verify mode or an SSH tunnel.",
+    unverifiedWarning:
+      "The certificate of this host is not verified: traffic is encrypted, but anyone on the network path could pose as the server. Use a verify mode or an SSH tunnel.",
   },
   ssh: {
     enable: "SSH tunnel",
@@ -160,12 +162,12 @@ export const strings = {
     noPassphrase: "No passphrase",
     unknownHostTitle: "Unknown SSH host",
     unknownHostExplain:
-      "TableMax has never connected to this SSH server. Compare this fingerprint with the one given by the server administrator (ssh-keygen -lf) before trusting it.",
+      "TableMax has no record of this server's key. Compare this fingerprint with the one given by the server administrator (ssh-keygen -lf) before trusting it.",
     fingerprint: "Fingerprint",
     trust: "Trust and connect",
     cancel: "Cancel",
-    hostKeyChanged: (fingerprint: string) =>
-      `The SSH host key has changed: the server sent ${fingerprint}, which differs from the key in known_hosts. The server may have been reinstalled, or someone may be intercepting the connection. Check the fingerprint with the server administrator before editing known_hosts.`,
+    hostKeyChanged: (fingerprint: string, host?: string) =>
+      `The SSH host key${host ? ` of ${host}` : ""} has changed: the server sent ${fingerprint}, which differs from the key in known_hosts. The server may have been reinstalled, or someone may be intercepting the connection. Check the fingerprint with the server administrator before editing known_hosts.`,
   },
   workspace: {
     back: "Connections",

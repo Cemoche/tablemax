@@ -1,7 +1,8 @@
 import { expect, test, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { strings } from "../../lib/strings";
-import { useConnectFlow, type FlowSecrets } from "./useConnectFlow";
+import type { ConnectionConfig } from "../../lib/types";
+import { flowTarget, useConnectFlow, type FlowSecrets } from "./useConnectFlow";
 
 const none: FlowSecrets = { password: null, sshSecret: null, acceptFingerprint: null };
 const FP = "SHA256:abcDEF0123456789abcDEF0123456789abcDEF01234";
@@ -81,7 +82,7 @@ test("an unknown host key prompts with its fingerprint; Trust retries accepting 
   const { result } = renderHook(() => useConnectFlow(run));
   let outcome: Promise<unknown> = Promise.resolve();
   act(() => {
-    outcome = result.current.start({ ...none, sshSecret: "s" }, "ctx", "bastion:2222");
+    outcome = result.current.start({ ...none, sshSecret: "s" }, "ctx", { host: "bastion:2222" });
   });
   await waitFor(() =>
     expect(result.current.prompt).toEqual({ kind: "hostKey", fingerprint: FP, host: "bastion:2222" }),
@@ -157,12 +158,12 @@ test("a new start supersedes a flow waiting on a prompt; answers go to the new f
   let a: Promise<unknown> = Promise.resolve();
   let b: Promise<unknown> = Promise.resolve();
   act(() => {
-    a = result.current.start(none, "A", "host-a");
+    a = result.current.start(none, "A", { host: "host-a" });
   });
   await waitFor(() => expect(result.current.prompt?.kind).toBe("hostKey"));
   expect(result.current.context).toBe("A");
   act(() => {
-    b = result.current.start(none, "B", "host-b");
+    b = result.current.start(none, "B", { host: "host-b" });
   });
   await act(async () => {
     await expect(a).resolves.toBeUndefined();
@@ -221,4 +222,119 @@ test("a superseded flow whose run succeeds resolves undefined", async () => {
     settle("A").resolve("late");
     await expect(a).resolves.toBeUndefined();
   });
+});
+
+const sshCfg = (ssh: Partial<NonNullable<ConnectionConfig["ssh"]>>, id = "c1"): ConnectionConfig => ({
+  id,
+  name: "n",
+  color: "swatch-1",
+  envTag: "local",
+  kind: "postgres",
+  host: "db",
+  port: 5432,
+  user: "u",
+  database: null,
+  sqlitePath: null,
+  passwordMode: "keyring",
+  group: null,
+  ssl: { mode: "prefer", caFile: null, certFile: null, keyFile: null },
+  ssh: { host: "bastion", port: null, user: null, auth: "password", keyFile: null, secretMode: "keyring", ...ssh },
+});
+
+test("flowTarget describes the SSH side of a connection", () => {
+  expect(flowTarget(sshCfg({ port: 2222 }))).toEqual({
+    host: "bastion:2222",
+    sshAuth: "password",
+    sshSecretStored: true,
+  });
+  expect(flowTarget(sshCfg({ auth: "key", secretMode: "ask" }))).toEqual({
+    host: "bastion",
+    sshAuth: "key",
+    sshSecretStored: false,
+  });
+  expect(flowTarget(sshCfg({}, "")).sshSecretStored).toBe(false); // unsaved: nothing stored
+  expect(flowTarget({ ...sshCfg({}), ssh: null })).toEqual({ host: "", sshAuth: null, sshSecretStored: false });
+});
+
+test("the host-key prompt names the server the backend checked, not the alias", async () => {
+  const run = vi
+    .fn()
+    .mockRejectedValueOnce({ kind: "hostKeyUnknown", message: FP, host: "10.0.0.5:2222" })
+    .mockResolvedValueOnce("ok");
+  const { result } = renderHook(() => useConnectFlow(run));
+  act(() => {
+    void result.current.start(none, "ctx", { host: "bastion" });
+  });
+  await waitFor(() =>
+    expect(result.current.prompt).toEqual({ kind: "hostKey", fingerprint: FP, host: "10.0.0.5:2222" }),
+  );
+  act(() => result.current.cancel());
+});
+
+test("a changed host key names the server", async () => {
+  const run = vi.fn().mockRejectedValue({ kind: "hostKeyChanged", message: FP, host: "10.0.0.5:2222" });
+  const { result } = renderHook(() => useConnectFlow(run));
+  await act(async () => {
+    await expect(result.current.start(none, "ctx")).rejects.toEqual({
+      kind: "hostKeyChanged",
+      message: strings.ssh.hostKeyChanged(FP, "10.0.0.5:2222"),
+    });
+  });
+  expect(strings.ssh.hostKeyChanged(FP, "10.0.0.5:2222")).toContain("10.0.0.5:2222");
+});
+
+test("a rejected SSH password prompts for it again", async () => {
+  const run = vi
+    .fn()
+    .mockRejectedValueOnce({ kind: "auth", message: "ssh authentication failed" })
+    .mockRejectedValueOnce({ kind: "auth", message: "ssh authentication failed" })
+    .mockResolvedValueOnce("ok");
+  const { result } = renderHook(() => useConnectFlow(run));
+  let outcome: Promise<unknown> = Promise.resolve();
+  const target = { host: "bastion", sshAuth: "password" as const, sshSecretStored: true };
+  act(() => {
+    outcome = result.current.start({ ...none, password: "db" }, "ctx", target);
+  });
+  const retry = { kind: "sshPassword", error: strings.secretPrompt.sshPassword.retry };
+  await waitFor(() => expect(result.current.prompt).toEqual(retry));
+  act(() => result.current.submit("wrong"));
+  await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(result.current.prompt).toEqual(retry));
+  act(() => result.current.submit("right"));
+  await act(async () => {
+    await expect(outcome).resolves.toBe("ok");
+  });
+  expect(run).toHaveBeenLastCalledWith({ ...none, password: "db", sshSecret: "right" }, "ctx");
+});
+
+test("a failed key or agent login is not a password prompt", async () => {
+  for (const sshAuth of ["key", "agent"] as const) {
+    const err = { kind: "auth", message: "ssh authentication failed" };
+    const run = vi.fn().mockRejectedValue(err);
+    const { result } = renderHook(() => useConnectFlow(run));
+    await act(async () => {
+      await expect(
+        result.current.start(none, "ctx", { host: "b", sshAuth, sshSecretStored: false }),
+      ).rejects.toEqual(err);
+    });
+    expect(result.current.prompt).toBeNull();
+  }
+});
+
+test("a stored passphrase that no longer works prompts with the wrong-passphrase text", async () => {
+  const run = vi
+    .fn()
+    .mockRejectedValueOnce({ kind: "auth", message: "ssh passphrase required" })
+    .mockResolvedValueOnce("ok");
+  const { result } = renderHook(() => useConnectFlow(run));
+  act(() => {
+    void result.current.start(none, "ctx", { host: "b", sshAuth: "key", sshSecretStored: true });
+  });
+  await waitFor(() =>
+    expect(result.current.prompt).toEqual({
+      kind: "sshPassphrase",
+      error: strings.secretPrompt.sshPassphrase.retry,
+    }),
+  );
+  act(() => result.current.cancel());
 });

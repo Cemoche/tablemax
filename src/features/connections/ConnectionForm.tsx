@@ -19,11 +19,12 @@ import {
   forBackend,
   normalize,
   errorText,
+  sslModePicked,
   withSslMode,
 } from "./connectionDraft";
 import { SshSection } from "./SshSection";
 import { SslSection } from "./SslSection";
-import { hostKeyLabel, useConnectFlow } from "./useConnectFlow";
+import { flowTarget, useConnectFlow } from "./useConnectFlow";
 
 interface Props {
   /** null = new connection. */
@@ -49,9 +50,9 @@ export function ConnectionForm({ connection, initialPassword = null, sslExplicit
   const [sshSecret, setSshSecret] = useState("");
   /**
    * The SSL mode follows host and SSH (defaultSslMode) until the user picks one. A
-   * pre-filled unsaved connection (from a URL) keeps a mode its URL stated.
+   * loaded connection keeps a non-default mode, and a URL draft a mode its URL stated.
    */
-  const [sslPicked, setSslPicked] = useState(!!connection?.id || sslExplicit);
+  const [sslPicked, setSslPicked] = useState(sslModePicked(connection, sslExplicit));
   const [busy, setBusy] = useState<"test" | "save" | "connect" | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const items = useConnections((s) => s.items);
@@ -62,7 +63,7 @@ export function ConnectionForm({ connection, initialPassword = null, sslExplicit
     setCfg(normalize(connection ?? blankConnection()));
     setPassword(initialPassword ?? "");
     setSshSecret("");
-    setSslPicked(!!connection?.id || sslExplicit);
+    setSslPicked(sslModePicked(connection, sslExplicit));
     setNotice(null);
     // initialPassword travels with `connection`; it must not reset typed input alone.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,7 +128,7 @@ export function ConnectionForm({ connection, initialPassword = null, sslExplicit
   const onTest = () =>
     run("test", async () => {
       const initial = { password: typed, sshSecret: typedSsh, acceptFingerprint: null };
-      const version = await testFlow.start(initial, outgoing(), hostKeyLabel(cfg));
+      const version = await testFlow.start(initial, outgoing(), flowTarget(cfg));
       if (version !== undefined) setNotice({ tone: "ok", text: strings.form.testOk(version) });
     });
 

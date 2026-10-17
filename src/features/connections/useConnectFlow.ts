@@ -3,12 +3,13 @@ import {
   isHostKeyChanged,
   isHostKeyUnknown,
   isPasswordRequired,
+  isSshAuthFailed,
   isSshPassphraseRequired,
   isSshPasswordRequired,
   toAppError,
 } from "../../lib/errors";
 import { strings } from "../../lib/strings";
-import type { AppError, ConnectionConfig } from "../../lib/types";
+import type { AppError, ConnectionConfig, SshAuth } from "../../lib/types";
 
 export interface FlowSecrets {
   password: string | null;
@@ -22,23 +23,45 @@ export type FlowPrompt =
   | { kind: SecretPromptKind; error: string | null }
   | { kind: "hostKey"; fingerprint: string; host: string };
 
-/** The SSH server of `cfg` as the host-key prompt names it ("" without SSH). */
-export function hostKeyLabel(cfg: ConnectionConfig): string {
-  if (!cfg.ssh) return "";
-  return cfg.ssh.port !== null ? `${cfg.ssh.host}:${cfg.ssh.port}` : cfg.ssh.host;
+/** What a flow knows about the SSH side of the connection it runs for. */
+export interface FlowTarget {
+  /** The SSH server as configured: the host-key prompt's label when the error names none. */
+  host: string;
+  /** null without SSH. */
+  sshAuth: SshAuth | null;
+  /** With no SSH secret typed, the backend uses the one in the keyring. */
+  sshSecretStored: boolean;
+}
+
+const NO_TARGET: FlowTarget = { host: "", sshAuth: null, sshSecretStored: false };
+
+/** The flow target of `cfg`. */
+export function flowTarget(cfg: ConnectionConfig): FlowTarget {
+  const ssh = cfg.ssh;
+  if (!ssh) return NO_TARGET;
+  return {
+    host: ssh.port !== null ? `${ssh.host}:${ssh.port}` : ssh.host,
+    sshAuth: ssh.auth,
+    sshSecretStored: cfg.id !== "" && ssh.auth !== "agent" && ssh.secretMode === "keyring",
+  };
 }
 
 /** The prompt an error asks for, or null when the flow cannot continue. */
-function promptFor(err: AppError, secrets: FlowSecrets, host: string): FlowPrompt | null {
-  // A required secret that was already given was rejected: say so in the prompt.
-  const secret = (kind: SecretPromptKind, given: string | null): FlowPrompt => ({
+function promptFor(err: AppError, secrets: FlowSecrets, target: FlowTarget): FlowPrompt | null {
+  // A secret that was given (typed, or stored for the SSH one) was rejected: say so.
+  const secret = (kind: SecretPromptKind, rejected: boolean): FlowPrompt => ({
     kind,
-    error: given !== null ? strings.secretPrompt[kind].retry : null,
+    error: rejected ? strings.secretPrompt[kind].retry : null,
   });
-  if (isPasswordRequired(err)) return secret("password", secrets.password);
-  if (isSshPasswordRequired(err)) return secret("sshPassword", secrets.sshSecret);
-  if (isSshPassphraseRequired(err)) return secret("sshPassphrase", secrets.sshSecret);
-  if (isHostKeyUnknown(err)) return { kind: "hostKey", fingerprint: err.message, host };
+  const sshGiven = secrets.sshSecret !== null || target.sshSecretStored;
+  if (isPasswordRequired(err)) return secret("password", secrets.password !== null);
+  if (isSshPasswordRequired(err)) return secret("sshPassword", secrets.sshSecret !== null);
+  if (isSshPassphraseRequired(err)) return secret("sshPassphrase", sshGiven);
+  // The server refused the SSH password (typed or stored): ask for it again.
+  if (isSshAuthFailed(err) && target.sshAuth === "password") return secret("sshPassword", true);
+  if (isHostKeyUnknown(err)) {
+    return { kind: "hostKey", fingerprint: err.message, host: err.host ?? target.host };
+  }
   return null;
 }
 
@@ -57,14 +80,15 @@ function answered(secrets: FlowSecrets, prompt: FlowPrompt, value: string): Flow
 
 /**
  * Runs `run` and, on each recognised error (password / SSH password / passphrase
- * required, unknown host key), shows the matching prompt, keeps the secrets already
- * given and runs again. `start` resolves with run's result, or undefined when the user
+ * required, SSH password refused, unknown host key), shows the matching prompt, keeps
+ * the secrets already given and runs again. `start` resolves with run's result, or undefined when the user
  * cancels a prompt; it rejects with any other error — a changed host key rejects with
  * `strings.ssh.hostKeyChanged`, never prompting.
  *
  * `context` (e.g. the connection) is bound to one `start`: every attempt of that flow
- * gets it, and `context` exposes it while the flow's prompt is open. `host` labels the
- * host-key prompt (the SSH server).
+ * gets it, and `context` exposes it while the flow's prompt is open. `target`
+ * (`flowTarget(cfg)`) tells which SSH secret a refusal concerns and labels the host-key
+ * prompt when the backend does not name the server.
  *
  * Single flight: a new `start` supersedes the running flow, which then resolves
  * undefined without prompting, retrying or reporting its result or error, and never
@@ -88,7 +112,8 @@ export function useConnectFlow<C, T>(run: (secrets: FlowSecrets, context: C) => 
   }, []);
 
   const start = useCallback(
-    async (initial: FlowSecrets, context: C, host = ""): Promise<T | undefined> => {
+    async (initial: FlowSecrets, context: C, target: Partial<FlowTarget> = {}): Promise<T | undefined> => {
+      const tgt: FlowTarget = { ...NO_TARGET, ...target };
       const gen = ++genRef.current;
       const current = () => genRef.current === gen;
       settle(null); // supersede the previous flow's prompt, if any
@@ -107,9 +132,9 @@ export function useConnectFlow<C, T>(run: (secrets: FlowSecrets, context: C) => 
             if (!current()) return undefined;
             const err = toAppError(e);
             if (isHostKeyChanged(err)) {
-              throw { kind: err.kind, message: strings.ssh.hostKeyChanged(err.message) };
+              throw { kind: err.kind, message: strings.ssh.hostKeyChanged(err.message, err.host) };
             }
-            const next = promptFor(err, secrets, host);
+            const next = promptFor(err, secrets, tgt);
             if (!next) throw e;
             const value = await ask(next);
             if (value === null || !current()) return undefined;

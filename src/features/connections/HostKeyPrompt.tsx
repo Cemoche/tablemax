@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { strings } from "../../lib/strings";
 
 interface Props {
-  /** The SSH server as configured (alias or host, with its port when set). */
+  /** The SSH server whose key is checked ("host:port" after ~/.ssh/config). */
   host: string;
   /** "SHA256:…", as `ssh-keygen -lf` prints it. */
   fingerprint: string;
@@ -10,7 +10,7 @@ interface Props {
   onCancel: () => void;
 }
 
-/** Modal asking to trust the key of an SSH server seen for the first time. */
+/** Modal asking to trust the key of an SSH server known_hosts has no key for. */
 export function HostKeyPrompt({ host, fingerprint, onTrust, onCancel }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCancel();

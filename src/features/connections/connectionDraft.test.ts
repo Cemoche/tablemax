@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { ConnectionConfig, SshSettings } from "../../lib/types";
-import { blankConnection, forBackend, normalize, withSslMode } from "./connectionDraft";
+import { blankConnection, forBackend, normalize, sslModePicked, withSslMode } from "./connectionDraft";
 
 const ssh = (over: Partial<SshSettings> = {}): SshSettings => ({
   host: "bastion",
@@ -54,4 +54,16 @@ test("a stored MySQL verify-ca connection loads as verify-full", () => {
   expect(normalize(stored).ssl.mode).toBe("verifyFull");
   const pg = { ...stored, kind: "postgres" as const };
   expect(normalize(pg).ssl.mode).toBe("verifyCa");
+});
+
+test("a loaded SSL mode counts as picked only when it is not the default", () => {
+  const ssl = (mode: ConnectionConfig["ssl"]["mode"]) => ({ ...blankConnection().ssl, mode });
+  expect(sslModePicked(null, false)).toBe(false);
+  expect(sslModePicked(cfg(null, { host: "localhost", ssl: ssl("prefer") }), false)).toBe(false);
+  expect(sslModePicked(cfg(null, { host: "db.example.com", ssl: ssl("verifyFull") }), false)).toBe(false);
+  expect(sslModePicked(cfg(ssh(), { host: "db.example.com", ssl: ssl("prefer") }), false)).toBe(false);
+  expect(sslModePicked(cfg(null, { host: "db.example.com", ssl: ssl("require") }), false)).toBe(true);
+  expect(sslModePicked(cfg(null, { host: "localhost", ssl: ssl("verifyFull") }), false)).toBe(true);
+  // A URL that stated its sslmode keeps it even when it is the default.
+  expect(sslModePicked(cfg(null, { host: "localhost", ssl: ssl("prefer") }), true)).toBe(true);
 });

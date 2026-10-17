@@ -22,12 +22,17 @@ export function isSshPassphraseRequired(e: AppError): boolean {
   return e.kind === "auth" && e.message === "ssh passphrase required";
 }
 
-/** Message = the server key's "SHA256:…" fingerprint. */
+/** The SSH server refused the credentials (password, key or agent identities). */
+export function isSshAuthFailed(e: AppError): boolean {
+  return e.kind === "auth" && e.message === "ssh authentication failed";
+}
+
+/** Message = the server key's "SHA256:…" fingerprint; `host` = the server checked. */
 export function isHostKeyUnknown(e: AppError): boolean {
   return e.kind === "hostKeyUnknown";
 }
 
-/** Message = the received key's fingerprint; the connection is blocked. */
+/** Message = the received key's fingerprint, `host` = the server; the connection is blocked. */
 export function isHostKeyChanged(e: AppError): boolean {
   return e.kind === "hostKeyChanged";
 }

@@ -60,7 +60,13 @@ export function sslModesFor(kind: DriverKind): SslMode[] {
   return kind === "mySql" || kind === "mariaDb" ? ALL_MODES.filter((m) => m !== "verifyCa") : ALL_MODES;
 }
 
-/** Disable/prefer to a remote host without a tunnel: traffic may be cleartext or unverified. */
-export function isCleartextRisk(host: string, overSsh: boolean, mode: SslMode): boolean {
-  return !overSsh && !isLocalHost(host) && (mode === "disable" || mode === "prefer");
+/**
+ * What a mode risks on a remote host reached without a tunnel: "cleartext" for
+ * disable/prefer (traffic may be unencrypted, certificate never checked), "unverified"
+ * for require (encrypted, but any certificate is accepted), null otherwise.
+ */
+export function tlsRisk(host: string, overSsh: boolean, mode: SslMode): "cleartext" | "unverified" | null {
+  if (overSsh || isLocalHost(host)) return null;
+  if (mode === "disable" || mode === "prefer") return "cleartext";
+  return mode === "require" ? "unverified" : null;
 }

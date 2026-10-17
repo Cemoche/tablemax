@@ -75,6 +75,18 @@ export function withSslMode(c: ConnectionConfig, picked: boolean): ConnectionCon
 }
 
 /**
+ * Whether the SSL mode of a config loaded into the form counts as picked by the user
+ * (kept as is) rather than following host and SSH (`defaultSslMode`): a URL draft that
+ * stated it, or a mode other than the default for the config's host and tunnel. A
+ * stored mode equal to the default keeps following, so editing the host of a local
+ * "prefer" connection to a remote one switches it to verify-full.
+ */
+export function sslModePicked(c: ConnectionConfig | null, sslExplicit: boolean): boolean {
+  if (!c) return false;
+  return sslExplicit || c.ssl.mode !== defaultSslMode(c.host, c.ssh !== null);
+}
+
+/**
  * The config sent to the backend. The agent has no secret; key auth with no
  * passphrase typed nor stored (`stored` = the saved SSH settings) is an unencrypted
  * key ("none"), so Save does not ask for a passphrase the key does not have.

@@ -1,11 +1,11 @@
-import { isCleartextRisk, sslModesFor } from "../../lib/ssl";
+import { sslModesFor, tlsRisk } from "../../lib/ssl";
 import { strings } from "../../lib/strings";
 import type { DriverKind, SslConfig, SslMode } from "../../lib/types";
 import { FileField } from "./FileField";
 
 interface Props {
   kind: DriverKind;
-  /** The DB host, for the cleartext warning. */
+  /** The DB host, for the cleartext / unverified warning. */
   host: string;
   overSsh: boolean;
   ssl: SslConfig;
@@ -20,6 +20,7 @@ const FILES = [
 
 /** TLS mode and files of a network connection (not shown for SQLite). */
 export function SslSection({ kind, host, overSsh, ssl, onChange }: Props) {
+  const risk = tlsRisk(host, overSsh, ssl.mode);
   return (
     <fieldset className="flex flex-col gap-2 rounded-sm border border-border p-3">
       <legend className="px-1 text-muted">{strings.ssl.legend}</legend>
@@ -37,9 +38,9 @@ export function SslSection({ kind, host, overSsh, ssl, onChange }: Props) {
           ))}
         </select>
       </label>
-      {isCleartextRisk(host, overSsh, ssl.mode) && (
+      {risk && (
         <p role="note" className="text-warning">
-          {strings.ssl.cleartextWarning}
+          {risk === "cleartext" ? strings.ssl.cleartextWarning : strings.ssl.unverifiedWarning}
         </p>
       )}
       {FILES.map((f) => (

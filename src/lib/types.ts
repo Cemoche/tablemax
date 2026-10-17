@@ -26,6 +26,11 @@ export type ErrorKind =
 export interface AppError {
   kind: ErrorKind;
   message: string;
+  /**
+   * hostKeyUnknown / hostKeyChanged only: the SSH server ("host:port", after
+   * ~/.ssh/config) whose key was checked. Absent on every other error.
+   */
+  host?: string;
 }
 
 export type CellValue =
