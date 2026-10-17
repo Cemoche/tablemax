@@ -188,6 +188,23 @@ pub fn write(base: &Path, connection_id: &str, name: &str, sql: &str) -> AppResu
     Ok(())
 }
 
+/// True when both paths designate the very same file (device + inode on Unix; the
+/// canonical paths elsewhere).
+fn is_same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (fs::metadata(a), fs::metadata(b)) {
+            (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+    }
+}
+
 pub fn rename(base: &Path, connection_id: &str, from: &str, to: &str) -> AppResult<()> {
     let src = file_path(base, connection_id, from)?;
     let dst = file_path(base, connection_id, to)?;
@@ -195,8 +212,7 @@ pub fn rename(base: &Path, connection_id: &str, from: &str, to: &str) -> AppResu
     // Refuse to overwrite another file. A case-only rename onto the same file (a
     // case-insensitive filesystem) is fine; on a case-sensitive one `a` and `A` are
     // different files and the check applies.
-    let same_file = matches!((fs::canonicalize(&src), fs::canonicalize(&dst)),
-        (Ok(a), Ok(b)) if a == b);
+    let same_file = is_same_file(&src, &dst);
     if fs::symlink_metadata(&dst).is_ok() && !same_file {
         return Err(AppError::new(
             ErrorKind::Invalid,

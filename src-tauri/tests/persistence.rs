@@ -286,13 +286,17 @@ fn saved_query_write_is_atomic_and_round_trips() {
         "no silent overwrite"
     );
     // Case-variants are distinct files on a case-sensitive filesystem: never clobbered.
-    saved_queries::write(&base, "c1", "x", "lower").unwrap();
-    saved_queries::write(&base, "c1", "X", "upper").unwrap();
-    if base.join("c1").join("X.sql").exists() && base.join("c1").join("x.sql").exists() {
-        let err = saved_queries::rename(&base, "c1", "x", "X");
-        if std::fs::read_to_string(base.join("c1").join("X.sql")).unwrap() == "upper" {
-            assert_eq!(err.unwrap_err().kind, ErrorKind::Invalid);
-        }
+    #[cfg(target_os = "linux")]
+    {
+        saved_queries::write(&base, "c1", "x", "lower").unwrap();
+        saved_queries::write(&base, "c1", "X", "upper").unwrap();
+        let err = saved_queries::rename(&base, "c1", "x", "X").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Invalid);
+        assert_eq!(saved_queries::read(&base, "c1", "X").unwrap(), "upper");
+        assert_eq!(saved_queries::read(&base, "c1", "x").unwrap(), "lower");
+        // A case-only rename onto a free name still works.
+        saved_queries::rename(&base, "c1", "x", "Y").unwrap();
+        assert_eq!(saved_queries::read(&base, "c1", "Y").unwrap(), "lower");
     }
     saved_queries::delete(&base, "c1", "c").unwrap();
     assert_eq!(
