@@ -80,7 +80,7 @@ impl Default for Settings {
             editor_font_family: String::new(),
             editor_font_size: 13,
             page_size: 300,
-            exact_count_threshold: 500_000,
+            exact_count_threshold: crate::value::EXACT_COUNT_THRESHOLD,
             auto_limit_default: false,
             auto_limit_value: 1000,
             keymap: BTreeMap::new(),

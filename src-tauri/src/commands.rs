@@ -208,16 +208,27 @@ pub async fn table_page(
     state.table_page(&workspace_id, &request).await
 }
 
-/// `filters` may be omitted (no filter).
+/// `filters` may be omitted (no filter). The exact count threshold comes from the user's
+/// settings (`exact_count_threshold`), read at each call.
 #[tauri::command]
 pub async fn table_count(
+    app: AppHandle,
     state: State<'_, SessionManager>,
     workspace_id: String,
     object: ObjectRef,
     filters: Option<Vec<Filter>>,
 ) -> AppResult<RowCount> {
+    let path = settings_path(&app)?;
+    let settings = tokio::task::spawn_blocking(move || settings::load(&path))
+        .await
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?;
     state
-        .table_count(&workspace_id, &object, &filters.unwrap_or_default())
+        .table_count(
+            &workspace_id,
+            &object,
+            &filters.unwrap_or_default(),
+            settings.exact_count_threshold,
+        )
         .await
 }
 

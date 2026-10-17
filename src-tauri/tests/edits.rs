@@ -30,7 +30,7 @@ use tablemax_lib::manager::SessionManager;
 use tablemax_lib::secrets::MemorySecretStore;
 use tablemax_lib::ssh::known_hosts::KnownHosts;
 use tablemax_lib::store::{ConnectionConfig, ConnectionStore, EnvTag, PasswordMode};
-use tablemax_lib::value::CellValue;
+use tablemax_lib::value::{CellValue, EXACT_COUNT_THRESHOLD};
 
 const WAIT: Duration = Duration::from_secs(20);
 
@@ -1245,7 +1245,10 @@ async fn lost_browse_connection_is_rebuilt() {
         assert_ne!(browse_backend_id(&fx).await, id, "{k:?}");
 
         kill_browse(&fx).await;
-        let n = fx.mgr.table_count(&fx.ws, &fx.obj("lost"), &[]).await;
+        let n = fx
+            .mgr
+            .table_count(&fx.ws, &fx.obj("lost"), &[], EXACT_COUNT_THRESHOLD)
+            .await;
         assert_eq!(n.unwrap(), RowCount::Exact(1), "{k:?}");
 
         kill_browse(&fx).await;
@@ -1381,6 +1384,59 @@ async fn second_commit_while_one_runs_is_refused() {
             CellValue::Int(5),
             "{k:?}"
         );
+    }
+}
+
+/// The unfiltered count follows the caller's exact count threshold (the user setting):
+/// above it the server's estimate, else an exact count. With filters, counting stops one
+/// past it.
+#[tokio::test]
+async fn count_follows_the_exact_count_threshold() {
+    for fx in all_fixtures().await {
+        let t = fx.q("cnt");
+        fx.run(&format!("CREATE TABLE {t} (id int PRIMARY KEY)"))
+            .await;
+        let values: Vec<String> = (1..=25).map(|i| format!("({i})")).collect();
+        fx.run(&format!("INSERT INTO {t} VALUES {}", values.join(",")))
+            .await;
+        fx.run(fx.pick(
+            &format!("ANALYZE {t}"),
+            &format!("ANALYZE TABLE {t}"),
+            "SELECT 1",
+        ))
+        .await;
+        let k = fx.kind;
+        let obj = fx.obj("cnt");
+        let count = |threshold: u64, filters: Vec<Filter>| {
+            let (mgr, ws, obj) = (fx.mgr.clone(), fx.ws.clone(), obj.clone());
+            async move {
+                mgr.table_count(&ws, &obj, &filters, threshold)
+                    .await
+                    .unwrap_or_else(|e| panic!("{k:?}: {e:?}"))
+            }
+        };
+        assert_eq!(count(500_000, vec![]).await, RowCount::Exact(25), "{k:?}");
+        let small = count(5, vec![]).await;
+        if fx.d() == Dialect::Sqlite {
+            // SQLite has no cheap estimate: always exact.
+            assert_eq!(small, RowCount::Exact(25), "{k:?}");
+        } else {
+            assert!(
+                matches!(small, RowCount::Estimate(e) if e > 5),
+                "{k:?}: {small:?}"
+            );
+        }
+        let id_pos = vec![Filter {
+            column: Some("id".into()),
+            op: FilterOp::Gt,
+            values: vec!["0".into()],
+        }];
+        assert_eq!(
+            count(5, id_pos.clone()).await,
+            RowCount::Estimate(5),
+            "{k:?}"
+        );
+        assert_eq!(count(500_000, id_pos).await, RowCount::Exact(25), "{k:?}");
     }
 }
 

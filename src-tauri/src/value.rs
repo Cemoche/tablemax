@@ -1,9 +1,15 @@
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_PAGE_SIZE: u32 = 300;
+/// Default of `Settings::exact_count_threshold`: above it a table's count is the engine's
+/// estimate.
 pub const EXACT_COUNT_THRESHOLD: u64 = 500_000;
-/// A filtered count stops at this many rows (one past the threshold: "500,000+").
-pub const FILTERED_COUNT_CAP: u64 = EXACT_COUNT_THRESHOLD + 1;
+
+/// A filtered count stops at this many rows: one past the exact count threshold, so it
+/// reads "at least <threshold>" ("500,000+" by default).
+pub fn filtered_count_cap(exact_threshold: u64) -> u64 {
+    exact_threshold.saturating_add(1)
+}
 pub const TEXT_PREVIEW_CHARS: usize = 10_000;
 pub const BYTES_PREVIEW: usize = 64;
 /// Hard cap on the rows a SQL-tab statement returns (`ResultSet::truncated` when hit).

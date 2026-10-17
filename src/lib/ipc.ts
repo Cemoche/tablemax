@@ -86,7 +86,10 @@ export const objectsList = (workspaceId: string, schema: string | null) =>
 export const tablePage = (workspaceId: string, request: PageRequest) =>
   invoke<ResultSet>("table_page", { workspaceId, request });
 
-/** With filters, the count is capped (estimate 500,000 beyond). */
+/**
+ * Above the exact count threshold (a setting) the count is an estimate; with filters it
+ * is capped (estimate = the threshold beyond).
+ */
 export const tableCount = (workspaceId: string, object: ObjectRef, filters: Filter[] = []) =>
   invoke<RowCount>("table_count", { workspaceId, object, filters });
 

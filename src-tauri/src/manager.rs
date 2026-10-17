@@ -54,7 +54,7 @@ use crate::ssh::tunnel::{self, HostKeyPolicy, SshTunnel};
 use crate::store::{
     self, ConnectionConfig, ConnectionStore, PasswordMode, SshSettings, same_identity,
 };
-use crate::value::{CellValue, EXACT_COUNT_THRESHOLD, FILTERED_COUNT_CAP, MAX_EDIT_BYTES};
+use crate::value::{CellValue, MAX_EDIT_BYTES, filtered_count_cap};
 
 /// `changes_apply` while another commit of the same workspace is running.
 pub const COMMIT_ALREADY_RUNNING: &str = "a commit is already running in this workspace";
@@ -1207,29 +1207,32 @@ impl SessionManager {
         .await
     }
 
-    /// Rows of a table or view. Without filters: the driver's count (estimated above
-    /// `EXACT_COUNT_THRESHOLD`). With filters: counted up to `FILTERED_COUNT_CAP`, then
-    /// `Estimate(EXACT_COUNT_THRESHOLD)` ("at least").
+    /// Rows of a table or view, `exact_threshold` being the user's exact count threshold
+    /// (`Settings::exact_count_threshold`). Without filters: the driver's count (estimated
+    /// above the threshold where the engine keeps an estimate). With filters: counted up to
+    /// one past the threshold ([`filtered_count_cap`]), then `Estimate(exact_threshold)`
+    /// ("at least").
     pub async fn table_count(
         &self,
         workspace_id: &str,
         obj: &ObjectRef,
         filters: &[Filter],
+        exact_threshold: u64,
     ) -> AppResult<RowCount> {
         if filters.is_empty() {
             return self
                 .on_browse(workspace_id, |b| async move {
-                    b.count_rows(obj, EXACT_COUNT_THRESHOLD).await
+                    b.count_rows(obj, exact_threshold).await
                 })
                 .await;
         }
         let info = self.table_info(workspace_id, obj).await?;
+        let cap = filtered_count_cap(exact_threshold);
         self.on_browse(workspace_id, |browse| {
             let info = info.clone();
             async move {
-                let stmt =
-                    build_filtered_count(browse.dialect(), &info, filters, FILTERED_COUNT_CAP)?;
-                read_count(&browse.query(&stmt).await?, FILTERED_COUNT_CAP)
+                let stmt = build_filtered_count(browse.dialect(), &info, filters, cap)?;
+                read_count(&browse.query(&stmt).await?, cap)
             }
         })
         .await
@@ -1428,7 +1431,7 @@ mod tests {
     use crate::driver::{Canceller, DbObject, ObjectKind, ObjectRef, SortDir};
     use crate::secrets::{MemorySecretStore, SecretKey, SecretKind};
     use crate::store::{EnvTag, PasswordMode, SshAuth, SshSettings};
-    use crate::value::CellValue;
+    use crate::value::{CellValue, EXACT_COUNT_THRESHOLD};
 
     const WAIT: Duration = Duration::from_secs(10);
     const INFINITE_CTE: &str = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) \
@@ -2241,16 +2244,41 @@ mod tests {
         );
 
         assert_eq!(
-            fx.mgr.table_count(&ws, &items, &[]).await.unwrap(),
+            fx.mgr
+                .table_count(&ws, &items, &[], EXACT_COUNT_THRESHOLD)
+                .await
+                .unwrap(),
             RowCount::Exact(2)
         );
         assert_eq!(
-            fx.mgr.table_count(&ws, &items, &only_b).await.unwrap(),
+            fx.mgr
+                .table_count(&ws, &items, &only_b, EXACT_COUNT_THRESHOLD)
+                .await
+                .unwrap(),
             RowCount::Exact(1)
+        );
+        // The exact count threshold is the caller's (the user setting): with filters, the
+        // count stops one past it ("at least" the threshold). SQLite counts unfiltered
+        // tables exactly whatever the threshold.
+        let both = vec![filter(Some("name"), FilterOp::Gte, &["a"])];
+        assert_eq!(
+            fx.mgr.table_count(&ws, &items, &both, 1).await.unwrap(),
+            RowCount::Estimate(1)
+        );
+        assert_eq!(
+            fx.mgr.table_count(&ws, &items, &both, 2).await.unwrap(),
+            RowCount::Exact(2)
+        );
+        assert_eq!(
+            fx.mgr.table_count(&ws, &items, &[], 1).await.unwrap(),
+            RowCount::Exact(2)
         );
         let none = vec![filter(None, FilterOp::Contains, &["zz"])];
         assert_eq!(
-            fx.mgr.table_count(&ws, &items, &none).await.unwrap(),
+            fx.mgr
+                .table_count(&ws, &items, &none, EXACT_COUNT_THRESHOLD)
+                .await
+                .unwrap(),
             RowCount::Exact(0)
         );
 
@@ -2260,7 +2288,11 @@ mod tests {
             .table_page(&ws, &page(items.clone(), bad.clone()))
             .await;
         assert_eq!(e.unwrap_err().kind, ErrorKind::Invalid);
-        let e = fx.mgr.table_count(&ws, &items, &bad).await.unwrap_err();
+        let e = fx
+            .mgr
+            .table_count(&ws, &items, &bad, EXACT_COUNT_THRESHOLD)
+            .await
+            .unwrap_err();
         assert_eq!(e.kind, ErrorKind::Invalid);
         let e = fx
             .mgr
@@ -2417,7 +2449,10 @@ mod tests {
             &fx.mgr.table_info(&ws, &items).await.unwrap()
         ));
         assert_eq!(
-            fx.mgr.table_count(&ws, &items, &[]).await.unwrap(),
+            fx.mgr
+                .table_count(&ws, &items, &[], EXACT_COUNT_THRESHOLD)
+                .await
+                .unwrap(),
             RowCount::Exact(2)
         );
     }
