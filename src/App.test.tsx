@@ -81,6 +81,8 @@ beforeEach(() => {
   vi.mocked(ipc.sessionSave).mockResolvedValue(undefined);
   vi.mocked(ipc.schemasList).mockResolvedValue(["public"]);
   vi.mocked(ipc.objectsList).mockResolvedValue([]);
+  vi.mocked(ipc.routinesList).mockResolvedValue([]);
+  vi.mocked(ipc.databasesList).mockResolvedValue([]);
   vi.mocked(ipc.workspaceClose).mockResolvedValue(undefined);
 });
 afterEach(async () => {

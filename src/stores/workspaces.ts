@@ -62,7 +62,14 @@ interface WorkspacesState {
   openTableTab: (wsId: string, object: ObjectRef, opts?: { preview?: boolean }) => void;
   /** Turns a preview tab into a regular one (no-op otherwise). */
   pinTab: (wsId: string, tabId: string) => void;
-  openQueryTab: (wsId: string) => void;
+  /** `sql` is the initial content of the new tab (default empty). */
+  openQueryTab: (wsId: string, sql?: string) => void;
+  /**
+   * PostgreSQL only: switches the workspace's database, then reloads its schemas and
+   * resets the current schema. Rejects (workspace unchanged) when the switch fails.
+   * Open table tabs of the previous database are left as they are.
+   */
+  switchDatabase: (wsId: string, database: string) => Promise<void>;
   closeTab: (wsId: string, tabId: string) => void;
   /** Activating a tab of a disconnected workspace requests its connect. */
   activateTab: (wsId: string, tabId: string) => void;
@@ -325,7 +332,18 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
         return { ...w, tabs: w.tabs.map((x) => (x.id === tabId ? { ...t, preview: false } : x)) };
       }),
 
-    openQueryTab: (wsId) =>
+    switchDatabase: async (wsId, database) => {
+      const info = await ipc.workspaceSwitchDatabase(wsId, database);
+      const schemas = await ipc.schemasList(wsId);
+      update(wsId, (w) => ({
+        ...w,
+        database: info.database ?? database,
+        schemas,
+        currentSchema: defaultSchema(w.dialect, schemas, info.database ?? database),
+      }));
+    },
+
+    openQueryTab: (wsId, sql = "") =>
       update(wsId, (w) => {
         const n = (queryCounters.get(wsId) ?? 0) + 1;
         queryCounters.set(wsId, n);
@@ -333,7 +351,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
           id: crypto.randomUUID(),
           kind: "query",
           title: strings.workspace.queryTitle(n),
-          sql: "",
+          sql,
           sqlSessionId: null,
         };
         return { ...w, tabs: [...w.tabs, tab], activeTabId: tab.id, mru: touch(w.mru, tab.id) };
