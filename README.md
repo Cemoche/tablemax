@@ -51,15 +51,29 @@ asked at each connect), never in `app.db`.
   command palette, `Ctrl+T` new SQL tab, `Ctrl+W` close tab, `Ctrl+Tab` recent tabs.
 - **History** (right panel): every statement run on a connection, newest first (the last
   1,000 are kept), with a search box. Click inserts the SQL at the cursor, double-click
-  replaces the editor content. It may hold values you typed: "Clear history" erases it
-  for the connection, and it is deleted with the connection.
+  replaces the editor content. Statements containing the word `IDENTIFIED` or `PASSWORD`
+  (`CREATE/ALTER USER … IDENTIFIED BY`, `SET PASSWORD`, PostgreSQL `… PASSWORD '…'`) are
+  never recorded. It may still hold other values you typed: "Clear history" erases it
+  for the connection (deleted rows are overwritten in `app.db`), and it is deleted with
+  the connection.
+- **Session restore**: open workspaces and tabs come back after a restart, disconnected
+  until you activate them. The text of each SQL tab is kept as typed, like an unsaved
+  document, so whatever you typed there (a password included) is stored in `app.db`.
+  On Linux and macOS `app.db` and the saved queries are readable by your user only.
 - **Saved queries** (left panel, per connection): `Ctrl+S` asks for a name the first time,
   then overwrites; the tab takes the name and shows a dot while it differs from the saved
   file. Open, rename and delete from the panel.
-- **MySQL / MariaDB `DELIMITER`**: scripts from the mysql client run as is — a
-  `DELIMITER //` line changes the statement delimiter and is not sent to the server.
-  Without it, the `BEGIN … END` body of `CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT` is still
-  sent as one statement.
+- **MySQL / MariaDB `DELIMITER`**: a `DELIMITER //` line changes the statement delimiter
+  like in the mysql client and is not sent to the server. Without it, the `BEGIN … END`
+  body of `CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT` is still sent as one statement.
+  Formatting is not available for a script with `DELIMITER` lines.
+- **MySQL / MariaDB single-statement guard**: each statement is checked before it is sent,
+  and anything the check cannot read with certainty is refused rather than sent. So some
+  valid scripts do not run as is: compound statements inside executable comments (the
+  `/*!50003 CREATE TRIGGER … BEGIN … END */` blocks of `mysqldump` output), dollar-quoted
+  bodies (`AS $$ … $$`, MySQL 9 JavaScript routines), and anything at all while the
+  session's client character set is `big5`, `cp932`, `gb18030`, `gbk` or `sjis` (run
+  `SET NAMES utf8mb4` to go back).
 
 ## Test databases
 
