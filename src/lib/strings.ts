@@ -101,6 +101,7 @@ export const strings = {
     host: "SSH host",
     hostPlaceholder: "alias or host name",
     port: "SSH port",
+    defaultPort: "22",
     user: "SSH user",
     fromConfig: "from ~/.ssh/config",
     auth: "SSH authentication",

@@ -96,7 +96,7 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
               <input
                 type="number"
                 className={field}
-                placeholder={fromConfig ?? "22"}
+                placeholder={fromConfig ?? strings.ssh.defaultPort}
                 value={ssh.port ?? ""}
                 onChange={(e) => patch({ port: e.target.value === "" ? null : Number(e.target.value) })}
               />

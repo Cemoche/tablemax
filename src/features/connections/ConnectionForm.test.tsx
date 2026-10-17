@@ -397,3 +397,14 @@ test("Test shows the changed host key explanation", async () => {
   expect(await screen.findByText(strings.ssh.hostKeyChanged(FP))).toBeInTheDocument();
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+test("a stored MySQL connection in verify-ca mode shows verify-full", () => {
+  const my: ConnectionConfig = {
+    ...saved,
+    kind: "mySql",
+    port: 3306,
+    ssl: { ...saved.ssl, mode: "verifyCa" },
+  };
+  render(<ConnectionForm connection={my} onConnect={vi.fn()} />);
+  expect(sslMode()).toBe("verifyFull");
+});

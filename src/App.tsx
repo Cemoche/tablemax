@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ConnectPrompt } from "./features/connections/ConnectPrompt";
 import { ConnectionForm } from "./features/connections/ConnectionForm";
 import { ConnectionList } from "./features/connections/ConnectionList";
@@ -24,11 +24,9 @@ function App() {
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? null;
   const showWorkspace = view === "workspace" && activeWorkspace !== null;
   const [loadError, setLoadError] = useState<string | null>(null);
-  /** The connection being opened (its prompts ask for its secrets). */
-  const opening = useRef<ConnectionConfig | null>(null);
-  const openFlow = useConnectFlow(async (s) => {
-    const id = opening.current?.id ?? "";
-    await openWorkspace(id, s.password, s.sshSecret, s.acceptFingerprint);
+  // Each open is bound to its connection; a newer open supersedes a pending one.
+  const openFlow = useConnectFlow(async (s, cfg: ConnectionConfig) => {
+    await openWorkspace(cfg.id, s.password, s.sshSecret, s.acceptFingerprint);
     return true;
   });
 
@@ -44,10 +42,9 @@ function App() {
     sshSecret: string | null = null,
   ) => {
     setLoadError(null);
-    opening.current = cfg;
     try {
       const initial = { password, sshSecret, acceptFingerprint: null };
-      if (await openFlow.start(initial, hostKeyLabel(cfg))) setView("workspace");
+      if (await openFlow.start(initial, cfg, hostKeyLabel(cfg))) setView("workspace");
     } catch (e) {
       setLoadError(toAppError(e).message);
     }
@@ -91,7 +88,7 @@ function App() {
           </>
         )}
       </div>
-      <ConnectPrompt flow={openFlow} connectionName={opening.current?.name ?? ""} />
+      <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />
     </div>
   );
 }

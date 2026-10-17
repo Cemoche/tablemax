@@ -72,8 +72,8 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Pr
   const stored = connection?.id ? connection.ssh : null;
   const outgoing = () => forBackend(cfg, stored, typedSsh);
 
-  const testFlow = useConnectFlow((s) =>
-    ipc.connectionTest(outgoing(), s.password, s.sshSecret, s.acceptFingerprint),
+  const testFlow = useConnectFlow((s, config: ConnectionConfig) =>
+    ipc.connectionTest(config, s.password, s.sshSecret, s.acceptFingerprint),
   );
 
   const fail = (e: unknown) => setNotice({ tone: "error", text: errorText(toAppError(e)) });
@@ -103,7 +103,7 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Pr
   const onTest = () =>
     run("test", async () => {
       const initial = { password: typed, sshSecret: typedSsh, acceptFingerprint: null };
-      const version = await testFlow.start(initial, hostKeyLabel(cfg));
+      const version = await testFlow.start(initial, outgoing(), hostKeyLabel(cfg));
       if (version !== undefined) setNotice({ tone: "ok", text: strings.form.testOk(version) });
     });
 
@@ -313,7 +313,10 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted }: Pr
           )}
         </div>
       </form>
-      <ConnectPrompt flow={testFlow} connectionName={cfg.name || strings.form.newTitle} />
+      <ConnectPrompt
+        flow={testFlow}
+        connectionName={testFlow.context?.name || strings.form.newTitle}
+      />
     </>
   );
 }

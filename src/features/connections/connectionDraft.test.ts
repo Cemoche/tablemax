@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { ConnectionConfig, SshSettings } from "../../lib/types";
-import { blankConnection, forBackend, withSslMode } from "./connectionDraft";
+import { blankConnection, forBackend, normalize, withSslMode } from "./connectionDraft";
 
 const ssh = (over: Partial<SshSettings> = {}): SshSettings => ({
   host: "bastion",
@@ -42,4 +42,16 @@ test("withSslMode defaults until picked and never keeps verify-ca on MySQL", () 
   expect(withSslMode(verifyCa, true).ssl.mode).toBe("verifyCa");
   expect(withSslMode({ ...verifyCa, kind: "mySql" }, true).ssl.mode).toBe("verifyFull");
   expect(withSslMode({ ...verifyCa, kind: "mariaDb" }, true).ssl.mode).toBe("verifyFull");
+});
+
+test("SQLite is sent without SSH settings", () => {
+  const lite = cfg(ssh({ auth: "password" }), { kind: "sqlite" });
+  expect(forBackend(lite, null, null).ssh).toBeNull();
+});
+
+test("a stored MySQL verify-ca connection loads as verify-full", () => {
+  const stored = cfg(null, { kind: "mySql", ssl: { ...blankConnection().ssl, mode: "verifyCa" } });
+  expect(normalize(stored).ssl.mode).toBe("verifyFull");
+  const pg = { ...stored, kind: "postgres" as const };
+  expect(normalize(pg).ssl.mode).toBe("verifyCa");
 });

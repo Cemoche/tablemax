@@ -39,9 +39,16 @@ export const blankConnection = (): ConnectionConfig => ({
   ssh: null,
 });
 
-/** SQLite has no password: never keyring/ask (the backend forces "none" too). */
-export const normalize = (c: ConnectionConfig): ConnectionConfig =>
-  c.kind === "sqlite" && c.passwordMode !== "none" ? { ...c, passwordMode: "none" } : c;
+/**
+ * A loaded config as the form edits it. SQLite has no password: never keyring/ask (the
+ * backend forces "none" too). A stored verify-ca on MySQL/MariaDB (unsupported there)
+ * shows as verify-full, the closest stricter mode, instead of a blank select.
+ */
+export const normalize = (c: ConnectionConfig): ConnectionConfig => {
+  const out = withSslMode(c, true);
+  const noPassword = out.kind === "sqlite" && out.passwordMode !== "none";
+  return noPassword ? { ...out, passwordMode: "none" } : out;
+};
 
 /** The changes of switching `c` to the `kind` driver. */
 export const driverPatch = (c: ConnectionConfig, kind: DriverKind): Partial<ConnectionConfig> => ({
@@ -77,7 +84,8 @@ export function forBackend(
   stored: SshSettings | null,
   typedSshSecret: string | null,
 ): ConnectionConfig {
-  const ssh = c.kind === "sqlite" ? null : c.ssh;
+  if (c.kind === "sqlite") return c.ssh ? { ...c, ssh: null } : c;
+  const ssh = c.ssh;
   if (!ssh) return c;
   const passphraseStored = stored?.auth === "key" && stored.secretMode === "keyring";
   const noSecret =
