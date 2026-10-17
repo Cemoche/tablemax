@@ -44,6 +44,9 @@ pub const CANCEL_RESEND_INTERVAL: Duration = Duration::from_millis(100);
 /// Upper bound on how long `cancel` keeps re-sending.
 pub const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(10);
+/// Upper bound on opening an SSH tunnel (config, connect, key exchange, auth), so a
+/// stalled server cannot hold a workspace (and its close) forever.
+pub const SSH_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -90,7 +93,8 @@ impl std::fmt::Debug for HeldSecret {
 
 /// The workspace's SSH tunnel: `Some` from opening to closing for an SSH connection,
 /// `None` without SSH or once closed. Async lock, held while a dead tunnel is
-/// reopened, so concurrent SQL sessions open a single new one.
+/// reopened (and while the browse connection is rebuilt on it), so concurrent
+/// callers open a single new one.
 type TunnelSlot = Arc<tokio::sync::Mutex<Option<Arc<SshTunnel>>>>;
 
 struct Workspace {
@@ -99,7 +103,17 @@ struct Workspace {
     held_ssh_secret: Option<HeldSecret>,
     tunnel: TunnelSlot,
     browse: Arc<dyn Session>,
+    /// The tunnel `browse` was connected through; once it is dead, `browse` is rebuilt.
+    browse_tunnel: Option<Arc<SshTunnel>>,
     sql_sessions: Vec<String>,
+}
+
+/// A workspace's reconnect parameters (held secrets are copies, dropped after use).
+struct Reconnect {
+    config: ConnectionConfig,
+    password: Option<String>,
+    ssh_secret: Option<String>,
+    slot: TunnelSlot,
 }
 
 /// Control flags of one batch. A fresh one is installed for every batch, so no flag
@@ -217,6 +231,18 @@ async fn connect(
         dial: tunnel.map(SshTunnel::local_addr),
     })
     .await
+}
+
+/// Bounds `fut` by [`SSH_OPEN_TIMEOUT`] (Connection "ssh connection timed out").
+async fn with_ssh_timeout<T>(fut: impl Future<Output = AppResult<T>>) -> AppResult<T> {
+    tokio::time::timeout(SSH_OPEN_TIMEOUT, fut)
+        .await
+        .unwrap_or_else(|_| {
+            Err(AppError::new(
+                ErrorKind::Connection,
+                "ssh connection timed out",
+            ))
+        })
 }
 
 /// The SSH settings that apply to `cfg` (SQLite never uses a tunnel).
@@ -451,6 +477,7 @@ impl SessionManager {
     }
 
     /// Opens the SSH tunnel of `cfg` to its DB `host:port`, or `None` without SSH.
+    /// Bounded by [`SSH_OPEN_TIMEOUT`].
     async fn open_tunnel(
         &self,
         cfg: &ConnectionConfig,
@@ -460,23 +487,25 @@ impl SessionManager {
         let Some(ssh) = ssh_of(cfg) else {
             return Ok(None);
         };
-        let secret = self.resolve_ssh_secret(cfg, ssh, ssh_secret).await?;
-        let (config, ssh) = (self.ssh_config.clone(), ssh.clone());
-        let target = blocking(move || {
-            let config = config.unwrap_or_else(|| Arc::new(user_config()));
-            resolve_ssh_target(&ssh, &config, home_dir().as_deref(), secret)
+        with_ssh_timeout(async {
+            let secret = self.resolve_ssh_secret(cfg, ssh, ssh_secret).await?;
+            let (config, ssh) = (self.ssh_config.clone(), ssh.clone());
+            let target = blocking(move || {
+                let config = config.unwrap_or_else(|| Arc::new(user_config()));
+                resolve_ssh_target(&ssh, &config, home_dir().as_deref(), secret)
+            })
+            .await?;
+            let policy = HostKeyPolicy {
+                known_hosts: KnownHosts {
+                    system: self.known_hosts.system.clone(),
+                    app: self.known_hosts.app.clone(),
+                },
+                accept_fingerprint,
+            };
+            tunnel::open_tunnel(&target, &cfg.host, cfg.port, &policy).await
         })
-        .await?;
-        let policy = HostKeyPolicy {
-            known_hosts: KnownHosts {
-                system: self.known_hosts.system.clone(),
-                app: self.known_hosts.app.clone(),
-            },
-            accept_fingerprint,
-        };
-        tunnel::open_tunnel(&target, &cfg.host, cfg.port, &policy)
-            .await
-            .map(Some)
+        .await
+        .map(Some)
     }
 
     /// The workspace's live tunnel (`None` without SSH), reopened with `held_secret` or
@@ -492,17 +521,33 @@ impl SessionManager {
             return Ok(None);
         }
         let mut current = slot.lock().await;
+        self.revive_tunnel(workspace_id, config, &mut current, held_secret)
+            .await
+            .map(Some)
+    }
+
+    /// `current` (the locked slot of an SSH workspace) if alive, else a new tunnel
+    /// stored in its place (the dead one is closed). `None` = workspace closed.
+    async fn revive_tunnel(
+        &self,
+        workspace_id: &str,
+        config: &ConnectionConfig,
+        current: &mut Option<Arc<SshTunnel>>,
+        held_secret: Option<String>,
+    ) -> AppResult<Arc<SshTunnel>> {
         match current.as_ref() {
             None => return Err(workspace_not_found(workspace_id)),
-            Some(t) if t.is_alive() => return Ok(Some(t.clone())),
+            Some(t) if t.is_alive() => return Ok(t.clone()),
             Some(_) => {}
         }
         // The host key was confirmed when the workspace was opened: no new trust here.
-        let fresh = self.open_tunnel(config, held_secret, None).await?;
-        if let Some(dead) = current.take() {
+        let fresh = self
+            .open_tunnel(config, held_secret, None)
+            .await?
+            .ok_or_else(|| AppError::new(ErrorKind::Invalid, "no SSH settings"))?;
+        if let Some(dead) = current.replace(fresh.clone()) {
             dead.close().await;
         }
-        *current = fresh.clone();
         Ok(fresh)
     }
 
@@ -616,6 +661,7 @@ impl SessionManager {
                 config,
                 held_password,
                 held_ssh_secret,
+                browse_tunnel: tunnel.clone(),
                 tunnel: Arc::new(tokio::sync::Mutex::new(tunnel)),
                 browse,
                 sql_sessions: Vec::new(),
@@ -666,36 +712,84 @@ impl SessionManager {
         slot.lock().await.clone()
     }
 
-    /// The workspace's shared browse connection (schemas, objects, pages, counts).
-    pub fn browse(&self, workspace_id: &str) -> AppResult<Arc<dyn Session>> {
-        self.state()
+    /// What reconnecting a workspace needs, copied out of the state lock.
+    fn reconnect_material(&self, workspace_id: &str) -> AppResult<Reconnect> {
+        let st = self.state();
+        let ws = st
             .workspaces
             .get(workspace_id)
-            .map(|ws| ws.browse.clone())
-            .ok_or_else(|| workspace_not_found(workspace_id))
+            .ok_or_else(|| workspace_not_found(workspace_id))?;
+        Ok(Reconnect {
+            config: ws.config.clone(),
+            password: ws.held_password.as_ref().map(|p| p.0.clone()),
+            ssh_secret: ws.held_ssh_secret.as_ref().map(|p| p.0.clone()),
+            slot: ws.tunnel.clone(),
+        })
+    }
+
+    /// The browse connection, unless the tunnel it went through has died.
+    fn usable_browse(&self, workspace_id: &str) -> AppResult<Option<Arc<dyn Session>>> {
+        let st = self.state();
+        let ws = st
+            .workspaces
+            .get(workspace_id)
+            .ok_or_else(|| workspace_not_found(workspace_id))?;
+        let usable = ws.browse_tunnel.as_ref().is_none_or(|t| t.is_alive());
+        Ok(usable.then(|| ws.browse.clone()))
+    }
+
+    /// The workspace's shared browse connection (schemas, objects, pages, counts).
+    ///
+    /// With SSH, once the tunnel it went through has died, the browse connection is
+    /// rebuilt (tunnel reopened if no SQL session did it yet, held secrets or keyring)
+    /// and swapped into the workspace, so browsing recovers without reopening the
+    /// workspace. Concurrent callers share one reopen (tunnel slot lock).
+    pub async fn browse(&self, workspace_id: &str) -> AppResult<Arc<dyn Session>> {
+        if let Some(browse) = self.usable_browse(workspace_id)? {
+            return Ok(browse);
+        }
+        let r = self.reconnect_material(workspace_id)?;
+        let mut current = r.slot.lock().await;
+        // Another caller may have rebuilt it while we waited for the lock.
+        if let Some(browse) = self.usable_browse(workspace_id)? {
+            return Ok(browse);
+        }
+        let tunnel = self
+            .revive_tunnel(workspace_id, &r.config, &mut current, r.ssh_secret)
+            .await?;
+        let password = self.resolve_password(&r.config, r.password).await?;
+        let fresh = connect(&r.config, password, Some(&tunnel)).await?;
+        let old = {
+            let mut st = self.state();
+            st.workspaces.get_mut(workspace_id).map(|ws| {
+                ws.browse_tunnel = Some(tunnel);
+                std::mem::replace(&mut ws.browse, fresh.clone())
+            })
+        };
+        drop(current);
+        match old {
+            Some(old) => {
+                // Its connection is already gone; bounded in case the driver waits.
+                let _ = tokio::time::timeout(CANCEL_TIMEOUT, old.close()).await;
+                Ok(fresh)
+            }
+            None => {
+                // The workspace was closed while we were reconnecting.
+                let _ = fresh.close().await;
+                Err(workspace_not_found(workspace_id))
+            }
+        }
     }
 
     /// Opens a dedicated connection with the workspace's parameters, through its
     /// tunnel (reopened first if it died).
     pub async fn open_sql_session(&self, workspace_id: &str) -> AppResult<String> {
-        let (config, held, held_ssh, slot) = {
-            let st = self.state();
-            let ws = st
-                .workspaces
-                .get(workspace_id)
-                .ok_or_else(|| workspace_not_found(workspace_id))?;
-            (
-                ws.config.clone(),
-                ws.held_password.as_ref().map(|p| p.0.clone()),
-                ws.held_ssh_secret.as_ref().map(|p| p.0.clone()),
-                ws.tunnel.clone(),
-            )
-        };
-        let password = self.resolve_password(&config, held).await?;
+        let r = self.reconnect_material(workspace_id)?;
+        let password = self.resolve_password(&r.config, r.password).await?;
         let tunnel = self
-            .live_tunnel(workspace_id, &config, &slot, held_ssh)
+            .live_tunnel(workspace_id, &r.config, &r.slot, r.ssh_secret)
             .await?;
-        let session = connect(&config, password, tunnel.as_deref()).await?;
+        let session = connect(&r.config, password, tunnel.as_deref()).await?;
         self.register_sql_session(workspace_id, session).await
     }
 
@@ -974,6 +1068,7 @@ mod tests {
         let objs = fx
             .mgr
             .browse(&ws.workspace_id)
+            .await
             .unwrap()
             .list_objects(None)
             .await
@@ -1124,7 +1219,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::NotFound);
         assert_eq!(
-            fx.mgr.browse(&ws.workspace_id).err().unwrap().kind,
+            fx.mgr.browse(&ws.workspace_id).await.err().unwrap().kind,
             ErrorKind::NotFound
         );
         assert_eq!(
@@ -1207,7 +1302,7 @@ mod tests {
             ErrorKind::NotFound
         );
         assert_eq!(
-            fx.mgr.browse("nope").err().unwrap().kind,
+            fx.mgr.browse("nope").await.err().unwrap().kind,
             ErrorKind::NotFound
         );
     }
@@ -1384,6 +1479,7 @@ mod tests {
                 held_ssh_secret: None,
                 tunnel: Default::default(),
                 browse,
+                browse_tunnel: None,
                 sql_sessions: Vec::new(),
             },
         );
@@ -1821,5 +1917,50 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Connection, "{}", err.message);
         assert_eq!(secrets.gets.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_connection_with_downgraded_tls_requires_password() {
+        let secrets = Arc::new(CountingSecrets {
+            inner: MemorySecretStore::new(),
+            gets: AtomicUsize::new(0),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = manager(&dir, secrets.clone());
+        let mut c = cfg(DriverKind::Postgres, PasswordMode::Keyring);
+        c.host = "db.example.com".into();
+        c.ssl.mode = crate::driver::tls::SslMode::VerifyFull;
+        let saved = mgr
+            .save_connection(c, Some("pw".into()), None)
+            .await
+            .unwrap();
+        let mut weaker = saved.clone();
+        weaker.ssl.mode = crate::driver::tls::SslMode::Prefer;
+        let err = mgr
+            .test_connection(&weaker, None, None, None)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (err.kind, err.message.as_str()),
+            (ErrorKind::Auth, "password required")
+        );
+        assert_eq!(secrets.gets.load(Ordering::SeqCst), 0, "keyring never read");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_ssh_open_times_out() {
+        let start = Instant::now();
+        let err = with_ssh_timeout(std::future::pending::<AppResult<()>>())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (err.kind, err.message.as_str()),
+            (ErrorKind::Connection, "ssh connection timed out")
+        );
+        assert_eq!(start.elapsed(), SSH_OPEN_TIMEOUT);
+        assert_eq!(SSH_OPEN_TIMEOUT, Duration::from_secs(30));
+        // A result within the bound passes through untouched.
+        let ok = with_ssh_timeout(async { Ok::<_, AppError>(7) }).await;
+        assert_eq!(ok.unwrap(), 7);
     }
 }

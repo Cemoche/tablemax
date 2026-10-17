@@ -130,7 +130,7 @@ pub async fn schemas_list(
     state: State<'_, SessionManager>,
     workspace_id: String,
 ) -> AppResult<Vec<String>> {
-    state.browse(&workspace_id)?.list_schemas().await
+    state.browse(&workspace_id).await?.list_schemas().await
 }
 
 #[tauri::command]
@@ -140,7 +140,8 @@ pub async fn objects_list(
     schema: Option<String>,
 ) -> AppResult<Vec<DbObject>> {
     state
-        .browse(&workspace_id)?
+        .browse(&workspace_id)
+        .await?
         .list_objects(schema.as_deref())
         .await
 }
@@ -151,7 +152,11 @@ pub async fn table_page(
     workspace_id: String,
     request: PageRequest,
 ) -> AppResult<ResultSet> {
-    state.browse(&workspace_id)?.fetch_page(&request).await
+    state
+        .browse(&workspace_id)
+        .await?
+        .fetch_page(&request)
+        .await
 }
 
 #[tauri::command]
@@ -161,7 +166,8 @@ pub async fn table_count(
     object: ObjectRef,
 ) -> AppResult<RowCount> {
     state
-        .browse(&workspace_id)?
+        .browse(&workspace_id)
+        .await?
         .count_rows(&object, EXACT_COUNT_THRESHOLD)
         .await
 }

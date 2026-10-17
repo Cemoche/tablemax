@@ -144,12 +144,13 @@ impl ConnectionStore {
 
     /// Parses a stored config. A config saved before SSL settings existed (no `ssl`
     /// key) gets the default mode for its host (`default_ssl_mode`), not the serde
-    /// default: a remote host must not silently switch to unverified TLS.
+    /// default: a remote host must not silently switch to unverified TLS. SQLite has
+    /// no TLS and keeps the default.
     fn parse(json: &str) -> AppResult<ConnectionConfig> {
         let value: serde_json::Value = serde_json::from_str(json).map_err(io_err)?;
         let legacy = value.get("ssl").is_none();
         let mut cfg: ConnectionConfig = serde_json::from_value(value).map_err(io_err)?;
-        if legacy {
+        if legacy && cfg.kind != DriverKind::Sqlite {
             cfg.ssl.mode = default_ssl_mode(&cfg.host, cfg.ssh.is_some());
         }
         Ok(cfg)
@@ -209,11 +210,13 @@ impl ConnectionStore {
     }
 }
 
-/// True when both configs designate the same server account through the same SSH
-/// target: a stored keyring secret may only be used for a config whose identity
-/// matches the stored one.
+/// True when both configs designate the same server account, reached through the same
+/// SSH target with the same TLS settings: a stored keyring secret may only be used for
+/// a config whose identity matches the stored one (so weakening TLS verification or
+/// changing the CA also requires the secrets again).
 pub fn same_identity(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
     a.kind == b.kind
+        && a.ssl == b.ssl
         && a.host == b.host
         && a.port == b.port
         && a.user == b.user
@@ -460,13 +463,18 @@ mod tests {
         .unwrap();
         let key = SecretKey::new(saved.id.clone(), SecretKind::DbPassword);
         type Edit = fn(&mut ConnectionConfig);
-        let edits: [Edit; 6] = [
+        let edits: [Edit; 10] = [
             |c| c.host = "127.0.0.2".into(),
             |c| c.port = 5433,
             |c| c.user = "other".into(),
             |c| c.database = Some("other".into()),
             |c| c.kind = DriverKind::MySql,
             |c| c.sqlite_path = Some("/tmp/x.db".into()),
+            // Weaker or different TLS verification must not reuse the stored password.
+            |c| c.ssl.mode = SslMode::Disable,
+            |c| c.ssl.ca_file = Some("/other/ca.pem".into()),
+            |c| c.ssl.cert_file = Some("/other/client.pem".into()),
+            |c| c.ssl.key_file = Some("/other/client.key".into()),
         ];
         for edit in edits {
             let mut changed = saved.clone();
@@ -924,9 +932,12 @@ mod tests {
         let a = ssh_cfg(SshAuth::Password);
         let mut b = a.clone();
         b.name = "other name".into();
-        b.ssl.mode = SslMode::VerifyFull;
         b.ssh.as_mut().unwrap().secret_mode = PasswordMode::Ask;
         assert!(same_identity(&a, &b));
+        // TLS settings are part of the identity: a downgrade needs the secrets again.
+        let mut tls = a.clone();
+        tls.ssl.mode = SslMode::VerifyFull;
+        assert!(!same_identity(&a, &tls));
         let mut c = a.clone();
         c.ssh.as_mut().unwrap().auth = SshAuth::Agent;
         assert!(!same_identity(&a, &c));
@@ -971,5 +982,24 @@ mod tests {
         let saved = save_connection(&store, &BrokenSecrets, c, None, Some("x".into())).unwrap();
         assert_eq!(saved.ssh, None);
         assert_eq!(store.get(&saved.id).unwrap().ssh, None);
+    }
+
+    #[test]
+    fn legacy_sqlite_config_keeps_default_ssl() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let json = r##"{"id":"lite","name":"old","color":"#888","envTag":"dev","kind":"sqlite",
+            "host":"","port":0,"user":"","database":null,"sqlitePath":"/tmp/x.db",
+            "passwordMode":"none","group":null}"##;
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO connections(id, name, config_json) VALUES('lite', 'old', ?1)",
+                params![json],
+            )
+            .unwrap();
+        // An empty host is not "local": without the SQLite exception it would get VerifyFull.
+        assert_eq!(store.get("lite").unwrap().ssl, SslConfig::default());
     }
 }

@@ -219,6 +219,7 @@ async fn open_workspace_over_ssh_asks_for_unknown_host_key() {
     let schemas = fx
         .mgr
         .browse(&ws.workspace_id)
+        .await
         .unwrap()
         .list_schemas()
         .await
@@ -358,10 +359,11 @@ async fn reopens_tunnel_after_it_dies() {
         .unwrap();
     let ws = open_confirming(&fx, &saved.id, None, None).await;
     let old = fx.mgr.workspace_tunnel(&ws.workspace_id).await.unwrap();
+    let browse = fx.mgr.browse(&ws.workspace_id).await.unwrap();
     old.close().await;
     assert!(!old.is_alive());
 
-    let browse = fx.mgr.browse(&ws.workspace_id).unwrap();
+    // The connection that went through the dead tunnel is lost.
     let e = tokio::time::timeout(WAIT, browse.list_schemas())
         .await
         .expect("browse must fail, not hang")
@@ -381,6 +383,54 @@ async fn reopens_tunnel_after_it_dies() {
     assert_sleep_is_cancelled(&fx.mgr, &sid, "select pg_sleep(30)").await;
     fx.mgr.close_workspace(&ws.workspace_id).await.unwrap();
     assert!(!new.is_alive());
+}
+
+/// Browsing (schemas, objects, pages) recovers by itself: no need to reopen the
+/// workspace. A browse and a SQL tab racing on a dead tunnel share one new tunnel.
+#[tokio::test]
+async fn browse_recovers_after_tunnel_dies() {
+    let fx = fixture();
+    let (cfg, pw) = pg_over_ssh(ssh_settings(SshAuth::Password, PasswordMode::Ask));
+    let saved = fx.mgr.save_connection(cfg, pw, None).await.unwrap();
+    let ws = open_confirming(&fx, &saved.id, None, Some(SSH_PASSWORD)).await;
+    let id = ws.workspace_id.as_str();
+    let before = fx.mgr.browse(id).await.unwrap();
+    // Unchanged while the tunnel lives.
+    assert!(Arc::ptr_eq(&before, &fx.mgr.browse(id).await.unwrap()));
+    let old = fx.mgr.workspace_tunnel(id).await.unwrap();
+    old.close().await;
+
+    let (browse, sid) = tokio::join!(fx.mgr.browse(id), fx.mgr.open_sql_session(id));
+    let (browse, sid) = (browse.unwrap(), sid.unwrap());
+    assert!(!Arc::ptr_eq(&before, &browse), "browse was reconnected");
+    let new = fx.mgr.workspace_tunnel(id).await.unwrap();
+    assert!(new.is_alive() && !Arc::ptr_eq(&old, &new));
+    // Both went through the same new tunnel: a second reopen would have closed the
+    // first new tunnel and broken one of them.
+    let schemas = tokio::time::timeout(WAIT, browse.list_schemas())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(schemas.iter().any(|s| s == "public"), "{schemas:?}");
+    assert_select_one(&fx.mgr, &sid).await.unwrap();
+    assert!(Arc::ptr_eq(
+        &new,
+        &fx.mgr.workspace_tunnel(id).await.unwrap()
+    ));
+    assert!(Arc::ptr_eq(&browse, &fx.mgr.browse(id).await.unwrap()));
+
+    // A SQL tab that reopened the tunnel first also lets browsing recover.
+    new.close().await;
+    let sid2 = fx.mgr.open_sql_session(id).await.unwrap();
+    let browse2 = fx.mgr.browse(id).await.unwrap();
+    assert!(!Arc::ptr_eq(&browse, &browse2));
+    browse2.list_schemas().await.unwrap();
+    assert_select_one(&fx.mgr, &sid2).await.unwrap();
+    fx.mgr.close_workspace(id).await.unwrap();
+    assert_eq!(
+        fx.mgr.browse(id).await.err().unwrap().kind,
+        ErrorKind::NotFound
+    );
 }
 
 #[tokio::test]
@@ -412,6 +462,7 @@ async fn ssh_user_from_config_alias() {
     let schemas = fx
         .mgr
         .browse(&ws.workspace_id)
+        .await
         .unwrap()
         .list_schemas()
         .await
