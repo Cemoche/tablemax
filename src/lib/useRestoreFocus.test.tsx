@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { render, screen } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { useRestoreFocus } from "./useRestoreFocus";
@@ -38,4 +39,58 @@ test("does nothing when the opener is gone, disabled or hidden", () => {
   rerender(<Host open hidden />);
   rerender(<Host open={false} hidden />);
   expect(opener).not.toHaveFocus();
+});
+
+test("an opener that is <body> restores nothing", () => {
+  (document.activeElement as HTMLElement | null)?.blur();
+  const { rerender } = render(<Host open={false} />);
+  rerender(<Host open />);
+  rerender(<Host open={false} />);
+  expect(screen.getByRole("button", { name: "opener" })).not.toHaveFocus();
+});
+
+test("a focus that moved elsewhere before the unmount is not stolen", () => {
+  const { rerender } = render(
+    <>
+      <Host open={false} />
+      <input aria-label="other" />
+    </>,
+  );
+  screen.getByRole("button", { name: "opener" }).focus();
+  rerender(
+    <>
+      <Host open />
+      <input aria-label="other" />
+    </>,
+  );
+  const other = screen.getByRole("textbox", { name: "other" });
+  other.focus();
+  rerender(
+    <>
+      <Host open={false} />
+      <input aria-label="other" />
+    </>,
+  );
+  expect(other).toHaveFocus();
+});
+
+test("StrictMode's simulated unmount leaves the focus in the dialog", () => {
+  const { rerender } = render(
+    <StrictMode>
+      <Host open={false} />
+    </StrictMode>,
+  );
+  screen.getByRole("button", { name: "opener" }).focus();
+  rerender(
+    <StrictMode>
+      <Host open />
+    </StrictMode>,
+  );
+  expect(screen.getByRole("button", { name: "inside" })).toHaveFocus();
+  rerender(
+    <StrictMode>
+      <Host open={false} />
+    </StrictMode>,
+  );
+  expect(screen.getByRole("button", { name: "opener" })).toHaveFocus();
 });

@@ -1346,6 +1346,9 @@ test("Cancel of the commit confirmation raised from the structure view focuses t
   await refusedCommit();
   vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);
   await userEvent.click(screen.getByRole("tab", { name: strings.grid.view.structure }));
+  // Mod+S with nothing focused: the opener is <body>, so only the explicit refocus can help.
+  (document.activeElement as HTMLElement | null)?.blur();
+  expect(document.body).toHaveFocus();
   await act(() => pending().commit("t1", "w1", obj));
   const dialog = await screen.findByRole("dialog");
   await userEvent.click(within(dialog).getByRole("button", { name: strings.safety.confirmCancel }));

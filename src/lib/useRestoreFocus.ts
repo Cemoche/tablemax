@@ -13,6 +13,11 @@ export function useRestoreFocus(): void {
   useEffect(() => {
     const el = opener.current;
     return () => {
+      // Only when the focus fell to body (the dialog's own element was removed). Under
+      // StrictMode's simulated unmount the dialog still holds the focus, and a focus that
+      // moved elsewhere is not ours to take.
+      const now = document.activeElement;
+      if (now && now !== document.body) return;
       if (
         el instanceof HTMLElement &&
         el !== document.body &&
