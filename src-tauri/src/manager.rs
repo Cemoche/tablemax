@@ -1313,9 +1313,35 @@ impl SessionManager {
     /// Opens a dedicated connection with the workspace's parameters, through its
     /// tunnel (reopened first if it died). Same keyring rule as [`Self::browse`].
     pub async fn open_sql_session(&self, workspace_id: &str) -> AppResult<String> {
+        self.open_sql_session_on(workspace_id, None).await
+    }
+
+    /// [`Self::open_sql_session`] on `database` instead of the workspace's current one
+    /// (PostgreSQL only; Invalid elsewhere): a query tab reopens a lost session on the
+    /// database its session was opened on, even after the workspace switched. A
+    /// database that does not exist is NotFound.
+    pub async fn open_sql_session_on(
+        &self,
+        workspace_id: &str,
+        database: Option<&str>,
+    ) -> AppResult<String> {
         let mut r = self.reconnect_material(workspace_id)?;
+        if let Some(db) = database {
+            if r.config.kind != DriverKind::Postgres {
+                return Err(AppError::new(
+                    ErrorKind::Invalid,
+                    "only PostgreSQL connections switch database; use the schema instead",
+                ));
+            }
+            if db.is_empty() {
+                return Err(AppError::new(ErrorKind::Invalid, "database name is empty"));
+            }
+        }
         self.unbind_stale_keyring(&mut r).await?;
         r.apply_database();
+        if let Some(db) = database {
+            r.config.database = Some(db.to_string());
+        }
         let password = self.resolve_password(&r.config, r.password).await?;
         let tunnel = self
             .live_tunnel(workspace_id, &r.config, &r.slot, r.ssh_secret)
@@ -2500,6 +2526,19 @@ mod tests {
         );
         let cat = fx.mgr.catalog(&ws.workspace_id, None, false).await.unwrap();
         assert_eq!(cat.schema.as_deref(), Some("main"));
+        // A SQL session on an explicit database is PostgreSQL only.
+        let e = fx
+            .mgr
+            .open_sql_session_on(&ws.workspace_id, Some("other"))
+            .await
+            .unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+        assert!(
+            fx.mgr
+                .open_sql_session_on(&ws.workspace_id, None)
+                .await
+                .is_ok()
+        );
     }
 
     async fn stubborn_session(fx: &Fx, delay: Duration) -> (String, Arc<AtomicUsize>) {

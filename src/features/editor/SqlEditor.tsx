@@ -11,6 +11,7 @@ import { isModalOpen, matchShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { useResolvedDark } from "../../lib/theme";
 import { registerEditorCommands } from "./editorCommands";
+import { delimiterAt } from "./splitStatements";
 import type { Dialect } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
 import { isValidFontFamily } from "../settings/bounds";
@@ -47,17 +48,33 @@ let formatter: Promise<Formatter> | null = null;
 /** sql-formatter is only needed on demand: load it on the first format. */
 const loadFormatter = () => (formatter ??= import("sql-formatter").then((m) => m.format));
 
+/** A MySQL `DELIMITER` client command line (sql-formatter knows nothing of it). */
+const DELIMITER_LINE = /^\s*DELIMITER\s/im;
+
 /**
  * Formats the selection, or the whole text when nothing is selected, with sql-formatter
  * (upper-case keywords) in ONE transaction, so a single undo restores the original. A text
- * sql-formatter cannot parse is left untouched and `onError` is called.
+ * sql-formatter cannot parse is left untouched and `onNotice` gets `formatFailed`. MySQL
+ * text holding a `DELIMITER` line, or a selection inside a `DELIMITER` region, is not
+ * formatted at all (sql-formatter would break the script): `onNotice` says so.
  */
-export async function formatEditor(view: EditorView, dialect: Dialect, onError: () => void): Promise<void> {
+export async function formatEditor(
+  view: EditorView,
+  dialect: Dialect,
+  onNotice: (message: string) => void,
+): Promise<void> {
   const state = view.state;
   const sel = state.selection.main;
   const [from, to] = sel.empty ? [0, state.doc.length] : [sel.from, sel.to];
   const source = state.sliceDoc(from, to);
   if (!source.trim()) return;
+  if (
+    dialect === "mySql" &&
+    (DELIMITER_LINE.test(source) || delimiterAt(state.doc.toString(), from, dialect) !== ";")
+  ) {
+    onNotice(strings.query.formatDelimiter);
+    return;
+  }
   const format = await loadFormatter();
   // The text changed while sql-formatter loaded: formatting the old text would undo edits.
   if (view.state.doc !== state.doc) return;
@@ -65,7 +82,7 @@ export async function formatEditor(view: EditorView, dialect: Dialect, onError: 
   try {
     out = format(source, { language: FORMAT_LANGUAGE[dialect], keywordCase: "upper" });
   } catch {
-    onError();
+    onNotice(strings.query.formatFailed);
     return;
   }
   if (out === source) return;
@@ -201,7 +218,7 @@ export function SqlEditor({
   const viewRef = useRef<EditorView | null>(null);
   const formatRef = useRef(() => {
     const view = viewRef.current;
-    if (view) void formatEditor(view, dialectRef.current, () => noticeRef.current?.(strings.query.formatFailed));
+    if (view) void formatEditor(view, dialectRef.current, (m) => noticeRef.current?.(m));
   });
   useEffect(() => {
     if (!tabId) return;

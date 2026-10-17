@@ -22,6 +22,12 @@ export type Tab =
        * `undefined` while unknown (a restored tab before its file was read).
        */
       savedSql?: string | null;
+      /**
+       * PostgreSQL: the database the tab's SQL session was opened on (absent/null until
+       * its first Run). A lost session reopens there, even after the workspace switched
+       * database; the tab bar shows it when it differs from the workspace's.
+       */
+      database?: string | null;
     };
 
 /**
@@ -49,6 +55,8 @@ export interface Workspace {
   activeTabId: string | null;
   /** Tab ids, most recently used first. */
   mru: string[];
+  /** Non-blocking message shown above the tabs until dismissed (absent/null: none). */
+  notice?: string | null;
 }
 
 interface WorkspacesState {
@@ -133,8 +141,11 @@ interface WorkspacesState {
       title: string;
       savedName: string | null;
       savedSql: string | null;
+      database: string | null;
     }>,
   ) => void;
+  /** Hides the workspace's notice. */
+  dismissNotice: (wsId: string) => void;
   /**
    * Adds restored (disconnected) workspaces, skipping connections already open, and
    * activates `activeId` unless a workspace is already active.
@@ -302,6 +313,8 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       status("disconnected");
       throw e;
     }
+    /** The restored database that could not be selected again. */
+    let unavailable: string | null = null;
     try {
       const wanted = get().workspaces.find((w) => w.id === placeholderId)?.database ?? null;
       // MySQL / SQLite carry the database in the schema; only PostgreSQL switches.
@@ -309,7 +322,9 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
         try {
           info = await ipc.workspaceSwitchDatabase(info.workspaceId, wanted);
         } catch {
-          // Gone or refused: stay on the connection's default database.
+          // Gone or refused: stay on the connection's default database (below: its
+          // table tabs are closed and the user is told).
+          unavailable = wanted;
         }
       }
       schemas = await ipc.schemasList(info.workspaceId);
@@ -343,6 +358,9 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
                 w.currentSchema !== null && schemas.includes(w.currentSchema)
                   ? w.currentSchema
                   : defaultSchema(dialect, schemas, cfg.database),
+              ...(unavailable !== null && {
+                notice: strings.session.databaseFallback(unavailable, database),
+              }),
             }
           : w,
       ),
@@ -350,6 +368,14 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       connectRequest:
         s.connectRequest?.workspaceId === placeholderId ? null : s.connectRequest,
     }));
+    if (unavailable !== null) {
+      // Like a database switch: they would show the default database's tables under
+      // the old titles. Query tabs stay (they open their own session).
+      const stale = get().workspaces.find((w) => w.id === newId)?.tabs ?? [];
+      for (const t of stale) {
+        if (t.kind === "table") get().closeTab(newId, t.id);
+      }
+    }
   };
 
   return {
@@ -549,6 +575,8 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
         ...w,
         tabs: w.tabs.map((t) => (t.id === tabId && t.kind === "query" ? { ...t, ...patch } : t)),
       })),
+
+    dismissNotice: (wsId) => update(wsId, (w) => ({ ...w, notice: null })),
 
     restoreWorkspaces: (list, activeId) => {
       const open = new Set(get().workspaces.map((w) => w.connectionId));

@@ -108,7 +108,7 @@ test("run shows one result tab per result set and error with index", async () =>
   await setup("select 1; update t set a=1; select boom");
   await userEvent.click(screen.getByRole("button", { name: "Run all" }));
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
-  expect(ipc.sqlSessionOpen).toHaveBeenCalledWith("w1");
+  expect(ipc.sqlSessionOpen).toHaveBeenCalledWith("w1", null);
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][0]).toBe("s1");
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select 1", "update t set a=1", "select boom"]);
   expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: "s1" });
@@ -253,6 +253,35 @@ test("a lost connection drops the session and the next Run reconnects", async ()
   expect(ipc.sqlSessionOpen).toHaveBeenCalledTimes(2);
   expect(vi.mocked(ipc.sqlExecute).mock.calls[1][0]).toBe("s2");
   expect(screen.queryByText("Connection lost — run again to reconnect")).toBeNull();
+});
+
+test("a query tab keeps its database: a lost session reopens there after a database switch", async () => {
+  vi.mocked(ipc.sqlSessionClose).mockResolvedValue(undefined);
+  await setup("select 1");
+  act(() => useWorkspaces.setState((s) => ({ workspaces: s.workspaces.map((w) => ({ ...w, database: "app" })) })));
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
+  expect(ipc.sqlSessionOpen).toHaveBeenLastCalledWith("w1", "app");
+  expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: "s1", database: "app" });
+  act(() => {
+    emit({ event: "statementFailed", data: { index: 0, error: { kind: "connectionLost", message: "lost" } } });
+    emit({ event: "batchFinished", data: { cancelled: false } });
+  });
+  // The workspace moved to another database meanwhile.
+  act(() => useWorkspaces.setState((s) => ({ workspaces: s.workspaces.map((w) => ({ ...w, database: "other" })) })));
+  vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s2");
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
+  expect(ipc.sqlSessionOpen).toHaveBeenLastCalledWith("w1", "app");
+  expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: "s2", database: "app" });
+});
+
+test("only PostgreSQL query tabs pin a database", async () => {
+  await setup("select 1", "mySql");
+  act(() => useWorkspaces.setState((s) => ({ workspaces: s.workspaces.map((w) => ({ ...w, database: "shop" })) })));
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  expect(ipc.sqlSessionOpen).toHaveBeenCalledWith("w1", null);
 });
 
 test("an execute rejected with connectionLost also drops the session", async () => {
@@ -426,6 +455,43 @@ test("the format command formats the whole text, and a parse error leaves it unt
   });
   expect(await screen.findByRole("status")).toHaveTextContent(strings.query.formatFailed);
   expect(view.state.doc.toString()).toBe("select (1");
+});
+
+test("formatting is refused for MySQL text with DELIMITER lines (sql-formatter would break them)", async () => {
+  editorMode.real = true;
+  const sql = "DELIMITER //\ncreate procedure p() begin select 1; end//\nDELIMITER ;\nselect a,b from t";
+  await setup(sql, "mySql");
+  const view = editorView();
+  act(() => {
+    runEditorCommand("t1", "format");
+  });
+  expect(await screen.findByRole("status")).toHaveTextContent(strings.query.formatDelimiter);
+  expect(view.state.doc.toString()).toBe(sql);
+  // A selection inside the `//` region is refused too, even without the DELIMITER line.
+  act(() => view.dispatch({ selection: { anchor: 13, head: 13 + "create procedure p()".length } }));
+  act(() => {
+    runEditorCommand("t1", "format");
+  });
+  await act(async () => {});
+  expect(view.state.doc.toString()).toBe(sql);
+  // Indented DELIMITER line in a selection.
+  act(() => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "select 1;\n  delimiter $$\nselect 2$$" } }));
+  act(() => view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }));
+  act(() => {
+    runEditorCommand("t1", "format");
+  });
+  await act(async () => {});
+  expect(view.state.doc.toString()).toBe("select 1;\n  delimiter $$\nselect 2$$");
+});
+
+test("PostgreSQL text with a DELIMITER word still formats", async () => {
+  editorMode.real = true;
+  await setup("select delimiter from t", "postgres");
+  const view = editorView();
+  act(() => {
+    runEditorCommand("t1", "format");
+  });
+  await waitFor(() => expect(view.state.doc.toString()).toBe("SELECT\n  delimiter\nFROM\n  t"));
 });
 
 test("Mod+/ toggles a line comment with a space after --", async () => {

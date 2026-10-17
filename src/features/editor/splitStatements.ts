@@ -16,8 +16,12 @@ export interface SplitOptions {
  *   FUNCTION/TRIGGER/EVENT` whose body is BEGIN … END, IF, CASE, LOOP, WHILE or REPEAT,
  *   MariaDB `BEGIN NOT ATOMIC … END`, SQLite `CREATE TRIGGER … BEGIN … END`, PostgreSQL
  *   `BEGIN ATOMIC … END`. For MySQL the `Compound` tracker below follows the same model
- *   as `Compound` in `src-tauri/src/driver/mysql.rs`, so what the splitter sends as one
- *   statement is what the MySQL driver accepts as one.
+ *   as `Compound` in `src-tauri/src/driver/mysql.rs`, but the splitter only decides where
+ *   statements end: the driver checks each one again and refuses more than it does. It
+ *   does not track compound bodies inside executable comments (mysqldump wraps its
+ *   triggers in `/*!50003 … ` comments), and refuses dollar-quoted bodies and every statement
+ *   while the client character set is big5/cp932/gb18030/gbk/sjis. Such input splits
+ *   fine here and is then refused by the driver (fail closed).
  * Dollar-quoted bodies in PostgreSQL are supported.
  */
 
