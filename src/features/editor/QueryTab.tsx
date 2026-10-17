@@ -6,15 +6,15 @@ import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { registerPendingFlush } from "../../lib/pendingFlush";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
-import { useAutoLimit } from "../../stores/autoLimit";
+import { autoLimitTexts, useAutoLimit, useAutoLimitOn } from "../../stores/autoLimit";
 import { useCatalog } from "../../stores/catalog";
 import { useQueryPanels } from "../../stores/queryPanels";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
 import { useLiveEnv } from "../workspace/useLiveEnv";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { useSavedQueries } from "../../stores/savedQueries";
+import { useSettings } from "../../stores/settings";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
-import { applyAutoLimit } from "./autoLimit";
 import { buildCompletionSource } from "./completion";
 import { ConfirmDialog, NameDialog } from "./Dialogs";
 import { HistoryPanel } from "./HistoryPanel";
@@ -24,8 +24,6 @@ import { type EditorSelection, type RunMode, SqlEditor, insertAtCursor, replaceD
 import { type Statement, delimiterAt, splitStatements, statementAt } from "./splitStatements";
 
 const SAVE_DEBOUNCE_MS = 300;
-/** Row cap added by "Auto LIMIT" (Plan 5 makes it a setting). */
-export const AUTO_LIMIT_ROWS = 1000;
 
 const btn =
   "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
@@ -73,11 +71,12 @@ export function QueryTab({ workspace, tab }: Props) {
   const textRef = useRef(tab.sql);
   const selRef = useRef<EditorSelection>({ from: 0, to: 0, head: 0 });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** A batch the backend refused until confirmed; Run resends these exact statements. */
-  const [pending, setPending] = useState<{ stmts: Statement[]; flagged: number[] } | null>(null);
+  /** A batch the backend refused until confirmed; Run resends these exact texts (as shown). */
+  const [pending, setPending] = useState<{ stmts: string[]; flagged: number[] } | null>(null);
   const run = useQueryRuns((s) => s.runs[tabId]);
   const running = run?.running ?? false;
-  const autoLimit = useAutoLimit((s) => !!s.on[tabId]);
+  const autoLimit = useAutoLimitOn(tabId);
+  const autoLimitRows = useSettings((s) => s.settings.autoLimitValue);
   const [notice, setNotice] = useState<string | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const connectionId = workspace.connectionId;
@@ -165,7 +164,8 @@ export function QueryTab({ workspace, tab }: Props) {
     }
   };
 
-  const execute = async (stmts: Statement[], confirmed = false) => {
+  /** `stmts`: the texts to send, Auto LIMIT already applied (`autoLimitTexts`). */
+  const execute = async (stmts: string[], confirmed = false) => {
     const runs = useQueryRuns.getState();
     if (stmts.length === 0 || runs.runs[tabId]?.running) return;
     flush();
@@ -185,10 +185,9 @@ export function QueryTab({ workspace, tab }: Props) {
         useWorkspaces.getState().updateTab(wsId, tabId, { sqlSessionId: sessionId });
       }
       const sid = sessionId;
-      const limited = useAutoLimit.getState().on[tabId];
       await ipc.sqlExecute(
         sid,
-        stmts.map((s) => (limited ? applyAutoLimit(s.text, dialect, AUTO_LIMIT_ROWS) : s.text)),
+        stmts,
         (e) => {
           useQueryRuns.getState().applyEvent(tabId, e);
           if (e.event === "statementFailed" && e.data.error.kind === "connectionLost") {
@@ -216,16 +215,18 @@ export function QueryTab({ workspace, tab }: Props) {
   };
 
   const runMode = (mode: RunMode) => {
+    // Auto LIMIT is applied once, here: the texts sent are the ones a confirmation shows and resends.
+    const send = (stmts: Statement[]) => void execute(autoLimitTexts(tabId, stmts, dialect));
     const all = splitStatements(textRef.current, dialect);
-    if (mode === "all") return void execute(all);
+    if (mode === "all") return send(all);
     const { from, to, head } = selRef.current;
     if (from !== to) {
       // A selection inside a `DELIMITER //` region splits with that delimiter.
       const delimiter = delimiterAt(textRef.current, from, dialect);
-      return void execute(splitStatements(textRef.current.slice(from, to), dialect, { delimiter }));
+      return send(splitStatements(textRef.current.slice(from, to), dialect, { delimiter }));
     }
     const one = statementAt(all, head);
-    void execute(one ? [one] : []);
+    send(one ? [one] : []);
   };
   const runModeRef = useRef(runMode);
   runModeRef.current = runMode;
@@ -361,14 +362,14 @@ export function QueryTab({ workspace, tab }: Props) {
         </button>
         <label
           className="flex shrink-0 items-center gap-1 text-sm"
-          title={strings.query.autoLimitHint(AUTO_LIMIT_ROWS)}
+          title={strings.query.autoLimitHint(autoLimitRows)}
         >
           <input
             type="checkbox"
             checked={autoLimit}
             onChange={(e) => useAutoLimit.getState().setAutoLimit(tabId, e.target.checked)}
           />
-          {strings.query.autoLimit(AUTO_LIMIT_ROWS)}
+          {strings.query.autoLimit(autoLimitRows)}
         </label>
       </div>
       <div className="flex min-h-0 flex-1">
@@ -433,7 +434,7 @@ export function QueryTab({ workspace, tab }: Props) {
           connectionName={workspace.name}
           envTag={env.envTag}
           safeMode={env.mode}
-          statements={pending.stmts.map((s) => s.text)}
+          statements={pending.stmts}
           flagged={pending.flagged}
           onCancel={() => setPending(null)}
           onRun={() => {

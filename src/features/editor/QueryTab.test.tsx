@@ -93,7 +93,8 @@ beforeEach(() => {
   editorMode.real = false;
   useQueryRuns.setState({ runs: {} });
   useCatalog.setState({ catalogs: {}, errors: {}, loading: {} });
-  useAutoLimit.setState({ on: {} });
+  useAutoLimit.setState({ override: {} });
+  useSettings.setState({ settings: DEFAULT_SETTINGS });
   vi.mocked(ipc.catalogGet).mockResolvedValue({ schema: "public", tables: [] });
   vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s1");
   vi.mocked(ipc.sqlCancel).mockResolvedValue(undefined);
@@ -375,6 +376,28 @@ describe("safe mode confirmation", () => {
     expect(dialog).toHaveTextContent("Safe mode: confirm writes");
   });
 
+  test("with Auto LIMIT on, the dialog shows the SQL as it will run and Run resends exactly that", async () => {
+    autoLimitSettings(true, 50);
+    await setup("select * from t; delete from t");
+    refuse("1");
+    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    const dialog = await screen.findByRole("dialog");
+    const items = within(dialog).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("select * from t LIMIT 50");
+    expect(items[1]).toHaveTextContent("delete from t");
+    const sent = vi.mocked(ipc.sqlExecute).mock.calls[0][1];
+    expect(sent).toEqual(["select * from t LIMIT 50", "delete from t"]);
+
+    // A settings change while the dialog is open does not alter what was shown.
+    act(() => autoLimitSettings(true, 7));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
+    const second = vi.mocked(ipc.sqlExecute).mock.calls[1];
+    expect(second[1]).toEqual(sent);
+    expect(second[3]).toBe(true);
+    act(() => resolveExec());
+  });
+
   test("an unparsable refusal flags every statement", async () => {
     await setup("select 1; select 2");
     refuse("???");
@@ -389,7 +412,10 @@ test("the tab loads the completion catalog of the current schema", async () => {
   expect(ipc.catalogGet).toHaveBeenCalledWith("w1", "public", false);
 });
 
-test("Auto LIMIT 1000 rewrites the SELECTs sent by Run", async () => {
+const autoLimitSettings = (autoLimitDefault: boolean, autoLimitValue = 1000) =>
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, autoLimitDefault, autoLimitValue } });
+
+test("Auto LIMIT rewrites the SELECTs sent by Run", async () => {
   await setup("select * from t; update t set a = 1");
   const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) });
   expect(box).not.toBeChecked();
@@ -404,6 +430,57 @@ test("Auto LIMIT 1000 rewrites the SELECTs sent by Run", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Run all" }));
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
   expect(vi.mocked(ipc.sqlExecute).mock.calls[1][1]).toEqual(["select * from t", "update t set a = 1"]);
+});
+
+test("default on: a new query tab runs with LIMIT <value>", async () => {
+  autoLimitSettings(true);
+  await setup("select * from t");
+  expect(screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) })).toBeChecked();
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t LIMIT 1000"]);
+});
+
+test("the configured value is the one sent and the one the label and hint name", async () => {
+  autoLimitSettings(true, 50);
+  await setup("select * from t");
+  const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(50) });
+  expect(box).toBeChecked();
+  expect(box.closest("label")).toHaveAttribute("title", strings.query.autoLimitHint(50));
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t LIMIT 50"]);
+});
+
+test("default off: no LIMIT", async () => {
+  autoLimitSettings(false, 50);
+  await setup("select * from t");
+  expect(screen.getByRole("checkbox", { name: strings.query.autoLimit(50) })).not.toBeChecked();
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t"]);
+});
+
+test("a tab toggled off by hand stays off when the default changes", async () => {
+  autoLimitSettings(true);
+  await setup("select * from t");
+  const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) });
+  await userEvent.click(box);
+  expect(box).not.toBeChecked();
+  act(() => autoLimitSettings(false));
+  act(() => autoLimitSettings(true));
+  expect(box).not.toBeChecked();
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t"]);
+});
+
+test("a tab not toggled by hand follows the default as it changes", async () => {
+  await setup("select * from t");
+  const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) });
+  expect(box).not.toBeChecked();
+  act(() => autoLimitSettings(true));
+  expect(box).toBeChecked();
 });
 
 test("Auto LIMIT is remembered per tab, in memory only", async () => {
