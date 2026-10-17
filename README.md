@@ -16,6 +16,8 @@ pnpm lint         # tsc + clippy
 
 ## Test databases
 
-`scripts/test-dbs.sh up|down|env` manages PostgreSQL 16 (port 54321), MySQL 8.4 (33061)
-and MariaDB 11.4 (33062) via `docker-compose.test.yml` (project `tablemax-test`).
-`scripts/test-dbs.sh env` prints the `TABLEMAX_TEST_PG_URLS` / `TABLEMAX_TEST_MYSQL_URLS` exports.
+`scripts/test-dbs.sh up|down|env` manages PostgreSQL 16 (port 54321), MySQL 8.4 (33061),
+MariaDB 11.4 (33062) and a test sshd (2222, user `tunnel`) via `docker-compose.test.yml`
+(project `tablemax-test`). `up` first runs `scripts/test-secrets.sh`, which generates the
+throwaway TLS certificates and SSH keys into `.test-secrets/` (gitignored).
+`scripts/test-dbs.sh env` prints the `TABLEMAX_TEST_*` exports.

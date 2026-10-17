@@ -1,6 +1,6 @@
 name: tablemax-test
 
-# TLS material comes from scripts/test-certs.sh (run by scripts/test-dbs.sh up).
+# TLS material and SSH keys come from scripts/test-secrets.sh (run by scripts/test-dbs.sh up).
 services:
   pg16:
     image: postgres:16-alpine
@@ -62,3 +62,17 @@ services:
       interval: 3s
       timeout: 3s
       retries: 40
+
+  # SSH tunnel endpoint. On the project's default network, so it reaches the databases
+  # as pg16:5432, mysql8:3306 and mariadb11:3306.
+  sshd:
+    build: tests/docker/sshd
+    volumes:
+      - ./.test-secrets/ssh:/keys:ro
+    ports:
+      - "127.0.0.1:2222:22"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
