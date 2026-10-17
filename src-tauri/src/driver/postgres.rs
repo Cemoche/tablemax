@@ -27,6 +27,11 @@
 //! num_nulls(q.c1) = 0 THEN format('%s', q.c1) END, .. FROM q` (`format('%s')` calls the
 //! output function; `num_nulls` keeps NULL apart from an all-NULL composite).
 //! A statement without parameters takes the simple-query path above instead.
+//!
+//! Row changes (`apply`) run `BEGIN`, each statement through `execute_raw` (its row count),
+//! then `COMMIT` (or `ROLLBACK`). The `Client` pipelines concurrent calls on one
+//! connection, so a page fetch issued meanwhile would run inside the transaction: every
+//! call takes `gate` shared, `apply` takes it exclusive for the whole transaction.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -41,6 +46,7 @@ use tokio_postgres::types::{ToSql, Type};
 use tokio_postgres::{CancelToken, Client, Config, NoTls, SimpleQueryMessage, Socket};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
+use super::dml::{self, ApplyOutcome};
 use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, non_null_default,
     object_not_found,
@@ -54,7 +60,7 @@ use super::{
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{
-    CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, json_value, text_value,
+    CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, json_cell, text_cell,
 };
 
 struct PgSession {
@@ -65,6 +71,8 @@ struct PgSession {
     lost: Arc<AtomicBool>,
     conn_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     version: String,
+    /// Shared by every call, exclusive during `apply` (see the module docs).
+    gate: tokio::sync::RwLock<()>,
 }
 
 struct PgCanceller {
@@ -216,6 +224,7 @@ pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> 
         lost,
         conn_task: Mutex::new(Some(handle)),
         version,
+        gate: tokio::sync::RwLock::new(()),
     }))
 }
 
@@ -278,7 +287,7 @@ impl PgSession {
                         let ty = types.as_ref().and_then(|t| t.get(i)).map(|(_, t)| t);
                         out.push(match text {
                             None => CellValue::Null,
-                            Some(s) => cell_from_text(ty, s),
+                            Some(s) => cell_from_text(ty, s, false),
                         });
                     }
                     rows.push(out);
@@ -328,17 +337,11 @@ impl PgSession {
         }
     }
 
-    /// Runs a parameterized statement (see the module docs for the text wrapper).
-    async fn query_bound(&self, stmt: &Statement) -> AppResult<ResultSet> {
+    /// Runs a parameterized statement (see the module docs for the text wrapper); `full`
+    /// keeps text and JSON values whole.
+    async fn query_bound(&self, stmt: &Statement, full: bool) -> AppResult<ResultSet> {
         self.check()?;
-        let params: Vec<&(dyn ToSql + Sync)> = stmt
-            .params
-            .iter()
-            .map(|p| match p {
-                SqlParam::Text(s) => s as &(dyn ToSql + Sync),
-                SqlParam::Bytes(b) => b as &(dyn ToSql + Sync),
-            })
-            .collect();
+        let params = bound(stmt);
         let inner = self
             .client
             .prepare(&stmt.sql)
@@ -380,7 +383,7 @@ impl PgSession {
                 let text: Option<&str> = row.try_get(i).map_err(|e| self.map_live_err(e))?;
                 out.push(match text {
                     None => CellValue::Null,
-                    Some(s) => cell_from_text(Some(ty), s),
+                    Some(s) => cell_from_text(Some(ty), s, full),
                 });
             }
             rows.push(out);
@@ -391,6 +394,34 @@ impl PgSession {
             truncated,
         })
     }
+
+    /// One statement of `apply`: the rows it touched.
+    async fn apply_one(&self, stmt: &Statement) -> AppResult<u64> {
+        self.client
+            .execute_raw(stmt.sql.as_str(), bound(stmt))
+            .await
+            .map_err(|e| self.map_live_err(e))
+    }
+
+    /// Best effort, retried once: a late cancel may interrupt the first attempt, and an
+    /// open transaction must never outlive `apply` (a lost connection ends it anyway).
+    async fn rollback(&self) {
+        for _ in 0..2 {
+            if self.client.batch_execute("ROLLBACK").await.is_ok() || self.client.is_closed() {
+                return;
+            }
+        }
+    }
+}
+
+fn bound(stmt: &Statement) -> Vec<&(dyn ToSql + Sync)> {
+    stmt.params
+        .iter()
+        .map(|p| match p {
+            SqlParam::Text(s) => s as &(dyn ToSql + Sync),
+            SqlParam::Bytes(b) => b as &(dyn ToSql + Sync),
+        })
+        .collect()
 }
 
 /// `sql`'s `n` columns, each rendered as text by its type's output function.
@@ -430,38 +461,36 @@ fn decode_hex(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// Re-types a PostgreSQL text-format value from its column type.
-fn cell_from_text(ty: Option<&Type>, s: &str) -> CellValue {
+/// Re-types a PostgreSQL text-format value from its column type; `full` keeps text and
+/// JSON whole.
+fn cell_from_text(ty: Option<&Type>, s: &str, full: bool) -> CellValue {
+    let text = || text_cell(s.to_string(), full);
     let Some(ty) = ty else {
-        return text_value(s.to_string());
+        return text();
     };
     match *ty {
         Type::BOOL => match s {
             "t" => CellValue::Bool(true),
             "f" => CellValue::Bool(false),
-            _ => text_value(s.to_string()),
+            _ => text(),
         },
-        Type::INT2 | Type::INT4 | Type::INT8 => s
-            .parse::<i64>()
-            .map(int_value)
-            .unwrap_or_else(|_| text_value(s.to_string())),
-        Type::FLOAT4 | Type::FLOAT8 => s
-            .parse::<f64>()
-            .map(float_value)
-            .unwrap_or_else(|_| text_value(s.to_string())),
+        Type::INT2 | Type::INT4 | Type::INT8 => {
+            s.parse::<i64>().map(int_value).unwrap_or_else(|_| text())
+        }
+        Type::FLOAT4 | Type::FLOAT8 => s.parse::<f64>().map(float_value).unwrap_or_else(|_| text()),
         Type::NUMERIC => CellValue::Decimal(s.to_string()),
         Type::BYTEA => match decode_hex(s) {
             Some(b) => bytes_value(&b),
             None => bytes_value(s.as_bytes()),
         },
-        Type::JSON | Type::JSONB => json_value(s.to_string()),
+        Type::JSON | Type::JSONB => json_cell(s.to_string(), full),
         Type::DATE
         | Type::TIME
         | Type::TIMETZ
         | Type::TIMESTAMP
         | Type::TIMESTAMPTZ
         | Type::INTERVAL => CellValue::Temporal(s.to_string()),
-        _ => text_value(s.to_string()),
+        _ => text(),
     }
 }
 
@@ -785,6 +814,7 @@ impl Session for PgSession {
     }
 
     async fn list_schemas(&self) -> AppResult<Vec<String>> {
+        let _gate = self.gate.read().await;
         self.check()?;
         let rows = self
             .client
@@ -801,6 +831,7 @@ impl Session for PgSession {
     }
 
     async fn list_objects(&self, schema: Option<&str>) -> AppResult<Vec<DbObject>> {
+        let _gate = self.gate.read().await;
         self.check()?;
         let schema = schema.unwrap_or("public").to_string();
         let rows = self
@@ -833,6 +864,7 @@ impl Session for PgSession {
     }
 
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        let _gate = self.gate.read().await;
         if stmt.params.is_empty() {
             // Nothing to bind: the simple-query path, no text wrapper.
             let (rs, _) = self.run(&stmt.sql).await?;
@@ -842,10 +874,42 @@ impl Session for PgSession {
                 truncated: false,
             }));
         }
-        self.query_bound(stmt).await
+        self.query_bound(stmt, false).await
+    }
+
+    async fn query_full(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        let _gate = self.gate.read().await;
+        self.query_bound(stmt, true).await
+    }
+
+    async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome> {
+        dml::check_apply_args(stmts, expect_one)?;
+        let _gate = self.gate.write().await;
+        self.check()?;
+        self.client
+            .batch_execute("BEGIN")
+            .await
+            .map_err(|e| self.map_live_err(e))?;
+        let mut affected = Vec::with_capacity(stmts.len());
+        for (i, stmt) in stmts.iter().enumerate() {
+            let result = self.apply_one(stmt).await;
+            if let Err(halt) = dml::record(i, expect_one[i], result, &mut affected) {
+                self.rollback().await;
+                return halt.into_result();
+            }
+        }
+        match self.client.batch_execute("COMMIT").await {
+            Ok(()) => Ok(dml::applied(affected)),
+            Err(e) => {
+                let err = self.map_live_err(e);
+                self.rollback().await;
+                dml::commit_failed(affected, err)
+            }
+        }
     }
 
     async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount> {
+        let _gate = self.gate.read().await;
         self.check()?;
         let q = qualified(Dialect::Postgres, obj);
         let row = self
@@ -873,6 +937,7 @@ impl Session for PgSession {
     }
 
     async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
+        let _gate = self.gate.read().await;
         let rel = self.relation(obj).await?;
         let columns: Vec<ColumnInfo> = self
             .columns(rel.oid)
@@ -915,11 +980,13 @@ impl Session for PgSession {
     }
 
     async fn table_ddl(&self, obj: &ObjectRef) -> AppResult<String> {
+        let _gate = self.gate.read().await;
         let rel = self.relation(obj).await?;
         self.table_ddl_of(&rel).await
     }
 
     async fn execute(&self, sql: &str) -> AppResult<StatementOutcome> {
+        let _gate = self.gate.read().await;
         let start = Instant::now();
         let (result, affected) = self.run(sql).await?;
         Ok(StatementOutcome {
@@ -1017,30 +1084,49 @@ mod tests {
     #[test]
     fn text_is_retyped_by_column_type() {
         assert_eq!(
-            cell_from_text(Some(&Type::BOOL), "f"),
+            cell_from_text(Some(&Type::BOOL), "f", false),
             CellValue::Bool(false)
         );
-        assert_eq!(cell_from_text(Some(&Type::INT8), "-5"), CellValue::Int(-5));
         assert_eq!(
-            cell_from_text(Some(&Type::INT8), "-9223372036854775808"),
+            cell_from_text(Some(&Type::INT8), "-5", false),
+            CellValue::Int(-5)
+        );
+        assert_eq!(
+            cell_from_text(Some(&Type::INT8), "-9223372036854775808", false),
             CellValue::BigInt("-9223372036854775808".into())
         );
         assert_eq!(
-            cell_from_text(Some(&Type::NUMERIC), "1.2300"),
+            cell_from_text(Some(&Type::NUMERIC), "1.2300", false),
             CellValue::Decimal("1.2300".into())
         );
         assert_eq!(
-            cell_from_text(Some(&Type::FLOAT8), "NaN"),
+            cell_from_text(Some(&Type::FLOAT8), "NaN", false),
             CellValue::Text("NaN".into())
         );
         assert_eq!(
-            cell_from_text(Some(&Type::FLOAT8), "-Infinity"),
+            cell_from_text(Some(&Type::FLOAT8), "-Infinity", false),
             CellValue::Text("-Infinity".into())
         );
-        assert_eq!(cell_from_text(None, "x"), CellValue::Text("x".into()));
         assert_eq!(
-            cell_from_text(Some(&Type::UUID), "u"),
+            cell_from_text(None, "x", false),
+            CellValue::Text("x".into())
+        );
+        assert_eq!(
+            cell_from_text(Some(&Type::UUID), "u", false),
             CellValue::Text("u".into())
+        );
+        let long = "x".repeat(crate::value::TEXT_PREVIEW_CHARS + 1);
+        assert!(matches!(
+            cell_from_text(Some(&Type::TEXT), &long, false),
+            CellValue::LongText { .. }
+        ));
+        assert_eq!(
+            cell_from_text(Some(&Type::TEXT), &long, true),
+            CellValue::Text(long.clone())
+        );
+        assert_eq!(
+            cell_from_text(Some(&Type::JSONB), &long, true),
+            CellValue::Json(long)
         );
     }
 }

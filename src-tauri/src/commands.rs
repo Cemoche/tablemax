@@ -8,6 +8,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+use crate::driver::dml::{ApplyOutcome, RowChange, RowKey};
 use crate::driver::meta::TableInfo;
 use crate::driver::query::Filter;
 use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
@@ -15,6 +16,7 @@ use crate::error::{AppError, AppResult, ErrorKind};
 use crate::import::{ImportPreview, ImportResult};
 use crate::manager::{ExecEvent, SessionManager, WorkspaceInfo};
 use crate::store::ConnectionConfig;
+use crate::value::CellValue;
 
 #[tauri::command]
 pub async fn connections_list(
@@ -240,6 +242,45 @@ pub async fn table_ddl(
     object: ObjectRef,
 ) -> AppResult<String> {
     state.browse(&workspace_id).await?.table_ddl(&object).await
+}
+
+/// One SQL text per change, values as escaped literals: for display, never executed.
+/// `Invalid` "change <index>: …" (0-based) for the first change that cannot be built.
+#[tauri::command]
+pub async fn changes_preview(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    object: ObjectRef,
+    changes: Vec<RowChange>,
+) -> AppResult<Vec<String>> {
+    state
+        .changes_preview(&workspace_id, &object, &changes)
+        .await
+}
+
+/// All changes in one transaction on the browse connection (all or nothing).
+#[tauri::command]
+pub async fn changes_apply(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    object: ObjectRef,
+    changes: Vec<RowChange>,
+) -> AppResult<ApplyOutcome> {
+    state.changes_apply(&workspace_id, &object, &changes).await
+}
+
+/// The whole value of a cell (text/JSON never cut), found by its row key.
+#[tauri::command]
+pub async fn cell_value(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    object: ObjectRef,
+    key: RowKey,
+    column: String,
+) -> AppResult<CellValue> {
+    state
+        .cell_value(&workspace_id, &object, &key, &column)
+        .await
 }
 
 #[tauri::command]

@@ -3,6 +3,10 @@
 //! independent of the mutex so it works while `execute` holds the connection.
 //!
 //! After `close()`, every session call returns `ErrorKind::ConnectionLost`.
+//!
+//! `apply` runs `BEGIN IMMEDIATE` … `COMMIT` inside one `with_conn` call: the mutex keeps
+//! every other call out of the transaction. An interrupt cancels the running statement
+//! (SQLite may then roll the transaction back itself; the explicit ROLLBACK is best effort).
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -12,6 +16,7 @@ use async_trait::async_trait;
 use rusqlite::types::{ToSqlOutput, ValueRef};
 use rusqlite::{Connection, InterruptHandle, OpenFlags, OptionalExtension, ToSql};
 
+use super::dml::{self, ApplyOutcome};
 use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, non_null_default,
     object_not_found, sort_indexes,
@@ -23,7 +28,7 @@ use super::{
     StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::value::{CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, text_value};
+use crate::value::{CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, text_cell};
 
 struct SqliteSession {
     conn: Arc<Mutex<Option<Connection>>>,
@@ -106,12 +111,13 @@ impl SqliteSession {
     }
 }
 
-fn cell(v: ValueRef<'_>) -> CellValue {
+/// `full` keeps text whole.
+fn cell(v: ValueRef<'_>, full: bool) -> CellValue {
     match v {
         ValueRef::Null => CellValue::Null,
         ValueRef::Integer(i) => int_value(i),
         ValueRef::Real(f) => float_value(f),
-        ValueRef::Text(t) => text_value(String::from_utf8_lossy(t).into_owned()),
+        ValueRef::Text(t) => text_cell(String::from_utf8_lossy(t).into_owned(), full),
         ValueRef::Blob(b) => bytes_value(b),
     }
 }
@@ -128,6 +134,7 @@ impl ToSql for SqlParam {
 fn read_rows(
     stmt: &mut rusqlite::Statement<'_>,
     params: impl rusqlite::Params,
+    full: bool,
 ) -> AppResult<ResultSet> {
     let columns: Vec<ColumnMeta> = stmt
         .columns()
@@ -149,7 +156,7 @@ fn read_rows(
         }
         let mut out = Vec::with_capacity(n);
         for i in 0..n {
-            out.push(cell(row.get_ref(i).map_err(map_err)?));
+            out.push(cell(row.get_ref(i).map_err(map_err)?, full));
         }
         rows.push(out);
     }
@@ -158,6 +165,33 @@ fn read_rows(
         rows,
         truncated,
     })
+}
+
+/// The transaction of `apply` (see the module docs).
+fn apply_tx(c: &Connection, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome> {
+    let rollback = || {
+        let _ = c.execute_batch("ROLLBACK");
+    };
+    c.execute_batch("BEGIN IMMEDIATE").map_err(map_err)?;
+    let mut affected = Vec::with_capacity(stmts.len());
+    for (i, stmt) in stmts.iter().enumerate() {
+        let result = c
+            .prepare(&stmt.sql)
+            .and_then(|mut p| p.execute(rusqlite::params_from_iter(stmt.params.iter())))
+            .map(|n| n as u64)
+            .map_err(map_err);
+        if let Err(halt) = dml::record(i, expect_one[i], result, &mut affected) {
+            rollback();
+            return halt.into_result();
+        }
+    }
+    match c.execute_batch("COMMIT") {
+        Ok(()) => Ok(dml::applied(affected)),
+        Err(e) => {
+            rollback();
+            dml::commit_failed(affected, map_err(e))
+        }
+    }
 }
 
 /// Kind and `CREATE` statement of a table or view; `NotFound` when the schema or the
@@ -492,9 +526,30 @@ impl Session for SqliteSession {
             read_rows(
                 &mut prepared,
                 rusqlite::params_from_iter(stmt.params.iter()),
+                false,
             )
         })
         .await
+    }
+
+    async fn query_full(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        let stmt = stmt.clone();
+        self.with_conn(move |c| {
+            let mut prepared = c.prepare(&stmt.sql).map_err(map_err)?;
+            read_rows(
+                &mut prepared,
+                rusqlite::params_from_iter(stmt.params.iter()),
+                true,
+            )
+        })
+        .await
+    }
+
+    async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome> {
+        dml::check_apply_args(stmts, expect_one)?;
+        let (stmts, expect_one) = (stmts.to_vec(), expect_one.to_vec());
+        self.with_conn(move |c| apply_tx(c, &stmts, &expect_one))
+            .await
     }
 
     async fn count_rows(&self, obj: &ObjectRef, _exact_threshold: u64) -> AppResult<RowCount> {
@@ -526,7 +581,7 @@ impl Session for SqliteSession {
             let start = Instant::now();
             let mut stmt = c.prepare(&sql).map_err(map_err)?;
             if stmt.column_count() > 0 {
-                let rs = read_rows(&mut stmt, [])?;
+                let rs = read_rows(&mut stmt, [], false)?;
                 Ok(StatementOutcome {
                     result: Some(rs),
                     rows_affected: None,

@@ -174,8 +174,8 @@ fn default_order(d: Dialect, info: &TableInfo) -> Vec<(String, String)> {
     Vec::new()
 }
 
-/// Binary columns are left out of the any-column search.
-fn is_binary(d: Dialect, type_name: &str) -> bool {
+/// Binary columns are left out of the any-column search (and measured as bytes by `dml`).
+pub(super) fn is_binary(d: Dialect, type_name: &str) -> bool {
     let t = type_name.trim().to_ascii_lowercase();
     match d {
         Dialect::Postgres => t == "bytea",
@@ -206,14 +206,16 @@ fn is_binary(d: Dialect, type_name: &str) -> bool {
     }
 }
 
-struct Builder {
-    d: Dialect,
-    sql: String,
+/// Accumulates SQL and its parameters, binding values in textual order (also used by
+/// `dml`).
+pub(super) struct Builder {
+    pub(super) d: Dialect,
+    pub(super) sql: String,
     params: Vec<SqlParam>,
 }
 
 impl Builder {
-    fn new(d: Dialect) -> Self {
+    pub(super) fn new(d: Dialect) -> Self {
         Builder {
             d,
             sql: String::new(),
@@ -221,24 +223,34 @@ impl Builder {
         }
     }
 
-    fn finish(self) -> Statement {
+    pub(super) fn finish(self) -> Statement {
         Statement {
             sql: self.sql,
             params: self.params,
         }
     }
 
-    /// Binds `v` and returns its placeholder (`$n` / `?`).
-    fn bind(&mut self, v: &str) -> String {
-        self.params.push(SqlParam::Text(v.to_string()));
+    /// Binds `p` and returns its placeholder (`$n` / `?`).
+    fn push(&mut self, p: SqlParam) -> String {
+        self.params.push(p);
         match self.d {
             Dialect::Postgres => format!("${}", self.params.len()),
             Dialect::MySql | Dialect::Sqlite => "?".into(),
         }
     }
 
-    /// A value compared with a column whose type without modifier is `base_type`.
-    fn typed(&mut self, v: &str, base_type: &str) -> String {
+    fn bind(&mut self, v: &str) -> String {
+        self.push(SqlParam::Text(v.to_string()))
+    }
+
+    /// Bytes, bound natively (the column's type decides, no cast).
+    pub(super) fn bytes(&mut self, b: Vec<u8>) -> String {
+        self.push(SqlParam::Bytes(b))
+    }
+
+    /// A value compared with (or written to) a column whose type without modifier is
+    /// `base_type`.
+    pub(super) fn typed(&mut self, v: &str, base_type: &str) -> String {
         let p = self.bind(v);
         match self.d {
             Dialect::Postgres => format!("CAST({p}::text AS {base_type})"),

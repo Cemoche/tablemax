@@ -28,8 +28,12 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::time::Instant;
 
+use crate::driver::dml::{
+    ApplyOutcome, RowChange, RowKey, STALE_ROW, build_cell_size, build_cell_value, build_change,
+    render_preview, suggests_schema_change,
+};
 use crate::driver::meta::TableInfo;
-use crate::driver::query::{Filter, build_filtered_count, build_page, read_count};
+use crate::driver::query::{Filter, Statement, build_filtered_count, build_page, read_count};
 use crate::driver::{
     self, Canceller, ConnectParams, Dialect, DriverKind, ObjectRef, PageRequest, ResultSet,
     RowCount, Session, StatementOutcome,
@@ -44,7 +48,7 @@ use crate::ssh::tunnel::{self, HostKeyPolicy, SshTunnel};
 use crate::store::{
     self, ConnectionConfig, ConnectionStore, PasswordMode, SshSettings, same_identity,
 };
-use crate::value::{EXACT_COUNT_THRESHOLD, FILTERED_COUNT_CAP};
+use crate::value::{CellValue, EXACT_COUNT_THRESHOLD, FILTERED_COUNT_CAP, MAX_EDIT_BYTES};
 
 /// How often a pending cancel is re-sent while the statement is still running.
 pub const CANCEL_RESEND_INTERVAL: Duration = Duration::from_millis(100);
@@ -115,6 +119,8 @@ struct Workspace {
     sql_sessions: Vec<String>,
     /// Table metadata read through `browse`, by (schema, name); dropped with the workspace.
     table_info: HashMap<(Option<String>, String), Arc<TableInfo>>,
+    /// Bumped by every invalidation: a read that started before one is not cached.
+    table_info_gen: u64,
 }
 
 /// A workspace's reconnect parameters (held secrets are copies, dropped after use).
@@ -687,6 +693,7 @@ impl SessionManager {
                 browse,
                 sql_sessions: Vec::new(),
                 table_info: HashMap::new(),
+                table_info_gen: 0,
             },
         );
         Ok(info)
@@ -843,14 +850,16 @@ impl SessionManager {
     }
 
     /// The metadata of a table or view, read once through the browse connection and
-    /// cached until [`Self::invalidate_table_info`] or the workspace closes.
+    /// cached until [`Self::invalidate_table_info`] or the workspace closes. A read that
+    /// was in flight when an invalidation happened is returned but not cached (it may
+    /// predate the change that caused the invalidation).
     pub async fn table_info(
         &self,
         workspace_id: &str,
         obj: &ObjectRef,
     ) -> AppResult<Arc<TableInfo>> {
         let key = (obj.schema.clone(), obj.name.clone());
-        {
+        let generation = {
             let st = self.state();
             let ws = st
                 .workspaces
@@ -859,9 +868,12 @@ impl SessionManager {
             if let Some(hit) = ws.table_info.get(&key) {
                 return Ok(hit.clone());
             }
-        }
+            ws.table_info_gen
+        };
         let info = Arc::new(self.browse(workspace_id).await?.table_info(obj).await?);
-        if let Some(ws) = self.state().workspaces.get_mut(workspace_id) {
+        if let Some(ws) = self.state().workspaces.get_mut(workspace_id)
+            && ws.table_info_gen == generation
+        {
             ws.table_info.insert(key, info.clone());
         }
         Ok(info)
@@ -870,9 +882,101 @@ impl SessionManager {
     /// Forgets the cached metadata of `obj` (no-op when absent or the workspace is closed).
     pub fn invalidate_table_info(&self, workspace_id: &str, obj: &ObjectRef) {
         if let Some(ws) = self.state().workspaces.get_mut(workspace_id) {
+            ws.table_info_gen += 1;
             ws.table_info
                 .remove(&(obj.schema.clone(), obj.name.clone()));
         }
+    }
+
+    /// The statements of `changes`, built from the cached metadata, with the browse
+    /// connection. `Invalid` "change <index>: …" (0-based) for the first one refused.
+    async fn build_changes(
+        &self,
+        workspace_id: &str,
+        obj: &ObjectRef,
+        changes: &[RowChange],
+    ) -> AppResult<(Arc<dyn Session>, Vec<Statement>)> {
+        let info = self.table_info(workspace_id, obj).await?;
+        let browse = self.browse(workspace_id).await?;
+        let d = browse.dialect();
+        let stmts = changes
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                build_change(d, &info, c)
+                    .map_err(|e| AppError::new(e.kind, format!("change {i}: {}", e.message)))
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        Ok((browse, stmts))
+    }
+
+    /// The SQL of each change with its values as literals, for display only.
+    pub async fn changes_preview(
+        &self,
+        workspace_id: &str,
+        obj: &ObjectRef,
+        changes: &[RowChange],
+    ) -> AppResult<Vec<String>> {
+        let (browse, stmts) = self.build_changes(workspace_id, obj, changes).await?;
+        let d = browse.dialect();
+        Ok(stmts.iter().map(|s| render_preview(d, s)).collect())
+    }
+
+    /// Applies `changes` in one transaction on the browse connection (the only write path
+    /// of the grid): all or nothing, each UPDATE / DELETE touching exactly one row. A
+    /// failure that hints at a schema change drops the table's cached metadata.
+    pub async fn changes_apply(
+        &self,
+        workspace_id: &str,
+        obj: &ObjectRef,
+        changes: &[RowChange],
+    ) -> AppResult<ApplyOutcome> {
+        let (browse, stmts) = self.build_changes(workspace_id, obj, changes).await?;
+        let expect_one: Vec<bool> = changes.iter().map(RowChange::expects_one_row).collect();
+        let outcome = browse.apply(&stmts, &expect_one).await?;
+        if outcome.error.as_ref().is_some_and(suggests_schema_change) {
+            self.invalidate_table_info(workspace_id, obj);
+        }
+        Ok(outcome)
+    }
+
+    /// The whole value of one cell (text and JSON never cut; bytes stay a preview), found
+    /// by its row key. `NotFound` when the row is gone, `Invalid` above `MAX_EDIT_BYTES`.
+    pub async fn cell_value(
+        &self,
+        workspace_id: &str,
+        obj: &ObjectRef,
+        key: &RowKey,
+        column: &str,
+    ) -> AppResult<CellValue> {
+        let info = self.table_info(workspace_id, obj).await?;
+        let browse = self.browse(workspace_id).await?;
+        let d = browse.dialect();
+        let gone = || AppError::new(ErrorKind::NotFound, STALE_ROW);
+        let size = browse
+            .query(&build_cell_size(d, &info, key, column)?)
+            .await?;
+        let bytes = match size.rows.first().and_then(|r| r.first()) {
+            None => return Err(gone()),
+            Some(CellValue::Int(n)) => (*n).max(0) as u64,
+            Some(CellValue::BigInt(s) | CellValue::Decimal(s)) => s.parse().unwrap_or(u64::MAX),
+            // NULL: nothing to load.
+            Some(_) => 0,
+        };
+        if bytes > MAX_EDIT_BYTES {
+            return Err(AppError::new(
+                ErrorKind::Invalid,
+                format!("value too large to edit ({} MB)", bytes.div_ceil(1 << 20)),
+            ));
+        }
+        let rs = browse
+            .query_full(&build_cell_value(d, &info, key, column)?)
+            .await?;
+        rs.rows
+            .into_iter()
+            .next()
+            .and_then(|r| r.into_iter().next())
+            .ok_or_else(gone)
     }
 
     /// One page of a table or view (filters, order, limit) through the browse connection,
@@ -1546,6 +1650,12 @@ mod tests {
         async fn query(&self, _: &Statement) -> AppResult<ResultSet> {
             Err(AppError::new(ErrorKind::Invalid, "stub"))
         }
+        async fn query_full(&self, _: &Statement) -> AppResult<ResultSet> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn apply(&self, _: &[Statement], _: &[bool]) -> AppResult<ApplyOutcome> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
         async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
             Ok(RowCount::Exact(0))
         }
@@ -1615,6 +1725,7 @@ mod tests {
                 browse_tunnel: None,
                 sql_sessions: Vec::new(),
                 table_info: HashMap::new(),
+                table_info_gen: 0,
             },
         );
         fx.mgr.close_workspace("w-stub").await.unwrap();
@@ -1622,7 +1733,8 @@ mod tests {
     }
 
     /// Serves a one-column table and counts `table_info` calls; `missing` is NotFound.
-    struct MetaSession(Arc<AtomicUsize>);
+    /// Each `table_info` call waits for `.1` (tests hold it to keep a read in flight).
+    struct MetaSession(Arc<AtomicUsize>, Arc<tokio::sync::Mutex<()>>);
 
     #[async_trait]
     impl Session for MetaSession {
@@ -1641,11 +1753,18 @@ mod tests {
         async fn query(&self, _: &Statement) -> AppResult<ResultSet> {
             Err(AppError::new(ErrorKind::Invalid, "meta"))
         }
+        async fn query_full(&self, _: &Statement) -> AppResult<ResultSet> {
+            Err(AppError::new(ErrorKind::Invalid, "meta"))
+        }
+        async fn apply(&self, _: &[Statement], _: &[bool]) -> AppResult<ApplyOutcome> {
+            Err(AppError::new(ErrorKind::Invalid, "meta"))
+        }
         async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
             Ok(RowCount::Exact(0))
         }
         async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
             self.0.fetch_add(1, Ordering::SeqCst);
+            let _hold = self.1.lock().await;
             if obj.name == "missing" {
                 return Err(AppError::new(ErrorKind::NotFound, "missing"));
             }
@@ -1676,6 +1795,14 @@ mod tests {
 
     /// A workspace whose browse connection is a [`MetaSession`]; returns its call count.
     fn meta_workspace(fx: &Fx, id: &str) -> Arc<AtomicUsize> {
+        meta_workspace_held(fx, id, Arc::default())
+    }
+
+    fn meta_workspace_held(
+        fx: &Fx,
+        id: &str,
+        hold: Arc<tokio::sync::Mutex<()>>,
+    ) -> Arc<AtomicUsize> {
         let calls = Arc::new(AtomicUsize::new(0));
         fx.mgr.state().workspaces.insert(
             id.into(),
@@ -1684,10 +1811,11 @@ mod tests {
                 held_password: None,
                 held_ssh_secret: None,
                 tunnel: Default::default(),
-                browse: Arc::new(MetaSession(calls.clone())),
+                browse: Arc::new(MetaSession(calls.clone(), hold)),
                 browse_tunnel: None,
                 sql_sessions: Vec::new(),
                 table_info: HashMap::new(),
+                table_info_gen: 0,
             },
         );
         calls
@@ -1815,6 +1943,111 @@ mod tests {
         fx.mgr.table_info("w2", &a).await.unwrap();
         assert_eq!(other.load(Ordering::SeqCst), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 6);
+    }
+
+    #[tokio::test]
+    async fn invalidation_wins_over_an_in_flight_read() {
+        let fx = fixture();
+        let hold = Arc::new(tokio::sync::Mutex::new(()));
+        let calls = meta_workspace_held(&fx, "w1", hold.clone());
+        let a = obj(None, "a");
+        let held = hold.lock().await;
+        let (m, o) = (fx.mgr.clone(), a.clone());
+        let read = tokio::spawn(async move { m.table_info("w1", &o).await });
+        while calls.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        // The read started before the invalidation: its (possibly stale) result is
+        // returned but must not be cached.
+        fx.mgr.invalidate_table_info("w1", &a);
+        drop(held);
+        read.await.unwrap().unwrap();
+        fx.mgr.table_info("w1", &a).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        // That one was cached.
+        fx.mgr.table_info("w1", &a).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn changes_apply_preview_and_cell_value_on_sqlite() {
+        use crate::driver::dml::{EditValue, RowChange, RowKey};
+        let fx = fixture();
+        let ws = sqlite_ws(&fx).await.workspace_id;
+        let items = obj(Some("main"), "items");
+        let key = |id| RowKey(vec![("id".into(), CellValue::Int(id))]);
+        let changes = vec![
+            RowChange::Update {
+                key: key(1),
+                set: vec![("name".into(), EditValue::Text("o'k".into()))],
+            },
+            RowChange::Insert {
+                values: vec![("name".into(), EditValue::Text("c".into()))],
+            },
+            RowChange::Delete { key: key(2) },
+        ];
+        assert_eq!(
+            fx.mgr.changes_preview(&ws, &items, &changes).await.unwrap(),
+            vec![
+                r#"UPDATE "main"."items" SET "name" = 'o''k' WHERE "id" = '1'"#,
+                r#"INSERT INTO "main"."items" ("name") VALUES ('c')"#,
+                r#"DELETE FROM "main"."items" WHERE "id" = '2'"#,
+            ]
+        );
+        let o = fx.mgr.changes_apply(&ws, &items, &changes).await.unwrap();
+        assert!(o.applied, "{o:?}");
+        assert_eq!(o.affected, vec![1, 1, 1]);
+        let rows = fx
+            .mgr
+            .table_page(&ws, &page(items.clone(), vec![]))
+            .await
+            .unwrap()
+            .rows;
+        assert_eq!(
+            rows,
+            vec![
+                vec![CellValue::Int(1), CellValue::Text("o'k".into())],
+                vec![CellValue::Int(3), CellValue::Text("c".into())],
+            ]
+        );
+        assert_eq!(
+            fx.mgr
+                .cell_value(&ws, &items, &key(3), "name")
+                .await
+                .unwrap(),
+            CellValue::Text("c".into())
+        );
+        let e = fx
+            .mgr
+            .cell_value(&ws, &items, &key(2), "name")
+            .await
+            .unwrap_err();
+        assert_eq!(e.kind, ErrorKind::NotFound);
+
+        // Row 2 is gone: the whole batch rolls back, the cache stays.
+        let before = fx.mgr.table_info(&ws, &items).await.unwrap();
+        let o = fx
+            .mgr
+            .changes_apply(
+                &ws,
+                &items,
+                &[
+                    RowChange::Delete { key: key(1) },
+                    RowChange::Delete { key: key(2) },
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!((o.applied, o.failed_index), (false, Some(1)));
+        assert_eq!(o.error.unwrap().message, STALE_ROW);
+        assert!(Arc::ptr_eq(
+            &before,
+            &fx.mgr.table_info(&ws, &items).await.unwrap()
+        ));
+        assert_eq!(
+            fx.mgr.table_count(&ws, &items, &[]).await.unwrap(),
+            RowCount::Exact(2)
+        );
     }
 
     #[tokio::test]

@@ -8,6 +8,8 @@ pub const TEXT_PREVIEW_CHARS: usize = 10_000;
 pub const BYTES_PREVIEW: usize = 64;
 /// Hard cap on the rows a SQL-tab statement returns (`ResultSet::truncated` when hit).
 pub const MAX_RESULT_ROWS: usize = 10_000;
+/// Largest value (in bytes) `cell_value` loads for editing.
+pub const MAX_EDIT_BYTES: u64 = 16 * 1024 * 1024;
 /// Largest integer magnitude a JavaScript number holds exactly (2^53 - 1).
 pub const JS_MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
@@ -60,6 +62,24 @@ pub fn text_value(s: String) -> CellValue {
             preview: s[..cut].to_string(),
             len: s.chars().count() as u64,
         },
+    }
+}
+
+/// Text cell: whole when `full` (a value loaded for editing), else as [`text_value`].
+pub fn text_cell(s: String, full: bool) -> CellValue {
+    if full {
+        CellValue::Text(s)
+    } else {
+        text_value(s)
+    }
+}
+
+/// JSON cell: whole when `full`, else as [`json_value`].
+pub fn json_cell(s: String, full: bool) -> CellValue {
+    if full {
+        CellValue::Json(s)
+    } else {
+        json_value(s)
     }
 }
 
@@ -145,6 +165,17 @@ mod tests {
         assert!(
             matches!(json_value(big), CellValue::LongText { ref preview, len } if preview.chars().count() == TEXT_PREVIEW_CHARS && len == n)
         );
+    }
+    #[test]
+    fn full_cells_are_never_cut() {
+        let long = "a".repeat(TEXT_PREVIEW_CHARS + 1);
+        assert_eq!(text_cell(long.clone(), true), CellValue::Text(long.clone()));
+        assert!(matches!(
+            text_cell(long.clone(), false),
+            CellValue::LongText { .. }
+        ));
+        assert_eq!(json_cell(long.clone(), true), CellValue::Json(long.clone()));
+        assert!(matches!(json_cell(long, false), CellValue::LongText { .. }));
     }
     #[test]
     fn cell_value_serializes_tagged() {

@@ -9,6 +9,8 @@ Rust 1.96, edition 2024, Tauri 2, tokio. Library crate `tablemax_lib` (`src/lib.
   shared SQL helpers `sql.rs`, TLS settings `tls.rs`. `meta.rs`: table metadata
   (`TableInfo`: columns, keys, indexes, foreign keys, row key). `query.rs`: parameterized
   grid statements (`Statement`/`SqlParam`, filters, page and capped filtered count).
+  `dml.rs`: row changes from the grid (`RowChange` → UPDATE/INSERT/DELETE, display-only
+  preview, full cell value statements); `Session::apply` runs them in one transaction.
 - `ssh/` — tunnels with russh (`tunnel.rs`), `~/.ssh/config` aliases (`config.rs`),
   host key checks (`known_hosts.rs`).
 - `import/` — connection import from other tools' exports (`tableplus.rs`, `rncryptor.rs`);

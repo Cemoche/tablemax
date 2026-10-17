@@ -1,3 +1,4 @@
+pub mod dml;
 pub mod meta;
 pub mod mysql;
 pub mod postgres;
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::CellValue;
+use dml::ApplyOutcome;
 use meta::TableInfo;
 use query::{Filter, Statement};
 use tls::SslConfig;
@@ -171,6 +173,15 @@ pub trait Session: Send + Sync {
     /// Runs a parameterized statement (see `query`) and returns its rows, decoded and
     /// capped (`MAX_RESULT_ROWS`) like `execute`.
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet>;
+    /// `query` with text and JSON values whole (no `TEXT_PREVIEW_CHARS` cut); bytes stay
+    /// a preview. For loading one cell to edit it.
+    async fn query_full(&self, stmt: &Statement) -> AppResult<ResultSet>;
+    /// Runs `stmts` in one transaction (see `dml`): each statement whose `expect_one` flag
+    /// is set must touch exactly one row. At the first error or other row count everything
+    /// is rolled back and the outcome says which statement failed and why (the database's
+    /// error, or `dml::STALE_ROW`). A lost connection or a cancel (through `canceller()`)
+    /// rolls back too and is returned as `Err`. Nothing else runs on the session meanwhile.
+    async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome>;
     /// Rows of a table or view without filters: an estimate above `exact_threshold`
     /// where the engine keeps one (filtered counts use `query::build_filtered_count`).
     async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount>;

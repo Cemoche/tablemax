@@ -36,6 +36,11 @@
 //! the SQL text), then the statement runs with SQL-level `PREPARE` / `EXECUTE .. USING`,
 //! whose rows come back in the text protocol like `execute`. Statement and variables are
 //! cleared afterwards.
+//!
+//! Sessions connect with CLIENT_FOUND_ROWS: an UPDATE reports the rows it matched, even
+//! those already holding the new value (same meaning as PostgreSQL and SQLite), which the
+//! exactly-one-row check of `apply` relies on. `apply` holds the connection lock from
+//! `START TRANSACTION` to `COMMIT` / `ROLLBACK`, so nothing else runs inside it.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -50,6 +55,7 @@ use mysql_async::{
     Value,
 };
 
+use super::dml::{self, ApplyOutcome};
 use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, object_not_found,
     sort_indexes,
@@ -63,7 +69,7 @@ use super::{
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{
-    CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, json_value, text_value,
+    CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, json_cell, text_cell,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -116,6 +122,10 @@ struct MyCanceller {
     seq: AtomicU64,
     /// Sequence of the statement a successful `KILL QUERY` was delivered for.
     cancelled_seq: AtomicU64,
+    /// Sequence a cancel was requested for, recorded before the `KILL QUERY` is sent: an
+    /// interrupted statement may return normally before `cancelled_seq` is stored, and
+    /// `apply` must still roll back.
+    requested_seq: AtomicU64,
 }
 
 #[async_trait]
@@ -125,6 +135,7 @@ impl Canceller for MyCanceller {
             return Ok(());
         }
         let target = self.seq.load(Ordering::SeqCst);
+        self.requested_seq.store(target, Ordering::SeqCst);
         let mut conn = open_conn(&self.opts).await?;
         let res = conn
             .query_drop(format!("KILL QUERY {}", self.conn_id))
@@ -253,6 +264,8 @@ fn build_opts(p: &ConnectParams) -> AppResult<Opts> {
         .db_name(p.database.clone())
         // Never silently swap the TCP endpoint for a unix socket reported by the server.
         .prefer_socket(false)
+        // Rows affected = rows matched (see the module docs).
+        .client_found_rows(true)
         .ssl_opts(ssl_opts(&p.ssl, tls_name)?)
         .into())
 }
@@ -317,6 +330,7 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
             running: AtomicBool::new(false),
             seq: AtomicU64::new(0),
             cancelled_seq: AtomicU64::new(0),
+            requested_seq: AtomicU64::new(0),
         }),
         version,
     }))
@@ -482,8 +496,9 @@ fn type_name(col: &Column) -> String {
     }
 }
 
-/// Re-types one text-protocol value from its column metadata.
-fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
+/// Re-types one text-protocol value from its column metadata; `full` keeps text and JSON
+/// whole.
+fn cell_from_value(col: &Column, v: &Value, force_json: bool, full: bool) -> CellValue {
     let bytes = match v {
         Value::NULL => return CellValue::Null,
         Value::Bytes(b) => b,
@@ -501,7 +516,7 @@ fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
     use ColumnType::*;
     let as_str = || std::str::from_utf8(bytes).ok();
     if force_json && let Some(s) = as_str() {
-        return json_value(s.to_string());
+        return json_cell(s.to_string(), full);
     }
     match col.column_type() {
         MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_INT24 | MYSQL_TYPE_LONG
@@ -510,7 +525,7 @@ fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
                 Ok(i) => int_value(i),
                 // BIGINT UNSIGNED above i64::MAX: keep the exact digits.
                 Err(_) if s.parse::<u64>().is_ok() => CellValue::BigInt(s.to_string()),
-                Err(_) => text_value(s.to_string()),
+                Err(_) => text_cell(s.to_string(), full),
             },
             None => bytes_value(bytes),
         },
@@ -522,11 +537,11 @@ fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
             Some(s) => s
                 .parse::<f64>()
                 .map(float_value)
-                .unwrap_or_else(|_| text_value(s.to_string())),
+                .unwrap_or_else(|_| text_cell(s.to_string(), full)),
             None => bytes_value(bytes),
         },
         MYSQL_TYPE_JSON => match as_str() {
-            Some(s) => json_value(s.to_string()),
+            Some(s) => json_cell(s.to_string(), full),
             None => bytes_value(bytes),
         },
         MYSQL_TYPE_BIT | MYSQL_TYPE_GEOMETRY => bytes_value(bytes),
@@ -548,7 +563,7 @@ fn cell_from_value(col: &Column, v: &Value, force_json: bool) -> CellValue {
                 bytes_value(bytes)
             } else {
                 match as_str() {
-                    Some(s) => text_value(s.to_string()),
+                    Some(s) => text_cell(s.to_string(), full),
                     None => bytes_value(bytes),
                 }
             }
@@ -604,15 +619,16 @@ impl MySession {
     }
 
     async fn run(&self, sql: &str) -> AppResult<(Option<ResultSet>, u64)> {
-        self.run_bound(sql, &[]).await
+        self.run_bound(sql, &[], false).await
     }
 
     /// Runs one statement (with its bound parameters) under the connection lock.
-    /// Returns (result set, rows affected).
+    /// Returns (result set, rows affected); `full` keeps text and JSON values whole.
     async fn run_bound(
         &self,
         sql: &str,
         params: &[SqlParam],
+        full: bool,
     ) -> AppResult<(Option<ResultSet>, u64)> {
         if self.lost.load(Ordering::SeqCst) {
             return Err(Self::gone());
@@ -635,9 +651,9 @@ impl MySession {
         let my_seq = self.canceller.seq.fetch_add(1, Ordering::SeqCst) + 1;
         self.canceller.running.store(true, Ordering::SeqCst);
         let out = if params.is_empty() {
-            Self::run_on(conn, &mut inner.json_cache, self.mariadb, sql).await
+            Self::run_on(conn, &mut inner.json_cache, self.mariadb, sql, full).await
         } else {
-            Self::run_prepared(conn, &mut inner.json_cache, self.mariadb, sql, params).await
+            Self::run_prepared(conn, &mut inner.json_cache, self.mariadb, sql, params, full).await
         };
         self.canceller.running.store(false, Ordering::SeqCst);
         let was_cancelled = self.canceller.cancelled_seq.load(Ordering::SeqCst) == my_seq;
@@ -677,6 +693,7 @@ impl MySession {
         mariadb: bool,
         sql: &str,
         params: &[SqlParam],
+        full: bool,
     ) -> AppResult<(Option<ResultSet>, u64)> {
         let vars: Vec<String> = (1..=params.len())
             .map(|i| format!("@__tablemax_p{i}"))
@@ -706,7 +723,7 @@ impl MySession {
         let result = match out {
             Ok(()) => {
                 let exec = format!("EXECUTE {STMT_NAME} USING {}", vars.join(", "));
-                Self::run_on(conn, json_cache, mariadb, &exec).await
+                Self::run_on(conn, json_cache, mariadb, &exec, full).await
             }
             Err(e) => Err(e),
         };
@@ -727,6 +744,7 @@ impl MySession {
         json_cache: &mut HashMap<(String, String), HashSet<String>>,
         mariadb: bool,
         sql: &str,
+        full: bool,
     ) -> AppResult<(Option<ResultSet>, u64)> {
         let mut qr = conn.query_iter(sql).await.map_err(|e| map_err(&e, true))?;
         let cols: Vec<Column> = qr.columns_ref().to_vec();
@@ -810,7 +828,7 @@ impl MySession {
                 cols.iter()
                     .enumerate()
                     .map(|(i, col)| match row.as_ref(i) {
-                        Some(v) => cell_from_value(col, v, is_json[i]),
+                        Some(v) => cell_from_value(col, v, is_json[i], full),
                         None => CellValue::Null,
                     })
                     .collect()
@@ -836,6 +854,66 @@ impl MySession {
             }),
             0,
         ))
+    }
+
+    /// The transaction of `apply`, on the locked connection. `my_seq` is the canceller
+    /// sequence of this call: a cancel requested for it rolls the whole transaction back,
+    /// even if its `KILL QUERY` is not (yet) delivered (an interrupted `SLEEP()` returns
+    /// normally, so the request is checked after each step).
+    async fn apply_on(
+        &self,
+        conn: &mut Conn,
+        json_cache: &mut HashMap<(String, String), HashSet<String>>,
+        stmts: &[Statement],
+        expect_one: &[bool],
+        my_seq: u64,
+    ) -> AppResult<ApplyOutcome> {
+        let live = |e: MyError| map_err(&e, true);
+        conn.query_drop("START TRANSACTION").await.map_err(live)?;
+        let mut affected = Vec::with_capacity(stmts.len());
+        for (i, stmt) in stmts.iter().enumerate() {
+            let mut result = if stmt.params.is_empty() {
+                Self::run_on(conn, json_cache, self.mariadb, &stmt.sql, false).await
+            } else {
+                Self::run_prepared(
+                    conn,
+                    json_cache,
+                    self.mariadb,
+                    &stmt.sql,
+                    &stmt.params,
+                    false,
+                )
+                .await
+            }
+            .map(|(_, n)| n);
+            if self.canceller.requested_seq.load(Ordering::SeqCst) == my_seq {
+                result = Err(AppError::new(ErrorKind::Cancelled, "query cancelled"));
+            }
+            if let Err(halt) = dml::record(i, expect_one[i], result, &mut affected) {
+                Self::rollback(conn).await;
+                return halt.into_result();
+            }
+        }
+        match conn.query_drop("COMMIT").await {
+            Ok(()) => Ok(dml::applied(affected)),
+            Err(e) => {
+                let err = live(e);
+                Self::rollback(conn).await;
+                dml::commit_failed(affected, err)
+            }
+        }
+    }
+
+    /// Best effort, retried once: a `KILL QUERY` that arrived late may interrupt the first
+    /// attempt, and an open transaction must never outlive `apply`.
+    async fn rollback(conn: &mut Conn) {
+        for _ in 0..2 {
+            match conn.query_drop("ROLLBACK").await {
+                Ok(()) => return,
+                Err(e) if map_err(&e, true).kind == ErrorKind::ConnectionLost => return,
+                Err(_) => {}
+            }
+        }
     }
 
     /// Bound-parameter metadata query under the connection lock.
@@ -1161,12 +1239,52 @@ impl Session for MySession {
     }
 
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
-        let (rs, _) = self.run_bound(&stmt.sql, &stmt.params).await?;
+        let (rs, _) = self.run_bound(&stmt.sql, &stmt.params, false).await?;
         Ok(rs.unwrap_or(ResultSet {
             columns: vec![],
             rows: vec![],
             truncated: false,
         }))
+    }
+
+    async fn query_full(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        let (rs, _) = self.run_bound(&stmt.sql, &stmt.params, true).await?;
+        Ok(rs.unwrap_or(ResultSet {
+            columns: vec![],
+            rows: vec![],
+            truncated: false,
+        }))
+    }
+
+    async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome> {
+        dml::check_apply_args(stmts, expect_one)?;
+        if self.lost.load(Ordering::SeqCst) {
+            return Err(Self::gone());
+        }
+        let mut guard = self.inner.lock().await;
+        let inner = &mut *guard;
+        if stmts
+            .iter()
+            .any(|s| has_multiple_statements(&s.sql, inner.modes))
+        {
+            return Err(AppError::new(
+                ErrorKind::Invalid,
+                "apply accepts exactly one statement per change",
+            ));
+        }
+        let Some(conn) = inner.conn.as_mut() else {
+            return Err(Self::gone());
+        };
+        let my_seq = self.canceller.seq.fetch_add(1, Ordering::SeqCst) + 1;
+        self.canceller.running.store(true, Ordering::SeqCst);
+        let out = self
+            .apply_on(conn, &mut inner.json_cache, stmts, expect_one, my_seq)
+            .await;
+        self.canceller.running.store(false, Ordering::SeqCst);
+        if let Err(e) = &out {
+            self.note_loss(e);
+        }
+        out
     }
 
     async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount> {
