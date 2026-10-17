@@ -1,5 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../lib/ipc";
+import { strings } from "../lib/strings";
 import type { ConnectionConfig } from "../lib/types";
 import { useConnections } from "./connections";
 import { useGridViews } from "./gridViews";
@@ -574,6 +575,33 @@ test("switchDatabase closes table tabs, keeps query tabs and updates database an
   expect(ws().activeTabId).toBe(q);
   expect(dropView).toHaveBeenCalledTimes(2);
   expect(ws()).toMatchObject({ database: "other", schemas: ["public", "x"], currentSchema: "public" });
+});
+
+test("switchDatabase refuses while a table tab has pending changes, before any backend call", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, obj);
+  s.openTableTab(id, { schema: "public", name: "u" });
+  const [t, u] = ws().tabs;
+  usePendingChanges.getState().addInsert(t.id, obj);
+  usePendingChanges.getState().addInsert(u.id, obj);
+  usePendingChanges.getState().addInsert(u.id, obj);
+  await expect(useWorkspaces.getState().switchDatabase(id, "other")).rejects.toEqual({
+    kind: "invalid",
+    message: strings.workspace.switchDatabasePending(3),
+  });
+  // Nothing switched, nothing closed, nothing dropped.
+  expect(ipc.workspaceSwitchDatabase).not.toHaveBeenCalled();
+  expect(ws().tabs).toHaveLength(2);
+  expect(useWorkspaces.getState().closeRequest).toBeNull();
+  expect(usePendingChanges.getState().count(u.id)).toBe(2);
+  // Once committed or discarded, the switch goes through.
+  usePendingChanges.getState().drop(t.id);
+  usePendingChanges.getState().drop(u.id);
+  vi.mocked(ipc.workspaceSwitchDatabase).mockResolvedValue(info({ database: "other" }));
+  await useWorkspaces.getState().switchDatabase(id, "other");
+  expect(ws().tabs).toHaveLength(0);
+  expect(ws().database).toBe("other");
 });
 
 test("switchDatabase keeps the store on the new database when schemasList fails", async () => {

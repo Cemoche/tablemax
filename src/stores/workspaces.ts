@@ -104,7 +104,8 @@ interface WorkspacesState {
    * keep their own SQL sessions), then reloads its schemas and resets the current
    * schema. Rejects with the workspace unchanged when the switch itself fails. Once the
    * switch succeeded the store follows the backend: a schemas failure leaves no schemas
-   * and rejects. A second call while one runs for the same workspace is ignored.
+   * and rejects. A second call while one runs for the same workspace is ignored. Rejects
+   * with `invalid` and calls nothing while a table tab has pending changes.
    */
   switchDatabase: (wsId: string, database: string) => Promise<void>;
   /**
@@ -461,6 +462,16 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
 
     switchDatabase: async (wsId, database) => {
       if (switching.has(wsId)) return;
+      // The switch closes the table tabs; one with pending changes would only ask to
+      // discard them after the backend switched (and its commit would then write to the
+      // same-named table of the new database). Refuse first, as the error the sidebar
+      // and the palette already show.
+      const pending = (get().workspaces.find((w) => w.id === wsId)?.tabs ?? [])
+        .filter((t) => t.kind === "table")
+        .reduce((n, t) => n + usePendingChanges.getState().count(t.id), 0);
+      if (pending > 0) {
+        throw { kind: "invalid", message: strings.workspace.switchDatabasePending(pending) };
+      }
       switching.add(wsId);
       try {
         const info = await ipc.workspaceSwitchDatabase(wsId, database);

@@ -208,6 +208,8 @@ export const strings = {
     tabListIcon: "▾",
     tabSwitcherLabel: "Recent tabs",
     tabKind: { table: "Table", query: "Query" },
+    switchDatabasePending: (n: number) =>
+      `Commit or discard the ${n} pending change${n === 1 ? "" : "s"} first: switching the database closes the table tabs`,
   },
   query: {
     editorLabel: "SQL editor",
