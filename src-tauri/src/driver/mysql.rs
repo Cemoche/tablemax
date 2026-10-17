@@ -1898,6 +1898,65 @@ mod tests {
         }
     }
 
+    /// Review round 2: single statements of every shape the tracker knows, each also
+    /// followed by `; drop table x` (which must be refused).
+    const ROUND2_SINGLES: [&str; 25] = [
+        "create function f() returns int return (select 1)",
+        "create function f() returns decimal(10,2) deterministic return 1",
+        "create function f() returns varchar(10) charset utf8mb4 collate utf8mb4_bin return 'a'",
+        "create procedure p() comment 'begin' select 1",
+        "create procedure p() comment 'x;y' language sql not deterministic contains sql sql security invoker select 1",
+        "create definer = root@localhost procedure p() select 1",
+        "create definer=current_user() procedure p() select 1",
+        "create definer=`a`@`%` trigger tr before insert on y for each row set new.a = 1",
+        "create procedure if not exists p() select 1",
+        "create trigger tr before insert on y for each row set new.a = 1",
+        "create trigger tr before insert on y for each row follows other set new.a = 1",
+        "create event e on schedule every 1 day do begin select 1; end",
+        "create event e on schedule every 1 day do select 1",
+        "create procedure p() begin end",
+        "create procedure p() l: begin select 1; end l",
+        "create procedure p() begin not atomic select 1; end",
+        "create procedure p() begin if x then select case when a then 1 else 2 end from t; end if; end",
+        "create procedure p() begin select case `end` when 1 then 2 end from t; end",
+        "create procedure p() begin select t.`end` from t; end",
+        "create procedure p() begin -- end;\n select 1; end",
+        "create procedure p() begin /* end; */ select 1; end",
+        "create procedure p() begin # end;\n select 1; end",
+        "create procedure p() begin select 'end;'; end",
+        "create procedure p() begin declare c cursor for select begin from t; end",
+        "create procedure p() begin declare exit handler for sqlexception begin select 1; end; end",
+    ];
+
+    #[test]
+    fn round2_singles_are_accepted() {
+        let extra =
+            "create procedure p() begin repeat set @i = @i + 1; until @i > 3 end repeat; end";
+        for single in ROUND2_SINGLES.iter().copied().chain([extra]) {
+            for tail in ["", ";", "; \n\t", " ;  -- done\n"] {
+                let sql = format!("{single}{tail}");
+                assert!(!has_multiple_statements(&sql, DEFAULT), "{sql:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn round2_second_statements_are_refused() {
+        let extra =
+            "create procedure p() begin repeat set @i = @i + 1; until @i > 3 end repeat; end";
+        for single in ROUND2_SINGLES.iter().copied().chain([extra]) {
+            for tail in ["; drop table x", ";\ndrop table x;", " ; drop table x; end"] {
+                let sql = format!("{single}{tail}");
+                assert!(has_multiple_statements(&sql, DEFAULT), "{sql:?}");
+            }
+        }
+        // A second CREATE without any separator.
+        assert!(has_multiple_statements(
+            "create procedure p() begin end create procedure q() begin end",
+            DEFAULT
+        ));
+    }
+
     #[test]
     fn unsigned_type_name_and_error_codes() {
         let e = MyError::Server(mysql_async::ServerError {

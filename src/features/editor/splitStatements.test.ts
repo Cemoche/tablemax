@@ -219,3 +219,42 @@ test("routine characteristics and non-BEGIN compound bodies", () => {
   const iff = "CREATE PROCEDURE p() IF @a THEN SELECT 1; ELSE SELECT 2; END IF";
   expect(texts([fn, loop, iff, "select 9"].join(";\n"), "mySql")).toEqual([fn, loop, iff, "select 9"]);
 });
+
+// ---- Review round 2: every shape the tracker knows, alone and followed by a DROP ----
+
+const ROUND2_SINGLES = [
+  "create function f() returns int return (select 1)",
+  "create function f() returns decimal(10,2) deterministic return 1",
+  "create function f() returns varchar(10) charset utf8mb4 collate utf8mb4_bin return 'a'",
+  "create procedure p() comment 'begin' select 1",
+  "create procedure p() comment 'x;y' language sql not deterministic contains sql sql security invoker select 1",
+  "create definer = root@localhost procedure p() select 1",
+  "create definer=current_user() procedure p() select 1",
+  "create definer=`a`@`%` trigger tr before insert on y for each row set new.a = 1",
+  "create procedure if not exists p() select 1",
+  "create trigger tr before insert on y for each row set new.a = 1",
+  "create trigger tr before insert on y for each row follows other set new.a = 1",
+  "create event e on schedule every 1 day do begin select 1; end",
+  "create event e on schedule every 1 day do select 1",
+  "create procedure p() begin end",
+  "create procedure p() l: begin select 1; end l",
+  "create procedure p() begin not atomic select 1; end",
+  "create procedure p() begin if x then select case when a then 1 else 2 end from t; end if; end",
+  "create procedure p() begin select case `end` when 1 then 2 end from t; end",
+  "create procedure p() begin select t.`end` from t; end",
+  "create procedure p() begin -- end;\n select 1; end",
+  "create procedure p() begin /* end; */ select 1; end",
+  "create procedure p() begin # end;\n select 1; end",
+  "create procedure p() begin select 'end;'; end",
+  "create procedure p() begin declare c cursor for select begin from t; end",
+  "create procedure p() begin declare exit handler for sqlexception begin select 1; end; end",
+  "create procedure p() begin repeat set @i = @i + 1; until @i > 3 end repeat; end",
+];
+
+test("round 2: each single statement stays whole, and a following DROP is never glued to it", () => {
+  for (const single of ROUND2_SINGLES) {
+    expect(texts(`${single};  \n`, "mySql"), single).toEqual([single]);
+    const st = texts(`${single};\ndrop table x;\ncreate procedure q() begin select 1; end;`, "mySql");
+    expect(st, single).toEqual([single, "drop table x", "create procedure q() begin select 1; end"]);
+  }
+});

@@ -204,6 +204,11 @@ async fn mysql_compound_procedure_runs_through_execute_batch() {
             "create procedure p4_sel() select begin from guard_x; drop table guard_x; end",
             "create procedure p4_h() begin declare continue handler for sqlexception \
              select begin from guard_x; end; drop table guard_x; end",
+            // Review round 2: a plain trigger / function / commented body, then a DROP.
+            "create trigger p4_tr before insert on guard_x for each row set new.a = 1; \
+             drop table guard_x",
+            "create function p4_f() returns decimal(10,2) deterministic return 1; drop table guard_x",
+            "create procedure p4_c() comment 'x;y' select 'end;'; drop table guard_x",
         ] {
             let got = batch(&m.mgr, &sid, &[sneaky]).await;
             assert!(
