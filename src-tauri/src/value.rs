@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_PAGE_SIZE: u32 = 300;
 pub const EXACT_COUNT_THRESHOLD: u64 = 500_000;
+/// A filtered count stops at this many rows (one past the threshold: "500,000+").
+pub const FILTERED_COUNT_CAP: u64 = EXACT_COUNT_THRESHOLD + 1;
 pub const TEXT_PREVIEW_CHARS: usize = 10_000;
 pub const BYTES_PREVIEW: usize = 64;
 /// Hard cap on the rows a SQL-tab statement returns (`ResultSet::truncated` when hit).

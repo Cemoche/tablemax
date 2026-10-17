@@ -29,8 +29,10 @@ use serde::Serialize;
 use tokio::time::Instant;
 
 use crate::driver::meta::TableInfo;
+use crate::driver::query::{Filter, build_filtered_count, build_page, read_count};
 use crate::driver::{
-    self, Canceller, ConnectParams, Dialect, DriverKind, ObjectRef, Session, StatementOutcome,
+    self, Canceller, ConnectParams, Dialect, DriverKind, ObjectRef, PageRequest, ResultSet,
+    RowCount, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::import::{self, IMPORT_TTL, ImportPreview, ImportResult, LastPick, PendingImports};
@@ -42,6 +44,7 @@ use crate::ssh::tunnel::{self, HostKeyPolicy, SshTunnel};
 use crate::store::{
     self, ConnectionConfig, ConnectionStore, PasswordMode, SshSettings, same_identity,
 };
+use crate::value::{EXACT_COUNT_THRESHOLD, FILTERED_COUNT_CAP};
 
 /// How often a pending cancel is re-sent while the statement is still running.
 pub const CANCEL_RESEND_INTERVAL: Duration = Duration::from_millis(100);
@@ -872,6 +875,37 @@ impl SessionManager {
         }
     }
 
+    /// One page of a table or view (filters, order, limit) through the browse connection,
+    /// built from the cached metadata.
+    pub async fn table_page(&self, workspace_id: &str, req: &PageRequest) -> AppResult<ResultSet> {
+        let info = self.table_info(workspace_id, &req.object).await?;
+        let browse = self.browse(workspace_id).await?;
+        let stmt = build_page(browse.dialect(), &info, req)?;
+        browse.query(&stmt).await
+    }
+
+    /// Rows of a table or view. Without filters: the driver's count (estimated above
+    /// `EXACT_COUNT_THRESHOLD`). With filters: counted up to `FILTERED_COUNT_CAP`, then
+    /// `Estimate(EXACT_COUNT_THRESHOLD)` ("at least").
+    pub async fn table_count(
+        &self,
+        workspace_id: &str,
+        obj: &ObjectRef,
+        filters: &[Filter],
+    ) -> AppResult<RowCount> {
+        if filters.is_empty() {
+            return self
+                .browse(workspace_id)
+                .await?
+                .count_rows(obj, EXACT_COUNT_THRESHOLD)
+                .await;
+        }
+        let info = self.table_info(workspace_id, obj).await?;
+        let browse = self.browse(workspace_id).await?;
+        let stmt = build_filtered_count(browse.dialect(), &info, filters, FILTERED_COUNT_CAP)?;
+        read_count(&browse.query(&stmt).await?, FILTERED_COUNT_CAP)
+    }
+
     /// Opens a dedicated connection with the workspace's parameters, through its
     /// tunnel (reopened first if it died). Same keyring rule as [`Self::browse`].
     pub async fn open_sql_session(&self, workspace_id: &str) -> AppResult<String> {
@@ -1009,12 +1043,12 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::driver::query::{FilterOp, Statement};
     use crate::driver::tls::SslConfig;
-    use crate::driver::{
-        Canceller, DbObject, ObjectKind, ObjectRef, PageRequest, ResultSet, RowCount,
-    };
+    use crate::driver::{Canceller, DbObject, ObjectKind, ObjectRef, SortDir};
     use crate::secrets::{MemorySecretStore, SecretKey, SecretKind};
     use crate::store::{EnvTag, PasswordMode, SshAuth, SshSettings};
+    use crate::value::CellValue;
 
     const WAIT: Duration = Duration::from_secs(10);
     const INFINITE_CTE: &str = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) \
@@ -1509,7 +1543,7 @@ mod tests {
         async fn list_objects(&self, _: Option<&str>) -> AppResult<Vec<DbObject>> {
             Ok(vec![])
         }
-        async fn fetch_page(&self, _: &PageRequest) -> AppResult<ResultSet> {
+        async fn query(&self, _: &Statement) -> AppResult<ResultSet> {
             Err(AppError::new(ErrorKind::Invalid, "stub"))
         }
         async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
@@ -1604,7 +1638,7 @@ mod tests {
         async fn list_objects(&self, _: Option<&str>) -> AppResult<Vec<DbObject>> {
             Ok(vec![])
         }
-        async fn fetch_page(&self, _: &PageRequest) -> AppResult<ResultSet> {
+        async fn query(&self, _: &Statement) -> AppResult<ResultSet> {
             Err(AppError::new(ErrorKind::Invalid, "meta"))
         }
         async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
@@ -1664,6 +1698,81 @@ mod tests {
             schema: schema.map(Into::into),
             name: name.into(),
         }
+    }
+
+    fn page(object: ObjectRef, filters: Vec<Filter>) -> PageRequest {
+        PageRequest {
+            object,
+            limit: 300,
+            offset: 0,
+            sort: None,
+            filters,
+        }
+    }
+
+    fn filter(col: Option<&str>, op: FilterOp, values: &[&str]) -> Filter {
+        Filter {
+            column: col.map(Into::into),
+            op,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn table_page_and_count_apply_filters() {
+        let fx = fixture();
+        let ws = sqlite_ws(&fx).await.workspace_id;
+        let items = obj(Some("main"), "items");
+        let all = fx
+            .mgr
+            .table_page(&ws, &page(items.clone(), vec![]))
+            .await
+            .unwrap();
+        assert_eq!(all.rows.len(), 2);
+        let mut sorted = page(items.clone(), vec![]);
+        sorted.sort = Some(("name".into(), SortDir::Desc));
+        let rows = fx.mgr.table_page(&ws, &sorted).await.unwrap().rows;
+        assert_eq!(rows[0][1], CellValue::Text("b".into()));
+
+        let only_b = vec![filter(Some("name"), FilterOp::Eq, &["b"])];
+        let rs = fx
+            .mgr
+            .table_page(&ws, &page(items.clone(), only_b.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            rs.rows,
+            vec![vec![CellValue::Int(2), CellValue::Text("b".into())]]
+        );
+
+        assert_eq!(
+            fx.mgr.table_count(&ws, &items, &[]).await.unwrap(),
+            RowCount::Exact(2)
+        );
+        assert_eq!(
+            fx.mgr.table_count(&ws, &items, &only_b).await.unwrap(),
+            RowCount::Exact(1)
+        );
+        let none = vec![filter(None, FilterOp::Contains, &["zz"])];
+        assert_eq!(
+            fx.mgr.table_count(&ws, &items, &none).await.unwrap(),
+            RowCount::Exact(0)
+        );
+
+        let bad = vec![filter(Some("nope"), FilterOp::Eq, &["1"])];
+        let e = fx
+            .mgr
+            .table_page(&ws, &page(items.clone(), bad.clone()))
+            .await;
+        assert_eq!(e.unwrap_err().kind, ErrorKind::Invalid);
+        let e = fx.mgr.table_count(&ws, &items, &bad).await.unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Invalid);
+        let e = fx
+            .mgr
+            .table_page(&ws, &page(obj(Some("main"), "missing"), vec![]))
+            .await
+            .unwrap_err();
+        assert_eq!(e.kind, ErrorKind::NotFound);
     }
 
     #[tokio::test]

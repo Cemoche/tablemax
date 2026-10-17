@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use common::{mysql_urls, params_from_url, ssl, tls_file, unique_schema};
 use tablemax_lib::driver::mysql::connect_mysql;
+use tablemax_lib::driver::query::build_page;
 use tablemax_lib::driver::tls::{SslConfig, SslMode};
 use tablemax_lib::driver::{
     ConnectParams, DbObject, DriverKind, ObjectKind, ObjectRef, PageRequest, ResultSet, RowCount,
@@ -12,6 +13,13 @@ use tablemax_lib::driver::{
 };
 use tablemax_lib::error::ErrorKind;
 use tablemax_lib::value::{CellValue, MAX_RESULT_ROWS, TEXT_PREVIEW_CHARS};
+
+/// One page the way the manager builds it: metadata, `build_page`, `query`.
+async fn page(s: &dyn Session, req: PageRequest) -> ResultSet {
+    let info = s.table_info(&req.object).await.unwrap();
+    let stmt = build_page(s.dialect(), &info, &req).unwrap();
+    s.query(&stmt).await.unwrap()
+}
 
 /// URL order from `scripts/test-dbs.sh env`: MySQL 8 first, MariaDB 11 second.
 fn kind_for(index: usize) -> DriverKind {
@@ -267,8 +275,9 @@ async fn mysql_reserved_word_table() {
         s.execute(&format!("insert into `{n}`.`order` values (1),(2),(3)"))
             .await
             .unwrap();
-        let rs = s
-            .fetch_page(&PageRequest {
+        let rs = page(
+            &*s,
+            PageRequest {
                 object: ObjectRef {
                     schema: Some(n.clone()),
                     name: "order".into(),
@@ -276,9 +285,10 @@ async fn mysql_reserved_word_table() {
                 limit: 2,
                 offset: 0,
                 sort: Some(("id".into(), SortDir::Desc)),
-            })
-            .await
-            .unwrap();
+                filters: vec![],
+            },
+        )
+        .await;
         let ids: Vec<_> = rs.rows.iter().map(|r| r[0].clone()).collect();
         assert_eq!(ids, vec![CellValue::Int(3), CellValue::Int(2)]);
     }

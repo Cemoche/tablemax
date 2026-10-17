@@ -1,6 +1,7 @@
 pub mod meta;
 pub mod mysql;
 pub mod postgres;
+pub mod query;
 pub mod sql;
 pub mod sqlite;
 pub mod tls;
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::CellValue;
 use meta::TableInfo;
+use query::{Filter, Statement};
 use tls::SslConfig;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -140,6 +142,9 @@ pub struct PageRequest {
     pub limit: u32,
     pub offset: u64,
     pub sort: Option<(String, SortDir)>,
+    /// Joined by AND. Absent from older frontends: no filter.
+    #[serde(default)]
+    pub filters: Vec<Filter>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -163,7 +168,11 @@ pub trait Session: Send + Sync {
     fn server_version(&self) -> String;
     async fn list_schemas(&self) -> AppResult<Vec<String>>;
     async fn list_objects(&self, schema: Option<&str>) -> AppResult<Vec<DbObject>>;
-    async fn fetch_page(&self, req: &PageRequest) -> AppResult<ResultSet>;
+    /// Runs a parameterized statement (see `query`) and returns its rows, decoded and
+    /// capped (`MAX_RESULT_ROWS`) like `execute`.
+    async fn query(&self, stmt: &Statement) -> AppResult<ResultSet>;
+    /// Rows of a table or view without filters: an estimate above `exact_threshold`
+    /// where the engine keeps one (filtered counts use `query::build_filtered_count`).
     async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount>;
     /// Columns, keys, indexes and foreign keys of a table or view (`NotFound` if absent).
     async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo>;

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use common::{params_from_url, pg_urls, ssl, tls_file, unique_schema};
 use tablemax_lib::driver::postgres::connect_postgres;
+use tablemax_lib::driver::query::build_page;
 use tablemax_lib::driver::tls::{SslConfig, SslMode};
 use tablemax_lib::driver::{
     ConnectParams, DbObject, DriverKind, ObjectKind, ObjectRef, PageRequest, ResultSet, RowCount,
@@ -12,6 +13,13 @@ use tablemax_lib::driver::{
 };
 use tablemax_lib::error::ErrorKind;
 use tablemax_lib::value::{CellValue, MAX_RESULT_ROWS, TEXT_PREVIEW_CHARS};
+
+/// One page the way the manager builds it: metadata, `build_page`, `query`.
+async fn page(s: &dyn Session, req: PageRequest) -> ResultSet {
+    let info = s.table_info(&req.object).await.unwrap();
+    let stmt = build_page(s.dialect(), &info, &req).unwrap();
+    s.query(&stmt).await.unwrap()
+}
 
 /// Creates a unique schema and drops it on drop, even when an assertion fails.
 struct TestSchema {
@@ -198,15 +206,17 @@ async fn pg_fetch_page_sort_desc_and_count() {
             schema: Some(n.clone()),
             name: "n".into(),
         };
-        let rs = s
-            .fetch_page(&PageRequest {
+        let rs = page(
+            &*s,
+            PageRequest {
                 object: obj.clone(),
                 limit: 5,
                 offset: 0,
                 sort: Some(("id".into(), SortDir::Desc)),
-            })
-            .await
-            .unwrap();
+                filters: vec![],
+            },
+        )
+        .await;
         let ids: Vec<_> = rs.rows.iter().map(|r| r[0].clone()).collect();
         let want: Vec<_> = (21..=25).rev().map(CellValue::Int).collect();
         assert_eq!(ids, want);

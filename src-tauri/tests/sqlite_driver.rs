@@ -1,12 +1,20 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tablemax_lib::driver::query::build_page;
 use tablemax_lib::driver::sqlite::connect_sqlite;
 use tablemax_lib::driver::{
-    DbObject, ObjectKind, ObjectRef, PageRequest, RowCount, Session, SortDir,
+    DbObject, ObjectKind, ObjectRef, PageRequest, ResultSet, RowCount, Session, SortDir,
 };
 use tablemax_lib::error::ErrorKind;
 use tablemax_lib::value::{CellValue, MAX_RESULT_ROWS};
+
+/// One page the way the manager builds it: metadata, `build_page`, `query`.
+async fn page(s: &dyn Session, req: PageRequest) -> ResultSet {
+    let info = s.table_info(&req.object).await.unwrap();
+    let stmt = build_page(s.dialect(), &info, &req).unwrap();
+    s.query(&stmt).await.unwrap()
+}
 
 async fn open() -> (tempfile::TempDir, Arc<dyn Session>) {
     let dir = tempfile::tempdir().unwrap();
@@ -59,15 +67,17 @@ async fn fetch_page_sorts_and_paginates() {
     s.execute("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<25) INSERT INTO n SELECT x FROM c")
         .await
         .unwrap();
-    let rs = s
-        .fetch_page(&PageRequest {
+    let rs = page(
+        &*s,
+        PageRequest {
             object: obj("n"),
             limit: 10,
             offset: 10,
             sort: Some(("id".into(), SortDir::Desc)),
-        })
-        .await
-        .unwrap();
+            filters: vec![],
+        },
+    )
+    .await;
     let ids: Vec<_> = rs.rows.iter().map(|r| r[0].clone()).collect();
     let want: Vec<_> = (6..=15).rev().map(CellValue::Int).collect();
     assert_eq!(ids, want);
@@ -88,8 +98,9 @@ async fn weird_identifier_table_opens() {
     s.execute(r#"INSERT INTO "My ""Table""" VALUES (1)"#)
         .await
         .unwrap();
-    let rs = s
-        .fetch_page(&PageRequest {
+    let rs = page(
+        &*s,
+        PageRequest {
             object: ObjectRef {
                 schema: Some("main".into()),
                 name: r#"My "Table""#.into(),
@@ -97,9 +108,10 @@ async fn weird_identifier_table_opens() {
             limit: 10,
             offset: 0,
             sort: None,
-        })
-        .await
-        .unwrap();
+            filters: vec![],
+        },
+    )
+    .await;
     assert_eq!(rs.rows.len(), 1);
 }
 
@@ -134,15 +146,17 @@ async fn long_text_cell_is_truncated() {
     s.execute("INSERT INTO big VALUES (replace(hex(zeroblob(1500000)), '0', 'a'))")
         .await
         .unwrap();
-    let rs = s
-        .fetch_page(&PageRequest {
+    let rs = page(
+        &*s,
+        PageRequest {
             object: obj("big"),
             limit: 10,
             offset: 0,
             sort: None,
-        })
-        .await
-        .unwrap();
+            filters: vec![],
+        },
+    )
+    .await;
     assert!(matches!(
         rs.rows[0][0],
         CellValue::LongText { len: 3_000_000, .. }

@@ -9,17 +9,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use async_trait::async_trait;
-use rusqlite::types::ValueRef;
-use rusqlite::{Connection, InterruptHandle, OpenFlags, OptionalExtension};
+use rusqlite::types::{ToSqlOutput, ValueRef};
+use rusqlite::{Connection, InterruptHandle, OpenFlags, OptionalExtension, ToSql};
 
 use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, non_null_default,
     object_not_found, sort_indexes,
 };
-use super::sql::{build_page_query, qualified, quote_ident};
+use super::query::{SqlParam, Statement};
+use super::sql::{qualified, quote_ident};
 use super::{
-    Canceller, ColumnMeta, DbObject, Dialect, ObjectKind, ObjectRef, PageRequest, ResultSet,
-    RowCount, Session, StatementOutcome,
+    Canceller, ColumnMeta, DbObject, Dialect, ObjectKind, ObjectRef, ResultSet, RowCount, Session,
+    StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, text_value};
@@ -115,7 +116,19 @@ fn cell(v: ValueRef<'_>) -> CellValue {
     }
 }
 
-fn read_rows(stmt: &mut rusqlite::Statement<'_>) -> AppResult<ResultSet> {
+impl ToSql for SqlParam {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        match self {
+            SqlParam::Text(s) => s.to_sql(),
+            SqlParam::Bytes(b) => b.to_sql(),
+        }
+    }
+}
+
+fn read_rows(
+    stmt: &mut rusqlite::Statement<'_>,
+    params: impl rusqlite::Params,
+) -> AppResult<ResultSet> {
     let columns: Vec<ColumnMeta> = stmt
         .columns()
         .iter()
@@ -127,7 +140,7 @@ fn read_rows(stmt: &mut rusqlite::Statement<'_>) -> AppResult<ResultSet> {
     let n = columns.len();
     let mut rows = Vec::new();
     let mut truncated = false;
-    let mut q = stmt.query([]).map_err(map_err)?;
+    let mut q = stmt.query(params).map_err(map_err)?;
     while let Some(row) = q.next().map_err(map_err)? {
         if rows.len() == MAX_RESULT_ROWS {
             // One row past the cap: stop stepping, the statement is reset on drop.
@@ -471,11 +484,14 @@ impl Session for SqliteSession {
         .await
     }
 
-    async fn fetch_page(&self, req: &PageRequest) -> AppResult<ResultSet> {
-        let sql = build_page_query(Dialect::Sqlite, req);
+    async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        let stmt = stmt.clone();
         self.with_conn(move |c| {
-            let mut stmt = c.prepare(&sql).map_err(map_err)?;
-            read_rows(&mut stmt)
+            let mut prepared = c.prepare(&stmt.sql).map_err(map_err)?;
+            read_rows(
+                &mut prepared,
+                rusqlite::params_from_iter(stmt.params.iter()),
+            )
         })
         .await
     }
@@ -509,7 +525,7 @@ impl Session for SqliteSession {
             let start = Instant::now();
             let mut stmt = c.prepare(&sql).map_err(map_err)?;
             if stmt.column_count() > 0 {
-                let rs = read_rows(&mut stmt)?;
+                let rs = read_rows(&mut stmt, [])?;
                 Ok(StatementOutcome {
                     result: Some(rs),
                     rows_affected: None,

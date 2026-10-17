@@ -19,6 +19,13 @@
 //! gives `rows_affected` for statements without columns. If `prepare` fails for a
 //! statement that cannot be prepared, we fall back to `simple_query` alone and all
 //! values come back as Text/Null.
+//!
+//! Parameterized statements (`query`) need the extended protocol, whose rows tokio-postgres
+//! always requests in binary. To keep the same canonical text (and the same decoder), the
+//! statement is prepared to learn its columns, then wrapped so the server renders every
+//! value with its type's output function: `WITH q(c1, ..) AS (<sql>) SELECT CASE WHEN
+//! num_nulls(q.c1) = 0 THEN format('%s', q.c1) END, .. FROM q` (`format('%s')` calls the
+//! output function; `num_nulls` keeps NULL apart from an all-NULL composite).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,7 +36,7 @@ use futures_util::StreamExt;
 use tokio_postgres::config::SslMode as PgSslMode;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::tls::MakeTlsConnect;
-use tokio_postgres::types::Type;
+use tokio_postgres::types::{ToSql, Type};
 use tokio_postgres::{CancelToken, Client, Config, NoTls, SimpleQueryMessage, Socket};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
@@ -37,11 +44,12 @@ use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, non_null_default,
     object_not_found,
 };
-use super::sql::{build_page_query, qualified};
+use super::query::{SqlParam, Statement};
+use super::sql::qualified;
 use super::tls::{SslMode, rustls_client_config};
 use super::{
-    Canceller, ColumnMeta, ConnectParams, DbObject, Dialect, ObjectKind, ObjectRef, PageRequest,
-    ResultSet, RowCount, Session, StatementOutcome,
+    Canceller, ColumnMeta, ConnectParams, DbObject, Dialect, ObjectKind, ObjectRef, ResultSet,
+    RowCount, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{
@@ -286,13 +294,7 @@ impl PgSession {
             return Ok((None, affected));
         }
         let columns = match &types {
-            Some(t) => t
-                .iter()
-                .map(|(n, ty)| ColumnMeta {
-                    name: n.clone(),
-                    type_name: ty.name().to_string(),
-                })
-                .collect(),
+            Some(t) => column_metas(t),
             None => names
                 .into_iter()
                 .map(|name| ColumnMeta {
@@ -310,6 +312,108 @@ impl PgSession {
             affected,
         ))
     }
+}
+
+impl PgSession {
+    /// A call on a live session failed: a non-server error is a lost link only when the
+    /// client is closed (a parameter the server would not accept fails client-side).
+    fn map_live_err(&self, e: tokio_postgres::Error) -> AppError {
+        match map_db_error(&e) {
+            Some(err) => err,
+            None if self.client.is_closed() => {
+                AppError::new(ErrorKind::ConnectionLost, e.to_string())
+            }
+            None => AppError::new(ErrorKind::Query, with_causes(&e)),
+        }
+    }
+
+    /// Runs a parameterized statement (see the module docs for the text wrapper).
+    async fn query_bound(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        self.check()?;
+        let params: Vec<&(dyn ToSql + Sync)> = stmt
+            .params
+            .iter()
+            .map(|p| match p {
+                SqlParam::Text(s) => s as &(dyn ToSql + Sync),
+                SqlParam::Bytes(b) => b as &(dyn ToSql + Sync),
+            })
+            .collect();
+        let inner = self
+            .client
+            .prepare(&stmt.sql)
+            .await
+            .map_err(|e| self.map_live_err(e))?;
+        let types: Vec<(String, Type)> = inner
+            .columns()
+            .iter()
+            .map(|c| (c.name().to_string(), c.type_().clone()))
+            .collect();
+        if types.is_empty() {
+            self.client
+                .execute_raw(&inner, params)
+                .await
+                .map_err(|e| self.map_live_err(e))?;
+            return Ok(ResultSet {
+                columns: vec![],
+                rows: vec![],
+                truncated: false,
+            });
+        }
+        let stream = self
+            .client
+            .query_raw(text_wrapper(&stmt.sql, types.len()).as_str(), params)
+            .await
+            .map_err(|e| self.map_live_err(e))?;
+        let mut stream = std::pin::pin!(stream);
+        let mut rows: Vec<Vec<CellValue>> = Vec::new();
+        let mut truncated = false;
+        while let Some(row) = stream.next().await {
+            let row = row.map_err(|e| self.map_live_err(e))?;
+            // Past the cap: drained so the session stays in sync (a cancel still lands).
+            if rows.len() == MAX_RESULT_ROWS {
+                truncated = true;
+                continue;
+            }
+            let mut out = Vec::with_capacity(types.len());
+            for (i, (_, ty)) in types.iter().enumerate() {
+                let text: Option<&str> = row.try_get(i).map_err(|e| self.map_live_err(e))?;
+                out.push(match text {
+                    None => CellValue::Null,
+                    Some(s) => cell_from_text(Some(ty), s),
+                });
+            }
+            rows.push(out);
+        }
+        Ok(ResultSet {
+            columns: column_metas(&types),
+            rows,
+            truncated,
+        })
+    }
+}
+
+/// `sql`'s `n` columns, each rendered as text by its type's output function.
+fn text_wrapper(sql: &str, n: usize) -> String {
+    let aliases: Vec<String> = (1..=n).map(|i| format!("c{i}")).collect();
+    let cells: Vec<String> = aliases
+        .iter()
+        .map(|c| format!("CASE WHEN num_nulls(q.{c}) = 0 THEN format('%s', q.{c}) END"))
+        .collect();
+    format!(
+        "WITH q({}) AS ({sql}) SELECT {} FROM q",
+        aliases.join(", "),
+        cells.join(", ")
+    )
+}
+
+fn column_metas(types: &[(String, Type)]) -> Vec<ColumnMeta> {
+    types
+        .iter()
+        .map(|(n, ty)| ColumnMeta {
+            name: n.clone(),
+            type_name: ty.name().to_string(),
+        })
+        .collect()
 }
 
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
@@ -723,10 +827,8 @@ impl Session for PgSession {
         Ok(out)
     }
 
-    async fn fetch_page(&self, req: &PageRequest) -> AppResult<ResultSet> {
-        let sql = build_page_query(Dialect::Postgres, req);
-        let (rs, _) = self.run(&sql).await?;
-        rs.ok_or_else(|| AppError::new(ErrorKind::Query, "page query returned no result set"))
+    async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        self.query_bound(stmt).await
     }
 
     async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount> {
@@ -878,6 +980,16 @@ mod tests {
         );
         assert!(start.elapsed() >= CONNECT_TIMEOUT, "{:?}", start.elapsed());
         hold.abort();
+    }
+
+    #[test]
+    fn text_wrapper_renders_every_column() {
+        assert_eq!(
+            text_wrapper("SELECT a, b FROM t", 2),
+            "WITH q(c1, c2) AS (SELECT a, b FROM t) SELECT \
+             CASE WHEN num_nulls(q.c1) = 0 THEN format('%s', q.c1) END, \
+             CASE WHEN num_nulls(q.c2) = 0 THEN format('%s', q.c2) END FROM q"
+        );
     }
 
     #[test]

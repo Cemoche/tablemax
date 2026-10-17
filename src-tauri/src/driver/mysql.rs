@@ -29,6 +29,13 @@
 //! Executable comments (`/*! ... */`, `/*M! ... */`) are scanned as code since the server
 //! runs their content. The lexer follows the session's `sql_mode` (NO_BACKSLASH_ESCAPES,
 //! ANSI_QUOTES): it is read at connect and re-read after any statement that may change it.
+//!
+//! Parameters (`query`): a server-side prepared statement (`exec`) would return rows in the
+//! binary protocol, decoded differently (dates, floats, YEAR). Instead the values are bound
+//! into session variables (`SET @__tablemax_p1 = ?, ..` through `exec`, so they never enter
+//! the SQL text), then the statement runs with SQL-level `PREPARE` / `EXECUTE .. USING`,
+//! whose rows come back in the text protocol like `execute`. Statement and variables are
+//! cleared afterwards.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -47,11 +54,12 @@ use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, object_not_found,
     sort_indexes,
 };
-use super::sql::{build_page_query, qualified};
+use super::query::{SqlParam, Statement};
+use super::sql::qualified;
 use super::tls::{SslConfig, SslMode, load_files, native_roots};
 use super::{
-    Canceller, ColumnMeta, ConnectParams, DbObject, Dialect, ObjectKind, ObjectRef, PageRequest,
-    ResultSet, RowCount, Session, StatementOutcome,
+    Canceller, ColumnMeta, ConnectParams, DbObject, Dialect, ObjectKind, ObjectRef, ResultSet,
+    RowCount, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{
@@ -61,6 +69,9 @@ use crate::value::{
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const BINARY_CHARSET: u16 = 63;
 const HIDDEN_SCHEMAS: [&str; 4] = ["mysql", "information_schema", "performance_schema", "sys"];
+/// Session variable holding the SQL of a parameterized statement, and the statement name.
+const SQL_VAR: &str = "@__tablemax_sql";
+const STMT_NAME: &str = "__tablemax_q";
 
 /// SQL-mode flags that change how the server tokenizes string literals.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -592,8 +603,17 @@ impl MySession {
         }
     }
 
-    /// Runs one statement under the connection lock. Returns (result set, rows affected).
     async fn run(&self, sql: &str) -> AppResult<(Option<ResultSet>, u64)> {
+        self.run_bound(sql, &[]).await
+    }
+
+    /// Runs one statement (with its bound parameters) under the connection lock.
+    /// Returns (result set, rows affected).
+    async fn run_bound(
+        &self,
+        sql: &str,
+        params: &[SqlParam],
+    ) -> AppResult<(Option<ResultSet>, u64)> {
         if self.lost.load(Ordering::SeqCst) {
             return Err(Self::gone());
         }
@@ -614,7 +634,11 @@ impl MySession {
         }
         let my_seq = self.canceller.seq.fetch_add(1, Ordering::SeqCst) + 1;
         self.canceller.running.store(true, Ordering::SeqCst);
-        let out = Self::run_on(conn, &mut inner.json_cache, self.mariadb, sql).await;
+        let out = if params.is_empty() {
+            Self::run_on(conn, &mut inner.json_cache, self.mariadb, sql).await
+        } else {
+            Self::run_prepared(conn, &mut inner.json_cache, self.mariadb, sql, params).await
+        };
         self.canceller.running.store(false, Ordering::SeqCst);
         let was_cancelled = self.canceller.cancelled_seq.load(Ordering::SeqCst) == my_seq;
         if out.is_ok() && may_change_sql_mode(sql) {
@@ -643,6 +667,59 @@ impl MySession {
             }
             Ok(v) => Ok(v),
         }
+    }
+
+    /// `sql` with `?` placeholders: values bound into session variables, then
+    /// `PREPARE` / `EXECUTE .. USING` (text-protocol rows, see the module docs).
+    async fn run_prepared(
+        conn: &mut Conn,
+        json_cache: &mut HashMap<(String, String), HashSet<String>>,
+        mariadb: bool,
+        sql: &str,
+        params: &[SqlParam],
+    ) -> AppResult<(Option<ResultSet>, u64)> {
+        let vars: Vec<String> = (1..=params.len())
+            .map(|i| format!("@__tablemax_p{i}"))
+            .collect();
+        let mut set = format!("SET {SQL_VAR} = ?");
+        let mut values = vec![Value::Bytes(sql.as_bytes().to_vec())];
+        for (var, p) in vars.iter().zip(params) {
+            match p {
+                SqlParam::Text(t) => {
+                    set.push_str(&format!(", {var} = ?"));
+                    values.push(Value::Bytes(t.as_bytes().to_vec()));
+                }
+                SqlParam::Bytes(b) => {
+                    set.push_str(&format!(", {var} = CAST(? AS BINARY)"));
+                    values.push(Value::Bytes(b.clone()));
+                }
+            }
+        }
+        let live = |e: MyError| map_err(&e, true);
+        let mut out = conn.exec_drop(set, values).await.map_err(live);
+        if out.is_ok() {
+            out = conn
+                .query_drop(format!("PREPARE {STMT_NAME} FROM {SQL_VAR}"))
+                .await
+                .map_err(live);
+        }
+        let result = match out {
+            Ok(()) => {
+                let exec = format!("EXECUTE {STMT_NAME} USING {}", vars.join(", "));
+                Self::run_on(conn, json_cache, mariadb, &exec).await
+            }
+            Err(e) => Err(e),
+        };
+        // Best effort: neither the statement nor the values (user data) outlive the call.
+        let _ = conn
+            .query_drop(format!("DEALLOCATE PREPARE {STMT_NAME}"))
+            .await;
+        let clear: Vec<String> = std::iter::once(SQL_VAR.to_string())
+            .chain(vars)
+            .map(|v| format!("{v} = NULL"))
+            .collect();
+        let _ = conn.query_drop(format!("SET {}", clear.join(", "))).await;
+        result
     }
 
     async fn run_on(
@@ -1081,10 +1158,13 @@ impl Session for MySession {
         Ok(out)
     }
 
-    async fn fetch_page(&self, req: &PageRequest) -> AppResult<ResultSet> {
-        let sql = build_page_query(Dialect::MySql, req);
-        let (rs, _) = self.run(&sql).await?;
-        rs.ok_or_else(|| AppError::new(ErrorKind::Query, "page query returned no result set"))
+    async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        let (rs, _) = self.run_bound(&stmt.sql, &stmt.params).await?;
+        Ok(rs.unwrap_or(ResultSet {
+            columns: vec![],
+            rows: vec![],
+            truncated: false,
+        }))
     }
 
     async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount> {

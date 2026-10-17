@@ -9,12 +9,12 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::driver::meta::TableInfo;
+use crate::driver::query::Filter;
 use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::import::{ImportPreview, ImportResult};
 use crate::manager::{ExecEvent, SessionManager, WorkspaceInfo};
 use crate::store::ConnectionConfig;
-use crate::value::EXACT_COUNT_THRESHOLD;
 
 #[tauri::command]
 pub async fn connections_list(
@@ -201,23 +201,19 @@ pub async fn table_page(
     workspace_id: String,
     request: PageRequest,
 ) -> AppResult<ResultSet> {
-    state
-        .browse(&workspace_id)
-        .await?
-        .fetch_page(&request)
-        .await
+    state.table_page(&workspace_id, &request).await
 }
 
+/// `filters` may be omitted (no filter).
 #[tauri::command]
 pub async fn table_count(
     state: State<'_, SessionManager>,
     workspace_id: String,
     object: ObjectRef,
+    filters: Option<Vec<Filter>>,
 ) -> AppResult<RowCount> {
     state
-        .browse(&workspace_id)
-        .await?
-        .count_rows(&object, EXACT_COUNT_THRESHOLD)
+        .table_count(&workspace_id, &object, &filters.unwrap_or_default())
         .await
 }
 
