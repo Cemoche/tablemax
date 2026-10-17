@@ -207,3 +207,37 @@ test("corrupt_session_is_ignored at startup: empty start, the file is not overwr
     vi.useRealTimers();
   }
 });
+
+/** The connection's row in the connection list (not its workspace button in the switcher). */
+const listRow = (name: string) =>
+  screen
+    .getAllByText(name)
+    .map((e) => e.closest("button"))
+    .find((b) => b && !b.closest("nav"))!;
+
+test("a restored connection reopened from the connection list shows why it failed", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByRole("tab", { name: "users" });
+  await user.click(screen.getByRole("button", { name: strings.workspace.back }));
+  vi.mocked(ipc.workspaceOpen).mockRejectedValueOnce({ kind: "connection", message: "connection refused" });
+  await user.dblClick(listRow("Prod PG"));
+  expect(await screen.findByText("connection refused")).toBeInTheDocument();
+  expect(useWorkspaces.getState().workspaces[0].status).toBe("disconnected");
+});
+
+test("a changed SSH host key on a restored connection opened from the list is shown", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByRole("tab", { name: "users" });
+  await user.click(screen.getByRole("button", { name: strings.workspace.back }));
+  vi.mocked(ipc.workspaceOpen).mockRejectedValueOnce({
+    kind: "hostKeyChanged",
+    message: "SHA256:evil",
+    host: "bastion:22",
+  });
+  await user.dblClick(listRow("Prod PG"));
+  expect(
+    await screen.findByText(strings.ssh.hostKeyChanged("SHA256:evil", "bastion:22")),
+  ).toBeInTheDocument();
+});

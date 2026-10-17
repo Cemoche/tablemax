@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ConnectPrompt } from "./features/connections/ConnectPrompt";
 import { ConnectionForm } from "./features/connections/ConnectionForm";
 import { ImportDialog } from "./features/connections/ImportDialog";
@@ -43,6 +43,9 @@ function App() {
     null,
   );
   const connectRequest = useWorkspaces((s) => s.connectRequest);
+  /** Connection of the workspace on screen (null on the connections view), read when a connect fails. */
+  const shownConnection = useRef<string | null>(null);
+  shownConnection.current = showWorkspace ? activeWorkspace.connectionId : null;
   // Each open is bound to its connection; a newer open supersedes a pending one.
   const openFlow = useConnectFlow(async (s, cfg: ConnectionConfig) => {
     await openWorkspace(cfg.id, s.password, s.sshSecret, s.acceptFingerprint);
@@ -83,9 +86,11 @@ function App() {
     } catch (e) {
       const message = toAppError(e).message;
       // A restored workspace stays in place, disconnected: its view shows the error.
+      // Started from the connections view (list, form), the error shows there too.
       const ws = useWorkspaces.getState().workspaces.find((w) => w.connectionId === cfg.id);
-      if (ws && ws.status !== "connected") setConnectError({ connectionId: cfg.id, message });
-      else setLoadError(message);
+      const disconnected = ws !== undefined && ws.status !== "connected";
+      if (disconnected) setConnectError({ connectionId: cfg.id, message });
+      if (!disconnected || shownConnection.current !== cfg.id) setLoadError(message);
     }
   };
 
