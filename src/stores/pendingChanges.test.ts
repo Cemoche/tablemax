@@ -516,3 +516,65 @@ test("a plain Discard and a successful commit still reset the tab", async () => 
   await expect(s().commit(T, "w1", obj)).resolves.toBe(true);
   expect(s().tabs[T]).toMatchObject({ error: null, outcomeUnknown: false, errors: {} });
 });
+
+test("Run refused because another tab of the workspace commits closes the confirmation and says why", async () => {
+  twoChanges();
+  confirmFirst();
+  vi.mocked(ipc.changesPreview).mockResolvedValueOnce(["a", "b"]);
+  await s().commit(T, "w1", obj);
+  expect(s().confirming[T]).toBeDefined();
+  usePendingChanges.setState({ committingIn: { w1: "tab2" } });
+  await expect(s().confirmCommit(T)).resolves.toBe(false);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  expect(s().confirming[T]).toBeUndefined();
+  expect(s().tabs[T].error).toBe(strings.grid.otherTabCommitting);
+  expect(s().count(T)).toBe(2);
+  expect(s().committingIn).toEqual({ w1: "tab2" });
+});
+
+test("a preview with another number of statements than changes is a preview failure", async () => {
+  twoChanges();
+  confirmFirst();
+  vi.mocked(ipc.changesPreview).mockResolvedValueOnce(["only one"]);
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
+  expect(s().confirming[T]).toBeUndefined();
+  expect(s().tabs[T].error).toBe(strings.grid.confirmPreviewFailed(strings.grid.previewCountMismatch(1, 2)));
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  expect(s().count(T)).toBe(2);
+});
+
+test("the commit slot is freed after a failed outcome and after a thrown error", async () => {
+  s().toggleDelete(T, obj, key(1));
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce({
+    applied: false,
+    affected: [0],
+    failedIndex: 0,
+    error: { kind: "query", message: "nope" },
+  });
+  await s().commit(T, "w1", obj);
+  expect(s().committingIn).toEqual({});
+  vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "query", message: "boom" });
+  await s().commit(T, "w1", obj);
+  expect(s().committingIn).toEqual({});
+  expect(s().committing[T]).toBe(false);
+});
+
+test("a confirmed commit that fails shows the error, keeps the changes and asks nothing again", async () => {
+  twoChanges();
+  confirmFirst();
+  vi.mocked(ipc.changesPreview).mockResolvedValueOnce(["a", "b"]);
+  await s().commit(T, "w1", obj);
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce({
+    applied: false,
+    affected: [1, 0],
+    failedIndex: null,
+    error: { kind: "query", message: "deadlock detected" },
+  });
+  await expect(s().confirmCommit(T)).resolves.toBe(false);
+  expect(s().tabs[T].error).toBe("deadlock detected");
+  expect(s().confirming[T]).toBeUndefined();
+  expect(s().count(T)).toBe(2);
+  expect(s().committingIn).toEqual({});
+  expect(ipc.changesPreview).toHaveBeenCalledTimes(1);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(2);
+});

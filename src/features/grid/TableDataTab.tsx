@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, ObjectRef } from "../../lib/types";
-import type { CommitConfirm } from "../../stores/pendingChanges";
+import { usePendingChanges } from "../../stores/pendingChanges";
 import { useWorkspaces } from "../../stores/workspaces";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
 import { StructureTab } from "../structure/StructureTab";
@@ -33,20 +33,25 @@ const btn =
 /** Only while the workspace is gone (a table tab always lives in one): the strictest look. */
 const NO_WORKSPACE: LiveEnvSource = { connectionId: "", envTag: "prod", safeMode: null };
 
-/** The commit a protected connection refused until confirmed, as QueryTab asks for a batch. */
+/**
+ * The commit a protected connection refused until confirmed, as QueryTab asks for a batch.
+ * Rendered at the tab's root: Mod+S also commits while the structure view is shown.
+ */
 function CommitConfirmDialog({
   workspaceId,
-  confirm,
-  onRun,
-  onCancel,
+  tabId,
+  onClose,
 }: {
   workspaceId: string;
-  confirm: CommitConfirm;
-  onRun: () => void;
-  onCancel: () => void;
+  tabId: string;
+  /** Run or Cancel was chosen (the dialog is gone). */
+  onClose: () => void;
 }) {
+  const confirm = usePendingChanges((s) => s.confirming[tabId]);
   const workspace = useWorkspaces((s) => s.workspaces.find((w) => w.id === workspaceId));
   const env = useLiveEnv(workspace ?? NO_WORKSPACE);
+  if (!confirm) return null;
+  const store = usePendingChanges.getState;
   return (
     <ConfirmRunDialog
       connectionName={workspace?.name ?? ""}
@@ -54,8 +59,14 @@ function CommitConfirmDialog({
       safeMode={env.mode}
       statements={confirm.statements}
       flagged={confirm.flagged}
-      onRun={onRun}
-      onCancel={onCancel}
+      onRun={() => {
+        onClose();
+        void store().confirmCommit(tabId);
+      }}
+      onCancel={() => {
+        onClose();
+        store().cancelConfirm(tabId);
+      }}
     />
   );
 }
@@ -69,6 +80,8 @@ export function TableDataTab(props: Props) {
   // switching keeps the page, the pending changes and the structure's section.
   const [structureSeen, setStructureSeen] = useState(false);
   if (view === "structure" && !structureSeen) setStructureSeen(true);
+  /** The commit confirmation closed: Commit gets the focus back once the tab is unlocked. */
+  const refocusCommit = useRef(false);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ViewToggle view={view} onChange={setView} />
@@ -79,6 +92,7 @@ export function TableDataTab(props: Props) {
           {...props}
           detail={detail}
           active={view === "data"}
+          refocusCommit={refocusCommit}
         />
       </div>
       {structureSeen && (
@@ -86,6 +100,13 @@ export function TableDataTab(props: Props) {
           <StructureTab workspaceId={props.workspaceId} object={props.object} dialect={props.dialect} />
         </div>
       )}
+      <CommitConfirmDialog
+        workspaceId={props.workspaceId}
+        tabId={props.tabId}
+        onClose={() => {
+          refocusCommit.current = true;
+        }}
+      />
     </div>
   );
 }
@@ -97,7 +118,8 @@ function TableDataView({
   dialect,
   detail,
   active,
-}: Props & { detail: ReturnType<typeof useRowDetail>; active: boolean }) {
+  refocusCommit,
+}: Props & { detail: ReturnType<typeof useRowDetail>; active: boolean; refocusCommit: RefObject<boolean> }) {
   const t = usePagedTable(workspaceId, object, tabId);
   const e = useTableEditing({ workspaceId, tabId, object, result: t.result, reload: t.reload });
   const links = useFkLinks({ workspaceId, tabId, object, dialect, info: e.info, data: t.result, model: e.model });
@@ -114,14 +136,17 @@ function TableDataView({
     },
   };
   const target = e.menuTarget;
-  // Cancel in the commit confirmation gives the focus back to Commit (enabled again then).
+  // Once the commit confirmation closed (Cancel, or Run and its commit settled) and the tab
+  // is unlocked, the focus comes back to Commit; to + Row when Commit is disabled (nothing
+  // left pending after a successful commit).
   const commitRef = useRef<HTMLButtonElement>(null);
-  const refocusCommit = useRef(false);
+  const addRowRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (e.confirm || !refocusCommit.current) return;
+    if (!refocusCommit.current || e.confirm || e.locked) return;
     refocusCommit.current = false;
-    commitRef.current?.focus();
-  }, [e.confirm]);
+    const commitBtn = commitRef.current;
+    (commitBtn && !commitBtn.disabled ? commitBtn : addRowRef.current)?.focus();
+  }, [e.confirm, e.locked, refocusCommit]);
   const menuItems = target
     ? joinMenuGroups([links.menuItems(target.row, target.col), e.menuItems, copy.menuItems(target.block)])
     : [];
@@ -152,6 +177,7 @@ function TableDataView({
       {e.editable && (
         <div className="flex items-center gap-3 border-b border-border bg-surface px-3 py-1 text-sm">
           <button
+            ref={addRowRef}
             type="button"
             className={btn}
             onClick={e.addRow}
@@ -245,17 +271,6 @@ function TableDataView({
           />
         )}
       </div>
-      {e.confirm && (
-        <CommitConfirmDialog
-          workspaceId={workspaceId}
-          confirm={e.confirm}
-          onRun={e.confirmCommit}
-          onCancel={() => {
-            refocusCommit.current = true;
-            e.cancelConfirm();
-          }}
-        />
-      )}
       {target && menuItems.length > 0 && (
         <GridContextMenu
           x={target.x}

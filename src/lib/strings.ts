@@ -281,6 +281,8 @@ export const strings = {
     cancelCommitLabel: "Cancel the commit",
     otherTabCommitting: "Another tab of this connection is committing.",
     confirmPreviewFailed: (message: string) => `the statements to confirm could not be prepared: ${message}`,
+    previewCountMismatch: (got: number, expected: number) =>
+      `${got} ${got === 1 ? "statement" : "statements"} for ${expected} ${expected === 1 ? "change" : "changes"}`,
     closeWhileCommitting: "Committing… wait for the commit to finish.",
     editorLabel: "Cell value",
     editorLoading: "loading…",

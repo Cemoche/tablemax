@@ -162,7 +162,10 @@ interface PendingState {
    * protected connection asking for confirmation fills `confirming` (false, no error).
    */
   commit: (tabId: string, workspaceId: string, object: ObjectRef) => Promise<boolean>;
-  /** Run in the confirmation: resends exactly the confirmed list, confirmed. */
+  /**
+   * Run in the confirmation: resends exactly the confirmed list, confirmed. Refused (the
+   * confirmation closes, tab error) while another tab of the workspace commits.
+   */
   confirmCommit: (tabId: string) => Promise<boolean>;
   /** Cancel in the confirmation: nothing is applied, the changes stay pending. */
   cancelConfirm: (tabId: string) => void;
@@ -308,6 +311,11 @@ export const usePendingChanges = create<PendingState>((set, get) => {
           return false;
         }
         if (gone()) return false;
+        // One SQL per change, or the flags and the SQL shown would not match the changes sent.
+        if (statements.length !== list.length) {
+          fail(null, strings.grid.confirmPreviewFailed(strings.grid.previewCountMismatch(statements.length, list.length)));
+          return false;
+        }
         const flagged = parseConfirmationIndices(err.message, list.length);
         set((s) => ({
           confirming: { ...s.confirming, [tabId]: { workspaceId, object, list, statements, flagged } },
@@ -540,9 +548,13 @@ export const usePendingChanges = create<PendingState>((set, get) => {
     confirmCommit: async (tabId) => {
       const c = get().confirming[tabId];
       if (!c || get().committing[tabId] === true) return false;
-      const other = get().committingIn[c.workspaceId];
-      if (other !== undefined && other !== tabId) return false;
       omitConfirm(tabId);
+      // Another tab of the workspace started committing meanwhile: close and say why.
+      const other = get().committingIn[c.workspaceId];
+      if (other !== undefined && other !== tabId) {
+        set((s) => ({ tabs: { ...s.tabs, [tabId]: { ...tab(tabId), errors: {}, error: strings.grid.otherTabCommitting } } }));
+        return false;
+      }
       return apply(tabId, c.workspaceId, c.object, c.list, true);
     },
 

@@ -347,10 +347,6 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     /** A context-menu action on a cell or row. */
     runAction,
     commit: () => void store().commit(tabId, workspaceId, object),
-    /** Run in the confirmation: sends the confirmed list as it was shown. */
-    confirmCommit: () => void store().confirmCommit(tabId),
-    /** Cancel in the confirmation: nothing applied, the changes stay. */
-    cancelConfirm: () => store().cancelConfirm(tabId),
     /** Cancels the running commit (rolled back). */
     cancelCommit: () => void store().cancelCommit(tabId, workspaceId).catch(() => {}),
     addRow: () => store().addInsert(tabId, object),

@@ -1066,3 +1066,48 @@ test("Discard after an unknown outcome drops the edits, reloads, and stays block
   await waitFor(() => expect(screen.queryByText(strings.grid.commitOutcomeUnknown)).toBeNull());
   expect(screen.getByRole("button", { name: commitName })).toBeEnabled();
 });
+
+test("Mod+S from the structure view shows the confirmation, visible and focused", async () => {
+  await refusedCommit();
+  vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);
+  await userEvent.click(screen.getByRole("tab", { name: strings.grid.view.structure }));
+  await act(() => pending().commit("t1", "w1", obj));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: strings.safety.confirmCancel })).toHaveFocus();
+  await userEvent.click(within(dialog).getByRole("button", { name: strings.safety.confirmCancel }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(pending().count("t1")).toBe(2);
+});
+
+test("after Run the focus comes back to Commit once the commit settled", async () => {
+  await refusedCommit();
+  vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);
+  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  const dialog = await screen.findByRole("dialog");
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce({
+    applied: false,
+    affected: [1, 0],
+    failedIndex: null,
+    error: { kind: "query", message: "deadlock detected" },
+  });
+  await userEvent.click(within(dialog).getByRole("button", { name: strings.safety.confirmRun }));
+  expect(await screen.findByText(strings.grid.commitFailed("deadlock detected"))).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: commitName })).toHaveFocus());
+});
+
+test("after a successful Run the focus lands on + Row once the reload unlocks the tab (Commit is disabled)", async () => {
+  await refusedCommit();
+  vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);
+  let reloaded: (r: ResultSet) => void = () => {};
+  vi.mocked(ipc.tablePage).mockReturnValueOnce(new Promise<ResultSet>((r) => (reloaded = r)));
+  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  const dialog = await screen.findByRole("dialog");
+  vi.mocked(ipc.changesApply).mockResolvedValueOnce(applied);
+  await userEvent.click(within(dialog).getByRole("button", { name: strings.safety.confirmRun }));
+  await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole("button", { name: strings.grid.addRow })).not.toHaveFocus();
+  await act(async () => reloaded(lines(3)));
+  await waitFor(() => expect(screen.getByRole("button", { name: strings.grid.addRow })).toHaveFocus());
+  expect(screen.getByRole("button", { name: commitName })).toBeDisabled();
+});
