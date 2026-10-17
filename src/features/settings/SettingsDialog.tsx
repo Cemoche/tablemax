@@ -1,11 +1,11 @@
 import { useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { KEYMAP_ACTIONS, effectiveShortcut } from "../../lib/keymap";
+import { DEFAULT_KEYMAP, KEYMAP_ACTIONS, type KeymapActionId, conflictFor, effectiveShortcut, isValidShortcut } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import type { Settings, ThemeSetting } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
 import { type NumericSettingKey, SETTINGS_BOUNDS, isValidFontFamily, parseBounded } from "./bounds";
-import { formatShortcut } from "../../lib/platform";
+import { formatShortcut, isMac } from "../../lib/platform";
 
 const input = "rounded-sm border border-border bg-bg px-2 py-1";
 const FOCUSABLE = 'button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])';
@@ -121,6 +121,144 @@ function FontFamilyField() {
         </p>
       )}
     </div>
+  );
+}
+
+const KEY_CODES: Record<string, string> = {
+  Slash: "/",
+  Period: ".",
+  Comma: ",",
+  Semicolon: ";",
+  Minus: "-",
+  Equal: "=",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Backquote: "`",
+};
+const NAMED_CODES = new Set([
+  "Enter", "Tab", "Escape", "Space", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+]);
+const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)$/;
+
+/**
+ * The canonical spec of a keydown ("Mod+Shift+K"), built from `e.code` so it does not depend
+ * on the layout; Mod is Ctrl on Linux/Windows and Meta on macOS (Ctrl stays Ctrl there).
+ * A key with no name in the grammar yields a spec without a key (the caller reports it as invalid).
+ */
+function specFromEvent(e: KeyboardEvent, mac: boolean): string {
+  const code = e.code;
+  let key = "";
+  if (/^Key[A-Z]$/.test(code)) key = code.slice(3);
+  else if (/^Digit[0-9]$/.test(code)) key = code.slice(5);
+  else if (/^F([1-9]|1[0-2])$/.test(code) || NAMED_CODES.has(code)) key = code;
+  else if (Object.prototype.hasOwnProperty.call(KEY_CODES, code)) key = KEY_CODES[code];
+  const mods: string[] = [];
+  if (mac ? e.metaKey : e.ctrlKey) mods.push("Mod");
+  if (mac ? e.ctrlKey : false) mods.push("Ctrl");
+  if (!mac && e.metaKey) mods.push("Meta");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  return [...mods, key].join("+");
+}
+
+function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
+  const keymap = useSettings((s) => s.settings.keymap);
+  const update = useSettings((s) => s.update);
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const keymapRef = useRef(keymap);
+  keymapRef.current = keymap;
+  const overridden = Object.prototype.hasOwnProperty.call(keymap, id) && effectiveShortcut(id, keymap) !== DEFAULT_KEYMAP[id];
+
+  useEffect(() => {
+    if (!recording) return;
+    // Capture phase on the document: nothing else (the dialog's Escape, global shortcuts) sees the key.
+    const onKey = (e: KeyboardEvent) => {
+      if (MODIFIER_CODES.test(e.code) || e.key === "Dead" || e.key === "Process") return;
+      const bare = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+      if (e.code === "Tab" && bare) {
+        setRecording(false); // focus navigation: let the browser move on
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (e.repeat) return;
+      if (e.code === "Escape" && bare) {
+        setRecording(false);
+        setError(null);
+        return;
+      }
+      const spec = specFromEvent(e, isMac());
+      if (!isValidShortcut(spec)) {
+        setError(strings.settings.shortcutInvalid);
+        return;
+      }
+      const current = keymapRef.current;
+      const other = conflictFor(id, spec, current);
+      if (other !== null) {
+        setError(strings.settings.shortcutConflict(strings.keymap[other]));
+        return;
+      }
+      setRecording(false);
+      setError(null);
+      if (spec === effectiveShortcut(id, current)) return;
+      const next = { ...current };
+      if (spec === DEFAULT_KEYMAP[id]) delete next[id];
+      else next[id] = spec;
+      void update({ keymap: next });
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [recording, id, update]);
+
+  const reset = () => {
+    const next = { ...keymap };
+    delete next[id];
+    setError(null);
+    void update({ keymap: next });
+  };
+
+  return (
+    <li className="flex flex-col gap-1">
+      <div className="flex items-center justify-between gap-4">
+        <span>{label}</span>
+        <span className="flex items-center gap-2">
+          <kbd className="font-mono text-muted">{formatShortcut(effectiveShortcut(id, keymap))}</kbd>
+          <button
+            type="button"
+            aria-label={strings.settings.changeShortcutFor(label)}
+            className="rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2"
+            onClick={() => {
+              setError(null);
+              setRecording(true);
+            }}
+            onBlur={() => {
+              setRecording(false);
+              setError(null);
+            }}
+          >
+            {recording ? strings.settings.recording : strings.settings.changeShortcut}
+          </button>
+          {overridden && (
+            <button
+              type="button"
+              aria-label={strings.settings.resetShortcutFor(label)}
+              className="rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2"
+              onClick={reset}
+            >
+              {strings.settings.resetShortcut}
+            </button>
+          )}
+        </span>
+      </div>
+      {error && (
+        <p role="alert" className="text-danger">
+          {error}
+        </p>
+      )}
+    </li>
   );
 }
 
@@ -246,10 +384,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         <Section title={strings.settings.keyboard}>
           <ul className="flex flex-col gap-1">
             {KEYMAP_ACTIONS.map((a) => (
-              <li key={a.id} className="flex justify-between gap-4">
-                <span>{a.label}</span>
-                <kbd className="font-mono text-muted">{formatShortcut(effectiveShortcut(a.id, settings.keymap))}</kbd>
-              </li>
+              <KeyboardRow key={a.id} id={a.id} label={a.label} />
             ))}
           </ul>
         </Section>

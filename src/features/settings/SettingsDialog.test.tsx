@@ -227,3 +227,85 @@ test("Tab cycles inside the dialog", async () => {
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
   }
 });
+
+const changeButton = (label: string) => screen.getByRole("button", { name: strings.settings.changeShortcutFor(label) });
+const queryReset = (label: string) => screen.queryByRole("button", { name: strings.settings.resetShortcutFor(label) });
+const paletteLabel = strings.keymap["palette.all"];
+
+test("recording a combination saves it and the label updates", async () => {
+  setup();
+  await userEvent.click(changeButton(paletteLabel));
+  expect(screen.getByText(strings.settings.recording)).toBeInTheDocument();
+  await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
+  expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K" } });
+  expect(shortcutOf(paletteLabel)).toBe("Ctrl+Shift+K");
+  expect(screen.queryByText(strings.settings.recording)).toBeNull();
+});
+
+test("a combination used by another action is refused with its label and saves nothing", async () => {
+  setup();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Control>}p{/Control}");
+  expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["palette.objects"]))).toBeInTheDocument();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+  expect(shortcutOf(paletteLabel)).toBe("Ctrl+K");
+});
+
+test("a combination the grammar rejects shows an inline error and saves nothing", async () => {
+  setup();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("k");
+  expect(screen.getByText(strings.settings.shortcutInvalid)).toBeInTheDocument();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+});
+
+test("Escape cancels recording without closing the dialog", async () => {
+  const { onClose } = setup();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByText(strings.settings.recording)).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+  await userEvent.keyboard("{Escape}");
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("modifier-only presses are ignored while recording", async () => {
+  setup();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Control>}{Shift>}{Alt>}");
+  expect(screen.getByText(strings.settings.recording)).toBeInTheDocument();
+  expect(screen.queryByText(strings.settings.shortcutInvalid)).toBeNull();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+  await userEvent.keyboard("{/Alt}{/Shift}{/Control}");
+});
+
+test("Reset appears only for an overridden action and removes the override", async () => {
+  useSettings.setState({
+    settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K", "grid.commit": "Mod+Shift+S" } },
+    confirmed: DEFAULT_SETTINGS,
+  });
+  setup();
+  expect(queryReset(strings.keymap["query.new"])).toBeNull();
+  await userEvent.click(queryReset(paletteLabel) as HTMLElement);
+  expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "grid.commit": "Mod+Shift+S" } });
+  expect(shortcutOf(paletteLabel)).toBe("Ctrl+K");
+});
+
+test("recording the default combination removes the override instead of storing it", async () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K" } }, confirmed: DEFAULT_SETTINGS });
+  setup();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Control>}k{/Control}");
+  expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: {} });
+});
+
+test("Tab without modifiers cancels recording; Ctrl+Tab style combinations are candidates", async () => {
+  setup();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Tab}");
+  expect(screen.queryByText(strings.settings.recording)).toBeNull();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Alt>}{Tab}{/Alt}");
+  expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Alt+Tab" } });
+});
