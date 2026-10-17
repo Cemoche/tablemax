@@ -8,6 +8,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::import::{ImportPreview, ImportResult};
 use crate::manager::{ExecEvent, SessionManager, WorkspaceInfo};
 use crate::store::ConnectionConfig;
 use crate::value::EXACT_COUNT_THRESHOLD;
@@ -94,6 +95,38 @@ fn picker_spec(purpose: FilePurpose) -> (Option<(&'static str, &'static [&'stati
 /// and returns the chosen path, or `None` when cancelled.
 #[tauri::command]
 pub async fn file_pick(app: AppHandle, purpose: FilePurpose) -> AppResult<Option<String>> {
+    pick_file(&app, purpose).await
+}
+
+/// Lets the user pick a TablePlus export, then reads it with `password` (`None` when the
+/// picker is cancelled). Secrets stay in the backend until `import_tableplus_commit`.
+#[tauri::command]
+pub async fn import_tableplus_preview(
+    app: AppHandle,
+    state: State<'_, SessionManager>,
+    password: String,
+) -> AppResult<Option<ImportPreview>> {
+    let Some(path) = pick_file(&app, FilePurpose::TableplusExport).await? else {
+        return Ok(None);
+    };
+    state
+        .import_tableplus_preview(path.into(), password)
+        .await
+        .map(Some)
+}
+
+/// Saves the previewed entries at `indexes` (positions in the preview's `items`).
+#[tauri::command]
+pub async fn import_tableplus_commit(
+    state: State<'_, SessionManager>,
+    import_id: String,
+    indexes: Vec<usize>,
+) -> AppResult<ImportResult> {
+    state.import_tableplus_commit(&import_id, &indexes).await
+}
+
+/// The native file picker, run off the async threads; `None` when cancelled.
+async fn pick_file(app: &AppHandle, purpose: FilePurpose) -> AppResult<Option<String>> {
     let (filter, in_ssh_dir) = picker_spec(purpose);
     let mut dialog = app.dialog().file();
     if let Some((name, extensions)) = filter {

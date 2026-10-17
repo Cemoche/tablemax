@@ -249,6 +249,9 @@ pub fn same_identity(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
 /// SQLite has no password nor tunnel: the mode is forced to `None`, `ssh` is dropped,
 /// any secret is ignored and the keyring is never required (stale secrets are removed
 /// best-effort).
+///
+/// A new connection (empty id) owns no secret yet: nothing is removed, so saving one
+/// without secrets never needs the keyring.
 pub fn save_connection(
     store: &ConnectionStore,
     secrets: &dyn SecretStore,
@@ -279,7 +282,8 @@ pub fn save_connection(
         .ssh
         .as_ref()
         .is_some_and(|s| s.secret_mode == PasswordMode::Keyring && ssh_secret.is_none());
-    if cfg.id.is_empty() {
+    let fresh = cfg.id.is_empty();
+    if fresh {
         cfg.id = uuid::Uuid::new_v4().to_string();
     } else if keeps_db || keeps_ssh {
         match store.get(&cfg.id) {
@@ -298,6 +302,7 @@ pub fn save_connection(
     match (cfg.password_mode, password) {
         (PasswordMode::Keyring, Some(pw)) => secrets.set(&key, &pw)?,
         (PasswordMode::Keyring, None) => {}
+        _ if fresh => {}
         _ => secrets.delete(&key)?,
     }
     let own = cfg.ssh.as_ref().and_then(SshSettings::secret_kind);
@@ -307,6 +312,7 @@ pub fn save_connection(
         match (own == Some(kind), mode, &ssh_secret) {
             (true, Some(PasswordMode::Keyring), Some(secret)) => secrets.set(&key, secret)?,
             (true, Some(PasswordMode::Keyring), None) => {}
+            _ if fresh => {}
             _ => secrets.delete(&key)?,
         }
     }
@@ -982,6 +988,21 @@ mod tests {
         let saved = save_connection(&store, &BrokenSecrets, c, None, Some("x".into())).unwrap();
         assert_eq!(saved.ssh, None);
         assert_eq!(store.get(&saved.id).unwrap().ssh, None);
+    }
+
+    #[test]
+    fn new_connection_without_secrets_needs_no_keyring() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(&dir);
+        let mut c = ssh_cfg(SshAuth::Key);
+        c.password_mode = PasswordMode::Ask;
+        c.ssh.as_mut().unwrap().secret_mode = PasswordMode::None;
+        // A fresh id owns no secret: nothing to remove, so the keyring is not touched.
+        let saved = save_connection(&store, &BrokenSecrets, c, None, None).unwrap();
+        assert_eq!(store.get(&saved.id).unwrap(), saved);
+        // Editing it removes stale secrets, which needs the keyring.
+        let err = save_connection(&store, &BrokenSecrets, saved, None, None).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Secret);
     }
 
     #[test]

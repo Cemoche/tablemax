@@ -4924,10 +4924,14 @@ dependencies = [
 name = "tablemax"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "async-trait",
+ "cbc",
  "futures-util",
+ "hmac",
  "keyring",
  "mysql_async",
+ "pbkdf2",
  "rand",
  "rusqlite",
  "russh",
@@ -4935,6 +4939,8 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

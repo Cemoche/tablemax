@@ -31,6 +31,7 @@ use crate::driver::{
     self, Canceller, ConnectParams, Dialect, DriverKind, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::import::{self, IMPORT_TTL, ImportPreview, ImportResult, PendingImports};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
 use crate::ssh::config::{SshConfigFile, user_config};
 use crate::ssh::known_hosts::KnownHosts;
@@ -190,6 +191,8 @@ pub struct SessionManager {
     known_hosts: KnownHosts,
     /// Replaces `~/.ssh/config` (tests); otherwise it is re-read at each connect.
     ssh_config: Option<Arc<SshConfigFile>>,
+    /// Previewed imports (with their secrets) waiting for a commit.
+    imports: PendingImports,
     state: Mutex<State>,
 }
 
@@ -374,8 +377,15 @@ impl SessionManager {
             secrets,
             known_hosts,
             ssh_config: None,
+            imports: PendingImports::new(IMPORT_TTL),
             state: Mutex::new(State::default()),
         }
+    }
+
+    /// Keeps previewed imports committable for `ttl` instead of [`IMPORT_TTL`].
+    pub fn with_import_ttl(mut self, ttl: Duration) -> Self {
+        self.imports = PendingImports::new(ttl);
+        self
     }
 
     /// Resolves SSH aliases with `config` instead of `~/.ssh/config`.
@@ -410,6 +420,42 @@ impl SessionManager {
     ) -> AppResult<ConnectionConfig> {
         let (st, sec) = (self.store.clone(), self.secrets.clone());
         blocking(move || store::save_connection(&st, sec.as_ref(), cfg, password, ssh_secret)).await
+    }
+
+    /// Reads the TablePlus export at `path` (decrypted with `password`) and keeps its
+    /// entries, secrets included, as a pending import; the preview carries no secret.
+    pub async fn import_tableplus_preview(
+        &self,
+        path: PathBuf,
+        password: String,
+    ) -> AppResult<ImportPreview> {
+        let store = self.store.clone();
+        let (entries, warnings, existing) = blocking(move || {
+            let data = import::read_export(&path)?;
+            let plain = import::rncryptor::decrypt(&data, &password)?;
+            let (entries, warnings) = import::tableplus::parse_export(&plain)?;
+            Ok((entries, warnings, store.list()?))
+        })
+        .await?;
+        let items = import::preview_items(&entries, &existing);
+        let import_id = self.imports.insert(entries);
+        Ok(ImportPreview {
+            import_id,
+            items,
+            warnings,
+        })
+    }
+
+    /// Saves the entries of a pending import at `indexes` and drops the import (NotFound
+    /// "import expired" when unknown or older than its TTL).
+    pub async fn import_tableplus_commit(
+        &self,
+        import_id: &str,
+        indexes: &[usize],
+    ) -> AppResult<ImportResult> {
+        let entries = self.imports.take(import_id, indexes)?;
+        let (st, sec) = (self.store.clone(), self.secrets.clone());
+        blocking(move || Ok(import::commit_entries(&st, sec.as_ref(), entries))).await
     }
 
     /// Concrete host aliases of `~/.ssh/config`.

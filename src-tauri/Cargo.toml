@@ -36,6 +36,12 @@ mysql_async = { version = "0.37", default-features = false, features = ["minimal
 keyring = "4.2"
 uuid = { version = "1", features = ["v4"] }
 russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa", "flate2"] }
+aes = "0.9.3"
+cbc = { version = "0.2.1", features = ["alloc"] }
+hmac = "0.13.0"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+pbkdf2 = { version = "0.13.0", default-features = false, features = ["hmac"] }
 
 [dev-dependencies]
 tempfile = "3"

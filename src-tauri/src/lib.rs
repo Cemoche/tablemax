@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod driver;
 pub mod error;
+pub mod import;
 pub mod manager;
 pub mod secrets;
 pub mod ssh;
@@ -49,6 +50,8 @@ pub fn run() {
             commands::workspace_open,
             commands::ssh_hosts_list,
             commands::file_pick,
+            commands::import_tableplus_preview,
+            commands::import_tableplus_commit,
             commands::workspace_close,
             commands::schemas_list,
             commands::objects_list,
