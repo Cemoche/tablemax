@@ -131,3 +131,18 @@ The window was closed with a WM_DELETE_WINDOW client message (what the X button 
 - Formatting for MySQL/SQLite dialects and Auto LIMIT on MySQL: only PostgreSQL checked.
 - Whether `beforeunload` fires at all on window close (see Problem 1): would need
   instrumentation of the app.
+
+## Re-check after 59b7002 (session flush on window close)
+
+Rebuilt with `pnpm tauri build --debug --no-bundle` (run with the normal environment: with
+HOME overridden rustup cannot find its toolchain), same isolated session as above
+(scratch HOME/XDG, Xvfb :97, private D-Bus, p4 stack). Window closed with a WM_DELETE_WINDOW
+message; the close delay is the time until the app process exits.
+- (a) Ctrl+T, close 0.1 s later: process exited after 0.14 s; `session_state` already held the
+  new `Query 3` tab. Problem 1 repro A is fixed.
+- (b) click in `Query 3`, type `select 'quick2'`, close 0.1 s after the last key: exited
+  after 0.11 s; after relaunch the tab is back with `select 'quick2'` in the editor
+  (screenshot `/tmp/claude-1000/-home-cyildirim-dev-tablemax/8c84c1b2-5d25-4b02-bd64-2793870fd9e9/scratchpad/manual-p4/shots/61-recheck-restored.png`). Problem 1 repro B is fixed.
+- (c) The window closes promptly (about 0.1 s in both cases, no visible 2 s fallback wait).
+- (d) Corrupt session row: not tested (out of scope).
+Problem 1 is resolved; problems 2 to 7 were not re-checked.
