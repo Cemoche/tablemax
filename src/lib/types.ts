@@ -196,3 +196,25 @@ export type ExecEvent =
   | { event: "statementFinished"; data: { index: number; outcome: StatementOutcome } }
   | { event: "statementFailed"; data: { index: number; error: AppError } }
   | { event: "batchFinished"; data: { cancelled: boolean } };
+
+// ---- Query history and saved queries (history.rs / saved_queries.rs) ----
+
+export interface HistoryEntry {
+  id: number;
+  connectionId: string;
+  sql: string;
+  /** Milliseconds since the Unix epoch. */
+  executedAt: number;
+  elapsedMs: number | null;
+  /** Rows returned, or rows touched by a write. */
+  rows: number | null;
+  error: string | null;
+}
+
+export interface SavedQuery {
+  /** File name without the `.sql` extension. */
+  name: string;
+  /** Milliseconds since the Unix epoch. */
+  modifiedAt: number;
+  size: number;
+}

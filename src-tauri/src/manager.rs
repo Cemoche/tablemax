@@ -32,8 +32,11 @@ use crate::driver::{
     self, Canceller, ConnectParams, Dialect, DriverKind, Session, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::history::{self, HistoryEntry, NewHistoryEntry};
 use crate::import::{self, IMPORT_TTL, ImportPreview, ImportResult, LastPick, PendingImports};
+use crate::saved_queries::{self, SavedQuery};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
+use crate::session_state;
 use crate::ssh::config::{SshConfigFile, user_config};
 use crate::ssh::known_hosts::KnownHosts;
 use crate::ssh::tunnel::{self, HostKeyPolicy, SshAuthMaterial, SshTarget, SshTunnel};
@@ -197,6 +200,8 @@ pub struct SessionManager {
     /// The export file last picked for an import, re-read by a retry.
     import_pick: LastPick,
     state: Mutex<State>,
+    /// `<app data>/queries`: saved queries, one folder per connection.
+    queries_dir: Option<PathBuf>,
 }
 
 fn workspace_not_found(id: &str) -> AppError {
@@ -383,7 +388,14 @@ impl SessionManager {
             imports: PendingImports::new(IMPORT_TTL),
             import_pick: LastPick::default(),
             state: Mutex::new(State::default()),
+            queries_dir: None,
         }
+    }
+
+    /// Where saved queries live (`<app data>/queries`); without it they are unavailable.
+    pub fn with_queries_dir(mut self, dir: PathBuf) -> Self {
+        self.queries_dir = Some(dir);
+        self
     }
 
     /// Keeps previewed imports committable for `ttl` instead of [`IMPORT_TTL`].
@@ -496,7 +508,17 @@ impl SessionManager {
 
     pub async fn delete_connection(&self, id: &str) -> AppResult<()> {
         let (st, sec, id) = (self.store.clone(), self.secrets.clone(), id.to_string());
-        blocking(move || store::delete_connection(&st, sec.as_ref(), &id)).await
+        let queries = self.queries_dir.clone();
+        blocking(move || {
+            store::delete_connection(&st, sec.as_ref(), &id)?;
+            // Its saved queries go with it; the connection is already gone, so a
+            // leftover folder is only logged-away clutter, not an error.
+            if let Some(dir) = queries {
+                let _ = saved_queries::remove_connection_dir(&dir, &id);
+            }
+            Ok(())
+        })
+        .await
     }
 
     /// Password for connecting with `cfg`: SQLite → always none (the keyring is never
@@ -982,6 +1004,11 @@ impl SessionManager {
             tokio::time::sleep(POLL).await;
         }
 
+        let history_conn = self
+            .state()
+            .workspaces
+            .get(&entry.workspace_id)
+            .map(|ws| ws.config.id.clone());
         let mut cancelled = false;
         for (index, sql) in statements.iter().enumerate() {
             // Mark the statement in flight before checking the flag: `request_cancel`
@@ -995,6 +1022,9 @@ impl SessionManager {
             sink(ExecEvent::StatementStarted { index });
             let result = entry.session.execute(sql).await;
             ctl.in_statement.store(false, SeqCst);
+            if let Some(conn_id) = &history_conn {
+                self.record_history(conn_id, sql, &result);
+            }
             match result {
                 Ok(outcome) => {
                     sink(ExecEvent::StatementFinished { index, outcome });
@@ -1019,6 +1049,131 @@ impl SessionManager {
     pub async fn cancel(&self, session_id: &str) -> AppResult<()> {
         let entry = self.sql_entry(session_id)?;
         request_cancel(&entry).await
+    }
+}
+
+/// History, session and saved queries: thin blocking wrappers over the store and the
+/// queries folder.
+impl SessionManager {
+    /// Records one finished statement without ever failing or slowing the batch: the
+    /// write runs detached on the blocking pool and its errors are dropped (the SQL
+    /// text is never logged).
+    fn record_history(&self, connection_id: &str, sql: &str, result: &AppResult<StatementOutcome>) {
+        let (elapsed_ms, rows, error) = match result {
+            Ok(o) => (
+                Some(o.elapsed_ms),
+                o.result
+                    .as_ref()
+                    .map(|r| r.rows.len() as u64)
+                    .or(o.rows_affected),
+                None,
+            ),
+            Err(e) => (None, None, Some(e.message.clone())),
+        };
+        let entry = NewHistoryEntry {
+            connection_id: connection_id.to_string(),
+            sql: sql.to_string(),
+            executed_at: history::now_ms(),
+            elapsed_ms,
+            rows,
+            error,
+        };
+        let store = self.store.clone();
+        drop(tokio::task::spawn_blocking(move || {
+            let _ = history::record(&store, entry);
+        }));
+    }
+
+    fn queries_base(&self) -> AppResult<PathBuf> {
+        self.queries_dir
+            .clone()
+            .ok_or_else(|| AppError::new(ErrorKind::Io, "saved queries are unavailable"))
+    }
+
+    pub async fn history_list(
+        &self,
+        connection_id: &str,
+        search: Option<String>,
+        limit: u32,
+    ) -> AppResult<Vec<HistoryEntry>> {
+        let (st, id) = (self.store.clone(), connection_id.to_string());
+        blocking(move || history::list(&st, &id, search.as_deref(), limit)).await
+    }
+
+    pub async fn history_clear(&self, connection_id: &str) -> AppResult<()> {
+        let (st, id) = (self.store.clone(), connection_id.to_string());
+        blocking(move || history::clear(&st, &id)).await
+    }
+
+    pub async fn session_save(&self, json: String) -> AppResult<()> {
+        let st = self.store.clone();
+        blocking(move || session_state::save_session(&st, &json)).await
+    }
+
+    pub async fn session_load(&self) -> AppResult<Option<String>> {
+        let st = self.store.clone();
+        blocking(move || session_state::load_session(&st)).await
+    }
+
+    /// Runs `f` on the connection's saved-queries folder; the connection must exist.
+    async fn with_queries<T, F>(&self, connection_id: &str, f: F) -> AppResult<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Path, &str) -> AppResult<T> + Send + 'static,
+    {
+        let base = self.queries_base()?;
+        let (st, id) = (self.store.clone(), connection_id.to_string());
+        blocking(move || {
+            st.get(&id)?;
+            f(&base, &id)
+        })
+        .await
+    }
+
+    pub async fn saved_queries_list(&self, connection_id: &str) -> AppResult<Vec<SavedQuery>> {
+        self.with_queries(connection_id, saved_queries::list).await
+    }
+
+    pub async fn saved_query_read(&self, connection_id: &str, name: &str) -> AppResult<String> {
+        let name = name.to_string();
+        self.with_queries(connection_id, move |b, id| {
+            saved_queries::read(b, id, &name)
+        })
+        .await
+    }
+
+    pub async fn saved_query_write(
+        &self,
+        connection_id: &str,
+        name: &str,
+        sql: &str,
+    ) -> AppResult<()> {
+        let (name, sql) = (name.to_string(), sql.to_string());
+        self.with_queries(connection_id, move |b, id| {
+            saved_queries::write(b, id, &name, &sql)
+        })
+        .await
+    }
+
+    pub async fn saved_query_rename(
+        &self,
+        connection_id: &str,
+        from: &str,
+        to: &str,
+    ) -> AppResult<()> {
+        let (from, to) = (from.to_string(), to.to_string());
+        self.with_queries(connection_id, move |b, id| {
+            saved_queries::rename(b, id, &from, &to)
+        })
+        .await
+    }
+
+    pub async fn saved_query_delete(&self, connection_id: &str, name: &str) -> AppResult<()> {
+        let name = name.to_string();
+        self.with_queries(connection_id, move |b, id| {
+            saved_queries::delete(b, id, &name)
+        })
+        .await
     }
 }
 

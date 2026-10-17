@@ -135,7 +135,39 @@ impl ConnectionStore {
             )
             .map_err(io_err)?;
         }
+        if v < 2 {
+            // Plan 4: query history and the restorable session. Existing rows are kept.
+            conn.execute_batch(
+                "BEGIN;
+                 CREATE TABLE IF NOT EXISTS query_history(
+                     id INTEGER PRIMARY KEY,
+                     connection_id TEXT NOT NULL,
+                     sql TEXT NOT NULL,
+                     executed_at INTEGER NOT NULL,
+                     elapsed_ms INTEGER,
+                     rows INTEGER,
+                     error TEXT
+                 );
+                 CREATE INDEX IF NOT EXISTS query_history_by_connection
+                     ON query_history(connection_id, executed_at DESC);
+                 CREATE TABLE IF NOT EXISTS session_state(
+                     id INTEGER PRIMARY KEY CHECK (id = 1),
+                     version INTEGER NOT NULL,
+                     json TEXT NOT NULL,
+                     saved_at INTEGER NOT NULL
+                 );
+                 PRAGMA user_version = 2;
+                 COMMIT;",
+            )
+            .map_err(io_err)?;
+        }
         Ok(())
+    }
+
+    /// Runs `f` on the store's connection (blocking; callers use `spawn_blocking`).
+    pub fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> AppResult<T>) -> AppResult<T> {
+        let conn = self.lock()?;
+        f(&conn)
     }
 
     fn lock(&self) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
@@ -206,6 +238,12 @@ impl ConnectionStore {
         let conn = self.lock()?;
         conn.execute("DELETE FROM connections WHERE id = ?1", params![id])
             .map_err(io_err)?;
+        // The history of a connection goes with it (it may hold sensitive values).
+        conn.execute(
+            "DELETE FROM query_history WHERE connection_id = ?1",
+            params![id],
+        )
+        .map_err(io_err)?;
         Ok(())
     }
 }

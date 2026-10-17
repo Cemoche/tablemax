@@ -13,6 +13,8 @@ import type {
   ResultSet,
   RowCount,
   WorkspaceInfo,
+  HistoryEntry,
+  SavedQuery,
 } from "./types";
 
 export const connectionsList = () => invoke<ConnectionConfig[]>("connections_list");
@@ -106,3 +108,32 @@ export const sqlExecute = (
 };
 
 export const sqlCancel = (sessionId: string) => invoke<void>("sql_cancel", { sessionId });
+
+// ---- History, session and saved queries ----
+
+export const historyList = (connectionId: string, search: string | null, limit: number) =>
+  invoke<HistoryEntry[]>("history_list", { connectionId, search, limit });
+
+export const historyClear = (connectionId: string) =>
+  invoke<void>("history_clear", { connectionId });
+
+/** Stores the session JSON as is (rejected above 5 MB). It must hold no secret. */
+export const sessionSave = (json: string) => invoke<void>("session_save", { json });
+
+/** The stored session text, or null; the caller validates the JSON and its version. */
+export const sessionLoad = () => invoke<string | null>("session_load");
+
+export const savedQueriesList = (connectionId: string) =>
+  invoke<SavedQuery[]>("saved_queries_list", { connectionId });
+
+export const savedQueryRead = (connectionId: string, name: string) =>
+  invoke<string>("saved_query_read", { connectionId, name });
+
+export const savedQueryWrite = (connectionId: string, name: string, sql: string) =>
+  invoke<void>("saved_query_write", { connectionId, name, sql });
+
+export const savedQueryRename = (connectionId: string, from: string, to: string) =>
+  invoke<void>("saved_query_rename", { connectionId, from, to });
+
+export const savedQueryDelete = (connectionId: string, name: string) =>
+  invoke<void>("saved_query_delete", { connectionId, name });

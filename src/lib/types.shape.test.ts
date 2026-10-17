@@ -5,9 +5,11 @@ import type {
   ErrorKind,
   ExecEvent,
   FilePurpose,
+  HistoryEntry,
   ImportPreview,
   ImportResult,
   ResultSet,
+  SavedQuery,
   RowCount,
   SshAuth,
   SslMode,
@@ -108,4 +110,16 @@ test("ImportPreview and ImportResult", () => {
   expect(p.warnings[0].entry).toBe("k");
   const r: ImportResult = JSON.parse('{"saved":[],"warnings":[]}');
   expect(r.saved).toEqual([]);
+});
+
+// history.rs HistoryEntry / saved_queries.rs SavedQuery (tests/persistence.rs checks the
+// camelCase keys on the Rust side).
+test("HistoryEntry and SavedQuery", () => {
+  const h: HistoryEntry = JSON.parse(
+    '{"id":1,"connectionId":"c","sql":"select 1","executedAt":1760000000000,"elapsedMs":3,"rows":1,"error":null}',
+  );
+  expect(h.executedAt).toBe(1760000000000);
+  expect(h.error).toBeNull();
+  const q: SavedQuery = JSON.parse('{"name":"Été","modifiedAt":1760000000000,"size":5}');
+  expect(q.modifiedAt).toBe(1760000000000);
 });

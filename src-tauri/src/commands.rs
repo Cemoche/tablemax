@@ -10,8 +10,10 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::history::HistoryEntry;
 use crate::import::{ImportPreview, ImportResult};
 use crate::manager::{ExecEvent, SessionManager, WorkspaceInfo};
+use crate::saved_queries::SavedQuery;
 use crate::store::ConnectionConfig;
 use crate::value::EXACT_COUNT_THRESHOLD;
 
@@ -291,4 +293,80 @@ mod tests {
         );
         assert!(!picker_spec(FilePurpose::CaCert).1);
     }
+}
+
+// ---- History, session and saved queries ----
+
+#[tauri::command]
+pub async fn history_list(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    search: Option<String>,
+    limit: u32,
+) -> AppResult<Vec<HistoryEntry>> {
+    state.history_list(&connection_id, search, limit).await
+}
+
+#[tauri::command]
+pub async fn history_clear(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+) -> AppResult<()> {
+    state.history_clear(&connection_id).await
+}
+
+#[tauri::command]
+pub async fn session_save(state: State<'_, SessionManager>, json: String) -> AppResult<()> {
+    state.session_save(json).await
+}
+
+#[tauri::command]
+pub async fn session_load(state: State<'_, SessionManager>) -> AppResult<Option<String>> {
+    state.session_load().await
+}
+
+#[tauri::command]
+pub async fn saved_queries_list(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+) -> AppResult<Vec<SavedQuery>> {
+    state.saved_queries_list(&connection_id).await
+}
+
+#[tauri::command]
+pub async fn saved_query_read(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    name: String,
+) -> AppResult<String> {
+    state.saved_query_read(&connection_id, &name).await
+}
+
+#[tauri::command]
+pub async fn saved_query_write(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    name: String,
+    sql: String,
+) -> AppResult<()> {
+    state.saved_query_write(&connection_id, &name, &sql).await
+}
+
+#[tauri::command]
+pub async fn saved_query_rename(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    from: String,
+    to: String,
+) -> AppResult<()> {
+    state.saved_query_rename(&connection_id, &from, &to).await
+}
+
+#[tauri::command]
+pub async fn saved_query_delete(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    name: String,
+) -> AppResult<()> {
+    state.saved_query_delete(&connection_id, &name).await
 }
