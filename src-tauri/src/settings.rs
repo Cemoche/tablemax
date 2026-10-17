@@ -80,8 +80,9 @@ pub const KEYMAP_SPEC_MAX: usize = 32;
 /// `Modifier+…+Key`, modifiers among `Mod`, `Ctrl`, `Meta`, `Alt`, `Shift`, each at most
 /// once, in any order; the key is one uppercase ASCII letter or digit, one of
 /// `` , . / ; - = [ ] \ ` ``, or a named key (`Enter`, `Tab`, `Escape`, `Space`,
-/// `Backspace`, `Delete`, `ArrowUp`/`Down`/`Left`/`Right`, `F1`–`F12`). At least one
-/// modifier unless the key is F1–F12; at most 32 characters, ASCII only.
+/// `Backspace`, `Delete`, `ArrowUp`/`Down`/`Left`/`Right`, `F1`–`F12`). At least one of
+/// `Mod`, `Ctrl`, `Meta`, `Alt` unless the key is F1–F12 (Shift alone is not enough); at most
+/// 32 characters, ASCII only.
 pub fn is_valid_shortcut(spec: &str) -> bool {
     if spec.is_empty() || spec.len() > KEYMAP_SPEC_MAX || !spec.is_ascii() {
         return false;
@@ -118,7 +119,8 @@ pub fn is_valid_shortcut(spec: &str) -> bool {
             | "ArrowLeft"
             | "ArrowRight"
     );
-    (function_key || char_key || named_key) && (function_key || !seen.is_empty())
+    // Shift alone is not enough (it would take an uppercase letter or reverse Tab away).
+    (function_key || char_key || named_key) && (function_key || seen.iter().any(|m| *m != "Shift"))
 }
 
 /// The entries of `keymap` with a known action id and a valid spec, at most `max` of them.
@@ -504,6 +506,29 @@ mod tests {
             "Meta+Ctrl+Alt+Shift+Mod+Backspace",
         ] {
             assert!(!is_valid_shortcut(bad), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn shift_alone_is_not_a_modifier_except_on_a_function_key() {
+        for bad in [
+            "Shift+K",
+            "Shift+Tab",
+            "Shift+1",
+            "Shift+Enter",
+            "Shift+/",
+            "Shift+ArrowUp",
+        ] {
+            assert!(!is_valid_shortcut(bad), "should reject {bad:?}");
+        }
+        for ok in [
+            "Shift+F5",
+            "Mod+Shift+K",
+            "Ctrl+Shift+Tab",
+            "Alt+Shift+1",
+            "Meta+Shift+Enter",
+        ] {
+            assert!(is_valid_shortcut(ok), "should accept {ok:?}");
         }
     }
 

@@ -51,7 +51,13 @@ test("a literal Ctrl stays Ctrl on macOS, Alt reads ⌥ there", () => {
   expect(formatShortcut("Ctrl+T", true)).toBe("Ctrl+T");
   expect(formatShortcut("Alt+1", true)).toBe("⌥+1");
   expect(formatShortcut("Alt+1", false)).toBe("Alt+1");
-  expect(formatShortcut("Meta+K", false)).toBe("⌘+K");
+});
+
+test("Meta reads ⌘ on macOS and Super elsewhere", () => {
+  expect(formatShortcut("Meta+K", true)).toBe("⌘+K");
+  expect(formatShortcut("Meta+K", false)).toBe("Super+K");
+  expect(formatShortcut("Meta+Shift+Enter", false)).toBe("Super+Shift+Enter");
+  expect(formatShortcut("Mod+K", true)).toBe("⌘+K");
 });
 
 test("odd specs do not crash", () => {

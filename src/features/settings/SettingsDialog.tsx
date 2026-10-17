@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { DEFAULT_KEYMAP, KEYMAP_ACTIONS, type KeymapActionId, conflictFor, effectiveShortcut, isValidShortcut, sameCombination } from "../../lib/keymap";
+import { DEFAULT_KEYMAP, KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, effectiveShortcut, isValidShortcut, sameCombination } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import { useRestoreFocus } from "../../lib/useRestoreFocus";
 import type { Settings, ThemeSetting } from "../../lib/types";
@@ -197,7 +197,7 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
         return;
       }
       const current = keymapRef.current;
-      const other = conflictFor(id, spec, current);
+      const other = conflictAnywhere(id, spec, current);
       if (other !== null) {
         setError(strings.settings.shortcutConflict(strings.keymap[other]));
         return;
@@ -214,9 +214,15 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
     return () => document.removeEventListener("keydown", onKey, true);
   }, [recording, id, update]);
 
+  // Same rule as recording: the default comes back only if no other action uses it now.
   const reset = () => {
     const next = { ...keymap };
     delete next[id];
+    const other = conflictAnywhere(id, DEFAULT_KEYMAP[id], next);
+    if (other !== null) {
+      setError(strings.settings.shortcutConflict(strings.keymap[other]));
+      return;
+    }
     setError(null);
     void update({ keymap: next });
   };

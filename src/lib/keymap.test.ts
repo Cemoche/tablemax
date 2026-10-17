@@ -6,6 +6,7 @@ import {
   DEFAULT_KEYMAP,
   KEYMAP_ACTIONS,
   type KeymapActionId,
+  conflictAnywhere,
   conflictFor,
   effectiveShortcut,
   isKeymapActionId,
@@ -137,6 +138,16 @@ test("the grammar rejects everything else", () => {
   expect(isValidShortcut("Meta+Ctrl+Alt+Shift+Mod+ArrowUp")).toBe(true);
 });
 
+test("Shift alone is not a modifier, except on a function key", () => {
+  for (const bad of ["Shift+K", "Shift+Tab", "Shift+1", "Shift+Enter", "Shift+/", "Shift+ArrowUp"]) {
+    expect(isValidShortcut(bad), bad).toBe(false);
+  }
+  for (const ok of ["Shift+F5", "Mod+Shift+K", "Ctrl+Shift+Tab", "Alt+Shift+1", "Meta+Shift+Enter"]) {
+    expect(isValidShortcut(ok), ok).toBe(true);
+  }
+  for (const spec of Object.values(DEFAULT_KEYMAP)) expect(isValidShortcut(spec), spec).toBe(true);
+});
+
 test("every grammar key is matched by matchShortcut", () => {
   const ev = (code: string, mods: Partial<KeyboardEvent> = {}) =>
     new KeyboardEvent("keydown", { code, ctrlKey: true, ...mods });
@@ -214,6 +225,18 @@ test("conflicts use the effective combinations and ignore the action itself", ()
   expect(conflictFor("palette.all", "Mod+K", {}, false)).toBeNull();
   // An invalid override falls back to the default, which still counts.
   expect(conflictFor("grid.rowDetails", "Mod+K", { "palette.all": "bad" }, false)).toBe("palette.all");
+});
+
+test("conflictAnywhere refuses a combination that conflicts on macOS or on Linux/Windows", () => {
+  // Meta+T is free on Linux but is Mod+T (New query) on macOS.
+  expect(conflictFor("palette.all", "Meta+T", {}, false)).toBeNull();
+  expect(conflictAnywhere("palette.all", "Meta+T", {})).toBe("query.new");
+  // Ctrl+K is free on macOS but is Mod+K (the palette) on Linux.
+  expect(conflictFor("grid.rowDetails", "Ctrl+K", {}, true)).toBeNull();
+  expect(conflictAnywhere("grid.rowDetails", "Ctrl+K", {})).toBe("palette.all");
+  // Free on both platforms.
+  expect(conflictAnywhere("palette.all", "Mod+Shift+K", {})).toBeNull();
+  expect(conflictAnywhere("palette.all", "Mod+K", {})).toBeNull();
 });
 
 test("an invalid combination has no conflict to report", () => {

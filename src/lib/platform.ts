@@ -24,7 +24,8 @@ export function isModKey(
 
 /**
  * Label of a canonical shortcut spec ("Mod+Shift+Enter", "Alt+1", "Mod+,"):
- * "⌘+Shift+Enter" on macOS, "Ctrl+Shift+Enter" elsewhere, names from strings.ts.
+ * "⌘+Shift+Enter" on macOS, "Ctrl+Shift+Enter" elsewhere, names from strings.ts. A literal
+ * Meta is ⌘ on macOS and the Super key elsewhere (Linux first; Windows calls it Win).
  */
 export function formatShortcut(spec: string, mac: boolean = isMac()): string {
   const { keyNames, keyLabels, keySeparator } = strings.settings;
@@ -41,7 +42,7 @@ export function formatShortcut(spec: string, mac: boolean = isMac()): string {
       case "Shift":
         return keyNames.shift;
       case "Meta":
-        return keyNames.cmd;
+        return mac ? keyNames.cmd : keyNames.meta;
       default:
         return m;
     }

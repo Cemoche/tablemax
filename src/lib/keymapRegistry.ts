@@ -92,8 +92,9 @@ const CHAR_KEY = /^[A-Z0-9,./;\-=[\]\\`]$/;
  * src-tauri/src/settings.rs): `Modifier+…+Key`, modifiers among Mod, Ctrl, Meta, Alt,
  * Shift, each at most once, in any order; Key = one uppercase ASCII letter or digit, one
  * of `, . / ; - = [ ] \ \``, or a named key (Enter, Tab, Escape, Space, Backspace, Delete,
- * ArrowUp/Down/Left/Right, F1–F12). At least one modifier unless the key is F1–F12; at most
- * 32 characters. Everything it accepts, `matchShortcut` can match.
+ * ArrowUp/Down/Left/Right, F1–F12). At least one of Mod, Ctrl, Meta, Alt unless the key is
+ * F1–F12 (Shift alone would take an uppercase letter or reverse Tab away from typing and focus
+ * navigation); at most 32 characters. Everything it accepts, `matchShortcut` can match.
  */
 export function isValidShortcut(spec: string): boolean {
   if (typeof spec !== "string" || spec.length === 0 || spec.length > SHORTCUT_MAX) return false;
@@ -106,7 +107,7 @@ export function isValidShortcut(spec: string): boolean {
   }
   const fn = FUNCTION_KEY.test(key);
   if (!fn && !NAMED_KEYS.has(key) && !CHAR_KEY.test(key)) return false;
-  return fn || seen.size > 0;
+  return fn || [...seen].some((m) => m !== "Shift");
 }
 
 /** The combination `id` uses: its keymap entry when that is a valid spec, else its default. */
@@ -153,4 +154,18 @@ export function conflictFor(
     if (combination(effectiveShortcut(other.id, keymap), mac) === wanted) return other.id;
   }
   return null;
+}
+
+/**
+ * `conflictFor` on this platform, then on the other one (Mod = Cmd on macOS, Ctrl on
+ * Linux/Windows): a keymap stays free of conflicts when the settings move to another
+ * machine (Meta+T recorded on Linux is Mod+T on macOS). The Settings dialog checks with it.
+ */
+export function conflictAnywhere(
+  id: KeymapActionId,
+  spec: string,
+  keymap: Record<string, string>,
+): KeymapActionId | null {
+  const mac = isMac();
+  return conflictFor(id, spec, keymap, mac) ?? conflictFor(id, spec, keymap, !mac);
 }

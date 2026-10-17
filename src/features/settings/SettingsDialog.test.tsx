@@ -299,6 +299,52 @@ test("Reset appears only for an overridden action and removes the override", asy
   expect(shortcutOf(paletteLabel)).toBe("Ctrl+K");
 });
 
+test("Reset is refused when the default is now used by another action (rebind, take, reset)", async () => {
+  const newQuery = strings.keymap["query.new"];
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+N" } }, confirmed: DEFAULT_SETTINGS });
+  setup();
+  // Mod+T is free once New query moved to Mod+N: the palette takes it.
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Control>}t{/Control}");
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+N", "palette.all": "Mod+T" } });
+  // Resetting New query would bring Mod+T back for two global actions.
+  await userEvent.click(queryReset(newQuery) as HTMLElement);
+  expect(screen.getByRole("alert")).toHaveTextContent(strings.settings.shortcutConflict(paletteLabel));
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
+  expect(shortcutOf(newQuery)).toBe("Ctrl+N");
+  expect(shortcutOf(paletteLabel)).toBe("Ctrl+T");
+});
+
+test("Reset is refused when the default would conflict on the other platform", async () => {
+  // On Linux Meta+T is free next to Mod+T, but on macOS Meta+T is Mod+T.
+  const newQuery = strings.keymap["query.new"];
+  useSettings.setState({
+    settings: { ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+N", "palette.all": "Meta+T" } },
+    confirmed: DEFAULT_SETTINGS,
+  });
+  setup();
+  await userEvent.click(queryReset(newQuery) as HTMLElement);
+  expect(screen.getByRole("alert")).toHaveTextContent(strings.settings.shortcutConflict(paletteLabel));
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+});
+
+test("a combination that conflicts on the other platform is refused (Meta+T is Mod+T on macOS)", async () => {
+  setup();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Meta>}t{/Meta}");
+  expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["query.new"]))).toBeInTheDocument();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+});
+
+test("Shift alone is not a modifier: Shift+K is refused as invalid", async () => {
+  setup();
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Shift>}k{/Shift}");
+  expect(screen.getByText(strings.settings.shortcutInvalid)).toBeInTheDocument();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+});
+
 test("recording the default combination removes the override instead of storing it", async () => {
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K" } }, confirmed: DEFAULT_SETTINGS });
   setup();

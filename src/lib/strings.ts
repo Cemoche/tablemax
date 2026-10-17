@@ -512,6 +512,8 @@ export const strings = {
       alt: "Alt",
       option: "⌥",
       shift: "Shift",
+      /** A literal Meta outside macOS (the Super/Windows key). */
+      meta: "Super",
     },
     /** Key names that read better as symbols in shortcut labels. */
     keyLabels: {
