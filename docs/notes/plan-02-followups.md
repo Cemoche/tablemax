@@ -79,3 +79,8 @@ it resolved in part keep only what is still open.
   stored passphrase was tried.
 - The host-key prompt now shows the resolved `host:port` the backend checked (the alias
   is no longer shown when `~/.ssh/config` maps it).
+
+## Residuals from the final fix-wave re-review
+- known_hosts: per-file evaluation reports Changed when `~/.ssh/known_hosts` and the app file record different algorithms for the same host (fails closed; false alarm). Rule to adopt: Known if some file records the presented key and no file records a same-algorithm different key.
+- `src-tauri/tests/ssh_tunnel.rs:276` (`unverifiable_known_hosts_blocks_without_trusting`) hard-codes `[127.0.0.1]:2222`; use `ssh_addr()` so side-by-side stacks pass.
+- `manager.rs` `unbind_stale_keyring`: the identity check runs before the tunnel slot lock and the (≤30 s) reopen; re-check right before each keyring read.
