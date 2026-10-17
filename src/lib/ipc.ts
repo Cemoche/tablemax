@@ -107,11 +107,13 @@ export const changesPreview = (workspaceId: string, object: ObjectRef, changes: 
 /**
  * Applies every change in one transaction on the browse connection (all or nothing).
  * Rejects with invalid "change <i>: <reason>" before running anything, cancelled (rolled
- * back), or connectionLost / connection (outcome unknown: COMMIT may have been sent).
+ * back), or connectionLost / connection (outcome unknown: COMMIT may have been sent or
+ * was interrupted).
  *
  * Safe mode: without `confirmed`, a commit the connection's safe mode wants confirmed is
  * rejected with confirmationRequired (message: the change indices, "0,1") before anything
- * is built or run; re-send it with `confirmed = true` once the user confirmed.
+ * is built or run; re-send it with `confirmed = true` once the user confirmed. Only one
+ * commit per workspace: another one while it runs rejects with invalid.
  */
 export const changesApply = (
   workspaceId: string,

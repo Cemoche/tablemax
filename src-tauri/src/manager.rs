@@ -56,6 +56,9 @@ use crate::store::{
 };
 use crate::value::{CellValue, EXACT_COUNT_THRESHOLD, FILTERED_COUNT_CAP, MAX_EDIT_BYTES};
 
+/// `changes_apply` while another commit of the same workspace is running.
+pub const COMMIT_ALREADY_RUNNING: &str = "a commit is already running in this workspace";
+
 /// How often a pending cancel is re-sent while the statement is still running.
 pub const CANCEL_RESEND_INTERVAL: Duration = Duration::from_millis(100);
 /// Upper bound on how long `cancel` keeps re-sending.
@@ -1060,13 +1063,15 @@ impl SessionManager {
     /// waits bounded (`dml::apply_lock_timeout_secs`). A failure that hints at a schema
     /// change drops the table's cached metadata. [`Self::changes_cancel`] interrupts it:
     /// everything is rolled back and the result is `Cancelled`. A lost connection is
-    /// returned as `ConnectionLost` (outcome unknown if COMMIT was already sent) and the
-    /// browse connection is rebuilt by the next call; a write is never retried.
+    /// returned as `ConnectionLost`, an interrupted COMMIT as `Connection` (outcome
+    /// unknown either way) and the browse connection is rebuilt by the next call; a write
+    /// is never retried.
     ///
     /// Safe mode: every change is a write. Unless `confirmed`, a non-empty commit the
     /// workspace's effective mode wants confirmed is refused with `ConfirmationRequired`
     /// (message: the change indices, `"0,1"`) before anything else: nothing is built or
-    /// run.
+    /// run. One commit per workspace at a time: a second one is refused with `Invalid`
+    /// ([`COMMIT_ALREADY_RUNNING`]) and leaves the running one (and its cancel) alone.
     pub async fn changes_apply(
         &self,
         workspace_id: &str,
@@ -1087,11 +1092,18 @@ impl SessionManager {
             }
         }
         let ctl = Arc::new(ApplyCtl::default());
-        self.state()
-            .workspaces
-            .get_mut(workspace_id)
-            .ok_or_else(|| workspace_not_found(workspace_id))?
-            .applying = Some(ctl.clone());
+        {
+            let mut st = self.state();
+            let ws = st
+                .workspaces
+                .get_mut(workspace_id)
+                .ok_or_else(|| workspace_not_found(workspace_id))?;
+            if ws.applying.is_some() {
+                return Err(AppError::new(ErrorKind::Invalid, COMMIT_ALREADY_RUNNING));
+            }
+            ws.applying = Some(ctl.clone());
+        }
+        // Only now: the slot holds this call's ctl, so the guard uninstalls only its own.
         let _end = EndApply {
             mgr: self,
             workspace_id,
@@ -1605,6 +1617,54 @@ mod tests {
             fx.mgr.changes_cancel("nope").await.unwrap_err().kind,
             ErrorKind::NotFound
         );
+    }
+
+    /// One commit per workspace: a second one is refused while the first runs, and the
+    /// refused call leaves the running commit's ctl in place (still cancellable).
+    #[tokio::test]
+    async fn second_commit_in_a_workspace_is_refused_and_keeps_the_first() {
+        use crate::driver::dml::{EditValue, RowChange, RowKey};
+        let fx = fixture();
+        let ws = sqlite_ws(&fx).await.workspace_id;
+        let running = Arc::new(ApplyCtl::default());
+        fx.mgr.state().workspaces.get_mut(&ws).unwrap().applying = Some(running.clone());
+        let changes = [RowChange::Update {
+            key: RowKey(vec![("id".into(), CellValue::Int(1))]),
+            set: vec![("name".into(), EditValue::Text("z".into()))],
+        }];
+        let e = fx
+            .mgr
+            .changes_apply(&ws, &obj(Some("main"), "items"), &changes, true)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (e.kind, e.message.as_str()),
+            (ErrorKind::Invalid, COMMIT_ALREADY_RUNNING)
+        );
+        assert_eq!(
+            COMMIT_ALREADY_RUNNING,
+            "a commit is already running in this workspace"
+        );
+        let still = fx.mgr.state().workspaces[&ws].applying.clone();
+        assert!(still.is_some_and(|c| Arc::ptr_eq(&c, &running)));
+        assert!(!running.finished.load(SeqCst));
+        // Nothing of the refused commit ran.
+        let rows = fx
+            .mgr
+            .table_page(&ws, &page(obj(Some("main"), "items"), vec![]))
+            .await
+            .unwrap()
+            .rows;
+        assert_eq!(rows[0][1], CellValue::Text("a".into()));
+        // Once the first ended, the next commit runs.
+        fx.mgr.state().workspaces.get_mut(&ws).unwrap().applying = None;
+        let o = fx
+            .mgr
+            .changes_apply(&ws, &obj(Some("main"), "items"), &changes, true)
+            .await
+            .unwrap();
+        assert!(o.applied, "{o:?}");
+        assert!(fx.mgr.state().workspaces[&ws].applying.is_none());
     }
 
     #[tokio::test]

@@ -67,6 +67,17 @@ out; lines it resolved in part keep only what is still open.
   outcome** (the COMMIT may have reached the server): the grid says so, keeps the pending
   changes and refuses another commit until the page has been reloaded (Reload stays
   allowed in that state).
+- A cancel that lands on the COMMIT itself (MySQL `KILL QUERY` → error 1317; the same
+  mapping applies to every engine) is reported as `Connection` "the commit was
+  interrupted: whether it was written is unknown" — an unknown outcome too, never
+  "cancelled, nothing written".
+- **Known behaviour:** a commit cancel re-sends the browse connection's canceller
+  (PostgreSQL cancel token / MySQL `KILL QUERY` on the browse connection), so it can also
+  interrupt a page or count running at the same time on that connection — on MySQL as
+  well as PostgreSQL. That page or count shows Cancelled; a reload fixes it.
+- One commit per workspace at a time: a second `changes_apply` while one runs is refused
+  (`Invalid` "a commit is already running in this workspace") and leaves the running one
+  and its cancel alone.
 - A lost browse connection (server restart, killed backend, dropped after a failed
   ROLLBACK, dead SSH tunnel) is rebuilt by the next call, once per loss; reads (pages,
   counts, metadata, cell values, schema and object lists, DDL) retry once on the new

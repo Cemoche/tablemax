@@ -25,6 +25,7 @@ use tablemax_lib::driver::{
     ConnectParams, Dialect, DriverKind, ObjectRef, PageRequest, ResultSet, RowCount, Session,
 };
 use tablemax_lib::error::ErrorKind;
+use tablemax_lib::manager::COMMIT_ALREADY_RUNNING;
 use tablemax_lib::manager::SessionManager;
 use tablemax_lib::secrets::MemorySecretStore;
 use tablemax_lib::ssh::known_hosts::KnownHosts;
@@ -1305,6 +1306,81 @@ async fn commit_waiting_on_a_row_lock_is_cancellable() {
         fx.mgr.changes_cancel(&fx.ws).await.unwrap();
         fx.apply_ok("lk", vec![update(int_key(2), &[("v", text("4"))])])
             .await;
+    }
+}
+
+/// One commit per workspace: while a commit waits on a row lock, a second one in the same
+/// workspace is refused (`Invalid`) without touching the first, which stays cancellable.
+#[tokio::test]
+async fn second_commit_while_one_runs_is_refused() {
+    for fx in all_fixtures().await {
+        if fx.d() == Dialect::Sqlite {
+            continue;
+        }
+        let t = fx.q("one");
+        fx.run(&format!("CREATE TABLE {t} (id int PRIMARY KEY, v int)"))
+            .await;
+        fx.run(&format!("INSERT INTO {t} VALUES (1, 1), (2, 2)"))
+            .await;
+        let k = fx.kind;
+        // Someone else holds row 1.
+        fx.run(fx.pick("BEGIN", "START TRANSACTION", "")).await;
+        fx.run(&format!("UPDATE {t} SET v = 10 WHERE id = 1")).await;
+
+        let (mgr, ws, obj) = (fx.mgr.clone(), fx.ws.clone(), fx.obj("one"));
+        let first = vec![update(int_key(1), &[("v", text("11"))])];
+        let running =
+            tokio::spawn(async move { mgr.changes_apply(&ws, &obj, &first, false).await });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            !running.is_finished(),
+            "{k:?}: the commit must wait for the lock"
+        );
+
+        let (obj, changes) = (fx.obj("one"), [update(int_key(2), &[("v", text("22"))])]);
+        let second = fx.mgr.changes_apply(&fx.ws, &obj, &changes, false);
+        let second = tokio::time::timeout(Duration::from_secs(2), second).await;
+        let first_still_runs = !running.is_finished();
+
+        // The first is still the workspace's commit: the cancel reaches it. Everything is
+        // released before asserting, so a failure cannot leave locks behind.
+        tokio::time::timeout(WAIT, fx.mgr.changes_cancel(&fx.ws))
+            .await
+            .expect("cancel must return")
+            .unwrap();
+        let res = tokio::time::timeout(WAIT, running).await;
+        fx.run("ROLLBACK").await;
+
+        let res = res.expect("cancelled commit must end").unwrap();
+        let e = second
+            .unwrap_or_else(|_| panic!("{k:?}: the second commit must be refused at once"))
+            .unwrap_err();
+        assert_eq!(
+            (e.kind, e.message.as_str()),
+            (ErrorKind::Invalid, COMMIT_ALREADY_RUNNING),
+            "{k:?}"
+        );
+        assert!(
+            first_still_runs,
+            "{k:?}: the refused commit did not end the first"
+        );
+        assert_eq!(res.unwrap_err().kind, ErrorKind::Cancelled, "{k:?}");
+        let rs = fx.page("one").await;
+        assert_eq!(cell(&rs, 0, "v"), CellValue::Int(1), "{k:?}");
+        assert_eq!(
+            cell(&rs, 1, "v"),
+            CellValue::Int(2),
+            "{k:?}: refused commit wrote nothing"
+        );
+
+        // Lock released and slot free: the next commit runs.
+        fx.apply_ok("one", vec![update(int_key(2), &[("v", text("5"))])])
+            .await;
+        assert_eq!(
+            cell(&fx.page("one").await, 1, "v"),
+            CellValue::Int(5),
+            "{k:?}"
+        );
     }
 }
 

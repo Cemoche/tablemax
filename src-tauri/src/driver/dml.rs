@@ -409,8 +409,9 @@ fn key_param(d: Dialect, col: &str, v: &CellValue) -> AppResult<SqlParam> {
     }))
 }
 
-/// Why `Session::apply` stops: `Abort` is returned as `Err` (lost connection, cancel),
-/// `Failed` as the outcome.
+/// Why `Session::apply` stops before COMMIT: `Abort` is returned as `Err` (lost
+/// connection, cancel: rolled back), `Failed` as the outcome. The COMMIT step itself goes
+/// through [`commit_failed`].
 pub(crate) enum Halt {
     Abort(AppError),
     Failed(ApplyOutcome),
@@ -487,8 +488,21 @@ pub(crate) fn applied(affected: Vec<u64>) -> ApplyOutcome {
     }
 }
 
-/// The COMMIT failed (e.g. a deferred constraint): nothing was written.
+/// Message of an interrupted COMMIT (`Connection`: outcome unknown).
+pub const COMMIT_INTERRUPTED: &str =
+    "the commit was interrupted: whether it was written is unknown";
+
+/// The COMMIT step failed. A plain error (e.g. a deferred constraint) means nothing was
+/// written: a failed outcome. An aborting error is returned as `Err`, and none of them
+/// says whether the COMMIT completed on the server: a lost connection stays
+/// `ConnectionLost`, a connection error `Connection`, and a cancel that landed on the
+/// COMMIT (MySQL `KILL QUERY` → error 1317 → `Cancelled`) becomes `Connection`
+/// ([`COMMIT_INTERRUPTED`]) so the caller never reports "cancelled, nothing written" for
+/// it. Shared by every engine's `Session::apply`.
 pub(crate) fn commit_failed(affected: Vec<u64>, e: AppError) -> AppResult<ApplyOutcome> {
+    if e.kind == ErrorKind::Cancelled {
+        return Err(AppError::new(ErrorKind::Connection, COMMIT_INTERRUPTED));
+    }
     if aborts(&e) {
         return Err(e);
     }
@@ -1227,6 +1241,8 @@ mod tests {
                 .kind,
             ErrorKind::ConnectionLost
         );
+        let e = commit_failed(vec![], AppError::new(ErrorKind::Connection, "y")).unwrap_err();
+        assert_eq!((e.kind, e.message.as_str()), (ErrorKind::Connection, "y"));
         let one = Statement {
             sql: "x".into(),
             params: vec![],
@@ -1235,6 +1251,23 @@ mod tests {
         assert_eq!(
             check_apply_args(&[one], &[]).unwrap_err().kind,
             ErrorKind::Invalid
+        );
+    }
+
+    /// A cancel (MySQL KILL QUERY → error 1317) that lands on COMMIT does not mean nothing
+    /// was written: the COMMIT may have completed. Reported as an unknown outcome.
+    #[test]
+    fn interrupted_commit_is_an_unknown_outcome() {
+        let e = commit_failed(
+            vec![1, 1],
+            AppError::new(ErrorKind::Cancelled, "interrupted"),
+        )
+        .unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Connection);
+        assert_eq!(e.message, COMMIT_INTERRUPTED);
+        assert_eq!(
+            COMMIT_INTERRUPTED,
+            "the commit was interrupted: whether it was written is unknown"
         );
     }
 

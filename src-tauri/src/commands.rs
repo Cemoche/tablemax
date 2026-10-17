@@ -265,7 +265,8 @@ pub async fn changes_preview(
 
 /// All changes in one transaction on the browse connection (all or nothing). Without
 /// `confirmed`, refused with `ConfirmationRequired` on a connection whose safe mode wants
-/// writes confirmed (nothing built or run).
+/// writes confirmed (nothing built or run); `Invalid` while another commit of the
+/// workspace runs.
 #[tauri::command]
 pub async fn changes_apply(
     state: State<'_, SessionManager>,
