@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install*)",
+      "Bash(pnpm test*)",
+      "Bash(pnpm lint*)",
+      "Bash(pnpm build*)",
+      "Bash(pnpm web*)",
+      "Bash(pnpm demo:db*)",
+      "Bash(cargo test *)",
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo tree *)",
+      "Bash(bash scripts/test-dbs.sh *)",
+      "Bash(scripts/test-dbs.sh *)",
+      "Bash(bash scripts/test-claude-hooks.sh*)",
+      "Bash(bash scripts/check-no-secrets.sh*)",
+      "Bash(docker compose -f docker-compose.test.yml *)",
+      "Bash(gh issue *)",
+      "Bash(gh pr *)",
+      "Bash(gh label list*)",
+      "Bash(gh run *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git switch *)",
+      "Bash(git fetch*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git worktree *)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(gh pr merge*)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push origin main*)",
+      "Bash(git push * main)",
+      "Bash(git push * HEAD:main*)",
+      "Bash(gh pr merge*--admin*)",
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/block-main-edits.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/session-context.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
+  },
+  "worktree": {
+    "baseRef": "fresh"
+  }
+}
