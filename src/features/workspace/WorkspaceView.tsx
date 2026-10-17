@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "../editor/QueryTab";
@@ -26,21 +26,10 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
   const closeTab = useWorkspaces((s) => s.closeTab);
   const { id, activeTabId } = workspace;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
-      const key = e.key.toLowerCase();
-      if (key === "t") {
-        e.preventDefault();
-        openQueryTab(id);
-      } else if (key === "w") {
-        e.preventDefault();
-        if (activeTabId) closeTab(id, activeTabId);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [id, activeTabId, openQueryTab, closeTab]);
+  useShortcut("Mod+T", () => openQueryTab(id));
+  useShortcut("Mod+W", () => {
+    if (activeTabId) closeTab(id, activeTabId);
+  });
 
   const active = workspace.tabs.find((t) => t.id === activeTabId) ?? null;
   return (
