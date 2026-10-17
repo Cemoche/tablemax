@@ -177,6 +177,7 @@ export const strings = {
     noTabs: "No open tabs",
     noTabsHint: "Pick a table in the sidebar or press Ctrl+T for a new query",
     tabsLabel: "Open tabs",
+    tabContentLabel: "Tab content",
     newQueryTab: "New query tab",
     closeTab: (title: string) => `Close ${title}`,
     queryTitle: (n: number) => `Query ${n}`,

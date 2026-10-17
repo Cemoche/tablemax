@@ -8,9 +8,18 @@ import type { ConnectionConfig } from "../../lib/types";
 import { catalogKey, useCatalog } from "../../stores/catalog";
 import { useConnections } from "../../stores/connections";
 import { useWorkspaces } from "../../stores/workspaces";
+import { runEditorCommand } from "../editor/editorCommands";
 import { tabKindLabel } from "../workspace/tabInfo";
 import { type ActionCtx, formatShortcut, visibleActions } from "./actions";
 import { fuzzyScore, rank } from "./fuzzy";
+
+/** The opener is gone (its tab was replaced): focus the active tab's editor or content. */
+function focusActiveTab() {
+  const { workspaces, activeWorkspaceId } = useWorkspaces.getState();
+  const w = workspaces.find((x) => x.id === activeWorkspaceId);
+  if (w?.activeTabId && runEditorCommand(w.activeTabId, "focus")) return;
+  document.querySelector<HTMLElement>("[data-tab-content]")?.focus();
+}
 
 /** At most this many items are rendered per group (a 5 000-table schema stays fluid). */
 export const MAX_PER_GROUP = 200;
@@ -80,7 +89,9 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
     fn();
     setTimeout(() => {
       const active = document.activeElement;
-      if ((!active || active === document.body) && el instanceof HTMLElement && el.isConnected) el.focus();
+      if (active && active !== document.body) return;
+      if (el instanceof HTMLElement && el.isConnected) el.focus();
+      else focusActiveTab();
     }, 0);
   };
   const toggle = (m: Mode) => {
@@ -280,7 +291,6 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
                 value={`action:${a.id}`}
                 className={itemClass}
                 onSelect={() => {
-                  const el = returnFocus.current;
                   const c: ActionCtx = {
                     ...ctx,
                     pickSchema: () => {
@@ -294,7 +304,6 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
                     // Opens a sub-list: the palette stays.
                     a.run(c);
                   } else {
-                    returnFocus.current = el;
                     closeAfter(() => a.run(c));
                   }
                 }}

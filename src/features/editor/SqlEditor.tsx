@@ -102,6 +102,7 @@ export function SqlEditor({ value, onChange, dialect, onRun, onSelectionChange, 
   useEffect(() => {
     if (!tabId) return;
     return registerEditorCommands(tabId, {
+      focus: () => viewRef.current?.focus(),
       toggleComment: () => {
         const view = viewRef.current;
         if (!view) return;

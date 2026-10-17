@@ -2,7 +2,7 @@
  * Command bridge between the palette and the mounted SQL editors: each editor registers
  * the commands it supports for its tab; the palette runs (and shows) them by name.
  */
-export type EditorCommandName = "toggleComment" | "format";
+export type EditorCommandName = "toggleComment" | "format" | "focus";
 export type EditorCommands = Partial<Record<EditorCommandName, () => void>>;
 
 const registry = new Map<string, EditorCommands>();

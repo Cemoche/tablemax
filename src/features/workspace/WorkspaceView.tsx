@@ -70,7 +70,12 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar workspace={workspace} />
         <TabSwitcher workspace={workspace} />
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div
+          data-tab-content=""
+          tabIndex={-1}
+          aria-label={strings.workspace.tabContentLabel}
+          className="min-h-0 flex-1 overflow-auto outline-none"
+        >
           {!connected ? (
             <Disconnected workspace={workspace} error={connectError} />
           ) : active ? (
