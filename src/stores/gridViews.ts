@@ -6,6 +6,8 @@ export interface GridView {
   sort: [string, SortDir] | null;
   /** Joined by AND; changing them goes back to page 0 (usePagedTable.setFilters). */
   filters: Filter[];
+  /** The page size the tab latched (usePagedTable); absent = the current setting. */
+  pageSize?: number;
 }
 
 /** A table a tab showed before following a foreign key, with its view at that moment. */

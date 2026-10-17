@@ -23,16 +23,17 @@ export function usePagedTable(
   tabId: string,
   wantedPageSize = DEFAULT_PAGE_SIZE,
 ) {
-  // The tab latches its page size: a new setting is adopted only while nothing is pending
-  // (paging is refused then, and the offsets stay consistent), and always restarts at page 0.
-  const [pageSize, setPageSize] = useState(wantedPageSize);
+  // The tab latches its page size in its view (it survives tab switches, like the pending
+  // changes): a new setting is adopted only while nothing is pending (paging is refused then,
+  // and the offsets stay consistent), and always restarts at page 0.
+  const view = useGridViews((s) => s.views[tabId]) ?? useGridViews.getState().getView(tabId);
+  const pageSize = view.pageSize ?? wantedPageSize;
   const pendingCount = usePendingChanges((s) => s.count(tabId));
   useEffect(() => {
-    if (wantedPageSize === pageSize || pendingCount > 0) return;
-    setPageSize(wantedPageSize);
-    useGridViews.getState().setView(tabId, { page: 0 });
-  }, [wantedPageSize, pageSize, pendingCount, tabId]);
-  const view = useGridViews((s) => s.views[tabId]) ?? useGridViews.getState().getView(tabId);
+    const set = useGridViews.getState().setView;
+    if (view.pageSize === undefined) set(tabId, { pageSize: wantedPageSize });
+    else if (view.pageSize !== wantedPageSize && pendingCount === 0) set(tabId, { pageSize: wantedPageSize, page: 0 });
+  }, [wantedPageSize, view.pageSize, pendingCount, tabId]);
   const { page, sort, filters } = view;
   const [result, setResult] = useState<ResultSet | null>(null);
   const [rowCount, setRowCount] = useState<RowCount | null>(null);

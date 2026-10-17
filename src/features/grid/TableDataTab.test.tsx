@@ -139,6 +139,46 @@ test("a new page size waits for pending changes to be discarded", async () => {
   );
 });
 
+test("a latched page size survives a tab remount while changes are pending, until they are discarded", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(300));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
+  const ui = <TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />;
+  const first = render(ui);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
+  await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 301–600 of 900"));
+  pending().toggleDelete("t1", obj, key(0));
+  act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 50 } }));
+  first.unmount();
+  vi.mocked(ipc.tablePage).mockClear();
+  render(ui);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 301–600 of 900"));
+  expect(ipc.tablePage).toHaveBeenCalledWith("w1", expect.objectContaining({ limit: 300, offset: 300 }));
+  expect(ipc.tablePage).not.toHaveBeenCalledWith("w1", expect.objectContaining({ limit: 50 }));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ limit: 50, offset: 0 })),
+  );
+});
+
+test("after a commit the tab adopts the changed page size at page 0 with a single fetch", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(300));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
+  vi.mocked(ipc.changesApply).mockResolvedValue({ applied: true, affected: [1], failedIndex: null, error: null });
+  pending().toggleDelete("t1", obj, key(0));
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
+  act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 100 } }));
+  await act(async () => {});
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
+  vi.mocked(ipc.tablePage).mockClear();
+  await act(() => pending().commit("t1", "w1", obj));
+  await waitFor(() => expect(ipc.tablePage).toHaveBeenCalled());
+  await act(async () => {});
+  const limits = vi.mocked(ipc.tablePage).mock.calls.map((c) => [c[1].limit, c[1].offset]);
+  expect(limits).toEqual([[100, 0]]);
+});
+
 test("error shows message with Retry; connectionLost hints", async () => {
   vi.mocked(ipc.tablePage).mockRejectedValueOnce({ kind: "connectionLost", message: "server gone" });
   vi.mocked(ipc.tablePage).mockResolvedValue(page(1));
@@ -226,7 +266,7 @@ test("paging and sorting are blocked while changes are pending", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
   expect(screen.getByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
   act(() => grid!.onSort!("note"));
-  expect(useGridViews.getState().getView("t1")).toEqual({ page: 0, sort: null, filters: [] });
+  expect(useGridViews.getState().getView("t1")).toEqual({ page: 0, sort: null, filters: [], pageSize: 300 });
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
   await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
   expect(screen.queryByText(strings.grid.commitOrDiscardFirst)).toBeNull();
