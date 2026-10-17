@@ -136,6 +136,7 @@ test("a pending value is shown instead of the loaded one", () => {
     deletes: {},
     errors: {},
     error: null,
+    outcomeUnknown: false,
     object: obj,
   };
   renderPanel(data(), { pending });
@@ -176,6 +177,7 @@ test("typing back to an empty string set on a NULL column keeps the empty string
     deletes: {},
     errors: {},
     error: null,
+    outcomeUnknown: false,
     object: obj,
   };
   const { onChange, onAction } = renderPanel(d, { pending });

@@ -232,7 +232,7 @@ export const strings = {
     loadedIn: (ms: number) => `${ms} ms`,
     retry: "Retry",
     loadFailed: "Could not load the table",
-    reopenHint: "The connection was lost. Close this workspace and reopen the connection.",
+    reopenHint: "The connection was lost. Retry to reconnect.",
     binary: (len: number, hex: string) => `<binary ${len} B> ${hex}`,
     defaultText: "DEFAULT",
     readOnlyView: "Read-only: this is a view.",
@@ -255,6 +255,11 @@ export const strings = {
     otherTableChanges: (table: string) =>
       `These changes belong to the table ${table}: nothing was written. Go back to it to commit them.`,
     nothingWritten: "Nothing was written; the changes are still pending.",
+    commitOutcomeUnknown:
+      "The connection was lost during the commit: some or all changes may have been saved. Reload and check before committing again.",
+    cancelCommit: "Cancel",
+    cancelCommitLabel: "Cancel the commit",
+    closeWhileCommitting: "Committing… wait for the commit to finish.",
     editorLabel: "Cell value",
     editorLoading: "loading…",
     editorLoadFailed: (message: string) => `Could not load the full value: ${message}`,
@@ -283,6 +288,8 @@ export const strings = {
     copyFailed: (message: string) => `Could not copy: ${message}`,
     dismiss: "Dismiss",
     dismissText: "×",
+    copyTruncated: (n: number) =>
+      `${n.toLocaleString("en-US")} ${n === 1 ? "value was" : "values were"} truncated in the copy.`,
     copySkippedInserts: (n: number) =>
       `${n.toLocaleString("en-US")} new ${n === 1 ? "row was" : "rows were"} not copied (not committed yet).`,
     trail: {

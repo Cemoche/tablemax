@@ -1,3 +1,4 @@
+import { ANY_OPS, ARITY } from "../../lib/quickFilter";
 import { strings } from "../../lib/strings";
 import type { Dialect, Filter, FilterOp } from "../../lib/types";
 import { formatValueList, splitValueList } from "../../lib/valueList";
@@ -26,30 +27,18 @@ const COLUMN_OPS: FilterOp[] = [
   "like", "notLike", "ilike", "contains", "notContains",
   "isNull", "isNotNull",
 ];
-const ANY_OPS: FilterOp[] = ["eq", "contains", "notContains", "like"];
 
 /** Operators a row may use: ILIKE on PostgreSQL only; Any column gets the four the backend allows. */
 export function opsFor(dialect: Dialect, column: DraftColumn): FilterOp[] {
   if (column === RAW_SQL) return ["raw"];
-  if (column === ANY_COLUMN) return ANY_OPS;
+  if (column === ANY_COLUMN) return [...ANY_OPS];
   return dialect === "postgres" ? COLUMN_OPS : COLUMN_OPS.filter((o) => o !== "ilike");
 }
 
 /** How many value fields an operator takes ("list" = one comma-separated field). */
 export function arityOf(op: FilterOp): 0 | 1 | 2 | "list" {
-  switch (op) {
-    case "isNull":
-    case "isNotNull":
-      return 0;
-    case "between":
-    case "notBetween":
-      return 2;
-    case "in":
-    case "notIn":
-      return "list";
-    default:
-      return 1;
-  }
+  if (op === "in" || op === "notIn") return "list";
+  return (ARITY[op] ?? 1) as 0 | 1 | 2;
 }
 
 let seq = 0;

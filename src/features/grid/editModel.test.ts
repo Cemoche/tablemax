@@ -31,7 +31,7 @@ const model = (data: ResultSet, info = tableInfo(), locked = false) =>
   buildGridModel(data, info, s().tabs[T], locked);
 
 beforeEach(() => {
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
 });
 
 test("inserts come first, then the page rows with their pending state", () => {
@@ -96,8 +96,14 @@ test("menu actions depend on the row and the cell", () => {
   ]);
   // Edited cell of a loaded row: no DEFAULT outside an insert.
   expect(menuActions(m, 1, 3)).toEqual(["setNull", "setEmpty", "revertCell", "duplicateRow", "deleteRow"]);
-  // NOT NULL, unedited cell.
-  expect(menuActions(m, 1, 1)).toEqual(["setEmpty", "duplicateRow", "deleteRow"]);
+  // NOT NULL, unedited integer cell: no empty string either (not a text column).
+  expect(menuActions(m, 1, 1)).toEqual(["duplicateRow", "deleteRow"]);
+  const varchar = tableInfo({
+    columns: tableInfo().columns.map((c) =>
+      c.name === "order_id" ? { ...c, typeName: "varchar(10)", baseType: "character varying" } : c,
+    ),
+  });
+  expect(menuActions(model(data, varchar), 1, 1)).toEqual(["setEmpty", "duplicateRow", "deleteRow"]);
   // Deleted row, row marker.
   expect(menuActions(m, 2, 3)).toEqual(["duplicateRow", "restoreRow"]);
   expect(menuActions(m, 2, null)).toEqual(["duplicateRow", "restoreRow"]);

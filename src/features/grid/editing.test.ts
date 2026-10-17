@@ -3,6 +3,7 @@ import { strings } from "../../lib/strings";
 import type { CellValue } from "../../lib/types";
 import { col, tableInfo } from "../../test/tableInfo";
 import {
+  acceptsEmptyString,
   cellEditability,
   cellText,
   insertValuesOf,
@@ -140,4 +141,14 @@ test("columns named __proto__ and constructor are plain keys", () => {
   expect(Object.getPrototypeOf(values)).toBeNull();
   expect(Object.keys(values)).toEqual(["id", "__proto__", "constructor"]);
   expect(values["__proto__"]).toEqual({ t: "text", v: "p" });
+});
+
+test("only character columns offer the empty string", () => {
+  const yes = ["text", "character varying", "bpchar", "varchar(20)", "char(3)", "longtext", "tinytext",
+    "citext", "NVARCHAR(10)", "CLOB", "set('a','b')", ""];
+  const no = ["integer", "numeric", "boolean", "date", "timestamp with time zone", "uuid", "jsonb", "json",
+    "text[]", "enum('a','b')", "REAL", "DATETIME", "tinyint(1)", "bit(3)"];
+  for (const t of yes) expect(acceptsEmptyString(col("c", { baseType: t })), t).toBe(true);
+  for (const t of no) expect(acceptsEmptyString(col("c", { baseType: t })), t).toBe(false);
+  expect(acceptsEmptyString(col("c", { baseType: "text", binary: true }))).toBe(false);
 });

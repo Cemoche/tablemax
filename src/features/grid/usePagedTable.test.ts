@@ -18,7 +18,7 @@ const rs = (n: number): ResultSet => ({
 beforeEach(() => {
   vi.resetAllMocks();
   useGridViews.setState({ views: {} });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {}, awaitingReload: {}, epoch: {} });
   vi.mocked(ipc.tablePage).mockResolvedValue(rs(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 650 });
 });
@@ -186,4 +186,44 @@ test("a capped filtered count shows 500,000+ and pages on while pages are full",
   await waitFor(() => expect(result.current.loading).toBe(false));
   // Past the estimate, a full page still offers the next one.
   expect(result.current.hasNext).toBe(true);
+});
+
+test("with an estimate, only a full page offers the next one", async () => {
+  // The estimate says 3 pages, but this page is short: it is the last one.
+  vi.mocked(ipc.tablePage).mockResolvedValue(rs(120));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "estimate", v: 900 });
+  const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  await waitFor(() => expect(result.current.rowCount).not.toBeNull());
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.hasNext).toBe(false);
+});
+
+test("a page loaded after a commit settles it; a reload is allowed when the outcome is unknown", async () => {
+  const st = usePendingChanges.getState;
+  const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  // A commit ended with an unknown outcome: the changes stay pending.
+  usePendingChanges.setState((s) => ({
+    tabs: {
+      ...s.tabs,
+      t1: {
+        edits: {},
+        inserts: [{ tempId: "n1", values: {} }],
+        deletes: {},
+        errors: {},
+        error: "lost",
+        outcomeUnknown: true,
+        object: obj,
+      },
+    },
+    epoch: { t1: 1 },
+  }));
+  act(() => result.current.reload());
+  await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(st().tabs.t1.outcomeUnknown).toBe(false));
+  expect(st().count("t1")).toBe(1);
+  // Now a reload is refused again like paging.
+  act(() => result.current.reload());
+  expect(st().blocked.t1).toBe(true);
+  expect(ipc.tablePage).toHaveBeenCalledTimes(2);
 });

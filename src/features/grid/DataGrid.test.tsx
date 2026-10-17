@@ -1,7 +1,7 @@
 import type { CellClickedEventArgs, DataEditorProps, GridSelection } from "@glideapps/glide-data-grid";
 import { CompactSelection } from "@glideapps/glide-data-grid";
 import { act, render } from "@testing-library/react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { ResultSet } from "../../lib/types";
 import { tableInfo } from "../../test/tableInfo";
@@ -39,6 +39,9 @@ const editing = (): GridEditing => ({
   onEditorOpen: vi.fn(),
   onSelect: vi.fn(),
   selectedRow: null,
+  rowSignature: "s",
+  rowIdAt: (row) => `r${row}`,
+  rowById: (id) => Number(id.slice(1)),
 });
 
 const click = (over: Partial<CellClickedEventArgs> = {}) =>
@@ -93,4 +96,40 @@ test("the context menu gets the grid's selection as a block", () => {
   // On the row marker (col -1): `col` null.
   act(() => editor!.onCellContextMenu!([-1, 2], click()));
   expect(ed.onContextMenu).toHaveBeenLastCalledWith(2, null, 103, 54, { rows: [0, 1], cols: [1, 2] });
+});
+
+/** Opens Glide's editor on `cell` (activation, then the overlay mounts). */
+function openEditor(cell: [number, number], onFinishedEditing = vi.fn()) {
+  act(() => editor!.onCellActivated!(cell));
+  const provided = editor!.provideEditor!(editor!.getCellContent(cell)) as {
+    editor: (p: Record<string, unknown>) => ReactNode;
+  };
+  const Editor = provided.editor;
+  const value = editor!.getCellContent(cell);
+  const view = render(
+    <Editor value={value} onChange={vi.fn()} onFinishedEditing={onFinishedEditing} isHighlighted={false} />,
+  );
+  return { onFinishedEditing, view };
+}
+
+test("the cell editor's edit goes to its record, wherever that row is now", () => {
+  const ed = editing();
+  const ids = ["r0", "r1", "r2"];
+  const moved = { ...ed, rowIdAt: (row: number) => ids[row] ?? null, rowById: vi.fn(() => 2) };
+  render(<DataGrid data={data} editing={moved} />);
+  openEditor([2, 1]);
+  // Glide reports the index the editor opened on; the record is now at row 2.
+  act(() => editor!.onCellEdited!([2, 1], { ...editor!.getCellContent([2, 1]), data: "typed" } as never));
+  expect(moved.rowById).toHaveBeenCalledWith("r1");
+  expect(ed.onEdit).toHaveBeenCalledWith(2, 2, "typed");
+});
+
+test("the cell editor closes, its edit dropped, when the rows change", () => {
+  const ed = editing();
+  const view = render(<DataGrid data={data} editing={ed} />);
+  const { onFinishedEditing } = openEditor([2, 1]);
+  view.rerender(<DataGrid data={data} editing={{ ...ed }} />);
+  expect(onFinishedEditing).not.toHaveBeenCalled();
+  view.rerender(<DataGrid data={data} editing={{ ...ed, rowSignature: "rows added" }} />);
+  expect(onFinishedEditing).toHaveBeenCalledWith(undefined);
 });

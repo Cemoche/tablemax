@@ -52,6 +52,15 @@ export interface GridEditing {
   onSelect: (row: number | null) => void;
   /** Where the selected record is now (it moves with inserts, reloads and pages). */
   selectedRow: number | null;
+  /**
+   * Changes whenever display rows are added, removed or reloaded, or a commit locks them:
+   * an open cell editor is then closed (its edit dropped).
+   */
+  rowSignature: string;
+  /** The identity of a display row (stable across renders), null when out of range. */
+  rowIdAt: (row: number) => string | null;
+  /** Where the row with that identity is now (null: gone). */
+  rowById: (id: string) => number | null;
 }
 
 export interface DataGridProps {
@@ -81,6 +90,8 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
   const activated = useRef<Item | null>(null);
   /** Cancels the open cell editor (set while one is open). */
   const closeEditor = useRef<(() => void) | null>(null);
+  /** The record and column the open editor edits (captured when it opened). */
+  const editorTarget = useRef<{ id: string | null; col: number } | null>(null);
   /** Controlled for table grids: reports the selected row and follows the selected record. */
   const [selection, setSelection] = useState<GridSelection>(() => ({
     columns: CompactSelection.empty(),
@@ -91,13 +102,15 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
     if (moved !== selection) setSelection(moved);
   }
 
-  // New data (a reload) closes an open editor: its row index may now be another row.
-  const shownData = useRef(data);
+  // New data (a reload), rows added or removed, or a commit closes an open editor: its row
+  // index may now be another row.
+  const shown = useRef({ data, signature: editing?.rowSignature });
+  const signature = editing?.rowSignature;
   useEffect(() => {
-    if (shownData.current === data) return;
-    shownData.current = data;
+    if (shown.current.data === data && shown.current.signature === signature) return;
+    shown.current = { data, signature };
     closeEditor.current?.();
-  }, [data]);
+  }, [data, signature]);
 
   const columns = useMemo<GridColumn[]>(
     () =>
@@ -222,11 +235,17 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
           load={load}
           onChange={(text) => p.onChange({ ...value, data: text })}
           onMount={() => {
+            const target = at ? { id: ed.rowIdAt(at[1]), col: at[0] } : null;
+            editorTarget.current = target;
             closeEditor.current = () => finish.current(undefined);
             editingRef.current?.onEditorOpen(true);
             return () => {
               closeEditor.current = null;
               editingRef.current?.onEditorOpen(false);
+              // After Glide reported the edit (if any) for this editor.
+              setTimeout(() => {
+                if (editorTarget.current === target) editorTarget.current = null;
+              }, 0);
             };
           }}
         />
@@ -272,7 +291,17 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
           editingRef.current?.onActivate(row, col);
         },
         onCellEdited: ([col, row]: Item, v: GridCell) => {
-          if (v.kind === GridCellKind.Text) editingRef.current?.onEdit(row, col, v.data);
+          const ed = editingRef.current;
+          if (!ed || v.kind !== GridCellKind.Text) return;
+          // The editor's edit goes to the record it was opened on, wherever it is now.
+          const target = editorTarget.current;
+          editorTarget.current = null;
+          if (!target) {
+            ed.onEdit(row, col, v.data);
+            return;
+          }
+          const at = target.id === null ? null : ed.rowById(target.id);
+          if (at !== null) ed.onEdit(at, target.col, v.data);
         },
         onCellClicked: ([col, row]: Item, e: CellClickedEventArgs) => {
           const ed = editingRef.current;

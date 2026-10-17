@@ -28,8 +28,9 @@ const btn =
 
 export function TableDataTab(props: Props) {
   // Kept across foreign key navigation (the panel shows the referenced row once selected).
-  const detail = useRowDetail();
   const { view, setView } = useTableView();
+  // Shortcuts of the data view (Mod+I, Alt+←) only act while it is shown.
+  const detail = useRowDetail(view === "data");
   // The structure loads when first asked for; then both views stay mounted (hidden) so
   // switching keeps the page, the pending changes and the structure's section.
   const [structureSeen, setStructureSeen] = useState(false);
@@ -39,7 +40,12 @@ export function TableDataTab(props: Props) {
       <ViewToggle view={view} onChange={setView} />
       <div hidden={view !== "data"} className="min-h-0 flex-1">
         {/* Another table (foreign key navigation) starts afresh: page, grid, selection, menus. */}
-        <TableDataView key={JSON.stringify([props.object.schema, props.object.name])} {...props} detail={detail} />
+        <TableDataView
+          key={JSON.stringify([props.object.schema, props.object.name])}
+          {...props}
+          detail={detail}
+          active={view === "data"}
+        />
       </div>
       {structureSeen && (
         <div hidden={view !== "structure"} className="min-h-0 flex-1">
@@ -56,7 +62,8 @@ function TableDataView({
   object,
   dialect,
   detail,
-}: Props & { detail: ReturnType<typeof useRowDetail> }) {
+  active,
+}: Props & { detail: ReturnType<typeof useRowDetail>; active: boolean }) {
   const t = usePagedTable(workspaceId, object, tabId);
   const e = useTableEditing({ workspaceId, tabId, object, result: t.result, reload: t.reload });
   const links = useFkLinks({ workspaceId, tabId, object, dialect, info: e.info, data: t.result, model: e.model });
@@ -79,7 +86,7 @@ function TableDataView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} />
+      <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} shortcut={active} />
       <FilterBar dialect={dialect} columns={columns} filters={t.filters} onApply={t.setFilters} />
       {t.error && (
         <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger">
@@ -106,7 +113,7 @@ function TableDataView({
             type="button"
             className={btn}
             onClick={e.addRow}
-            disabled={e.committing}
+            disabled={e.locked}
           >
             {strings.grid.addRow}
           </button>
@@ -114,18 +121,29 @@ function TableDataView({
             type="button"
             className={btn}
             onClick={e.commit}
-            disabled={e.count === 0 || e.committing}
+            disabled={e.count === 0 || e.locked || e.outcomeUnknown}
           >
             {e.committing ? strings.grid.committing : strings.grid.commit(modShortcut("S"))}
           </button>
-          <button
-            type="button"
-            className={btn}
-            onClick={e.discard}
-            disabled={e.count === 0 || e.committing}
-          >
-            {strings.grid.discard}
-          </button>
+          {e.committing ? (
+            <button
+              type="button"
+              className={btn}
+              aria-label={strings.grid.cancelCommitLabel}
+              onClick={e.cancelCommit}
+            >
+              {strings.grid.cancelCommit}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={btn}
+              onClick={e.discard}
+              disabled={e.count === 0 || e.locked}
+            >
+              {strings.grid.discard}
+            </button>
+          )}
           {e.count > 0 && <span>{strings.grid.pendingCount(e.count)}</span>}
           {e.hint && <span className="ml-auto truncate text-muted">{e.hint}</span>}
         </div>
@@ -133,7 +151,8 @@ function TableDataView({
       {e.failure && (
         <div role="alert" className="border-b border-border px-3 py-1 text-sm text-danger">
           <p className="break-words">{e.failure}</p>
-          <p className="text-muted">{strings.grid.nothingWritten}</p>
+          {/* Only a rolled-back commit wrote nothing; an unknown outcome says so itself. */}
+          {!e.outcomeUnknown && <p className="text-muted">{strings.grid.nothingWritten}</p>}
         </div>
       )}
       {copy.notice && (

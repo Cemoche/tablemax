@@ -3,7 +3,14 @@
 // DataGrid draws it, TableDataTab acts on it.
 import type { CellValue, EditValue, ResultSet, RowKey, TableInfo } from "../../lib/types";
 import { type PendingEdit, type PendingTab, rowKeyId } from "../../stores/pendingChanges";
-import { cellEditability, isTruncated, readOnlyReason, rowKeyIssue, rowKeyOf } from "./editing";
+import {
+  acceptsEmptyString,
+  cellEditability,
+  isTruncated,
+  readOnlyReason,
+  rowKeyIssue,
+  rowKeyOf,
+} from "./editing";
 
 export type DisplayRow =
   | { kind: "insert"; tempId: string; values: Record<string, EditValue> }
@@ -173,7 +180,8 @@ export type MenuAction =
 
 /**
  * The context menu of a cell (`col` null: the row marker). Cell actions only on editable
- * cells (Set NULL on nullable columns, Set DEFAULT in inserts), then the row actions.
+ * cells (Set NULL on nullable columns, Set empty string on character columns, Set DEFAULT
+ * in inserts), then the row actions.
  */
 export function menuActions(model: GridModel, row: number, col: number | null): MenuAction[] {
   const { info } = model;
@@ -185,7 +193,7 @@ export function menuActions(model: GridModel, row: number, col: number | null): 
     if (c.editable) {
       const column = info.columns.find((x) => x.name === model.columns[col]);
       if (column?.nullable) out.push("setNull");
-      out.push("setEmpty");
+      if (column && acceptsEmptyString(column)) out.push("setEmpty");
       if (r.kind === "insert") out.push("setDefault");
       if (c.edited) out.push("revertCell");
     }

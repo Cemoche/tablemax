@@ -4,7 +4,7 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { AppError, Filter, ObjectRef, ResultSet, RowCount } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
-import { guardPending } from "../../stores/pendingChanges";
+import { guardPending, usePendingChanges } from "../../stores/pendingChanges";
 
 export const DEFAULT_PAGE_SIZE = 300;
 
@@ -42,6 +42,9 @@ export function usePagedTable(
   useEffect(() => {
     const mine = ++seq.current;
     const started = performance.now();
+    // A page requested after a commit ended unlocks the tab once it settles.
+    const pending = usePendingChanges.getState();
+    const epoch = pending.epochOf(tabId);
     setLoading(true);
     ipc
       .tablePage(workspaceId, {
@@ -53,6 +56,7 @@ export function usePagedTable(
       })
       .then((r) => {
         if (mine !== seq.current) return;
+        pending.pageSettled(tabId, epoch, true);
         setResult(r);
         setError(null);
         setElapsedMs(Math.round(performance.now() - started));
@@ -60,6 +64,7 @@ export function usePagedTable(
       })
       .catch((e) => {
         if (mine !== seq.current) return;
+        pending.pageSettled(tabId, epoch, false);
         setError(toAppError(e));
         setLoading(false);
       });
@@ -67,7 +72,7 @@ export function usePagedTable(
       seq.current++;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, object.schema, object.name, page, sortCol, sortDir, filterKey, pageSize, tick]);
+  }, [workspaceId, object.schema, object.name, page, sortCol, sortDir, filterKey, pageSize, tick, tabId]);
 
   // Count is independent of paging/sorting: once per mount, on reload and per filters.
   const countedFilters = useRef(filterKey);
@@ -94,10 +99,9 @@ export function usePagedTable(
 
   const fullPage = (result?.rows.length ?? 0) === pageSize;
   const pageCount = rowCount ? Math.max(1, Math.ceil(rowCount.v / pageSize)) : page + 1;
-  // An estimate (or a capped filtered count) may be short: a full page offers the next one.
-  const hasNext = !rowCount
-    ? fullPage
-    : page + 1 < pageCount || (rowCount.t === "estimate" && fullPage);
+  // An estimate (or a capped filtered count) may be off either way: only a full page
+  // offers the next one.
+  const hasNext = !rowCount || rowCount.t === "estimate" ? fullPage : page + 1 < pageCount;
 
   // Page, sort and filter changes are refused while changes are pending (they would apply to
   // rows the user no longer sees); guardPending flags the tab with the reason.
@@ -131,9 +135,10 @@ export function usePagedTable(
     const v = useGridViews.getState().getView(tabId);
     if (v.page > 0 && guardPending(tabId)) setView(tabId, { page: v.page - 1 });
   }, [tabId, setView]);
-  // Refused like paging while changes are pending (after a commit nothing is pending).
+  // Refused like paging while changes are pending (after a commit nothing is pending),
+  // except after a commit whose outcome is unknown: the user must reload to check.
   const reload = useCallback(() => {
-    if (guardPending(tabId)) setTick((t) => t + 1);
+    if (usePendingChanges.getState().guardReload(tabId)) setTick((t) => t + 1);
   }, [tabId]);
 
   return {

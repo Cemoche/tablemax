@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { ANY_OPS, ARITY } from "../../lib/quickFilter";
 import type { Filter } from "../../lib/types";
 import {
   ANY_COLUMN,
@@ -81,4 +82,11 @@ test("invalid drafts give per-row errors and no filters", () => {
 test("an empty value is a legitimate single value", () => {
   const d = { ...newDraft(["note"]), values: [""] };
   expect(filtersFromDrafts([d]).filters).toEqual([{ column: "note", op: "eq", values: [""] }]);
+});
+
+test("operator tables are shared with the quick filter", () => {
+  expect(opsFor("postgres", ANY_COLUMN)).toEqual([...ANY_OPS]);
+  for (const op of ["isNull", "isNotNull", "between", "notBetween", "eq"] as const) {
+    expect(arityOf(op)).toBe(ARITY[op] ?? 1);
+  }
 });
