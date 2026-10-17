@@ -9,6 +9,8 @@ interface Props {
   load?: () => Promise<string>;
   /** Each edit; Glide's overlay commits the last one on Enter / Tab / click outside. */
   onChange: (text: string) => void;
+  /** Runs when the editor opens; the function it returns runs when the editor closes. */
+  onMount?: () => (() => void) | void;
 }
 
 /**
@@ -16,11 +18,14 @@ interface Props {
  * for a new line, Tab and Escape). A truncated value is never offered for editing: the
  * editor shows "loading…" until `load` resolves, or the error if it fails.
  */
-export function CellEditorOverlay({ value, load, onChange }: Props) {
+export function CellEditorOverlay({ value, load, onChange, onMount }: Props) {
   const [state, setState] = useState<
     { s: "ready"; text: string } | { s: "loading" } | { s: "failed"; message: string }
   >(load ? { s: "loading" } : { s: "ready", text: value });
   const loadRef = useRef(load);
+  const mountRef = useRef(onMount);
+
+  useEffect(() => mountRef.current?.(), []);
 
   useEffect(() => {
     const fn = loadRef.current;

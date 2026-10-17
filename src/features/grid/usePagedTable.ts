@@ -108,7 +108,10 @@ export function usePagedTable(
     const v = useGridViews.getState().getView(tabId);
     if (v.page > 0 && guardPending(tabId)) setView(tabId, { page: v.page - 1 });
   }, [tabId, setView]);
-  const reload = useCallback(() => setTick((t) => t + 1), []);
+  // Refused like paging while changes are pending (after a commit nothing is pending).
+  const reload = useCallback(() => {
+    if (guardPending(tabId)) setTick((t) => t + 1);
+  }, [tabId]);
 
   return {
     result,

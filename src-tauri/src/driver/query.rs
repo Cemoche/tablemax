@@ -174,7 +174,8 @@ fn default_order(d: Dialect, info: &TableInfo) -> Vec<(String, String)> {
     Vec::new()
 }
 
-/// Binary columns are left out of the any-column search (and measured as bytes by `dml`).
+/// Binary column types by name (MySQL/MariaDB, SQLite, plain PostgreSQL `bytea`): what
+/// the drivers use to set `ColumnInfo::binary` (PostgreSQL also resolves domains).
 pub(super) fn is_binary(d: Dialect, type_name: &str) -> bool {
     let t = type_name.trim().to_ascii_lowercase();
     match d {
@@ -396,9 +397,8 @@ impl Builder {
             return Err(invalid("filter on all columns: expected 1 value(s)"));
         }
         let v = &f.values[0];
-        let d = self.d;
         let mut parts = Vec::new();
-        for c in info.columns.iter().filter(|c| !is_binary(d, &c.type_name)) {
+        for c in info.columns.iter().filter(|c| !c.binary) {
             let q = quote_ident(self.d, &c.name);
             let lhs = self.as_text(&q);
             parts.push(match f.op {
@@ -464,6 +464,9 @@ mod tests {
             default: None,
             auto_increment: false,
             generated: false,
+            binary: is_binary(Dialect::Postgres, type_name)
+                || is_binary(Dialect::MySql, type_name)
+                || is_binary(Dialect::Sqlite, type_name),
             comment: None,
         }
     }

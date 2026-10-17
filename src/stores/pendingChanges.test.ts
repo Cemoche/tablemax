@@ -28,7 +28,7 @@ const obj = { schema: "public", name: "order_lines" };
 
 beforeEach(() => {
   vi.resetAllMocks();
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
 });
 
 test("setting a cell back to its original value removes the edit", () => {
@@ -69,7 +69,7 @@ test("duplicating a row leaves out auto and generated columns", () => {
 
 test("toChanges lists updates, then inserts, then deletes", () => {
   s().toggleDelete(T, key(3));
-  const a = s().addInsert(T);
+  const a = s().addInsert(T)!;
   s().setInsertCell(T, a, "note", { t: "text", v: "fresh" });
   s().setInsertCell(T, a, "line", { t: "default" });
   s().setCell(T, key(1), "note", { t: "null" }, row(1, "old"), columns);
@@ -102,7 +102,7 @@ test("deleting an edited row keeps only the delete; restoring it brings nothing 
 
 test("revertChange, removeInsert and discard", () => {
   s().setCell(T, key(1), "note", { t: "text", v: "new" }, row(1, "old"), columns);
-  const a = s().addInsert(T);
+  const a = s().addInsert(T)!;
   s().toggleDelete(T, key(2));
   s().revertChange(T, `update:${rowKeyId(key(1))}`);
   s().removeInsert(T, a);
@@ -196,4 +196,53 @@ test("a commit finishing after its tab was closed leaves nothing behind", async 
   expect(s().tabs[T]).toBeUndefined();
   expect(s().committing[T]).toBeUndefined();
   expect(s().applied[T]).toBeUndefined();
+});
+
+test("changes are refused while a commit runs, and a second commit is not sent", async () => {
+  let resolve!: (o: Awaited<ReturnType<typeof ipc.changesApply>>) => void;
+  vi.mocked(ipc.changesApply).mockImplementation(() => new Promise((r) => (resolve = r)));
+  s().toggleDelete(T, key(1));
+  const done = s().commit(T, "w1", obj);
+  expect(s().setCell(T, key(2), "note", { t: "null" }, row(2, "old"), columns)).toBe(false);
+  expect(s().addInsert(T)).toBeNull();
+  expect(s().toggleDelete(T, key(3))).toBe(false);
+  expect(s().toggleDelete(T, key(1))).toBe(false);
+  expect(s().revertChange(T, `delete:${rowKeyId(key(1))}`)).toBe(false);
+  expect(s().discard(T)).toBe(false);
+  expect(s().toChanges(T)).toEqual([{ kind: "delete", key: key(1) }]);
+  await expect(s().commit(T, "w1", obj)).resolves.toBe(false);
+  expect(ipc.changesApply).toHaveBeenCalledTimes(1);
+  resolve({ applied: true, affected: [1], failedIndex: null, error: null });
+  await expect(done).resolves.toBe(true);
+  expect(s().count(T)).toBe(0);
+  expect(s().setCell(T, key(2), "note", { t: "null" }, row(2, "old"), columns)).toBe(true);
+});
+
+test("columns named __proto__ and constructor are ordinary columns", () => {
+  const names = ["id", "__proto__", "constructor"];
+  const orig: CellValue[] = [int(1), { t: "text", v: "p" }, { t: "text", v: "c" }];
+  const k: RowKey = [["id", int(1)]];
+  s().setCell(T, k, "__proto__", { t: "text", v: "P" }, orig, names);
+  s().setCell(T, k, "constructor", { t: "null" }, orig, names);
+  expect(s().toChanges(T)).toEqual([
+    { kind: "update", key: k, set: [["__proto__", { t: "text", v: "P" }], ["constructor", { t: "null" }]] },
+  ]);
+  s().setCell(T, k, "__proto__", { t: "text", v: "p" }, orig, names);
+  expect(s().toChanges(T)).toEqual([{ kind: "update", key: k, set: [["constructor", { t: "null" }]] }]);
+  const a = s().addInsert(T)!;
+  s().setInsertCell(T, a, "constructor", { t: "text", v: "x" });
+  s().setInsertCell(T, a, "__proto__", { t: "text", v: "y" });
+  expect(s().toChanges(T)[1]).toEqual({
+    kind: "insert",
+    values: [["constructor", { t: "text", v: "x" }], ["__proto__", { t: "text", v: "y" }]],
+  });
+  s().setInsertCell(T, a, "constructor", { t: "default" });
+  expect(s().toChanges(T)[1]).toEqual({ kind: "insert", values: [["__proto__", { t: "text", v: "y" }]] });
+});
+
+test("the editor-open flag is per tab", () => {
+  s().setEditorOpen(T, true);
+  expect(s().editorOpen[T]).toBe(true);
+  s().setEditorOpen(T, false);
+  expect(s().editorOpen[T]).toBe(false);
 });

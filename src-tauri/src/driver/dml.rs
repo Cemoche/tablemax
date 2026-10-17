@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::meta::{ColumnInfo, TableInfo};
-use super::query::{Builder, SqlParam, Statement, is_binary};
+use super::query::{Builder, SqlParam, Statement};
 use super::sql::{qualified, quote_ident};
 use super::{Dialect, ObjectKind};
 use crate::error::{AppError, AppResult, ErrorKind};
@@ -94,7 +94,7 @@ pub fn build_change(d: Dialect, info: &TableInfo, c: &RowChange) -> AppResult<St
                     EditValue::Default => {
                         return Err(invalid("DEFAULT is only allowed in an insert"));
                     }
-                    EditValue::Text(t) => b.typed(t, &column.base_type),
+                    EditValue::Text(t) => b.typed(t, &text_column(column)?.base_type),
                 };
                 parts.push(format!("{} = {rhs}", quote_ident(d, col)));
             }
@@ -115,7 +115,7 @@ pub fn build_change(d: Dialect, info: &TableInfo, c: &RowChange) -> AppResult<St
                         "NULL".to_string()
                     }
                     EditValue::Text(t) => {
-                        let column = writable(info, col)?;
+                        let column = text_column(writable(info, col)?)?;
                         b.typed(t, &column.base_type)
                     }
                 };
@@ -155,7 +155,7 @@ pub fn build_cell_size(
     column: &str,
 ) -> AppResult<Option<Statement>> {
     let c = known(info, column)?;
-    if is_binary(d, &c.type_name) {
+    if c.binary {
         return Ok(None);
     }
     let q = quote_ident(d, column);
@@ -294,6 +294,14 @@ fn editable(info: &TableInfo) -> AppResult<&[String]> {
 fn known<'a>(info: &'a TableInfo, col: &str) -> AppResult<&'a ColumnInfo> {
     info.column(col)
         .ok_or_else(|| invalid(format!("unknown column {col}")))
+}
+
+/// A column that may receive a text value (bytes are not edited as text in v1).
+fn text_column(c: &ColumnInfo) -> AppResult<&ColumnInfo> {
+    if c.binary {
+        return Err(invalid("binary columns can't be edited as text"));
+    }
+    Ok(c)
 }
 
 fn writable<'a>(info: &'a TableInfo, col: &str) -> AppResult<&'a ColumnInfo> {
@@ -481,6 +489,7 @@ mod tests {
             default: None,
             auto_increment: false,
             generated: false,
+            binary: type_name == "bytea",
             comment: None,
         }
     }
@@ -909,6 +918,31 @@ mod tests {
             "note is set twice"
         );
         assert_eq!(err(d, &t, &upd(vec![])), "nothing to update");
+    }
+
+    #[test]
+    fn refuses_text_in_binary_columns() {
+        let t = info("public");
+        let d = Dialect::Postgres;
+        let upd = RowChange::Update {
+            key: std_key(),
+            set: set(&[("data", text("\\xdead"))]),
+        };
+        assert_eq!(err(d, &t, &upd), "binary columns can't be edited as text");
+        let ins = RowChange::Insert {
+            values: set(&[("code", text("a")), ("data", text("00"))]),
+        };
+        assert_eq!(err(d, &t, &ins), "binary columns can't be edited as text");
+        // NULL and DEFAULT carry no text: allowed.
+        let null = RowChange::Update {
+            key: std_key(),
+            set: set(&[("data", EditValue::Null)]),
+        };
+        assert!(build_change(d, &t, &null).is_ok());
+        let default = RowChange::Insert {
+            values: set(&[("code", text("a")), ("data", EditValue::Default)]),
+        };
+        assert!(build_change(d, &t, &default).is_ok());
     }
 
     #[test]

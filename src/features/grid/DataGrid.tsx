@@ -12,7 +12,7 @@ import {
   DataEditor,
 } from "@glideapps/glide-data-grid";
 import "@glideapps/glide-data-grid/dist/index.css";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
 import type { ResultSet, SortDir } from "../../lib/types";
 import { CellEditorOverlay } from "./CellEditorOverlay";
@@ -35,6 +35,8 @@ export interface GridEditing {
   onContextMenu: (row: number, col: number | null, x: number, y: number) => void;
   /** Enter / double click, also on a read-only cell (to say why it is read-only). */
   onActivate: (row: number, col: number) => void;
+  /** The cell editor opened (true) or closed (false). */
+  onEditorOpen: (open: boolean) => void;
 }
 
 export interface DataGridProps {
@@ -62,6 +64,16 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
   editingRef.current = editing;
   /** The cell last activated (Enter / double click): the one the editor opens on. */
   const activated = useRef<Item | null>(null);
+  /** Cancels the open cell editor (set while one is open). */
+  const closeEditor = useRef<(() => void) | null>(null);
+
+  // New data (a reload) closes an open editor: its row index may now be another row.
+  const shownData = useRef(data);
+  useEffect(() => {
+    if (shownData.current === data) return;
+    shownData.current = data;
+    closeEditor.current?.();
+  }, [data]);
 
   const columns = useMemo<GridColumn[]>(
     () =>
@@ -162,6 +174,8 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
     const at = activated.current;
     const Editor: ProvideEditorComponent<GridCell> = (p) => {
       const value = p.value as TextCell;
+      const finish = useRef(p.onFinishedEditing);
+      finish.current = p.onFinishedEditing;
       // A typed character replaces the value: nothing to load then.
       const load =
         p.initialValue === undefined && at && ed.model.cell(at[1], at[0]).truncated
@@ -172,6 +186,14 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
           value={value.data}
           load={load}
           onChange={(text) => p.onChange({ ...value, data: text })}
+          onMount={() => {
+            closeEditor.current = () => finish.current(undefined);
+            editingRef.current?.onEditorOpen(true);
+            return () => {
+              closeEditor.current = null;
+              editingRef.current?.onEditorOpen(false);
+            };
+          }}
         />
       );
     };

@@ -1,7 +1,8 @@
 // Editing rules of the table grid: which cells can be edited, the row key of a loaded
 // row, and how typed text becomes an EditValue. Pure functions (no store, no IPC).
+import { dict, hasKey } from "../../lib/records";
 import { strings } from "../../lib/strings";
-import type { CellValue, ColumnInfo, EditValue, RowKey, TableInfo } from "../../lib/types";
+import type { CellValue, EditValue, RowKey, TableInfo } from "../../lib/types";
 import { cellContent } from "./cellContent";
 
 /** The loaded value is a preview: long text / JSON cut, or bytes beyond the preview. */
@@ -9,11 +10,6 @@ export function isTruncated(v: CellValue): boolean {
   if (v.t === "longText") return true;
   if (v.t === "bytes") return v.v.len * 2 > v.v.hexPreview.length;
   return false;
-}
-
-/** Binary column types (bytes are read-only in v1), whatever the cell holds. */
-export function isBinaryColumn(c: ColumnInfo): boolean {
-  return /bytea|blob|binary/i.test(c.typeName);
 }
 
 /** The text an editor starts from (what Ctrl+C copies); "" for NULL. */
@@ -28,8 +24,6 @@ export function readOnlyReason(info: TableInfo): string | null {
   return null;
 }
 
-const indexOf = (columns: string[], name: string) => columns.indexOf(name);
-
 /**
  * Why the row key of a loaded row cannot identify it (a NULL or truncated key value, a
  * key column missing from the result), or null when it can.
@@ -37,7 +31,7 @@ const indexOf = (columns: string[], name: string) => columns.indexOf(name);
 export function rowKeyIssue(info: TableInfo, columns: string[], row: CellValue[]): string | null {
   if (!info.rowKey) return readOnlyReason(info);
   for (const name of info.rowKey) {
-    const v = row[indexOf(columns, name)];
+    const v = row[columns.indexOf(name)];
     if (!v) return strings.grid.readOnlyNoKey;
     if (v.t === "null") return strings.grid.nullKey;
     if (isTruncated(v)) return strings.grid.truncatedKey;
@@ -48,7 +42,7 @@ export function rowKeyIssue(info: TableInfo, columns: string[], row: CellValue[]
 /** The row key of a loaded row in row-key order, or null when it cannot identify the row. */
 export function rowKeyOf(info: TableInfo, columns: string[], row: CellValue[]): RowKey | null {
   if (!info.rowKey || rowKeyIssue(info, columns, row) !== null) return null;
-  return info.rowKey.map((name) => [name, row[indexOf(columns, name)]]);
+  return info.rowKey.map((name) => [name, row[columns.indexOf(name)]]);
 }
 
 export interface Editability {
@@ -63,7 +57,7 @@ export function cellEditability(info: TableInfo, column: string, value: CellValu
   const c = info.columns.find((x) => x.name === column);
   if (!c) return { editable: false, reason: strings.grid.readOnlyNoKey };
   if (c.generated) return { editable: false, reason: strings.grid.generatedColumn };
-  if (isBinaryColumn(c) || value?.t === "bytes") {
+  if (c.binary || value?.t === "bytes") {
     return { editable: false, reason: strings.grid.binaryReadOnly };
   }
   return { editable: true };
@@ -88,20 +82,26 @@ export function matchesOriginal(value: EditValue, original: CellValue): boolean 
 }
 
 /**
- * The values of a duplicated row: every column but auto-increment, generated and binary
- * ones (they get their default). Truncated values are listed in `truncated` instead: the
- * caller loads them in full (cell_value) before inserting.
+ * The values of a duplicated row, as the user sees it (`edits`, the row's pending values,
+ * over the loaded ones): every column but auto-increment, generated and binary ones (they
+ * get their default). Truncated values are listed in `truncated` instead: the caller loads
+ * them in full (cell_value) before inserting. `values` has a null prototype.
  */
 export function insertValuesOf(
   info: TableInfo,
   columns: string[],
   row: CellValue[],
+  edits?: Readonly<Record<string, EditValue>>,
 ): { values: Record<string, EditValue>; truncated: string[] } {
-  const values: Record<string, EditValue> = {};
+  const values = dict<EditValue>();
   const truncated: string[] = [];
   for (const c of info.columns) {
-    if (c.autoIncrement || c.generated || isBinaryColumn(c)) continue;
-    const v = row[indexOf(columns, c.name)];
+    if (c.autoIncrement || c.generated || c.binary) continue;
+    if (edits && hasKey(edits, c.name)) {
+      values[c.name] = edits[c.name];
+      continue;
+    }
+    const v = row[columns.indexOf(c.name)];
     if (!v || v.t === "bytes") continue;
     if (v.t === "null") values[c.name] = { t: "null" };
     else if (isTruncated(v)) truncated.push(c.name);

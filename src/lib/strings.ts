@@ -269,6 +269,8 @@ export const strings = {
     discardTitle: "Discard pending changes?",
     discardConfirm: (n: number) =>
       `Discard ${n.toLocaleString("en-US")} pending ${n === 1 ? "change" : "changes"}?`,
+    discardConfirmWorkspace: (n: number, tabs: number) =>
+      `Discard ${n.toLocaleString("en-US")} pending ${n === 1 ? "change" : "changes"} in ${tabs} ${tabs === 1 ? "tab" : "tabs"}?`,
     discardOk: "Discard",
     discardCancel: "Cancel",
   },

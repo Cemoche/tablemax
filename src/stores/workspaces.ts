@@ -34,6 +34,7 @@ interface WorkspacesState {
     sshSecret?: string | null,
     acceptFingerprint?: string | null,
   ) => Promise<void>;
+  /** Asks first (closeRequest) when tabs of the workspace have pending changes. */
   closeWorkspace: (id: string) => Promise<void>;
   setActiveWorkspace: (id: string) => void;
   setSchema: (wsId: string, schema: string) => void;
@@ -41,14 +42,17 @@ interface WorkspacesState {
   openQueryTab: (wsId: string) => void;
   /**
    * Closes a tab. A table tab with pending changes is not closed: `closeRequest` asks the
-   * user first (confirmCloseTab / cancelCloseTab).
+   * user first (confirmClose / cancelClose).
    */
   closeTab: (wsId: string, tabId: string) => void;
-  /** A tab close waiting for "Discard N pending changes?". */
-  closeRequest: { wsId: string; tabId: string; count: number } | null;
-  /** Discards the pending changes of `closeRequest` and closes its tab. */
-  confirmCloseTab: () => void;
-  cancelCloseTab: () => void;
+  /**
+   * A close waiting for "Discard N pending changes?": a tab (`tabId`), or the whole
+   * workspace (`tabId` null; `tabs` = table tabs with pending changes).
+   */
+  closeRequest: { wsId: string; tabId: string | null; count: number; tabs: number } | null;
+  /** Discards the pending changes of `closeRequest` and closes its tab or workspace. */
+  confirmClose: () => Promise<void>;
+  cancelClose: () => void;
   activateTab: (wsId: string, tabId: string) => void;
   /** Patches a query tab (no-op for table tabs). */
   updateTab: (
@@ -115,6 +119,26 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     set((s) => ({ workspaces: [...s.workspaces, ws], activeWorkspaceId: ws.id }));
   };
 
+  const doCloseWorkspace = async (id: string) => {
+    // Backend workspaceClose also closes the workspace's SQL sessions.
+    queryCounters.delete(id);
+    for (const t of get().workspaces.find((w) => w.id === id)?.tabs ?? []) {
+      useGridViews.getState().dropView(t.id);
+      useQueryRuns.getState().drop(t.id);
+      usePendingChanges.getState().drop(t.id);
+    }
+    set((s) => {
+      const idx = s.workspaces.findIndex((w) => w.id === id);
+      const workspaces = s.workspaces.filter((w) => w.id !== id);
+      const activeWorkspaceId =
+        s.activeWorkspaceId === id
+          ? (workspaces[Math.min(idx, workspaces.length - 1)]?.id ?? null)
+          : s.activeWorkspaceId;
+      return { workspaces, activeWorkspaceId };
+    });
+    await ipc.workspaceClose(id);
+  };
+
   const doCloseTab = (wsId: string, tabId: string) => {
     const ws = get().workspaces.find((w) => w.id === wsId);
     const tab = ws?.tabs.find((t) => t.id === tabId);
@@ -159,23 +183,17 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     },
 
     closeWorkspace: async (id) => {
-      // Backend workspaceClose also closes the workspace's SQL sessions.
-      queryCounters.delete(id);
-      for (const t of get().workspaces.find((w) => w.id === id)?.tabs ?? []) {
-        useGridViews.getState().dropView(t.id);
-        useQueryRuns.getState().drop(t.id);
-        usePendingChanges.getState().drop(t.id);
+      const tabs = get().workspaces.find((w) => w.id === id)?.tabs ?? [];
+      const counts = tabs
+        .filter((t) => t.kind === "table")
+        .map((t) => usePendingChanges.getState().count(t.id))
+        .filter((n) => n > 0);
+      if (counts.length > 0) {
+        const count = counts.reduce((a, b) => a + b, 0);
+        set({ closeRequest: { wsId: id, tabId: null, count, tabs: counts.length } });
+        return;
       }
-      set((s) => {
-        const idx = s.workspaces.findIndex((w) => w.id === id);
-        const workspaces = s.workspaces.filter((w) => w.id !== id);
-        const activeWorkspaceId =
-          s.activeWorkspaceId === id
-            ? (workspaces[Math.min(idx, workspaces.length - 1)]?.id ?? null)
-            : s.activeWorkspaceId;
-        return { workspaces, activeWorkspaceId };
-      });
-      await ipc.workspaceClose(id);
+      await doCloseWorkspace(id);
     },
 
     setActiveWorkspace: (id) => set({ activeWorkspaceId: id }),
@@ -209,7 +227,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       if (!tab) return;
       const count = tab.kind === "table" ? usePendingChanges.getState().count(tabId) : 0;
       if (count > 0) {
-        set({ closeRequest: { wsId, tabId, count } });
+        set({ closeRequest: { wsId, tabId, count, tabs: 1 } });
         return;
       }
       doCloseTab(wsId, tabId);
@@ -217,13 +235,15 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
 
     closeRequest: null,
 
-    confirmCloseTab: () => {
+    confirmClose: async () => {
       const req = get().closeRequest;
       set({ closeRequest: null });
-      if (req) doCloseTab(req.wsId, req.tabId);
+      if (!req) return;
+      if (req.tabId !== null) doCloseTab(req.wsId, req.tabId);
+      else await doCloseWorkspace(req.wsId);
     },
 
-    cancelCloseTab: () => set({ closeRequest: null }),
+    cancelClose: () => set({ closeRequest: null }),
 
     activateTab: (wsId, tabId) => update(wsId, (w) => ({ ...w, activeTabId: tabId })),
 

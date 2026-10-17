@@ -9,6 +9,7 @@ export const col = (name: string, over: Partial<ColumnInfo> = {}): ColumnInfo =>
   default: null,
   autoIncrement: false,
   generated: false,
+  binary: false,
   comment: null,
   ...over,
 });
@@ -26,7 +27,7 @@ export const tableInfo = (over: Partial<TableInfo> = {}): TableInfo => ({
     col("id", { typeName: "integer", baseType: "integer", autoIncrement: true, nullable: false }),
     col("note"),
     col("total", { typeName: "numeric", baseType: "numeric", generated: true }),
-    col("data", { typeName: "bytea", baseType: "bytea" }),
+    col("data", { typeName: "bytea", baseType: "bytea", binary: true }),
   ],
   primaryKey: ["order_id", "line"],
   indexes: [],

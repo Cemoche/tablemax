@@ -35,6 +35,8 @@ export type RowState = "insert" | "delete" | "failed" | null;
 
 export interface GridModel {
   info: TableInfo | null;
+  /** A commit is running: nothing is editable and the menu offers nothing. */
+  locked: boolean;
   columns: string[];
   rows: DisplayRow[];
   cell: (row: number, col: number) => EditCell;
@@ -140,6 +142,7 @@ export function buildGridModel(
 
   return {
     info,
+    locked,
     columns,
     rows,
     cell,
@@ -175,7 +178,7 @@ export type MenuAction =
 export function menuActions(model: GridModel, row: number, col: number | null): MenuAction[] {
   const { info } = model;
   const r = model.rows[row];
-  if (!r || !info || readOnlyReason(info) !== null) return [];
+  if (!r || !info || model.locked || readOnlyReason(info) !== null) return [];
   const out: MenuAction[] = [];
   if (col !== null) {
     const c = model.cell(row, col);

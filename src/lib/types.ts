@@ -228,6 +228,8 @@ export interface ColumnInfo {
   autoIncrement: boolean;
   /** Generated (computed) column: never editable. */
   generated: boolean;
+  /** Holds bytes (bytea and domains over it, binary/varbinary/blob/bit/geometry, SQLite BLOB): read-only in v1. */
+  binary: boolean;
   comment: string | null;
 }
 

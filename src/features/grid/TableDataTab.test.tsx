@@ -49,7 +49,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   grid = null;
   useGridViews.setState({ views: {} });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo());
 });
 
@@ -212,4 +212,45 @@ test("the editor loads the full value of a truncated cell", async () => {
   await waitFor(() => expect(grid?.editing?.model.cell(0, 3).truncated).toBe(true));
   await expect(grid!.editing!.loadFull(0, 3)).resolves.toBe("the whole text");
   expect(ipc.cellValue).toHaveBeenCalledWith("w1", obj, key(0), "note");
+});
+
+test("Reload is blocked while changes are pending", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  pending().toggleDelete("t1", key(0));
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–2 of 2"));
+  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+  expect(screen.getByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
+});
+
+test("Duplicate row copies the pending edits of the row", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  await waitFor(() => expect(grid?.editing?.model.cell(0, 3).editable).toBe(true));
+  act(() => grid!.editing!.onEdit(0, 3, "as edited"));
+  act(() => grid!.editing!.onContextMenu(0, 3, 5, 5));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.duplicateRow }));
+  await waitFor(() => expect(pending().count("t1")).toBe(2));
+  expect(pending().toChanges("t1")[1]).toEqual({
+    kind: "insert",
+    values: [
+      ["order_id", { t: "text", v: "42" }],
+      ["line", { t: "text", v: "0" }],
+      ["note", { t: "text", v: "as edited" }],
+    ],
+  });
+});
+
+test("the grid reports when its cell editor is open", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} />);
+  await waitFor(() => expect(grid?.editing).toBeDefined());
+  act(() => grid!.editing!.onEditorOpen(true));
+  expect(pending().editorOpen.t1).toBe(true);
+  act(() => grid!.editing!.onEditorOpen(false));
+  expect(pending().editorOpen.t1).toBe(false);
 });

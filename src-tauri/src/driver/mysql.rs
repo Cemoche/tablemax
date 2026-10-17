@@ -60,7 +60,7 @@ use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, object_not_found,
     sort_indexes,
 };
-use super::query::{SqlParam, Statement};
+use super::query::{SqlParam, Statement, is_binary};
 use super::sql::qualified;
 use super::tls::{SslConfig, SslMode, load_files, native_roots};
 use super::{
@@ -1095,6 +1095,7 @@ impl MySession {
                     let type_name: String = if is_json { "json".into() } else { column_type };
                     ColumnInfo {
                         default: normalize_default(default, &data_type, &extra, self.mariadb),
+                        binary: is_binary(Dialect::MySql, &type_name),
                         base_type: type_name.clone(),
                         type_name,
                         name: col,

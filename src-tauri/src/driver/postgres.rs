@@ -591,7 +591,12 @@ impl PgSession {
                  pg_get_expr(d.adbin, d.adrelid), a.attidentity::text, a.attgenerated::text, \
                  col_description(a.attrelid, a.attnum), \
                  quote_literal(col_description(a.attrelid, a.attnum)), \
-                 format_type(a.atttypid, -1) \
+                 format_type(a.atttypid, -1), \
+                 (WITH RECURSIVE ty(oid, base) AS ( \
+                    SELECT t.oid, t.typbasetype FROM pg_type t WHERE t.oid = a.atttypid \
+                    UNION ALL \
+                    SELECT t.oid, t.typbasetype FROM pg_type t JOIN ty ON t.oid = ty.base \
+                  ) SELECT bool_or(ty.oid = 'bytea'::regtype) FROM ty) \
                  FROM pg_attribute a \
                  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
                  WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped \
@@ -623,6 +628,7 @@ impl PgSession {
                         auto_increment: !identity.is_empty() || serial,
                         default,
                         generated,
+                        binary: r.get::<_, Option<bool>>(10).unwrap_or(false),
                         comment: r.get(7),
                     },
                     quoted: r.get(1),

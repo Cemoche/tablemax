@@ -32,3 +32,13 @@ test("a failed load never offers the preview for editing", async () => {
   expect(await screen.findByText(strings.grid.editorLoadFailed("the row changed"))).toBeInTheDocument();
   expect(screen.queryByRole("textbox")).toBeNull();
 });
+
+test("onMount runs when the editor opens and its cleanup when it closes", () => {
+  const cleanup = vi.fn();
+  const onMount = vi.fn(() => cleanup);
+  const { unmount } = render(<CellEditorOverlay value="a" onChange={vi.fn()} onMount={onMount} />);
+  expect(onMount).toHaveBeenCalledOnce();
+  expect(cleanup).not.toHaveBeenCalled();
+  unmount();
+  expect(cleanup).toHaveBeenCalledOnce();
+});

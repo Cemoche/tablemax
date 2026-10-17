@@ -18,6 +18,7 @@ use tablemax_lib::driver::dml::{
 use tablemax_lib::driver::mysql::connect_mysql;
 use tablemax_lib::driver::postgres::connect_postgres;
 use tablemax_lib::driver::query::{Filter, FilterOp, SqlParam, Statement};
+use tablemax_lib::driver::sql::quote_ident;
 use tablemax_lib::driver::sqlite::connect_sqlite;
 use tablemax_lib::driver::tls::SslConfig;
 use tablemax_lib::driver::{
@@ -1224,5 +1225,65 @@ async fn key_types_hit_exactly_the_intended_row() {
                 key_hits_one_row(&fx, "k_ts", "DATETIME", &ts, 1).await;
             }
         }
+    }
+}
+
+#[tokio::test]
+async fn binary_columns_are_flagged_and_refuse_text() {
+    for fx in all_fixtures().await {
+        let k = fx.kind;
+        let t = fx.q("bin");
+        let cols = match fx.d() {
+            Dialect::Postgres => {
+                let dom = format!("{}.bin_d", quote_ident(Dialect::Postgres, &fx.schema));
+                let dom2 = format!("{}.bin_d2", quote_ident(Dialect::Postgres, &fx.schema));
+                fx.run(&format!("CREATE DOMAIN {dom} AS bytea")).await;
+                fx.run(&format!("CREATE DOMAIN {dom2} AS {dom}")).await;
+                format!("b bytea, b2 {dom}, b3 {dom2}, n text")
+            }
+            Dialect::MySql => "b BIT(8), b2 varbinary(8), b3 blob, n text".to_string(),
+            Dialect::Sqlite => "b BLOB, b2 blob, b3 BLOB, n TEXT".to_string(),
+        };
+        fx.run(&format!("CREATE TABLE {t} (id int PRIMARY KEY, {cols})"))
+            .await;
+        fx.run(&format!("INSERT INTO {t} (id) VALUES (1)")).await;
+        let info = fx.mgr.table_info(&fx.ws, &fx.obj("bin")).await.unwrap();
+        let flags: Vec<(String, bool)> = info
+            .columns
+            .iter()
+            .map(|c| (c.name.clone(), c.binary))
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                ("id", false),
+                ("b", true),
+                ("b2", true),
+                ("b3", true),
+                ("n", false)
+            ]
+            .map(|(n, b)| (n.to_string(), b))
+            .to_vec(),
+            "{k:?}"
+        );
+        for col in ["b", "b2", "b3"] {
+            let e = fx
+                .mgr
+                .changes_apply(
+                    &fx.ws,
+                    &fx.obj("bin"),
+                    &[update(int_key(1), &[(col, text("1"))])],
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(e.kind, ErrorKind::Invalid, "{k:?} {col}");
+            assert_eq!(
+                e.message, "change 0: binary columns can't be edited as text",
+                "{k:?} {col}"
+            );
+        }
+        // NULL is still allowed.
+        fx.apply_ok("bin", vec![update(int_key(1), &[("b", EditValue::Null)])])
+            .await;
     }
 }

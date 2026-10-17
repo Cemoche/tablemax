@@ -18,7 +18,7 @@ const rs = (n: number): ResultSet => ({
 beforeEach(() => {
   vi.resetAllMocks();
   useGridViews.setState({ views: {} });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
   vi.mocked(ipc.tablePage).mockResolvedValue(rs(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 650 });
 });
@@ -119,11 +119,13 @@ test("pending changes block paging and sorting", async () => {
   const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
   await waitFor(() => expect(result.current.pageCount).toBe(3));
   act(() => usePendingChanges.getState().addInsert("t1"));
+  act(() => result.current.reload());
   act(() => result.current.nextPage());
   act(() => result.current.setSort("id"));
   expect(result.current.page).toBe(0);
   expect(result.current.sort).toBeNull();
   expect(usePendingChanges.getState().blocked.t1).toBe(true);
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
   act(() => usePendingChanges.getState().discard("t1"));
   act(() => result.current.nextPage());
   expect(result.current.page).toBe(1);

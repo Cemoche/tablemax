@@ -122,7 +122,9 @@ test("TableInfo", () => {
   const t: TableInfo = JSON.parse(`{
     "object":{"schema":"public","name":"order"},"kind":"table",
     "columns":[{"name":"amount","typeName":"numeric(12,2)","baseType":"numeric","nullable":true,
-      "default":"0","autoIncrement":false,"generated":false,"comment":null}],
+      "default":"0","autoIncrement":false,"generated":false,"binary":false,"comment":null},
+      {"name":"data","typeName":"bytea","baseType":"bytea","nullable":true,"default":null,
+      "autoIncrement":false,"generated":false,"binary":true,"comment":null}],
     "primaryKey":["id"],
     "indexes":[{"name":"order_pkey","columns":["id"],"unique":true,"primary":true,"definition":null}],
     "foreignKeys":[{"name":"f","columns":["parent_id"],"refSchema":null,"refTable":"parent",
@@ -130,6 +132,7 @@ test("TableInfo", () => {
     "rowKey":["id"],"hasRowid":false
   }`);
   expect(t.columns[0].baseType).toBe("numeric");
+  expect(t.columns.map((c) => c.binary)).toEqual([false, true]);
   expect(t.foreignKeys[0].onDelete).toBe("CASCADE");
   expect(t.rowKey).toEqual(["id"]);
 });

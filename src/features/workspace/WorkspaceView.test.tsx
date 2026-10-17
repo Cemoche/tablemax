@@ -5,6 +5,7 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { CloseConfirm } from "./CloseConfirm";
 import { WorkspaceView } from "./WorkspaceView";
 
 vi.mock("../../lib/ipc");
@@ -29,12 +30,20 @@ const base: Workspace = {
   activeTabId: "t1",
 };
 const current = () => useWorkspaces.getState().workspaces[0];
-const View = () => <WorkspaceView workspace={useWorkspaces((s) => s.workspaces[0])} />;
+const View = () => {
+  const ws = useWorkspaces((s) => s.workspaces[0]);
+  return (
+    <>
+      {ws && <WorkspaceView workspace={ws} />}
+      <CloseConfirm />
+    </>
+  );
+};
 
 beforeEach(() => {
   vi.resetAllMocks();
   useWorkspaces.setState({ workspaces: [base], activeWorkspaceId: "w1", closeRequest: null });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
   vi.mocked(ipc.changesApply).mockResolvedValue({
     applied: true,
     affected: [1],
@@ -80,4 +89,27 @@ test("closing a tab with pending changes asks to discard them", async () => {
   await userEvent.click(await screen.findByRole("button", { name: strings.grid.discardOk }));
   expect(current().tabs.map((t) => t.id)).toEqual(["q1"]);
   expect(usePendingChanges.getState().count("t1")).toBe(0);
+});
+
+test("Ctrl+S does nothing while the grid's cell editor is open", async () => {
+  usePendingChanges.getState().addInsert("t1");
+  usePendingChanges.getState().setEditorOpen("t1", true);
+  render(<View />);
+  await userEvent.keyboard("{Control>}s{/Control}");
+  expect(ipc.changesApply).not.toHaveBeenCalled();
+  usePendingChanges.getState().setEditorOpen("t1", false);
+  await userEvent.keyboard("{Control>}s{/Control}");
+  await waitFor(() => expect(ipc.changesApply).toHaveBeenCalledOnce());
+});
+
+test("closing the workspace with pending changes asks with the tab count", async () => {
+  vi.mocked(ipc.workspaceClose).mockResolvedValue(undefined);
+  usePendingChanges.getState().addInsert("t1");
+  render(<View />);
+  void useWorkspaces.getState().closeWorkspace("w1");
+  const dialog = await screen.findByRole("dialog", { name: strings.grid.discardTitle });
+  expect(dialog).toHaveTextContent(strings.grid.discardConfirmWorkspace(1, 1));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.discardOk }));
+  await waitFor(() => expect(useWorkspaces.getState().workspaces).toHaveLength(0));
+  expect(ipc.workspaceClose).toHaveBeenCalledWith("w1");
 });

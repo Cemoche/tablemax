@@ -30,7 +30,7 @@ const model = (data: ResultSet, info = tableInfo(), locked = false) =>
   buildGridModel(data, info, s().tabs[T], locked);
 
 beforeEach(() => {
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
 });
 
 test("inserts come first, then the page rows with their pending state", () => {
@@ -100,6 +100,8 @@ test("menu actions depend on the row and the cell", () => {
   // Deleted row, row marker.
   expect(menuActions(m, 2, 3)).toEqual(["duplicateRow", "restoreRow"]);
   expect(menuActions(m, 2, null)).toEqual(["duplicateRow", "restoreRow"]);
+  // A commit is running: nothing.
+  expect(menuActions(model(data, tableInfo(), true), 1, 3)).toEqual([]);
   // Read-only table: nothing.
   expect(menuActions(model(data, tableInfo({ rowKey: null })), 1, 3)).toEqual([]);
 });

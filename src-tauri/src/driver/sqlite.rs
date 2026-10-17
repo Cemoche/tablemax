@@ -22,7 +22,7 @@ use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, non_null_default,
     object_not_found, sort_indexes,
 };
-use super::query::{SqlParam, Statement};
+use super::query::{SqlParam, Statement, is_binary};
 use super::sql::{qualified, quote_ident};
 use super::{
     Canceller, ColumnMeta, DbObject, Dialect, ObjectKind, ObjectRef, ResultSet, RowCount, Session,
@@ -313,6 +313,7 @@ fn table_info_of(c: &Connection, schema: &str, name: &str) -> AppResult<TableInf
                 default: non_null_default(x.3.clone()),
                 auto_increment: alias,
                 generated: x.5 == 2 || x.5 == 3,
+                binary: is_binary(Dialect::Sqlite, &x.1),
                 comment: None,
             }
         })

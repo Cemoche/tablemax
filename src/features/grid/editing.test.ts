@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { strings } from "../../lib/strings";
 import type { CellValue } from "../../lib/types";
-import { tableInfo } from "../../test/tableInfo";
+import { col, tableInfo } from "../../test/tableInfo";
 import {
   cellEditability,
   cellText,
@@ -103,4 +103,41 @@ test("insertValuesOf copies a row without auto, generated or binary columns", ()
   });
   const withNull = [int(9), int(42), int(4), { t: "null" } as CellValue, int(7), { t: "null" } as CellValue];
   expect(insertValuesOf(tableInfo(), columns, withNull).values.note).toEqual({ t: "null" });
+});
+
+test("binary comes from the backend flag, not the type name", () => {
+  const info = tableInfo({
+    columns: [...tableInfo().columns, col("raw", { typeName: "blob_like_text" }), col("bits", { typeName: "bit(8)", binary: true })],
+  });
+  expect(cellEditability(info, "raw", text("x"))).toEqual({ editable: true });
+  expect(cellEditability(info, "bits", text("1")).editable).toBe(false);
+});
+
+test("insertValuesOf copies pending edits over the loaded values", () => {
+  const row = [int(9), int(42), int(3), text("old"), int(7), { t: "null" } as CellValue];
+  const edits = Object.assign(Object.create(null), {
+    note: { t: "text", v: "edited" },
+    total: { t: "text", v: "99" },
+  });
+  const { values, truncated } = insertValuesOf(tableInfo(), columns, row, edits);
+  expect(values.note).toEqual({ t: "text", v: "edited" });
+  expect(values.total).toBeUndefined();
+  expect(truncated).toEqual([]);
+  // A pending value replaces a truncated one: nothing left to load.
+  const long: CellValue = { t: "longText", v: { preview: "abc", len: 20000 } };
+  const r2 = [int(9), int(42), int(3), long, int(7), { t: "null" } as CellValue];
+  expect(insertValuesOf(tableInfo(), columns, r2, edits).truncated).toEqual([]);
+});
+
+test("columns named __proto__ and constructor are plain keys", () => {
+  const info = tableInfo({
+    columns: [col("id", { nullable: false }), col("__proto__"), col("constructor")],
+    rowKey: ["id"],
+    primaryKey: ["id"],
+  });
+  const names = ["id", "__proto__", "constructor"];
+  const { values } = insertValuesOf(info, names, [int(1), text("p"), text("c")]);
+  expect(Object.getPrototypeOf(values)).toBeNull();
+  expect(Object.keys(values)).toEqual(["id", "__proto__", "constructor"]);
+  expect(values["__proto__"]).toEqual({ t: "text", v: "p" });
 });

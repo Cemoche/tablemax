@@ -27,6 +27,11 @@ pub struct ColumnInfo {
     pub auto_increment: bool,
     /// Generated (computed) column: never editable.
     pub generated: bool,
+    /// Holds bytes, which the grid shows as a preview and cannot edit as text: PostgreSQL
+    /// `bytea` (and domains over it), MySQL/MariaDB binary/varbinary/blob/bit/geometry
+    /// types, SQLite columns whose declared type contains BLOB.
+    #[serde(default)]
+    pub binary: bool,
     pub comment: Option<String>,
 }
 
@@ -135,6 +140,7 @@ mod tests {
             default: None,
             auto_increment: false,
             generated: false,
+            binary: false,
             comment: None,
         }
     }

@@ -5,7 +5,6 @@ import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { ObjectSidebar } from "./ObjectSidebar";
 import { TabBar } from "./TabBar";
 
@@ -26,19 +25,18 @@ export function TabContent({ workspace, tab }: { workspace: Workspace; tab: Tab 
 export function WorkspaceView({ workspace }: { workspace: Workspace }) {
   const openQueryTab = useWorkspaces((s) => s.openQueryTab);
   const closeTab = useWorkspaces((s) => s.closeTab);
-  const closeRequest = useWorkspaces((s) => s.closeRequest);
-  const confirmCloseTab = useWorkspaces((s) => s.confirmCloseTab);
-  const cancelCloseTab = useWorkspaces((s) => s.cancelCloseTab);
   const { id, activeTabId } = workspace;
   const active = workspace.tabs.find((t) => t.id === activeTabId) ?? null;
 
-  // Mod+S (Ctrl, Cmd on macOS) commits the active table tab, unless a modal is open.
+  // Mod+S (Ctrl, Cmd on macOS) commits the active table tab, unless a modal or the grid's
+  // cell editor is open (the edit being typed is not pending yet).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isModKey(e) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "s") return;
       if (active?.kind !== "table") return;
       e.preventDefault();
       if (document.querySelector('[aria-modal="true"]')) return;
+      if (usePendingChanges.getState().editorOpen[active.id]) return;
       void usePendingChanges.getState().commit(active.id, id, active.object);
     };
     window.addEventListener("keydown", onKey);
@@ -77,16 +75,6 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
           )}
         </div>
       </div>
-      {closeRequest?.wsId === id && (
-        <ConfirmDialog
-          title={strings.grid.discardTitle}
-          message={strings.grid.discardConfirm(closeRequest.count)}
-          confirmLabel={strings.grid.discardOk}
-          cancelLabel={strings.grid.discardCancel}
-          onConfirm={confirmCloseTab}
-          onCancel={cancelCloseTab}
-        />
-      )}
     </div>
   );
 }

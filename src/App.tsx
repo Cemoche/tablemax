@@ -8,6 +8,7 @@ import { ConnectionList } from "./features/connections/ConnectionList";
 import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlow";
 import { toAppError } from "./lib/errors";
 import { WorkspaceSwitcher } from "./features/workspace/WorkspaceSwitcher";
+import { CloseConfirm } from "./features/workspace/CloseConfirm";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import type { ConnectionConfig } from "./lib/types";
 import { useConnections } from "./stores/connections";
@@ -120,6 +121,7 @@ function App() {
         />
       )}
       {importDialog && <ImportDialog onClose={() => setImportDialog(false)} />}
+      <CloseConfirm />
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />
     </div>
   );

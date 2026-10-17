@@ -37,7 +37,7 @@ const info = (over = {}) => ({
 beforeEach(() => {
   vi.resetAllMocks();
   useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null, closeRequest: null });
-  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {}, editorOpen: {} });
   useConnections.setState({ items: [cfg()] });
   vi.mocked(ipc.workspaceOpen).mockResolvedValue(info());
   vi.mocked(ipc.schemasList).mockResolvedValue(["audit", "public"]);
@@ -188,12 +188,12 @@ test("closing a table tab with pending changes asks first", async () => {
   usePendingChanges.getState().addInsert(tab.id);
   s.closeTab(id, tab.id);
   expect(ws().tabs).toHaveLength(1);
-  expect(useWorkspaces.getState().closeRequest).toEqual({ wsId: id, tabId: tab.id, count: 2 });
-  useWorkspaces.getState().cancelCloseTab();
+  expect(useWorkspaces.getState().closeRequest).toEqual({ wsId: id, tabId: tab.id, count: 2, tabs: 1 });
+  useWorkspaces.getState().cancelClose();
   expect(useWorkspaces.getState().closeRequest).toBeNull();
   expect(usePendingChanges.getState().count(tab.id)).toBe(2);
   s.closeTab(id, tab.id);
-  useWorkspaces.getState().confirmCloseTab();
+  useWorkspaces.getState().confirmClose();
   expect(ws().tabs).toHaveLength(0);
   expect(useWorkspaces.getState().closeRequest).toBeNull();
   expect(usePendingChanges.getState().tabs[tab.id]).toBeUndefined();
@@ -207,11 +207,25 @@ test("closing a table tab without pending changes closes it at once", async () =
   expect(useWorkspaces.getState().closeRequest).toBeNull();
 });
 
-test("closing a workspace drops the pending changes of its tabs", async () => {
+test("closing a workspace with pending changes asks first, then drops them", async () => {
   const id = await open();
-  useWorkspaces.getState().openTableTab(id, { schema: "public", name: "t" });
-  const tab = ws().tabs[0];
-  usePendingChanges.getState().addInsert(tab.id);
-  await useWorkspaces.getState().closeWorkspace(id);
-  expect(usePendingChanges.getState().tabs[tab.id]).toBeUndefined();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, { schema: "public", name: "t" });
+  s.openTableTab(id, { schema: "public", name: "u" });
+  s.openQueryTab(id);
+  const [t, u] = ws().tabs;
+  usePendingChanges.getState().addInsert(t.id);
+  usePendingChanges.getState().addInsert(u.id);
+  usePendingChanges.getState().addInsert(u.id);
+  await s.closeWorkspace(id);
+  expect(ipc.workspaceClose).not.toHaveBeenCalled();
+  expect(useWorkspaces.getState().closeRequest).toEqual({ wsId: id, tabId: null, count: 3, tabs: 2 });
+  useWorkspaces.getState().cancelClose();
+  expect(useWorkspaces.getState().workspaces).toHaveLength(1);
+  await s.closeWorkspace(id);
+  await useWorkspaces.getState().confirmClose();
+  expect(ipc.workspaceClose).toHaveBeenCalledWith(id);
+  expect(useWorkspaces.getState().workspaces).toHaveLength(0);
+  expect(usePendingChanges.getState().tabs[t.id]).toBeUndefined();
+  expect(usePendingChanges.getState().tabs[u.id]).toBeUndefined();
 });
