@@ -152,6 +152,9 @@ describe("parseArgs", () => {
     expect(parseArgs(["--milestone", "M", "p.md"]).milestone).toBe("M");
     expect(() => parseArgs([])).toThrow(/usage/);
     expect(() => parseArgs(["p.md", "--bogus"])).toThrow(/unknown option/);
+    // an option value never swallows a flag (the allow rule relies on a trailing --dry-run)
+    expect(() => parseArgs(["p.md", "--milestone", "--dry-run"])).toThrow(/needs a title/);
+    expect(() => parseArgs(["p.md", "--milestone"])).toThrow(/needs a title/);
   });
 });
 

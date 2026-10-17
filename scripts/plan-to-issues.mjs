@@ -146,7 +146,11 @@ export function parseArgs(argv) {
     const a = argv[i];
     if (a === "--dry-run") opts.dryRun = true;
     else if (a === "--assign-me") opts.assignMe = true;
-    else if (a === "--milestone" && argv[i + 1]) opts.milestone = argv[++i];
+    else if (a === "--milestone") {
+      const value = argv[++i];
+      if (!value || value.startsWith("-")) throw new Error(`--milestone needs a title\n${USAGE}`);
+      opts.milestone = value;
+    }
     else if (a.startsWith("-")) throw new Error(`unknown option ${a}\n${USAGE}`);
     else if (!opts.planPath) opts.planPath = a;
     else throw new Error(`unexpected argument ${a}\n${USAGE}`);

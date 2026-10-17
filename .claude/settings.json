@@ -19,7 +19,7 @@
       "Bash(scripts/test-dbs.sh *)",
       "Bash(bash scripts/test-claude-hooks.sh)",
       "Bash(bash scripts/check-no-secrets.sh)",
-      "Bash(node scripts/plan-to-issues.mjs *--dry-run*)",
+      "Bash(node scripts/plan-to-issues.mjs * --dry-run)",
       "Bash(docker compose -f docker-compose.test.yml up*)",
       "Bash(docker compose -f docker-compose.test.yml down*)",
       "Bash(docker compose -f docker-compose.test.yml ps*)",

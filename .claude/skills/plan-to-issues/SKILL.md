@@ -31,8 +31,9 @@ is skipped, so the command can be re-run safely.
    dry run is possible.
 2. Always run the dry run first and show its output:
    ```bash
-   node scripts/plan-to-issues.mjs <plan-file> --dry-run [--assign-me] [--milestone <title>]
+   node scripts/plan-to-issues.mjs <plan-file> [--assign-me] [--milestone <title>] --dry-run
    ```
+   (`--dry-run` last: that form runs without a permission prompt.)
 3. If the user passed `--dry-run`, stop here. If labels are reported missing (other than
    `plan:P`, which the script creates), the repository is not bootstrapped yet: tell the user
    to run `bash scripts/github-bootstrap.sh` (owner) and stop.
