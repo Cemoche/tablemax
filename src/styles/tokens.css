@@ -86,6 +86,9 @@
   --env-dev: #4f8cff;
   --env-staging: #f0b429;
   --env-prod: #ff6b6b;
+  --pending-edit: #3b3416;
+  --pending-insert: #173628;
+  --pending-delete: #3e1c20;
 }
 
 :root[data-theme="light"] {

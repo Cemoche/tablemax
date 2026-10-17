@@ -5,9 +5,14 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { TableInfo } from "../../lib/types";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { buildEditorTheme } from "../editor/SqlEditor";
 import { StructureTab } from "./StructureTab";
 
 vi.mock("../../lib/ipc");
+vi.mock("../editor/SqlEditor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../editor/SqlEditor")>();
+  return { ...actual, buildEditorTheme: vi.fn(actual.buildEditorTheme) };
+});
 
 const s = strings.structure;
 const object = { schema: "public", name: "orders" };
@@ -145,6 +150,21 @@ test("DDL is shown read-only and Copy writes it to the clipboard", async () => {
   await user.click(screen.getByRole("button", { name: s.copy }));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith(DDL));
   await screen.findByText(s.copied);
+});
+
+test("the DDL follows a forced dark theme while the OS is light", async () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  document.documentElement.dataset.theme = "dark";
+  try {
+    const user = userEvent.setup();
+    renderTab();
+    await user.click(await tab(s.tabs.ddl));
+    await waitFor(() => expect(screen.getByLabelText(s.ddlLabel)).toHaveTextContent(DDL));
+    expect(vi.mocked(buildEditorTheme)).toHaveBeenLastCalledWith(true);
+  } finally {
+    delete document.documentElement.dataset.theme;
+    vi.unstubAllGlobals();
+  }
 });
 
 test("Refresh re-fetches with refresh=true and reloads the DDL", async () => {
