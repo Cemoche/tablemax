@@ -9,6 +9,8 @@
  */
 import { toAppError } from "../lib/errors";
 import * as ipc from "../lib/ipc";
+import { flushPending } from "../lib/pendingFlush";
+import { onFlushRequested } from "../lib/windowClose";
 import type { Dialect, DriverKind, ObjectRef } from "../lib/types";
 import { useConnections } from "./connections";
 import { type Tab, type Workspace, useWorkspaces } from "./workspaces";
@@ -247,25 +249,38 @@ export async function restoreSession(): Promise<void> {
 }
 
 /**
- * Saves the session 1 s after the last change of the workspaces store, and at once on
- * `beforeunload` when a change is pending. Nothing is saved before `restoreSession`
- * finished, nor when the snapshot equals the last one saved or restored (a status or id
- * change alone). Returns the function that stops it.
+ * Saves the session 1 s after the last change of the workspaces store, and at once when
+ * the window is about to close: the backend holds the close back and sends an event
+ * (`beforeunload` does not reliably run in the webview), the pending editor text is
+ * pushed into the store, the session is written and awaited, then the close is
+ * confirmed, whatever the outcome of the write. `beforeunload` stays as a harmless
+ * extra (browser mode). Nothing is saved before `restoreSession` finished, nor when the
+ * snapshot equals the last one saved or restored (a status or id change alone).
+ * Returns the function that stops it.
  */
 export function startSessionAutosave(): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  /** The write in flight, so a close waits for it too. */
+  let inflight: Promise<void> | null = null;
 
-  const save = () => {
+  const save = (): Promise<void> => {
     if (timer) clearTimeout(timer);
     timer = null;
-    if (!ready) return;
+    if (!ready) return Promise.resolve();
     const json = currentJson();
-    if (json === lastJson) return;
+    if (json === lastJson) return Promise.resolve();
     lastJson = json;
-    ipc.sessionSave(json).catch(() => {
-      // Too large or not writable: try again on the next change.
-      if (lastJson === json) lastJson = null;
-    });
+    const write = ipc
+      .sessionSave(json)
+      .catch(() => {
+        // Too large or not writable: try again on the next change.
+        if (lastJson === json) lastJson = null;
+      })
+      .finally(() => {
+        if (inflight === write) inflight = null;
+      });
+    inflight = write;
+    return write;
   };
 
   const unsubscribe = useWorkspaces.subscribe((s, prev) => {
@@ -276,11 +291,35 @@ export function startSessionAutosave(): () => void {
   });
 
   const onUnload = () => {
-    if (timer) save();
+    if (timer) void save();
   };
   window.addEventListener("beforeunload", onUnload);
 
+  let stopped = false;
+  const onFlush = async () => {
+    try {
+      flushPending();
+      await save();
+      if (inflight) await inflight;
+    } catch {
+      // Closing matters more than the save.
+    } finally {
+      try {
+        await ipc.windowCloseConfirmed();
+      } catch {
+        // The backend closes on its own after its fallback delay.
+      }
+    }
+  };
+  let unlisten: (() => void) | null = null;
+  void onFlushRequested(() => void onFlush()).then((fn) => {
+    if (stopped) fn();
+    else unlisten = fn;
+  });
+
   return () => {
+    stopped = true;
+    unlisten?.();
     unsubscribe();
     window.removeEventListener("beforeunload", onUnload);
     if (timer) clearTimeout(timer);

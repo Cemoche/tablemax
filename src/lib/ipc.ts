@@ -159,3 +159,6 @@ export const databasesList = (workspaceId: string) =>
  */
 export const workspaceSwitchDatabase = (workspaceId: string, database: string) =>
   invoke<WorkspaceInfo>("workspace_switch_database", { workspaceId, database });
+
+/** Really closes the main window once the session was flushed (Rust held the close back). */
+export const windowCloseConfirmed = () => invoke<void>("window_close_confirmed");

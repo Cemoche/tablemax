@@ -260,6 +260,14 @@ pub async fn sql_cancel(state: State<'_, SessionManager>, session_id: String) ->
     state.cancel(&session_id).await
 }
 
+/// The frontend flushed its session: really close the window (see `close_gate`).
+#[tauri::command]
+pub fn window_close_confirmed(window: tauri::Window, gate: State<'_, crate::close_gate::CloseGate>) {
+    if gate.confirm() {
+        let _ = window.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

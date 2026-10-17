@@ -1,6 +1,7 @@
 import type { EditorView } from "@codemirror/view";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
+import { registerPendingFlush } from "../../lib/pendingFlush";
 import { toAppError } from "../../lib/errors";
 import { useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
@@ -129,6 +130,15 @@ export function QueryTab({ workspace, tab }: Props) {
     () => () => {
       if (saveTimer.current) flush();
     },
+    [flush],
+  );
+
+  // The window close pushes the debounced text into the store before saving the session.
+  useEffect(
+    () =>
+      registerPendingFlush(() => {
+        if (saveTimer.current) flush();
+      }),
     [flush],
   );
 
