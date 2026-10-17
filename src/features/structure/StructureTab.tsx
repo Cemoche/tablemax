@@ -2,7 +2,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { sql } from "@codemirror/lang-sql";
 import CodeMirror from "@uiw/react-codemirror";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
@@ -91,8 +91,8 @@ function IndexesTable({ info }: { info: TableInfo }) {
         </tr>
       </thead>
       <tbody>
-        {info.indexes.map((i) => (
-          <tr key={i.name}>
+        {info.indexes.map((i, n) => (
+          <tr key={`${i.name}#${n}`}>
             <td className={td}>{i.name}</td>
             <td className={td}>{i.columns.join(", ")}</td>
             <td className={td}>
@@ -124,10 +124,10 @@ function ForeignKeysTable({ info, workspaceId }: { info: TableInfo; workspaceId:
         </tr>
       </thead>
       <tbody>
-        {info.foreignKeys.map((fk) => {
+        {info.foreignKeys.map((fk, n) => {
           const target: ObjectRef = { schema: fk.refSchema, name: fk.refTable };
           return (
-            <tr key={fk.name}>
+            <tr key={`${fk.name}#${n}`}>
               <td className={td}>{fk.name}</td>
               <td className={td}>{fk.columns.join(", ")}</td>
               <td className={td}>
@@ -154,6 +154,7 @@ function ForeignKeysTable({ info, workspaceId }: { info: TableInfo; workspaceId:
 function DdlView({ ddl, dialect }: { ddl: string; dialect: Dialect }) {
   const dark = usePrefersDark();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => setCopyState("idle"), [ddl]);
   const extensions = useMemo(
     () => [
       sql({ dialect: DIALECTS[dialect] }),
@@ -213,6 +214,9 @@ export function StructureTab({
   const [ddl, setDdl] = useState<Loaded<string>>({ data: null, error: null });
   const [pending, setPending] = useState(true);
   const run = useRef(0);
+  const uid = useId();
+  const tabId = (k: Section) => `${uid}-tab-${k}`;
+  const panelId = `${uid}-panel`;
 
   const load = useCallback(
     (refresh: boolean) => {
@@ -248,7 +252,7 @@ export function StructureTab({
     e.preventDefault();
     const next = SECTIONS[(i + d + SECTIONS.length) % SECTIONS.length];
     setSection(next);
-    document.getElementById(`structure-tab-${next}`)?.focus();
+    document.getElementById(tabId(next))?.focus();
   };
 
   const infoLoading = !info.data && !info.error;
@@ -266,22 +270,22 @@ export function StructureTab({
   };
 
   return (
-    <div className="flex h-full flex-col bg-bg text-text">
+    <div className="flex h-full flex-col bg-bg text-fg">
       <div className="flex items-center justify-between border-b border-border px-2">
         <div role="tablist" aria-label={s.tabsLabel} className="flex">
           {SECTIONS.map((k, i) => (
             <button
               key={k}
-              id={`structure-tab-${k}`}
+              id={tabId(k)}
               type="button"
               role="tab"
               aria-selected={section === k}
-              aria-controls="structure-panel"
+              aria-controls={panelId}
               tabIndex={section === k ? 0 : -1}
               onClick={() => setSection(k)}
               onKeyDown={(e) => onTabKey(e, i)}
               className={`border-b-2 px-3 py-2 ${
-                section === k ? "border-accent text-text" : "border-transparent text-muted"
+                section === k ? "border-accent text-fg" : "border-transparent text-muted"
               }`}
             >
               {s.tabs[k]}
@@ -291,6 +295,7 @@ export function StructureTab({
         <button
           type="button"
           disabled={pending}
+          aria-busy={pending}
           onClick={() => load(true)}
           className="rounded-sm border border-border px-2 py-1 disabled:opacity-50"
         >
@@ -298,9 +303,9 @@ export function StructureTab({
         </button>
       </div>
       <div
-        id="structure-panel"
+        id={panelId}
         role="tabpanel"
-        aria-labelledby={`structure-tab-${section}`}
+        aria-labelledby={tabId(section)}
         className="min-h-0 flex-1 overflow-auto"
       >
         {infoLoading && section !== "ddl" ? <Empty text={s.loading} /> : panel()}

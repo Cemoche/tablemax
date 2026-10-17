@@ -152,7 +152,7 @@ test("Refresh re-fetches with refresh=true and reloads the DDL", async () => {
   await userEvent.click(screen.getByRole("button", { name: s.refresh }));
   await waitFor(() => expect(ipc.tableInfo).toHaveBeenLastCalledWith("w1", object, true));
   expect(ipc.tableDdl).toHaveBeenCalledTimes(2);
-  await screen.findByRole("button", { name: s.refresh });
+  await waitFor(() => expect(screen.getByRole("button", { name: s.refresh })).toBeEnabled());
 });
 
 test("an info error is shown with its message", async () => {
@@ -169,4 +169,30 @@ test("a DDL error does not hide the structure", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(s.ddlFailed("no ddl"));
   await userEvent.click(screen.getByRole("tab", { name: s.tabs.columns }));
   expect(screen.getByRole("table", { name: s.tabs.columns })).toBeInTheDocument();
+});
+
+test("a stale response never overwrites a newer load", async () => {
+  let resolveOld!: (i: TableInfo) => void;
+  const other = { schema: "public", name: "items" };
+  const fresh = { ...info, object: other, columns: [col("fresh_col")] };
+  vi.mocked(ipc.tableInfo)
+    .mockReturnValueOnce(new Promise((r) => (resolveOld = r)))
+    .mockResolvedValueOnce(fresh);
+  const { rerender } = renderTab();
+  rerender(<StructureTab workspaceId="w1" object={other} dialect="postgres" />);
+  await screen.findByText("fresh_col");
+  resolveOld({ ...info, columns: [col("stale_col")] });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(screen.queryByText("stale_col")).toBeNull();
+  expect(screen.getByText("fresh_col")).toBeInTheDocument();
+});
+
+test("a rejected clipboard write shows the copy failure", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("denied"));
+  renderTab();
+  await user.click(await tab(s.tabs.ddl));
+  await waitFor(() => expect(screen.getByLabelText(s.ddlLabel)).toHaveTextContent(DDL));
+  await user.click(screen.getByRole("button", { name: s.copy }));
+  expect(await screen.findByText(s.copyFailed)).toBeInTheDocument();
 });
