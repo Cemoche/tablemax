@@ -19,6 +19,7 @@ const col = (name: string, over: Partial<TableInfo["columns"][number]> = {}) => 
   default: null,
   autoIncrement: false,
   generated: false,
+  binary: false,
   comment: null,
   ...over,
 });
