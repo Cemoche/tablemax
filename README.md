@@ -59,6 +59,12 @@ open a pull request to `main` with `Closes #<n>`; the owner merges. Setup, workf
 rules (for people and their Claude Code agents) are in [CONTRIBUTING.md](CONTRIBUTING.md);
 agent rules in [CLAUDE.md](CLAUDE.md).
 
+## License
+
+TableMax is free software: you can redistribute it and modify it under the terms of the GNU
+General Public License, version 3 or (at your option) any later version. It is distributed
+without any warranty. See [LICENSE](LICENSE) for the full text.
+
 ## Connections
 
 - **SSL / TLS**: modes `disable`, `prefer`, `require` (encrypted, certificate not checked),

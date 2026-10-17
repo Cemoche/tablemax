@@ -28,7 +28,8 @@
       "appimage"
     ],
     "publisher": "TableMax contributors",
-    "copyright": "Copyright © 2026 Cem Yildirim and TableMax contributors",
+    "copyright": "Copyright © 2026 Cem Yildirim and the TableMax contributors",
+    "license": "GPL-3.0-or-later",
     "category": "DeveloperTool",
     "shortDescription": "A free, fast desktop database client",
     "longDescription": "TableMax is a free, fast desktop database client for PostgreSQL, MySQL, MariaDB and SQLite: browse schemas and tables in a virtualized grid, run SQL in an editor with syntax highlighting, connect over SSL/TLS or SSH tunnels, and confirm writes on production connections with safe mode. Passwords stay in the system keyring.",

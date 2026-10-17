@@ -2,7 +2,8 @@
 name = "tablemax"
 version = "0.1.0"
 description = "TableMax, a free desktop database client"
-authors = ["TableMax contributors"]
+authors = ["Cem Yildirim and the TableMax contributors"]
+license = "GPL-3.0-or-later"
 edition = "2024"
 
 [lib]

@@ -485,7 +485,7 @@ export const strings = {
     about: "About",
     version: "Version",
     versionUnknown: "…",
-    license: "License: not chosen yet",
+    license: "License: GPL-3.0-or-later",
     repository: "Repository",
     repositoryUrl: "github.com/Cemoche/tablemax",
     range: (min: number, max: number) => `Enter a whole number between ${min.toLocaleString("en-US")} and ${max.toLocaleString("en-US")}`,

@@ -64,6 +64,11 @@ Pour un message à l'équipe sur une issue : **`/issue-comment <n> <texte>`**.
 Deux worktrees qui lancent `pnpm test:rust` en même temps : voir « Two worktrees side by
 side » dans le [README](README.md#two-worktrees-side-by-side).
 
+### Licence
+
+TableMax est publié sous GPL-3.0-or-later (voir [LICENSE](LICENSE)). Toute contribution est
+acceptée sous cette même licence.
+
 ### Ce qu'on ne fait jamais
 
 - Pousser ou committer sur `main` (tout passe par une PR).
@@ -153,6 +158,11 @@ To tell the team something on an issue: **`/issue-comment <n> <text>`**.
 
 Two worktrees running `pnpm test:rust` at the same time: see "Two worktrees side by side"
 in the [README](README.md#two-worktrees-side-by-side).
+
+### License
+
+TableMax is released under GPL-3.0-or-later (see [LICENSE](LICENSE)). Contributions are
+accepted under the same license.
 
 ### Never
 

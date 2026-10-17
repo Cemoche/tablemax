@@ -25,7 +25,7 @@ after the rebase on Plans 3 and 4) is not done yet: see its checklist below.
 - Ruling R11: accepted the implementer's extension: unversioned `/*! … */` is also lexed both ways (a statement made only of an executable comment is a write), with new false positives (PG `explain (format 'json')`, MySQL `EXPLAIN FOR CONNECTION`, tables named like keywords), all fail-safe — cost if wrong: extra confirmation clicks on prod.
 
 ### Task 4 — settings dialog
-- Ruling R12: no license is declared in the repo; choosing one is the owner's decision, so About shows one strings.ts entry "License: not chosen yet", no LICENSE file is added, and the repository is plain text `github.com/Cemoche/tablemax` — cost if wrong: one string to change once Cem picks a license.
+- Ruling R12: no license is declared in the repo; choosing one is the owner's decision, so About shows one strings.ts entry "License: not chosen yet", no LICENSE file is added, and the repository is plain text `github.com/Cemoche/tablemax` — cost if wrong: one string to change once Cem picks a license. SUPERSEDED: Cem chose GPL-3.0-or-later; LICENSE added, package.json / Cargo.toml / tauri.conf.json carry it, About reads "License: GPL-3.0-or-later".
 - Ruling R13 (= R3/R4 applied): Task 4 adds Rust `app_version()` and a read-only shortcut list with the shortcuts on this branch: Mod+Enter, Mod+Shift+Enter (SqlEditor), Ctrl+T / Ctrl+W (WorkspaceView), plus the new Mod+, (settings) — cost if wrong: list swapped for `DEFAULT_KEYMAP` in Task 6.
 
 ### Final fix wave
@@ -78,8 +78,6 @@ after the rebase on Plans 3 and 4) is not done yet: see its checklist below.
 - Replace the local shortcut list (`src/features/settings/shortcuts.ts`) with Plan 4's `DEFAULT_KEYMAP`, keeping `formatShortcut`'s platform modifier names.
 
 ## Open questions for Cem
-- License: About says "License: not chosen yet"; no LICENSE file, no package.json / Cargo.toml field.
-- The .deb copyright line carries a personal name (Cem Yildirim): keep it or use a project name?
 - AppImage glibc 2.43 floor: it does not run on Ubuntu 24.04 LTS; a portable build needs an older build host or a CI container. Worth setting up before v1?
 - Identifier `dev.tablemax.app` ends in `.app` (Tauri warns): change it now (moves the data directory) or keep it?
 - Package name `table-max` (deb) vs command `tablemax`: align them?
