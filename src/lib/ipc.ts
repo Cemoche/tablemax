@@ -119,3 +119,6 @@ export const settingsGet = () => invoke<Settings>("settings_get");
 
 /** Saves the settings; resolves with the stored value (out-of-range numbers clamped). */
 export const settingsSet = (settings: Settings) => invoke<Settings>("settings_set", { settings });
+
+/** The app version (from the package info). */
+export const appVersion = () => invoke<string>("app_version");

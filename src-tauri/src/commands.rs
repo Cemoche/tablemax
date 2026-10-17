@@ -328,6 +328,12 @@ pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Setti
     .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
 }
 
+/// The app version, from the package info.
+#[tauri::command]
+pub fn app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 /// Sets the title of the calling window (`TableMax — <connection> [PROD]`). Done here
 /// rather than from JS so the capabilities stay at `core:default`.
 #[tauri::command]
