@@ -138,6 +138,21 @@ fn pg_ssl_mode(mode: SslMode) -> PgSslMode {
     }
 }
 
+/// Bounds TCP connect, TLS, authentication and the session setup queries together: a
+/// server (or tunnel) that accepts and never answers fails as Connection
+/// "connection timed out" instead of hanging (tokio-postgres only bounds the TCP connect).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct AbortOnDrop(Option<tokio::task::JoinHandle<()>>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if let Some(h) = self.0.take() {
+            h.abort();
+        }
+    }
+}
+
 pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
     let tls =
         rustls_client_config(&p.ssl)?.map(|c| MakeRustlsConnect::new(Arc::unwrap_or_clone(c)));
@@ -155,14 +170,17 @@ pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> 
     if let Some(db) = &p.database {
         cfg.dbname(db);
     }
-    cfg.connect_timeout(Duration::from_secs(10));
+    // TCP connect only: the whole connect + startup is bounded by CONNECT_TIMEOUT below.
+    cfg.connect_timeout(CONNECT_TIMEOUT);
     let lost = Arc::new(AtomicBool::new(false));
-    let (client, handle) = match &tls {
-        Some(tls) => open_client(&cfg, tls.clone(), lost.clone()).await?,
-        None => open_client(&cfg, NoTls, lost.clone()).await?,
-    };
-    // The text decoders assume hex bytea output.
-    let init = async {
+    let opened = tokio::time::timeout(CONNECT_TIMEOUT, async {
+        let (client, handle) = match &tls {
+            Some(tls) => open_client(&cfg, tls.clone(), lost.clone()).await?,
+            None => open_client(&cfg, NoTls, lost.clone()).await?,
+        };
+        // Stops the connection task if init fails or the deadline drops this future.
+        let mut guard = AbortOnDrop(Some(handle));
+        // The text decoders assume hex bytea output.
         client
             .batch_execute("SET bytea_output = 'hex'")
             .await
@@ -171,16 +189,12 @@ pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> 
             .query_one("SELECT current_setting('server_version')", &[])
             .await
             .map_err(map_err)?;
-        Ok::<String, AppError>(row.get(0))
-    }
+        let handle = guard.0.take().expect("connection task");
+        Ok::<_, AppError>((client, handle, row.get::<_, String>(0)))
+    })
     .await;
-    let version = match init {
-        Ok(v) => v,
-        Err(e) => {
-            handle.abort();
-            return Err(e);
-        }
-    };
+    let (client, handle, version) =
+        opened.map_err(|_| AppError::new(ErrorKind::Connection, "connection timed out"))??;
     let cancel = client.cancel_token();
     Ok(Arc::new(PgSession {
         client,
@@ -464,6 +478,49 @@ impl Session for PgSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver::DriverKind;
+    use crate::driver::tls::SslConfig;
+
+    #[tokio::test]
+    async fn silent_server_times_out() {
+        // Accepts connections and holds them open without ever answering.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hold = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+        let p = ConnectParams {
+            kind: DriverKind::Postgres,
+            host: "127.0.0.1".into(),
+            port,
+            user: "u".into(),
+            password: None,
+            database: None,
+            sqlite_path: None,
+            ssl: SslConfig {
+                mode: SslMode::Disable,
+                ..Default::default()
+            },
+            dial: None,
+        };
+        let start = Instant::now();
+        let res = tokio::time::timeout(
+            CONNECT_TIMEOUT + Duration::from_secs(5),
+            connect_postgres(&p),
+        )
+        .await
+        .expect("connect to a silent server must end on its own");
+        let e = res.err().expect("a silent server must not connect");
+        assert_eq!(
+            (e.kind, e.message.as_str()),
+            (ErrorKind::Connection, "connection timed out")
+        );
+        assert!(start.elapsed() >= CONNECT_TIMEOUT, "{:?}", start.elapsed());
+        hold.abort();
+    }
 
     #[test]
     fn hex_bytea_decodes() {
