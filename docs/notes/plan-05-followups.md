@@ -3,7 +3,8 @@
 Extracted from the SDD ledger at the end of Plan 5 Tasks 1–5 (branch feat/plan-05-safety),
 after the final fix wave. Deferred minors that a fix round or the final fix wave resolved
 are left out; lines resolved in part keep only what is still open. Task 6 (integration
-after the rebase on Plans 3 and 4) is not done yet: see its checklist below.
+after the rebase on Plans 3 and 4) is done (Phase A, then Phase B): its checklist and
+rulings are below.
 
 ## Rulings
 
@@ -37,6 +38,13 @@ after the rebase on Plans 3 and 4) is not done yet: see its checklist below.
 ### Final review
 - Ruling R16: for an open workspace the backend applies `stricter(effective(saved), effective(opened))`: tightening applies at once, loosening (a looser mode, or a retag away from prod) only at the next workspace open, fail-safe and in line with R6. The banner, the window title and ConfirmRunDialog read the live saved connection (tag + safe mode, falling back to the opened config) and show the same stricter-of mode (`enforcedSafeMode` in `src/lib/safeMode.ts`) — cost if wrong: a user who relaxes a prod connection must reopen its workspace for it to apply.
 
+### Task 6 — Phase B
+- Ruling B-R1 (controller): the `editor` shortcut scope lives inside a query tab (the CodeMirror keymap fires first, then the window listener sees the same keydown), so `editor` conflicts with `queryTab` as well as with itself and `global`; `queryTab` and `tableTab` never conflict with each other — cost if wrong: one combination refused that the orchestrator's literal rule would allow.
+- Ruling B-R2: the backend `render_preview` (`dml.rs`) writes PostgreSQL literals as `E'…'` / `E'\\x…'`, like the frontend's `quoteString` / `bytesLiteral`, so the confirmation preview reads the same under any `standard_conforming_strings` (cec5bc3) — cost if wrong: none (display only).
+- Open: `conflictFor` ignores CodeMirror's built-in keys (Mod+F, Mod+Z, Mod+D…) and Glide's own keys (Ctrl+C / Ctrl+A); a custom binding wins (Prec.highest / capture), so nothing breaks silently, but the built-in stops working.
+- Open: Auto LIMIT per-tab overrides are kept in memory only, not in Plan 4's session snapshot (documented choice).
+- Open: filtered counts at a high `exact_count_threshold` hold the browse connection without a user-facing cancel (already in `plan-03-followups.md`, "Deferred (Task 8)").
+
 ## Deferred minors
 
 ### Settings (Task 1, Task 4)
@@ -46,14 +54,15 @@ after the rebase on Plans 3 and 4) is not done yet: see its checklist below.
 - Task 1: the settings store's `load()` is not sequenced against an in-flight `update()`; a failed stale update's error is dropped silently.
 - Task 4: NumberField saves every intermediate valid value while typing: done in Task 6 (Phase A) (saves on Enter or blur).
 - Task 4: ⚙ glyph hard-coded in App.tsx (not in strings.ts).
-- Task 4: Mod+, (App.tsx) accepts metaKey on every platform (→ Phase B).
+- Task 4: Mod+, (App.tsx) accepted metaKey on every platform: done in Task 6 (Phase B) (023dc67: `useAction("settings.open")`, Mod = Cmd on macOS and Ctrl elsewhere, not both).
 - Task 4: no tests for the dialog reverting after a failed `settings_set`, nor for Mod+, while ConfirmRunDialog is open.
 - Final fix wave: the font grammar is ASCII only, so a font whose name has non-ASCII letters (CJK font names…) cannot be set; widen to Unicode letters on both sides if users ask.
 
 ### Safe mode (Task 2, Task 3)
 - Task 2: MySQL lexers (safety.rs, mysql.rs `has_multiple_statements`) read every digit after `/*!` as the version, where MySQL reads 5–6; fail-safe.
 - Task 3: cancelling ConfirmRunDialog dropped the tab's previous results: done in Task 6 (Phase A) (snapshot restored on refusal).
-- Task 3: ConfirmRunDialog's Escape/Tab trap works only while focus is inside the overlay (a click on a non-focusable area loses it); window-level Ctrl+T / Ctrl+W still fire while it is open; focus is not restored to the editor (→ Phase B).
+- Task 3: ConfirmRunDialog: window-level Ctrl+T / Ctrl+W fired while it was open, and focus was not restored to the editor: done in Task 6 (Phase B) (023dc67 modal-aware shortcuts; 396553f, ea98060 `useRestoreFocus`). Escape worked only while focus was inside the overlay: done in Task 6 (Phase B) (41abddf: Escape on a `document` listener while mounted).
+- Task 3: ConfirmRunDialog's Tab trap still works only while focus is inside the overlay: after a click on a non-focusable area (focus on `<body>`), Tab moves to the first focusable element of the page, possibly behind the dialog. SettingsDialog has the same gap. Global shortcuts stay inert (the dialog is `aria-modal`), so nothing unsafe follows.
 - Task 3: ConfirmRunDialog duplicated `ENV_BG`: done in Task 6 (Phase A) (shared `src/features/workspace/envClasses.ts`).
 - Task 3: `useWindowTitle` swallows `windowSetTitle` errors silently.
 - Final review (nit): `classify` is skipped when the mode is Off or ConfirmAll (fine today; matters only if classification gets other uses).
@@ -61,7 +70,7 @@ after the rebase on Plans 3 and 4) is not done yet: see its checklist below.
 
 ### UI shell
 - Final review: double `border-b` between the App.tsx top bar and WorkspaceSwitcher.
-- Task 4: window-level Ctrl+T / Ctrl+W and Mod+, still fire while a modal (Settings, ConfirmRunDialog) is open; focus not restored on close (→ Phase B).
+- Task 4: window-level Ctrl+T / Ctrl+W and Mod+, fired while a modal (Settings, ConfirmRunDialog) was open; focus was not restored on close: done in Task 6 (Phase B) (023dc67, 857a2e8; 396553f, ea98060).
 
 ### Packaging (Task 5)
 - Task 5: the .deb package is named `table-max` while the command is `tablemax` (documented in the README).
@@ -72,10 +81,10 @@ after the rebase on Plans 3 and 4) is not done yet: see its checklist below.
 
 ## Task 6 checklist (after the rebase on Plans 3 and 4)
 - Done in Task 6 (Phase A): grid Commit (`changes_apply`) goes through the same `confirmed` guard as `execute_batch`: `safety::{effective_safe_mode, needs_confirmation}` with the R16 stricter-of-saved-and-opened resolution (`workspace_safe_mode`), refusing with `ConfirmationRequired` before any statement runs, and the dialog shows the SQL that will run.
-- → Phase B. Modal-aware global shortcuts with focus restore: today Ctrl+W pressed under Settings closes the query tab behind it and loses its SQL; Ctrl+T / Ctrl+W / Mod+, must be ignored while a modal is open, and focus must return to where it was on close.
+- Done in Task 6 (Phase B): modal-aware global shortcuts with focus restore: Ctrl+W pressed under Settings no longer closes the query tab behind it; Ctrl+T / Ctrl+W / Mod+, are ignored while a modal is open, and focus returns to where it was on close (023dc67, 857a2e8, 396553f, ea98060).
 - Done in Task 6 (Phase A): NumberField saves on blur/Enter; page size and exact count threshold wired to the grid.
 - Done in Task 6 (Phase A): the tab's query results are restored when the confirmation dialog is cancelled.
-- → Phase B. Replace the local shortcut list (`src/features/settings/shortcuts.ts`) with Plan 4's `DEFAULT_KEYMAP`, keeping `formatShortcut`'s platform modifier names.
+- Done in Task 6 (Phase B): the local shortcut list (`src/features/settings/shortcuts.ts`) is replaced by Plan 4's `DEFAULT_KEYMAP`, with one `formatShortcut` and its platform modifier names (a5f56d9, 06c4db2); the Keyboard section edits it (e1198b2, 748e82b; final review fixes 8b08976: Reset refuses a conflicting default, conflicts checked on both platforms, Shift alone is not a modifier, Meta reads Super outside macOS).
 
 ## Open questions for Cem
 - AppImage glibc 2.43 floor: it does not run on Ubuntu 24.04 LTS; a portable build needs an older build host or a CI container. Worth setting up before v1?

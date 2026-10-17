@@ -56,16 +56,24 @@ and the integration rules; this note records what differed and what was fixed).
 
 ## Left for plan 5 Task 6
 
-- Grid commits (`changes_apply`, from the grid, row details and pending panel) bypass safe
-  mode (`src-tauri/CLAUDE.md` asks every write path to go through the guard).
-- Settings not consumed yet: `pageSize`, `exactCountThreshold`, `autoLimitDefault` /
-  `autoLimitValue` (plan 4 `AUTO_LIMIT_ROWS`), `keymap`; the structure view's DDL editor
-  ignores the editor font settings (`editorFontStyle`).
-- `ConfirmRunDialog` lists the statements as typed; with Auto LIMIT on, the confirmed run
-  sends them with `LIMIT` appended.
-- Raw `keydown` listeners on `e.key` (plan 5 Mod+,; plan 3 Alt+1/2, Alt+←, Ctrl+I) next to
-  plan 4's `useShortcut` (`e.code`); two platform helpers (`lib/platform.ts`,
-  `lib/shortcuts.ts`). All check the same `aria-modal` marker.
+All done on `feat/plan-05-task6` (Phase A, then Phase B; the final review found nothing
+still open in code):
+
+- Done in Task 6 (Phase A): grid commits (`changes_apply`, from the grid, row details and
+  pending panel) go through the safe mode guard (`src-tauri/CLAUDE.md` asks every write path
+  to): 69070eb, 4e693f9, 9335cb9.
+- Done in Task 6: every setting is consumed. Phase A: `pageSize` (308c7b0, 6b8a9c7),
+  `exactCountThreshold` (70ea9de), the structure view's DDL editor uses `editorFontStyle`
+  (d37436b). Phase B: `autoLimitDefault` / `autoLimitValue` replace plan 4's
+  `AUTO_LIMIT_ROWS` (670a4a6); `keymap` drives every shortcut (a5f56d9, dcb5f39, 706e3ab,
+  023dc67, 857a2e8, e1198b2, 748e82b; final review fixes 8b08976).
+- Done in Task 6 (Phase B): `ConfirmRunDialog` shows the statements that will run, `LIMIT`
+  appended included, and the confirmed run resends exactly those (670a4a6).
+- Done in Task 6: raw `keydown` listeners on `e.key` replaced by keymap-driven, modal-aware
+  shortcuts on `e.code` (Phase B: 023dc67, 857a2e8); one platform helper module,
+  `lib/platform.ts` (Phase A: a0cd8d7; Phase B: 06c4db2). Left by design: the dialogs'
+  Escape/Tab handlers, the menus' Escape, TabSwitcher (keymap-driven) and the shortcut
+  recorder.
 
 Follow-ups: pending changes are not in plan 4's session snapshot and nothing asks before
 quitting with some; a SQL session opened while a switch runs may land on the old database
