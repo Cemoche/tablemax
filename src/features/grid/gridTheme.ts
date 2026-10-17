@@ -50,6 +50,31 @@ export function buildGridTheme(readVar: ReadVar = readCssVar): Partial<Theme> {
   };
 }
 
+export interface EditThemes {
+  /** A cell with a pending value. */
+  edited: Partial<Theme>;
+  /** A row to insert. */
+  inserted: Partial<Theme>;
+  /** A row to delete (its text is also struck through by DataGrid). */
+  deleted: Partial<Theme>;
+  /** A row whose change failed to apply. */
+  failed: Partial<Theme>;
+}
+
+/** Overrides for pending changes (tokens --pending-*); a missing token overrides nothing. */
+export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
+  const only = (key: keyof Theme, token: string): Partial<Theme> => {
+    const v = readVar(token);
+    return v ? { [key]: v } : {};
+  };
+  return {
+    edited: only("bgCell", "--pending-edit"),
+    inserted: only("bgCell", "--pending-insert"),
+    deleted: { ...only("bgCell", "--pending-delete"), ...only("textDark", "--text-muted") },
+    failed: only("textDark", "--danger"),
+  };
+}
+
 /** Theme + muted-cell override, rebuilt whenever the OS color scheme changes. */
 export function useGridTheme(readVar: ReadVar = readCssVar) {
   const [rev, setRev] = useState(0);
@@ -63,7 +88,7 @@ export function useGridTheme(readVar: ReadVar = readCssVar) {
   return useMemo(() => {
     const theme = buildGridTheme(readVar);
     const muted: Partial<Theme> = { textDark: theme.textMedium };
-    return { theme, muted };
+    return { theme, muted, edit: buildEditThemes(readVar) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rev]);
 }

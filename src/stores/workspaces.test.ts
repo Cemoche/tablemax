@@ -2,6 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../lib/ipc";
 import type { ConnectionConfig } from "../lib/types";
 import { useConnections } from "./connections";
+import { usePendingChanges } from "./pendingChanges";
 import { useQueryRuns } from "./queryRuns";
 import { useWorkspaces } from "./workspaces";
 
@@ -35,7 +36,8 @@ const info = (over = {}) => ({
 
 beforeEach(() => {
   vi.resetAllMocks();
-  useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null });
+  useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null, closeRequest: null });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {} });
   useConnections.setState({ items: [cfg()] });
   vi.mocked(ipc.workspaceOpen).mockResolvedValue(info());
   vi.mocked(ipc.schemasList).mockResolvedValue(["audit", "public"]);
@@ -175,4 +177,41 @@ test("closing a query tab drops its run state", async () => {
   useQueryRuns.getState().start(tab.id, 1);
   useWorkspaces.getState().closeTab(id, tab.id);
   expect(useQueryRuns.getState().runs[tab.id]).toBeUndefined();
+});
+
+test("closing a table tab with pending changes asks first", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, { schema: "public", name: "t" });
+  const tab = ws().tabs[0];
+  usePendingChanges.getState().addInsert(tab.id);
+  usePendingChanges.getState().addInsert(tab.id);
+  s.closeTab(id, tab.id);
+  expect(ws().tabs).toHaveLength(1);
+  expect(useWorkspaces.getState().closeRequest).toEqual({ wsId: id, tabId: tab.id, count: 2 });
+  useWorkspaces.getState().cancelCloseTab();
+  expect(useWorkspaces.getState().closeRequest).toBeNull();
+  expect(usePendingChanges.getState().count(tab.id)).toBe(2);
+  s.closeTab(id, tab.id);
+  useWorkspaces.getState().confirmCloseTab();
+  expect(ws().tabs).toHaveLength(0);
+  expect(useWorkspaces.getState().closeRequest).toBeNull();
+  expect(usePendingChanges.getState().tabs[tab.id]).toBeUndefined();
+});
+
+test("closing a table tab without pending changes closes it at once", async () => {
+  const id = await open();
+  useWorkspaces.getState().openTableTab(id, { schema: "public", name: "t" });
+  useWorkspaces.getState().closeTab(id, ws().tabs[0].id);
+  expect(ws().tabs).toHaveLength(0);
+  expect(useWorkspaces.getState().closeRequest).toBeNull();
+});
+
+test("closing a workspace drops the pending changes of its tabs", async () => {
+  const id = await open();
+  useWorkspaces.getState().openTableTab(id, { schema: "public", name: "t" });
+  const tab = ws().tabs[0];
+  usePendingChanges.getState().addInsert(tab.id);
+  await useWorkspaces.getState().closeWorkspace(id);
+  expect(usePendingChanges.getState().tabs[tab.id]).toBeUndefined();
 });

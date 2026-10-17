@@ -17,6 +17,9 @@
   --color-env-dev: var(--env-dev);
   --color-env-staging: var(--env-staging);
   --color-env-prod: var(--env-prod);
+  --color-pending-edit: var(--pending-edit);
+  --color-pending-insert: var(--pending-insert);
+  --color-pending-delete: var(--pending-delete);
   --color-swatch-1: var(--swatch-1);
   --color-swatch-2: var(--swatch-2);
   --color-swatch-3: var(--swatch-3);

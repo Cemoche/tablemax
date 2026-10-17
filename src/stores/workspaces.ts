@@ -4,6 +4,7 @@ import { strings } from "../lib/strings";
 import type { ConnectionConfig, Dialect, EnvTag, ObjectRef } from "../lib/types";
 import { useConnections } from "./connections";
 import { useGridViews } from "./gridViews";
+import { usePendingChanges } from "./pendingChanges";
 import { useQueryRuns } from "./queryRuns";
 
 export type Tab =
@@ -38,7 +39,16 @@ interface WorkspacesState {
   setSchema: (wsId: string, schema: string) => void;
   openTableTab: (wsId: string, object: ObjectRef) => void;
   openQueryTab: (wsId: string) => void;
+  /**
+   * Closes a tab. A table tab with pending changes is not closed: `closeRequest` asks the
+   * user first (confirmCloseTab / cancelCloseTab).
+   */
   closeTab: (wsId: string, tabId: string) => void;
+  /** A tab close waiting for "Discard N pending changes?". */
+  closeRequest: { wsId: string; tabId: string; count: number } | null;
+  /** Discards the pending changes of `closeRequest` and closes its tab. */
+  confirmCloseTab: () => void;
+  cancelCloseTab: () => void;
   activateTab: (wsId: string, tabId: string) => void;
   /** Patches a query tab (no-op for table tabs). */
   updateTab: (
@@ -105,6 +115,25 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     set((s) => ({ workspaces: [...s.workspaces, ws], activeWorkspaceId: ws.id }));
   };
 
+  const doCloseTab = (wsId: string, tabId: string) => {
+    const ws = get().workspaces.find((w) => w.id === wsId);
+    const tab = ws?.tabs.find((t) => t.id === tabId);
+    if (!ws || !tab) return;
+    if (tab.kind === "query" && tab.sqlSessionId) {
+      void ipc.sqlSessionClose(tab.sqlSessionId)?.catch(() => {});
+    }
+    useGridViews.getState().dropView(tabId);
+    useQueryRuns.getState().drop(tabId);
+    usePendingChanges.getState().drop(tabId);
+    update(wsId, (w) => {
+      const idx = w.tabs.findIndex((t) => t.id === tabId);
+      const tabs = w.tabs.filter((t) => t.id !== tabId);
+      const activeTabId =
+        w.activeTabId === tabId ? (tabs[idx] ?? tabs[idx - 1])?.id ?? null : w.activeTabId;
+      return { ...w, tabs, activeTabId };
+    });
+  };
+
   return {
     workspaces: [],
     activeWorkspaceId: null,
@@ -135,6 +164,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       for (const t of get().workspaces.find((w) => w.id === id)?.tabs ?? []) {
         useGridViews.getState().dropView(t.id);
         useQueryRuns.getState().drop(t.id);
+        usePendingChanges.getState().drop(t.id);
       }
       set((s) => {
         const idx = s.workspaces.findIndex((w) => w.id === id);
@@ -175,22 +205,25 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       }),
 
     closeTab: (wsId, tabId) => {
-      const ws = get().workspaces.find((w) => w.id === wsId);
-      const tab = ws?.tabs.find((t) => t.id === tabId);
-      if (!ws || !tab) return;
-      if (tab.kind === "query" && tab.sqlSessionId) {
-        void ipc.sqlSessionClose(tab.sqlSessionId)?.catch(() => {});
+      const tab = get().workspaces.find((w) => w.id === wsId)?.tabs.find((t) => t.id === tabId);
+      if (!tab) return;
+      const count = tab.kind === "table" ? usePendingChanges.getState().count(tabId) : 0;
+      if (count > 0) {
+        set({ closeRequest: { wsId, tabId, count } });
+        return;
       }
-      useGridViews.getState().dropView(tabId);
-      useQueryRuns.getState().drop(tabId);
-      update(wsId, (w) => {
-        const idx = w.tabs.findIndex((t) => t.id === tabId);
-        const tabs = w.tabs.filter((t) => t.id !== tabId);
-        const activeTabId =
-          w.activeTabId === tabId ? (tabs[idx] ?? tabs[idx - 1])?.id ?? null : w.activeTabId;
-        return { ...w, tabs, activeTabId };
-      });
+      doCloseTab(wsId, tabId);
     },
+
+    closeRequest: null,
+
+    confirmCloseTab: () => {
+      const req = get().closeRequest;
+      set({ closeRequest: null });
+      if (req) doCloseTab(req.wsId, req.tabId);
+    },
+
+    cancelCloseTab: () => set({ closeRequest: null }),
 
     activateTab: (wsId, tabId) => update(wsId, (w) => ({ ...w, activeTabId: tabId })),
 

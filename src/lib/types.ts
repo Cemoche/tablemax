@@ -1,6 +1,6 @@
 // TypeScript mirrors of the Rust serde types (all camelCase on the wire).
-// Sources: src-tauri/src/{value,error,store,manager,commands}.rs, driver/{mod,tls}.rs and
-// import/{mod,tableplus}.rs.
+// Sources: src-tauri/src/{value,error,store,manager,commands}.rs,
+// driver/{mod,tls,meta,query,dml}.rs and import/{mod,tableplus}.rs.
 // Pinned by types.shape.test.ts.
 
 export type DriverKind = "postgres" | "mySql" | "mariaDb" | "sqlite";
@@ -175,11 +175,113 @@ export interface StatementOutcome {
 
 export type SortDir = "asc" | "desc";
 
+/** driver/query.rs FilterOp. */
+export type FilterOp =
+  | "eq"
+  | "neq"
+  | "lt"
+  | "gt"
+  | "lte"
+  | "gte"
+  | "in"
+  | "notIn"
+  | "between"
+  | "notBetween"
+  | "like"
+  | "notLike"
+  /** PostgreSQL only (LIKE elsewhere). */
+  | "ilike"
+  | "contains"
+  | "notContains"
+  | "isNull"
+  | "isNotNull"
+  /** `values[0]` is the user's own SQL, written as is between parentheses. */
+  | "raw";
+
+export interface Filter {
+  /** null = any column (eq, contains, notContains, like only). */
+  column: string | null;
+  op: FilterOp;
+  values: string[];
+}
+
 export interface PageRequest {
   object: ObjectRef;
   limit: number;
   offset: number;
   sort: [string, SortDir] | null;
+  /** Joined by AND. */
+  filters: Filter[];
+}
+
+/** driver/meta.rs ColumnInfo. */
+export interface ColumnInfo {
+  name: string;
+  /** PostgreSQL: format_type; MySQL/MariaDB: COLUMN_TYPE; SQLite: the declared type. */
+  typeName: string;
+  /** The type without its modifier (what values are cast to). */
+  baseType: string;
+  nullable: boolean;
+  /** The default as an SQL expression; null without a default or with DEFAULT NULL. */
+  default: string | null;
+  /** serial / identity / AUTO_INCREMENT / SQLite INTEGER PRIMARY KEY. */
+  autoIncrement: boolean;
+  /** Generated (computed) column: never editable. */
+  generated: boolean;
+  comment: string | null;
+}
+
+export interface IndexInfo {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  primary: boolean;
+  definition: string | null;
+}
+
+export interface ForeignKeyInfo {
+  name: string;
+  columns: string[];
+  refSchema: string | null;
+  refTable: string;
+  refColumns: string[];
+  onUpdate: string;
+  onDelete: string;
+}
+
+export interface TableInfo {
+  object: ObjectRef;
+  kind: ObjectKind;
+  columns: ColumnInfo[];
+  primaryKey: string[];
+  indexes: IndexInfo[];
+  foreignKeys: ForeignKeyInfo[];
+  /** Columns identifying one row (primary key, else a unique NOT NULL index); null = read-only. */
+  rowKey: string[] | null;
+  hasRowid: boolean;
+}
+
+/** driver/dml.rs EditValue: `default` (the column's default) only in an insert. */
+export type EditValue = { t: "null" } | { t: "default" } | { t: "text"; v: string };
+
+/** The loaded values of the row key columns, as [column, value] pairs. */
+export type RowKey = [string, CellValue][];
+
+export type RowChange =
+  | { kind: "update"; key: RowKey; set: [string, EditValue][] }
+  | { kind: "insert"; values: [string, EditValue][] }
+  | { kind: "delete"; key: RowKey };
+
+/**
+ * Result of changes_apply. Not applied: everything was rolled back; `failedIndex` is the
+ * change that failed, null when the commit itself failed.
+ */
+export interface ApplyOutcome {
+  applied: boolean;
+  /** Rows touched by each statement that ran (the failed one included). */
+  affected: number[];
+  failedIndex: number | null;
+  error: AppError | null;
 }
 
 export type RowCount = { t: "exact"; v: number } | { t: "estimate"; v: number };

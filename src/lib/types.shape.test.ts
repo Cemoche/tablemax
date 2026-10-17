@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import type {
+  ApplyOutcome,
   CellValue,
   ConnectionConfig,
   ErrorKind,
@@ -7,10 +8,16 @@ import type {
   FilePurpose,
   ImportPreview,
   ImportResult,
+  EditValue,
+  Filter,
+  FilterOp,
+  PageRequest,
   ResultSet,
+  RowChange,
   RowCount,
   SshAuth,
   SslMode,
+  TableInfo,
   WorkspaceInfo,
 } from "./types";
 
@@ -108,4 +115,61 @@ test("ImportPreview and ImportResult", () => {
   expect(p.warnings[0].entry).toBe("k");
   const r: ImportResult = JSON.parse('{"saved":[],"warnings":[]}');
   expect(r.saved).toEqual([]);
+});
+
+// driver/meta.rs TableInfo / ColumnInfo / IndexInfo / ForeignKeyInfo (camelCase).
+test("TableInfo", () => {
+  const t: TableInfo = JSON.parse(`{
+    "object":{"schema":"public","name":"order"},"kind":"table",
+    "columns":[{"name":"amount","typeName":"numeric(12,2)","baseType":"numeric","nullable":true,
+      "default":"0","autoIncrement":false,"generated":false,"comment":null}],
+    "primaryKey":["id"],
+    "indexes":[{"name":"order_pkey","columns":["id"],"unique":true,"primary":true,"definition":null}],
+    "foreignKeys":[{"name":"f","columns":["parent_id"],"refSchema":null,"refTable":"parent",
+      "refColumns":["id"],"onUpdate":"NO ACTION","onDelete":"CASCADE"}],
+    "rowKey":["id"],"hasRowid":false
+  }`);
+  expect(t.columns[0].baseType).toBe("numeric");
+  expect(t.foreignKeys[0].onDelete).toBe("CASCADE");
+  expect(t.rowKey).toEqual(["id"]);
+});
+
+// driver/query.rs Filter / FilterOp and driver/mod.rs PageRequest (query.rs serde_shapes).
+test("Filter and PageRequest", () => {
+  const ops: FilterOp[] = [
+    "eq", "neq", "lt", "gt", "lte", "gte", "in", "notIn", "between", "notBetween",
+    "like", "notLike", "ilike", "contains", "notContains", "isNull", "isNotNull", "raw",
+  ];
+  expect(ops).toHaveLength(18);
+  const f: Filter = JSON.parse('{"column":null,"op":"notContains","values":["x"]}');
+  expect(f.column).toBeNull();
+  const req: PageRequest = {
+    object: { schema: null, name: "t" },
+    limit: 300,
+    offset: 0,
+    sort: ["a", "desc"],
+    filters: [f],
+  };
+  expect(Object.keys(req)).toEqual(["object", "limit", "offset", "sort", "filters"]);
+});
+
+// driver/dml.rs serde_shapes: EditValue, RowKey pairs, RowChange, ApplyOutcome.
+test("EditValue, RowChange and ApplyOutcome", () => {
+  const values: EditValue[] = [JSON.parse('{"t":"text","v":"x"}'), JSON.parse('{"t":"default"}'), { t: "null" }];
+  expect(values.map((v) => v.t)).toEqual(["text", "default", "null"]);
+  const changes: RowChange[] = JSON.parse(`[
+    {"kind":"update","key":[["id",{"t":"int","v":7}],["code",{"t":"text","v":"a'b"}]],
+     "set":[["amount",{"t":"text","v":"12.30"}],["note",{"t":"null"}]]},
+    {"kind":"insert","values":[["id",{"t":"default"}]]},
+    {"kind":"delete","key":[["data",{"t":"bytes","v":{"len":1,"hexPreview":"00"}}]]}
+  ]`);
+  const u = changes[0];
+  if (u.kind === "update") expect(u.key[1]).toEqual(["code", { t: "text", v: "a'b" }]);
+  expect(changes.map((c) => c.kind)).toEqual(["update", "insert", "delete"]);
+  const o: ApplyOutcome = JSON.parse(`{
+    "applied":false,"affected":[1,0],"failedIndex":1,
+    "error":{"kind":"query","message":"the row changed or was deleted since it was loaded"}
+  }`);
+  expect(o.failedIndex).toBe(1);
+  expect(o.error?.kind).toBe("query");
 });

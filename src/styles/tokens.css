@@ -37,6 +37,9 @@
   --env-dev: #2563eb;
   --env-staging: #b26a00;
   --env-prod: #c62828;
+  --pending-edit: #fff3c4;
+  --pending-insert: #dcf3e2;
+  --pending-delete: #fadcdc;
 }
 
 /* dark-first: applies unless the OS explicitly asks for light */
@@ -57,5 +60,8 @@
     --env-dev: #4f8cff;
     --env-staging: #f0b429;
     --env-prod: #ff6b6b;
+    --pending-edit: #3b3416;
+    --pending-insert: #173628;
+    --pending-delete: #3e1c20;
   }
 }

@@ -1,8 +1,11 @@
 import { useEffect } from "react";
+import { isModKey } from "../../lib/platform";
 import { strings } from "../../lib/strings";
+import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { ObjectSidebar } from "./ObjectSidebar";
 import { TabBar } from "./TabBar";
 
@@ -23,7 +26,24 @@ export function TabContent({ workspace, tab }: { workspace: Workspace; tab: Tab 
 export function WorkspaceView({ workspace }: { workspace: Workspace }) {
   const openQueryTab = useWorkspaces((s) => s.openQueryTab);
   const closeTab = useWorkspaces((s) => s.closeTab);
+  const closeRequest = useWorkspaces((s) => s.closeRequest);
+  const confirmCloseTab = useWorkspaces((s) => s.confirmCloseTab);
+  const cancelCloseTab = useWorkspaces((s) => s.cancelCloseTab);
   const { id, activeTabId } = workspace;
+  const active = workspace.tabs.find((t) => t.id === activeTabId) ?? null;
+
+  // Mod+S (Ctrl, Cmd on macOS) commits the active table tab, unless a modal is open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isModKey(e) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "s") return;
+      if (active?.kind !== "table") return;
+      e.preventDefault();
+      if (document.querySelector('[aria-modal="true"]')) return;
+      void usePendingChanges.getState().commit(active.id, id, active.object);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [id, active]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -41,7 +61,6 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [id, activeTabId, openQueryTab, closeTab]);
 
-  const active = workspace.tabs.find((t) => t.id === activeTabId) ?? null;
   return (
     <div className={`flex h-full min-h-0 border-t-2 ${ENV_BORDER[workspace.envTag]}`}>
       <ObjectSidebar workspace={workspace} />
@@ -58,6 +77,16 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
           )}
         </div>
       </div>
+      {closeRequest?.wsId === id && (
+        <ConfirmDialog
+          title={strings.grid.discardTitle}
+          message={strings.grid.discardConfirm(closeRequest.count)}
+          confirmLabel={strings.grid.discardOk}
+          cancelLabel={strings.grid.discardCancel}
+          onConfirm={confirmCloseTab}
+          onCancel={cancelCloseTab}
+        />
+      )}
     </div>
   );
 }

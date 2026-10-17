@@ -2,16 +2,22 @@
 // Rejected promises carry an AppError (use toAppError from ./errors to normalise).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
+  ApplyOutcome,
+  CellValue,
   ConnectionConfig,
   DbObject,
   ExecEvent,
   FilePurpose,
+  Filter,
   ImportPreview,
   ImportResult,
   ObjectRef,
   PageRequest,
   ResultSet,
+  RowChange,
   RowCount,
+  RowKey,
+  TableInfo,
   WorkspaceInfo,
 } from "./types";
 
@@ -79,8 +85,34 @@ export const objectsList = (workspaceId: string, schema: string | null) =>
 export const tablePage = (workspaceId: string, request: PageRequest) =>
   invoke<ResultSet>("table_page", { workspaceId, request });
 
-export const tableCount = (workspaceId: string, object: ObjectRef) =>
-  invoke<RowCount>("table_count", { workspaceId, object });
+/** With filters, the count is capped (estimate 500,000 beyond). */
+export const tableCount = (workspaceId: string, object: ObjectRef, filters: Filter[] = []) =>
+  invoke<RowCount>("table_count", { workspaceId, object, filters });
+
+/** Cached per workspace; `refresh` re-reads it from the database. */
+export const tableInfo = (workspaceId: string, object: ObjectRef, refresh: boolean) =>
+  invoke<TableInfo>("table_info", { workspaceId, object, refresh });
+
+export const tableDdl = (workspaceId: string, object: ObjectRef) =>
+  invoke<string>("table_ddl", { workspaceId, object });
+
+/**
+ * The SQL of each change, with literals inlined (display only, never run). Rejects with
+ * invalid "change <i>: <reason>" (0-based) for a change that cannot be built.
+ */
+export const changesPreview = (workspaceId: string, object: ObjectRef, changes: RowChange[]) =>
+  invoke<string[]>("changes_preview", { workspaceId, object, changes });
+
+/**
+ * Applies every change in one transaction on the browse connection (all or nothing).
+ * Rejects with invalid "change <i>: <reason>" before running anything, or cancelled.
+ */
+export const changesApply = (workspaceId: string, object: ObjectRef, changes: RowChange[]) =>
+  invoke<ApplyOutcome>("changes_apply", { workspaceId, object, changes });
+
+/** The whole value of a cell (text/JSON never cut); notFound when the row is gone. */
+export const cellValue = (workspaceId: string, object: ObjectRef, key: RowKey, column: string) =>
+  invoke<CellValue>("cell_value", { workspaceId, object, key, column });
 
 export const sqlSessionOpen = (workspaceId: string) =>
   invoke<string>("sql_session_open", { workspaceId });

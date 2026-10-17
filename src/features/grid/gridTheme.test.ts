@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { buildGridTheme, useGridTheme } from "./gridTheme";
+import { buildEditThemes, buildGridTheme, useGridTheme } from "./gridTheme";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -34,4 +34,21 @@ test("theme is rebuilt on a color-scheme media change and listener is removed", 
   expect(result.current.theme.bgCell).toBe("#000");
   unmount();
   expect(removeEventListener).toHaveBeenCalled();
+});
+
+test("pending-change themes read their tokens", () => {
+  const vars: Record<string, string> = {
+    "--pending-edit": "#e1",
+    "--pending-insert": "#e2",
+    "--pending-delete": "#e3",
+    "--danger": "#e4",
+    "--text-muted": "#e5",
+  };
+  const t = buildEditThemes((n) => vars[n] ?? "");
+  expect(t.edited.bgCell).toBe("#e1");
+  expect(t.inserted.bgCell).toBe("#e2");
+  expect(t.deleted).toEqual({ bgCell: "#e3", textDark: "#e5" });
+  expect(t.failed.textDark).toBe("#e4");
+  // Missing tokens: no override rather than a hardcoded color.
+  expect(buildEditThemes(() => "").edited).toEqual({});
 });

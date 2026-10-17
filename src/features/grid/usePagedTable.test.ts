@@ -3,6 +3,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import type { ResultSet } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
+import { usePendingChanges } from "../../stores/pendingChanges";
 import { formatRowCount, usePagedTable } from "./usePagedTable";
 
 vi.mock("../../lib/ipc");
@@ -17,6 +18,7 @@ const rs = (n: number): ResultSet => ({
 beforeEach(() => {
   vi.resetAllMocks();
   useGridViews.setState({ views: {} });
+  usePendingChanges.setState({ tabs: {}, blocked: {}, committing: {}, applied: {} });
   vi.mocked(ipc.tablePage).mockResolvedValue(rs(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 650 });
 });
@@ -42,7 +44,9 @@ test("sort cycles asc, desc, none and resets page", async () => {
     limit: 300,
     offset: 0,
     sort: ["name", "asc"],
+    filters: [],
   });
+  expect(ipc.tableCount).toHaveBeenCalledWith("w1", obj, []);
 });
 
 test("paging bounds and page count", async () => {
@@ -109,4 +113,18 @@ test("unmounting before the response resolves updates no state", async () => {
   expect(result.current.result).toBeNull();
   expect(result.current.rowCount).toBeNull();
   expect(spy).not.toHaveBeenCalled();
+});
+
+test("pending changes block paging and sorting", async () => {
+  const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  await waitFor(() => expect(result.current.pageCount).toBe(3));
+  act(() => usePendingChanges.getState().addInsert("t1"));
+  act(() => result.current.nextPage());
+  act(() => result.current.setSort("id"));
+  expect(result.current.page).toBe(0);
+  expect(result.current.sort).toBeNull();
+  expect(usePendingChanges.getState().blocked.t1).toBe(true);
+  act(() => usePendingChanges.getState().discard("t1"));
+  act(() => result.current.nextPage());
+  expect(result.current.page).toBe(1);
 });
