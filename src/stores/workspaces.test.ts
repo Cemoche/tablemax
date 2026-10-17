@@ -381,6 +381,21 @@ test("a pending change pins a preview tab; opening or viewing it does not", asyn
   expect(usePendingChanges.getState().count(pv)).toBe(1);
 });
 
+test("the grid latching its page size does not pin a preview tab", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users, { preview: true });
+  const pv = ws().tabs[0].id;
+  // What usePagedTable does when the tab mounts, and when the setting changes later.
+  useGridViews.getState().setView(pv, { pageSize: 300 });
+  useGridViews.getState().setView(pv, { pageSize: 50, page: 0 });
+  expect(ws().tabs[0]).toMatchObject({ preview: true });
+  // So the next single click still replaces it.
+  s.openTableTab(id, orders, { preview: true });
+  expect(ws().tabs).toHaveLength(1);
+  expect(ws().tabs[0]).toMatchObject({ object: orders, preview: true });
+});
+
 test("filtering a preview tab pins it", async () => {
   const id = await open();
   useWorkspaces.getState().openTableTab(id, users, { preview: true });

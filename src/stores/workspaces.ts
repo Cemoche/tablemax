@@ -626,10 +626,14 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
 
 // A preview tab is pinned by the first change the user makes in it (Plan 4, ruling R1), so
 // a single click in the sidebar never replaces it: a sort, page or filter change and a
-// foreign key navigation (all in its grid view) here, a pending edit below.
+// foreign key navigation (its grid view and trail) here, a pending edit below. The page
+// size the grid latches into the view when it mounts (Plan 5 settings) is not a user change.
+const userView = (v: GridView | undefined) =>
+  JSON.stringify([v?.page ?? 0, v?.sort ?? null, v?.filters ?? []]);
 useGridViews.subscribe((state, prev) => {
   for (const tabId of Object.keys(state.views)) {
-    if (state.views[tabId] === prev.views[tabId]) continue;
+    const navigated = state.trails[tabId] !== prev.trails[tabId];
+    if (!navigated && userView(state.views[tabId]) === userView(prev.views[tabId])) continue;
     for (const w of useWorkspaces.getState().workspaces) {
       if (w.tabs.some((t) => t.id === tabId && t.kind === "table" && t.preview)) {
         useWorkspaces.getState().pinTab(w.id, tabId);
