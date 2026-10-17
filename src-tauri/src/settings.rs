@@ -1,6 +1,8 @@
 //! Persisted user settings: `<app_data_dir>/settings.json`, versioned, written atomically.
 //! Out-of-range values are clamped to their bounds; an unreadable file gives defaults and
-//! is never rewritten by `load`.
+//! is never rewritten by `load`. An editor font family outside the safe grammar
+//! (`is_valid_font_family`) is reset to "" (the default font) by `clamped`, on load and on
+//! save alike, without touching the other fields.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -16,6 +18,34 @@ pub const EDITOR_FONT_SIZE: (u32, u32) = (10, 24);
 pub const PAGE_SIZE: (u32, u32) = (50, 5000);
 pub const EXACT_COUNT_THRESHOLD: (u64, u64) = (10_000, 100_000_000);
 pub const AUTO_LIMIT_VALUE: (u32, u32) = (1, 1_000_000);
+pub const EDITOR_FONT_FAMILY_MAX: usize = 200;
+
+/// The font families the editor accepts (mirrored by `isValidFontFamily` in
+/// src/features/settings/bounds.ts): "" (default font), or comma-separated names, each
+/// unquoted (ASCII letters, digits, spaces, `-`, `_`) or wholly quoted with `'` or `"`
+/// around the same characters; at most 200 characters. ASCII only on purpose: it keeps
+/// the grammar trivially free of anything CSS could read as syntax (`; { } ( ) : / \ < >`,
+/// stray quotes, escapes); a font whose name has other characters is not settable yet.
+pub fn is_valid_font_family(s: &str) -> bool {
+    if s.is_empty() {
+        return true;
+    }
+    if s.len() > EDITOR_FONT_FAMILY_MAX {
+        return false;
+    }
+    let name_ok = |n: &str| {
+        !n.trim().is_empty()
+            && n.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_')
+    };
+    s.split(',').all(|part| {
+        let p = part.trim_matches(' ');
+        let quoted = |q: char| {
+            p.len() >= 2 && p.starts_with(q) && p.ends_with(q) && name_ok(&p[1..p.len() - 1])
+        };
+        name_ok(p) || quoted('\'') || quoted('"')
+    })
+}
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -59,9 +89,13 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Returns these settings with every numeric value brought into its bounds.
+    /// Returns these settings with every numeric value brought into its bounds and an
+    /// unsafe editor font family replaced by "" (the default font).
     pub fn clamped(mut self) -> Self {
         self.version = SETTINGS_VERSION;
+        if !is_valid_font_family(&self.editor_font_family) {
+            self.editor_font_family = String::new();
+        }
         self.editor_font_size = self.editor_font_size.clamp(EDITOR_FONT_SIZE.0, EDITOR_FONT_SIZE.1);
         self.page_size = self.page_size.clamp(PAGE_SIZE.0, PAGE_SIZE.1);
         self.exact_count_threshold = self
@@ -187,8 +221,10 @@ mod tests {
     fn atomic_write() {
         let dir = tempfile::tempdir().unwrap();
         save(&path(&dir), &Settings::default()).unwrap();
-        let mut s = Settings::default();
-        s.page_size = 100;
+        let s = Settings {
+            page_size: 100,
+            ..Settings::default()
+        };
         save(&path(&dir), &s).unwrap();
         let names: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
@@ -221,5 +257,71 @@ mod tests {
         }
         assert!(inputs.contains(&load(&p)));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn font_family_grammar() {
+        for ok in [
+            "",
+            "Fira Code",
+            "\"Fira Code\", monospace",
+            "JetBrains Mono, monospace",
+            "'Source Code Pro',monospace",
+            "my_font-2",
+        ] {
+            assert!(is_valid_font_family(ok), "should accept {ok:?}");
+        }
+        let too_long = "a".repeat(201);
+        for bad in [
+            "x; } .a { color: red",
+            "url(x)",
+            "a:b",
+            "\"Fira",
+            "'Fira\"",
+            "Fira'",
+            "a/b",
+            "a\\b",
+            "<b>",
+            "a{b}",
+            "a,,b",
+            "a,",
+            "   ",
+            "\"\"",
+            "\"a\"b",
+            "Fira\nCode",
+            too_long.as_str(),
+        ] {
+            assert!(!is_valid_font_family(bad), "should reject {bad:?}");
+        }
+        assert!(is_valid_font_family(&"a".repeat(200)));
+    }
+
+    #[test]
+    fn injected_font_family_resets_only_that_field() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            path(&dir),
+            r#"{"theme":"dark","pageSize":100,"editorFontFamily":"x; } .a { color: red"}"#,
+        )
+        .unwrap();
+        let s = load(&path(&dir));
+        assert_eq!(s.editor_font_family, "");
+        assert_eq!(s.theme, Theme::Dark);
+        assert_eq!(s.page_size, 100);
+        // settings_set stores what `clamped` returns: the bad family is dropped there too.
+        let set = Settings {
+            editor_font_family: "url(x)".into(),
+            editor_font_size: 16,
+            ..Settings::default()
+        }
+        .clamped();
+        assert_eq!(set.editor_font_family, "");
+        assert_eq!(set.editor_font_size, 16);
+        let kept = Settings {
+            editor_font_family: "\"Fira Code\", monospace".into(),
+            ..Settings::default()
+        }
+        .clamped();
+        assert_eq!(kept.editor_font_family, "\"Fira Code\", monospace");
     }
 }

@@ -70,16 +70,59 @@ test("a valid number is saved and clears the error", async () => {
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, pageSize: 500 });
 });
 
-test("auto LIMIT checkbox and font family are saved", async () => {
+test("the auto LIMIT checkbox is saved", async () => {
   setup();
   await userEvent.click(screen.getByRole("checkbox", { name: strings.settings.autoLimit }));
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, autoLimitDefault: true });
-  await userEvent.type(screen.getByLabelText(strings.settings.fontFamily), "A");
+});
+
+test("the font family is saved on Enter or blur, not on each keystroke", async () => {
+  setup();
+  const input = screen.getByLabelText(strings.settings.fontFamily);
+  await userEvent.type(input, "JetBrains Mono, monospace");
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+  await userEvent.keyboard("{Enter}");
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({
     ...DEFAULT_SETTINGS,
-    autoLimitDefault: true,
-    editorFontFamily: "A",
+    editorFontFamily: "JetBrains Mono, monospace",
   });
+  await userEvent.clear(input);
+  await userEvent.type(input, '"Fira Code", monospace');
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
+  await userEvent.tab();
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(2);
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({
+    ...DEFAULT_SETTINGS,
+    editorFontFamily: '"Fira Code", monospace',
+  });
+});
+
+test.each(["x; } .a { color: red", "url(x)", "a:b", '"Fira'])(
+  "an invalid font family %s shows an error and is never sent",
+  async (bad) => {
+    setup();
+    const input = screen.getByLabelText(strings.settings.fontFamily);
+    await userEvent.click(input);
+    await userEvent.paste(bad);
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    const msg = document.getElementById(input.getAttribute("aria-describedby") ?? "");
+    expect(msg).toHaveTextContent(strings.settings.fontFamilyInvalid);
+    await userEvent.keyboard("{Enter}");
+    await userEvent.tab();
+    expect(ipc.settingsSet).not.toHaveBeenCalled();
+    // The text stays so it can be fixed.
+    expect(input).toHaveValue(bad);
+  },
+);
+
+test("clearing the font family saves the default", async () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, editorFontFamily: "Fira Code" } });
+  setup();
+  const input = screen.getByLabelText(strings.settings.fontFamily);
+  await userEvent.clear(input);
+  await userEvent.tab();
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, editorFontFamily: "" });
 });
 
 test("About shows the version, the license line and the repository as text", async () => {

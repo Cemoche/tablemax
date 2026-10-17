@@ -3,7 +3,7 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { Settings, ThemeSetting } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
-import { type NumericSettingKey, SETTINGS_BOUNDS, parseBounded } from "./bounds";
+import { type NumericSettingKey, SETTINGS_BOUNDS, isValidFontFamily, parseBounded } from "./bounds";
 import { SHORTCUTS } from "./shortcuts";
 
 const input = "rounded-sm border border-border bg-bg px-2 py-1";
@@ -67,7 +67,53 @@ function NumberField({ field, label }: { field: NumericSettingKey; label: string
   );
 }
 
-/** Modal settings editor; every valid change is saved immediately through the settings store. */
+/**
+ * Font family: edited as a draft and saved on Enter or blur, only when it matches the safe
+ * font grammar; invalid or half-typed text (`"Fira`) shows an inline error and is never sent.
+ */
+function FontFamilyField() {
+  const value = useSettings((s) => s.settings.editorFontFamily);
+  const update = useSettings((s) => s.update);
+  const [draft, setDraft] = useState<string | null>(null);
+  const id = useId();
+  const text = draft ?? value;
+  const invalid = draft !== null && !isValidFontFamily(draft.trim());
+  const commit = () => {
+    if (draft === null) return;
+    const next = draft.trim();
+    if (!isValidFontFamily(next)) return;
+    setDraft(null);
+    if (next !== value) void update({ editorFontFamily: next });
+  };
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="text-muted">
+        {strings.settings.fontFamily}
+      </label>
+      <input
+        id={id}
+        type="text"
+        className={`${input} ${invalid ? "border-danger" : ""}`}
+        value={text}
+        placeholder={strings.settings.fontFamilyPlaceholder}
+        aria-invalid={invalid}
+        aria-describedby={invalid ? `${id}-error` : undefined}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+        }}
+        onBlur={commit}
+      />
+      {invalid && (
+        <p id={`${id}-error`} className="text-danger">
+          {strings.settings.fontFamilyInvalid}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Modal settings editor; valid changes are saved through the settings store (the font family on Enter or blur). */
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useSettings((s) => s.settings);
   const error = useSettings((s) => s.error);
@@ -165,16 +211,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         </Section>
 
         <Section title={strings.settings.editor}>
-          <label className="flex flex-col gap-1">
-            <span className="text-muted">{strings.settings.fontFamily}</span>
-            <input
-              type="text"
-              className={input}
-              value={settings.editorFontFamily}
-              placeholder={strings.settings.fontFamilyPlaceholder}
-              onChange={(e) => void update({ editorFontFamily: e.target.value })}
-            />
-          </label>
+          <FontFamilyField />
           <NumberField field="editorFontSize" label={strings.settings.fontSize} />
         </Section>
 

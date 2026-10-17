@@ -267,6 +267,8 @@ export const strings = {
     editor: "Editor",
     fontFamily: "Font family",
     fontFamilyPlaceholder: "Empty = default monospace font",
+    fontFamilyInvalid:
+      "Use font names separated by commas: letters, digits, spaces, - and _, each optionally in quotes (200 characters max)",
     fontSize: "Font size",
     data: "Data",
     pageSize: "Page size (rows)",
