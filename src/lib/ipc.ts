@@ -112,6 +112,9 @@ export const sqlExecute = (
 
 export const sqlCancel = (sessionId: string) => invoke<void>("sql_cancel", { sessionId });
 
+/** Sets the calling window's title (no JS permission needed: done in Rust). */
+export const windowSetTitle = (title: string) => invoke<void>("window_set_title", { title });
+
 export const settingsGet = () => invoke<Settings>("settings_get");
 
 /** Saves the settings; resolves with the stored value (out-of-range numbers clamped). */

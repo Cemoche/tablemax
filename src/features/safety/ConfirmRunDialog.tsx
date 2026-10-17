@@ -1,0 +1,88 @@
+import { useEffect, useRef } from "react";
+import { strings } from "../../lib/strings";
+import type { EnvTag } from "../../lib/types";
+
+const ENV_BG: Record<EnvTag, string> = {
+  local: "bg-env-local",
+  dev: "bg-env-dev",
+  staging: "bg-env-staging",
+  prod: "bg-env-prod",
+};
+
+interface Props {
+  connectionName: string;
+  envTag: EnvTag;
+  /** Every statement of the refused batch, in order. */
+  statements: string[];
+  /** Indices (into `statements`) the backend wants confirmed. */
+  flagged: number[];
+  onRun: () => void;
+  onCancel: () => void;
+}
+
+const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2";
+
+/** Modal shown when a protected connection refused an unconfirmed batch (nothing ran yet). */
+export function ConfirmRunDialog({ connectionName, envTag, statements, flagged, onRun, onCancel }: Props) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const runRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    cancelRef.current?.focus();
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onCancel();
+    } else if (e.key === "Tab") {
+      // Keep focus inside the dialog: two buttons, so Tab just toggles between them.
+      e.preventDefault();
+      (document.activeElement === cancelRef.current ? runRef : cancelRef).current?.focus();
+    }
+  };
+
+  const tag = envTag.toUpperCase();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/70" onKeyDown={onKeyDown}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-run-title"
+        className="flex max-h-[80vh] w-[40rem] max-w-[90vw] flex-col gap-3 rounded-md border border-border bg-surface p-4 shadow-lg"
+      >
+        <h2 id="confirm-run-title" className="flex items-center gap-2 font-semibold">
+          <span aria-hidden className={`size-2 rounded-full ${ENV_BG[envTag]}`} />
+          {strings.safety.dialogTitle}
+        </h2>
+        <p className="text-muted">{strings.safety.dialogIntro(connectionName, tag)}</p>
+        <ol className="flex min-h-0 flex-col gap-1 overflow-auto">
+          {statements.map((s, i) => {
+            const isFlagged = flagged.includes(i);
+            return (
+              <li
+                key={i}
+                data-flagged={isFlagged ? "true" : undefined}
+                className={`rounded-sm border-l-4 px-2 py-1 ${
+                  isFlagged ? "border-warning bg-warning/15" : "border-border bg-bg"
+                }`}
+              >
+                <span className="text-muted">{strings.safety.statementLabel(i + 1)}</span>
+                {isFlagged && <span className="ml-2 text-warning">{strings.safety.needsConfirmation}</span>}
+                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-sm">{s}</pre>
+              </li>
+            );
+          })}
+        </ol>
+        <div className="flex justify-end gap-2">
+          <button ref={cancelRef} type="button" className={btn} onClick={onCancel}>
+            {strings.safety.confirmCancel}
+          </button>
+          <button ref={runRef} type="button" className={`${btn} text-danger`} onClick={onRun}>
+            {strings.safety.confirmRun}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -7,6 +7,7 @@ import { blankConnection } from "./features/connections/connectionDraft";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlow";
 import { toAppError } from "./lib/errors";
+import { useWindowTitle } from "./features/workspace/useWindowTitle";
 import { WorkspaceSwitcher } from "./features/workspace/WorkspaceSwitcher";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import type { ConnectionConfig } from "./lib/types";
@@ -36,6 +37,7 @@ function App() {
   const [view, setView] = useState<View>("connections");
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? null;
   const showWorkspace = view === "workspace" && activeWorkspace !== null;
+  useWindowTitle(showWorkspace ? activeWorkspace : null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Each open is bound to its connection; a newer open supersedes a pending one.
   const openFlow = useConnectFlow(async (s, cfg: ConnectionConfig) => {

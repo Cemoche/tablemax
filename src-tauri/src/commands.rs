@@ -327,3 +327,12 @@ pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Setti
     .await
     .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
 }
+
+/// Sets the title of the calling window (`TableMax — <connection> [PROD]`). Done here
+/// rather than from JS so the capabilities stay at `core:default`.
+#[tauri::command]
+pub fn window_set_title(window: tauri::WebviewWindow, title: String) -> AppResult<()> {
+    window
+        .set_title(&title)
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))
+}

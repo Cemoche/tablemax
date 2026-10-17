@@ -22,6 +22,7 @@ import {
   sslModePicked,
   withSslMode,
 } from "./connectionDraft";
+import { SafetySection } from "./SafetySection";
 import { SshSection } from "./SshSection";
 import { SslSection } from "./SslSection";
 import { flowTarget, useConnectFlow } from "./useConnectFlow";
@@ -234,6 +235,12 @@ export function ConnectionForm({ connection, initialPassword = null, sslExplicit
             </select>
           </label>
         </div>
+
+        <SafetySection
+          value={cfg.safeMode}
+          envTag={cfg.envTag}
+          onChange={(safeMode) => patch({ safeMode })}
+        />
 
         {isSqlite ? (
           <label className="flex flex-col gap-1">

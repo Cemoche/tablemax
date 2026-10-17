@@ -1,4 +1,4 @@
-import { beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as ipc from "../../lib/ipc";
@@ -486,4 +486,51 @@ test("a URL draft with an explicit sslmode keeps it when the host changes", () =
   render(<ConnectionForm connection={draft} sslExplicit onConnect={vi.fn()} />);
   fireEvent.change(screen.getByLabelText("Host"), { target: { value: "db.example.com" } });
   expect(sslMode()).toBe("prefer");
+});
+
+describe("safe mode selector", () => {
+  const modeSelect = () => screen.getByLabelText(strings.safety.sectionLabel) as HTMLSelectElement;
+  const defaultLabel = () => modeSelect().options[0].textContent;
+
+  test("the Default option names the effective mode of the selected tag", async () => {
+    render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+    expect(modeSelect().value).toBe("");
+    expect(defaultLabel()).toBe("Default (by environment): Off");
+    await userEvent.selectOptions(screen.getByLabelText("Environment"), "prod");
+    expect(defaultLabel()).toBe("Default (by environment): Confirm writes");
+    await userEvent.selectOptions(screen.getByLabelText("Environment"), "staging");
+    expect(defaultLabel()).toBe("Default (by environment): Off");
+    expect([...modeSelect().options].map((o) => o.textContent).slice(1)).toEqual([
+      "Off",
+      "Confirm writes",
+      "Confirm all queries",
+    ]);
+  });
+
+  test("the chosen mode is saved; Default saves null", async () => {
+    vi.mocked(ipc.connectionSave).mockResolvedValue(saved);
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} />);
+    await userEvent.selectOptions(modeSelect(), "confirmAll");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(ipc.connectionSave).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(ipc.connectionSave).mock.calls[0][0].safeMode).toBe("confirmAll");
+    await userEvent.selectOptions(modeSelect(), "");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(ipc.connectionSave).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(ipc.connectionSave).mock.calls[1][0].safeMode).toBeNull();
+  });
+
+  test("editing another field keeps the stored safe mode", async () => {
+    vi.mocked(ipc.connectionSave).mockResolvedValue(saved);
+    render(<ConnectionForm connection={{ ...saved, safeMode: "confirmWrites" }} onConnect={vi.fn()} />);
+    expect(modeSelect().value).toBe("confirmWrites");
+    await userEvent.clear(screen.getByLabelText("Name"));
+    await userEvent.type(screen.getByLabelText("Name"), "Renamed");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(ipc.connectionSave).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(ipc.connectionSave).mock.calls[0][0]).toMatchObject({
+      name: "Renamed",
+      safeMode: "confirmWrites",
+    });
+  });
 });
