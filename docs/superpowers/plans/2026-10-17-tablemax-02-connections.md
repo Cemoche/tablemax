@@ -240,7 +240,7 @@ git add -A && git commit -m "✨ feat(ssh): open SSH tunnels with password, key 
 - Produces (`manager.rs`) :
   - `SessionManager::new(store, secrets, known_hosts: KnownHosts)`.
   - `test_connection(cfg, password, ssh_secret, accept_fingerprint: Option<String>)`, `open_workspace(connection_id, password, ssh_secret, accept_fingerprint: Option<String>)` ; `save_connection(cfg, password, ssh_secret)`.
-  - Résolution SSH : `user_config().resolve(ssh.host)` puis champs du formulaire prioritaires ; `user` absent partout → `Invalid "ssh user required"` ; clé : `key_file` sinon le premier `IdentityFile` existant, sinon `Invalid "ssh key file required"`.
+  - Résolution SSH : `user_config().resolve(ssh.host)` puis champs du formulaire prioritaires ; `user` absent partout → `Invalid "ssh user required"` ; clé : `key_file` sinon le premier `IdentityFile` existant, sinon le premier fichier existant parmi `~/.ssh/id_ed25519`, `~/.ssh/id_ecdsa`, `~/.ssh/id_rsa` (comme OpenSSH), sinon `Invalid "ssh key file required"`.
   - Le workspace garde `Option<Arc<SshTunnel>>` et les secrets SSH saisis (mode `Ask`, comme `held_password`) ; la connexion de navigation, chaque onglet SQL et les annulations passent par ce tunnel (`ConnectParams.dial = Some(tunnel.local_addr())`, `host` = hôte DB de la config). `open_sql_session` rouvre le tunnel s'il est mort (`!is_alive()`), avec les secrets tenus ou le trousseau ; `close_workspace` ferme le tunnel après les sessions.
   - Pas de tunnel pour SQLite (`ssh` ignoré et forcé à `None` à l'enregistrement).
 - Produces (`commands.rs`) — contrat frontend :
@@ -379,7 +379,22 @@ git add -A && git commit -m "✨ feat(connections): connection groups and URL im
 - Produces (`tableplus.rs`) :
   - `pub struct ImportedConnection { pub config: ConnectionConfig /* id vide */, pub password: Option<String>, pub ssh_secret: Option<String> }` (Debug manuel qui masque les secrets)
   - `pub struct ImportWarning { pub entry: String, pub message: String }` (Serialize camelCase)
-  - `pub fn parse_export(plain: &[u8]) -> AppResult<(Vec<ImportedConnection>, Vec<ImportWarning>)>` — correspondance des champs **d'après `docs/research/2026-10-17-tableplusconnection-format.md`** (table « Correspondance » de ce document : driver, hôte, port, user, base, chemin SQLite, couleur → swatch la plus proche, tag d'environnement, groupe, SSL mode + fichiers, SSH host/port/user/auth/clé, mots de passe) ; drivers hors v1 et options inconnues → `ImportWarning`, l'entrée est ignorée ou le champ omis, jamais d'échec global ; JSON illisible → `Invalid "not a TablePlus export"`.
+  - `pub fn parse_export(plain: &[u8]) -> AppResult<(Vec<ImportedConnection>, Vec<ImportWarning>)>` — format décrit dans `docs/research/2026-10-17-tableplusconnection-format.md` (racine = tableau JSON ; élément avec `IsExpanded` ou `IsExpaned` = groupe, récursif via `groups`/`connections` ; sinon connexion). Clés inconnues ignorées ; ports et booléens acceptés en chaîne **ou** nombre ; clé absente = vide ; JSON illisible → `Invalid "not a TablePlus export"`. Correspondance :
+
+| Export | TableMax |
+|---|---|
+| `ConnectionName` | `name` (vide → `"Imported connection"`) |
+| `Driver` `MySQL` / `MariaDB` / `PostgreSQL` / `SQLite` | `kind` `mySql` / `mariaDb` / `postgres` / `sqlite` ; tout autre driver → entrée ignorée + `ImportWarning { entry: <nom>, message: "unsupported driver <Driver>" }` |
+| `DatabaseHost`, `DatabasePort`, `DatabaseUser`, `DatabaseName`, `DatabasePath` | `host`, `port` (vide → port par défaut du driver), `user`, `database` (vide → `None`), `sqlite_path` |
+| `isOverSSH` = 1 + `ServerAddress`, `ServerPort`, `ServerUser` | `ssh = Some(SshSettings { host, port, user, … })` ; auth `Password` si `ServerPassword` non vide, sinon `Key` avec `key_file: None` (le chemin de clé n'est pas exporté) ; `secret_mode` = `Keyring` si un secret est présent, sinon `Ask` pour `Password` et `None` pour `Key` |
+| `DatabasePassword` | `password` ; `password_mode` = `Keyring` si non vide, sinon `Ask` (`None` pour SQLite) |
+| `ServerPassword` / `DatabaseKeyPassword` | `ssh_secret` (mot de passe SSH / **passphrase de la clé SSH**, malgré le nom) |
+| `Tag`, sinon `Enviroment` | `env_tag` : `local`→Local, `development`/`dev`→Dev, `testing`/`staging`→Staging, `production`/`prod`→Prod, absent ou autre → Local |
+| groupes imbriqués (`Name`) | `group` = noms du chemin joints par `" / "` (ex. `"Fixture Group / Sub"`) ; connexion hors groupe → `None` |
+| (non exporté) couleur, SSL | `color` = `"swatch-1"`, `ssl` = `SslConfig::default()` |
+| `Favorites`, `DriverVersion`, `SafeModeLevel`, `RecentlySchema`, `Schema`, `image`, `GroupID` | ignorés |
+
+    Une connexion SSH par clé importée reçoit en plus l'avertissement `"SSH key file not included in the export: choose it in the connection settings"` (la résolution de la Task 4 retombe sinon sur `~/.ssh/config` et les clés par défaut).
 - Produces (`manager.rs` / `commands.rs`) :
   - `import_tableplus_preview(password: String) -> ImportPreview` : ouvre le sélecteur (`FilePurpose::TableplusExport`), lit le fichier (max 10 Mo, sinon `Invalid "file too large"`), déchiffre, analyse, et **garde côté backend** les secrets dans une table d'imports en attente (clé `import_id` UUID, expiration 10 minutes ou au premier commit). Annulation du sélecteur → `Ok(None)` (type de retour `Option<ImportPreview>`).
   - `#[serde(rename_all = "camelCase")] pub struct ImportPreview { pub import_id: String, pub items: Vec<ImportItem>, pub warnings: Vec<ImportWarning> }` ; `pub struct ImportItem { pub index: usize, pub config: ConnectionConfig, pub has_password: bool, pub has_ssh_secret: bool, pub duplicate_of: Option<String> }` — `duplicate_of` = id d'une connexion existante de même identité (`same_identity`) ou de même nom.
