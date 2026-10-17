@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
 import { strings } from "./lib/strings";
 import { ConnectPrompt } from "./features/connections/ConnectPrompt";
@@ -9,12 +9,14 @@ import { blankConnection } from "./features/connections/connectionDraft";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlow";
 import { toAppError } from "./lib/errors";
+import { CommandPalette } from "./features/palette/CommandPalette";
 import { useWindowTitle } from "./features/workspace/useWindowTitle";
 import { WorkspaceSwitcher } from "./features/workspace/WorkspaceSwitcher";
 import { CloseConfirm } from "./features/workspace/CloseConfirm";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import type { ConnectionConfig } from "./lib/types";
 import { useConnections } from "./stores/connections";
+import { restoreSession, startSessionAutosave } from "./stores/session";
 import { useWorkspaces } from "./stores/workspaces";
 
 type View = "connections" | "workspace";
@@ -43,6 +45,14 @@ function App() {
   const showWorkspace = view === "workspace" && activeWorkspace !== null;
   useWindowTitle(showWorkspace ? activeWorkspace : null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** Why the last connect of a disconnected (restored) workspace failed. */
+  const [connectError, setConnectError] = useState<{ connectionId: string; message: string } | null>(
+    null,
+  );
+  const connectRequest = useWorkspaces((s) => s.connectRequest);
+  /** Connection of the workspace on screen (null on the connections view), read when a connect fails. */
+  const shownConnection = useRef<string | null>(null);
+  shownConnection.current = showWorkspace ? activeWorkspace.connectionId : null;
   // Each open is bound to its connection; a newer open supersedes a pending one.
   const openFlow = useConnectFlow(async (s, cfg: ConnectionConfig) => {
     await openWorkspace(cfg.id, s.password, s.sshSecret, s.acceptFingerprint);
@@ -61,8 +71,23 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Connections first (a restored workspace takes its name and color from its
+  // connection), then the last session, disconnected: nothing connects at startup.
+  // Without the connections the session is neither restored nor overwritten.
   useEffect(() => {
-    load().catch((e) => setLoadError(toAppError(e).message));
+    let live = true;
+    const stopAutosave = startSessionAutosave();
+    load().then(
+      async () => {
+        await restoreSession();
+        if (live && useWorkspaces.getState().activeWorkspaceId) setView("workspace");
+      },
+      (e) => setLoadError(toAppError(e).message),
+    );
+    return () => {
+      live = false;
+      stopAutosave();
+    };
   }, [load]);
 
   // An already open workspace is just activated (openWorkspace never prompts for it);
@@ -73,13 +98,31 @@ function App() {
     sshSecret: string | null = null,
   ) => {
     setLoadError(null);
+    setConnectError(null);
     try {
       const initial = { password, sshSecret, acceptFingerprint: null };
       if (await openFlow.start(initial, cfg, flowTarget(cfg))) setView("workspace");
     } catch (e) {
-      setLoadError(toAppError(e).message);
+      const message = toAppError(e).message;
+      // A restored workspace stays in place, disconnected: its view shows the error.
+      // Started from the connections view (list, form), the error shows there too.
+      const ws = useWorkspaces.getState().workspaces.find((w) => w.connectionId === cfg.id);
+      const disconnected = ws !== undefined && ws.status !== "connected";
+      if (disconnected) setConnectError({ connectionId: cfg.id, message });
+      if (!disconnected || shownConnection.current !== cfg.id) setLoadError(message);
     }
   };
+
+  // Activating a disconnected workspace (one of its tabs, the workspace itself or its
+  // Reconnect button) runs the same flow as opening it, prompts included.
+  useEffect(() => {
+    if (!connectRequest) return;
+    useWorkspaces.getState().clearConnectRequest();
+    const ws = useWorkspaces.getState().workspaces.find((w) => w.id === connectRequest.workspaceId);
+    const cfg = ws && useConnections.getState().items.find((c) => c.id === ws.connectionId);
+    if (cfg) void open(cfg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per request
+  }, [connectRequest]);
 
   return (
     <div className="flex h-screen flex-col bg-bg text-fg">
@@ -109,7 +152,13 @@ function App() {
       <div className="flex min-h-0 flex-1">
         {showWorkspace ? (
           <main className="min-w-0 flex-1">
-            <WorkspaceView key={activeWorkspace.id} workspace={activeWorkspace} />
+            <WorkspaceView
+              key={activeWorkspace.id}
+              workspace={activeWorkspace}
+              connectError={
+                connectError?.connectionId === activeWorkspace.connectionId ? connectError.message : null
+              }
+            />
           </main>
         ) : (
           <>
@@ -153,6 +202,14 @@ function App() {
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {importDialog && <ImportDialog onClose={() => setImportDialog(false)} />}
       <CloseConfirm />
+      <CommandPalette
+        onOpenConnection={(cfg) => void open(cfg)}
+        onNewConnection={() => {
+          select(null);
+          setView("connections");
+        }}
+        onShowWorkspace={() => setView("workspace")}
+      />
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />
     </div>
   );

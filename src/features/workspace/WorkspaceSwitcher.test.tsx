@@ -51,10 +51,13 @@ beforeEach(() => {
         color: "swatch-1",
         envTag: "dev",
         dialect: "postgres",
+        status: "connected",
+        database: null,
         schemas: [],
         currentSchema: null,
         tabs: [],
         activeTabId: null,
+        mru: [],
       } satisfies Workspace,
     ],
     activeWorkspaceId: "w1",
@@ -81,7 +84,7 @@ test("closing a workspace whose backend close fails leaves no unhandled rejectio
 test("a workspace with a running commit cannot be closed yet", () => {
   const ws = useWorkspaces.getState().workspaces[0];
   useWorkspaces.setState({
-    workspaces: [{ ...ws, tabs: [{ id: "t1", kind: "table", object: { schema: null, name: "x" }, title: "x" }] }],
+    workspaces: [{ ...ws, tabs: [{ id: "t1", kind: "table", object: { schema: null, name: "x" }, title: "x", preview: false }] }],
   });
   usePendingChanges.setState({ committing: { t1: true } });
   render(<WorkspaceSwitcher connectionsActive={false} onShowConnections={() => {}} onSelectWorkspace={() => {}} />);

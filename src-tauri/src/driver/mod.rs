@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod dml;
 pub mod meta;
 pub mod mysql;
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::CellValue;
+use catalog::{Catalog, DbRoutine};
 use dml::ApplyOutcome;
 use meta::TableInfo;
 use query::{Filter, Statement};
@@ -198,6 +200,15 @@ pub trait Session: Send + Sync {
     fn is_lost(&self) -> bool {
         false
     }
+    /// Tables, views and their columns (definition order) of `schema` in one query,
+    /// for completion and the palette. `None` = the default schema of the engine.
+    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog>;
+    /// Functions and procedures of `schema` (PostgreSQL: every non-system schema when
+    /// `None`). SQLite has none.
+    async fn list_routines(&self, schema: Option<&str>) -> AppResult<Vec<DbRoutine>>;
+    /// Databases the connection can switch to (PostgreSQL), or the schemas for
+    /// MySQL / attached databases for SQLite.
+    async fn list_databases(&self) -> AppResult<Vec<String>>;
 }
 
 pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {

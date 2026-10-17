@@ -1,13 +1,17 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { undo } from "@codemirror/commands";
+import { EditorView } from "@codemirror/view";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
-import type { ExecEvent } from "../../lib/types";
-import type { ConnectionConfig } from "../../lib/types";
+import type { ConnectionConfig, Dialect, ExecEvent } from "../../lib/types";
+import { useAutoLimit } from "../../stores/autoLimit";
+import { useCatalog } from "../../stores/catalog";
 import { useConnections } from "../../stores/connections";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { runEditorCommand } from "./editorCommands";
 import { QueryTab } from "./QueryTab";
 
 vi.mock("../../lib/ipc");
@@ -16,22 +20,33 @@ vi.mock("../grid/DataGrid", () => ({
     <div data-testid="grid" data-rows={data.rows.length} data-sortable={String(!!onSort)} />
   ),
 }));
-vi.mock("./SqlEditor", () => ({
-  SqlEditor: (p: {
-    value: string;
-    onChange: (v: string) => void;
-    onRun: (mode: "current" | "all") => void;
-  }) => (
-    <textarea
-      aria-label="SQL editor"
-      value={p.value}
-      onChange={(e) => p.onChange(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.ctrlKey && e.key === "Enter") p.onRun(e.shiftKey ? "all" : "current");
-      }}
-    />
-  ),
-}));
+// CodeMirror measures text ranges, which jsdom does not lay out.
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+}
+
+/** Most tests use a textarea stand-in; `editorMode.real` mounts the CodeMirror editor. */
+const editorMode = vi.hoisted(() => ({ real: false }));
+vi.mock("./SqlEditor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./SqlEditor")>();
+  return {
+    ...actual,
+    SqlEditor: (p: Parameters<typeof actual.SqlEditor>[0]) =>
+      editorMode.real ? (
+        <actual.SqlEditor {...p} />
+      ) : (
+        <textarea
+          aria-label="SQL editor"
+          value={p.value}
+          onChange={(e) => p.onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.ctrlKey && e.key === "Enter") p.onRun(e.shiftKey ? "all" : "current");
+          }}
+        />
+      ),
+  };
+});
 
 const rs = (n: number, truncated = false) => ({
   columns: [{ name: "a", typeName: "int" }],
@@ -42,7 +57,7 @@ const rs = (n: number, truncated = false) => ({
 let emit: (e: ExecEvent) => void;
 let resolveExec: () => void;
 
-const setup = async (sql = "select 1; select 2") => {
+const setup = async (sql = "select 1; select 2", dialect: Dialect = "postgres") => {
   useWorkspaces.setState({
     workspaces: [
       {
@@ -51,11 +66,14 @@ const setup = async (sql = "select 1; select 2") => {
         name: "n",
         color: "swatch-1",
         envTag: "dev",
-        dialect: "postgres",
+        dialect,
+        status: "connected",
+        database: null,
         schemas: ["public"],
         currentSchema: "public",
         tabs: [{ id: "t1", kind: "query", title: "Query 1", sql, sqlSessionId: null }],
         activeTabId: "t1",
+        mru: [],
       } satisfies Workspace,
     ],
     activeWorkspaceId: "w1",
@@ -63,13 +81,19 @@ const setup = async (sql = "select 1; select 2") => {
   const ws = useWorkspaces.getState().workspaces[0];
   const tab = ws.tabs[0];
   if (tab.kind !== "query") throw new Error("x");
-  return render(<QueryTab workspace={ws} tab={tab} />);
+  const r = render(<QueryTab workspace={ws} tab={tab} />);
+  await act(async () => {}); // let the catalog load settle
+  return r;
 };
 
 beforeEach(() => {
   vi.resetAllMocks();
   useConnections.setState({ items: [] });
+  editorMode.real = false;
   useQueryRuns.setState({ runs: {} });
+  useCatalog.setState({ catalogs: {}, errors: {}, loading: {} });
+  useAutoLimit.setState({ on: {} });
+  vi.mocked(ipc.catalogGet).mockResolvedValue({ schema: "public", tables: [] });
   vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s1");
   vi.mocked(ipc.sqlCancel).mockResolvedValue(undefined);
   vi.mocked(ipc.sqlExecute).mockImplementation((_s, _stmts, onEvent) => {
@@ -357,4 +381,134 @@ describe("safe mode confirmation", () => {
     await screen.findByRole("dialog");
     expect(screen.getAllByRole("listitem").every((i) => i.getAttribute("data-flagged") === "true")).toBe(true);
   });
+});
+
+test("the tab loads the completion catalog of the current schema", async () => {
+  await setup("select 1");
+  expect(ipc.catalogGet).toHaveBeenCalledWith("w1", "public", false);
+});
+
+test("Auto LIMIT 1000 rewrites the SELECTs sent by Run", async () => {
+  await setup("select * from t; update t set a = 1");
+  const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) });
+  expect(box).not.toBeChecked();
+  await userEvent.click(box);
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t LIMIT 1000", "update t set a = 1"]);
+  act(() => emit({ event: "batchFinished", data: { cancelled: false } }));
+
+  // Off again: statements go as typed.
+  await userEvent.click(box);
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[1][1]).toEqual(["select * from t", "update t set a = 1"]);
+});
+
+test("Auto LIMIT is remembered per tab, in memory only", async () => {
+  const { unmount } = await setup("select 1");
+  await userEvent.click(screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) }));
+  unmount();
+  const ws = useWorkspaces.getState().workspaces[0];
+  const tab = ws.tabs[0];
+  if (tab.kind !== "query") throw new Error("x");
+  render(<QueryTab workspace={ws} tab={tab} />);
+  await act(async () => {});
+  expect(screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) })).toBeChecked();
+  expect(Object.keys(tab)).not.toContain("autoLimit"); // not part of the session snapshot
+});
+
+const editorView = () => {
+  const content = document.querySelector(".cm-content");
+  const view = content && EditorView.findFromDOM(content as HTMLElement);
+  if (!view) throw new Error("no editor");
+  return view;
+};
+const press = (view: EditorView, init: KeyboardEventInit & { keyCode: number }) =>
+  act(() => {
+    fireEvent.keyDown(view.contentDOM, init);
+  });
+
+test("Mod+Shift+F formats the selection in one undoable transaction", async () => {
+  editorMode.real = true;
+  const sql = "select a,b from t; select c from u";
+  await setup(sql);
+  const view = editorView();
+  act(() => view.dispatch({ selection: { anchor: 0, head: "select a,b from t".length } }));
+  press(view, { key: "F", code: "KeyF", keyCode: 70, ctrlKey: true, shiftKey: true });
+  await waitFor(() => expect(view.state.doc.toString()).toBe("SELECT\n  a,\n  b\nFROM\n  t; select c from u"));
+  expect(view.state.selection.main).toMatchObject({ from: 0, to: "SELECT\n  a,\n  b\nFROM\n  t".length });
+
+  // The text reaches the tab (it is what Run sends).
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["SELECT\n  a,\n  b\nFROM\n  t", "select c from u"]);
+
+  act(() => {
+    undo(view);
+  });
+  expect(view.state.doc.toString()).toBe(sql);
+});
+
+test("the format command formats the whole text, and a parse error leaves it untouched", async () => {
+  editorMode.real = true;
+  await setup("select `x` from t where a = 1", "mySql");
+  const view = editorView();
+  act(() => {
+    expect(runEditorCommand("t1", "format")).toBe(true);
+  });
+  await waitFor(() =>
+    expect(view.state.doc.toString()).toBe("SELECT\n  `x`\nFROM\n  t\nWHERE\n  a = 1"),
+  );
+
+  act(() => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "select (1" } }));
+  act(() => {
+    runEditorCommand("t1", "format");
+  });
+  expect(await screen.findByRole("status")).toHaveTextContent(strings.query.formatFailed);
+  expect(view.state.doc.toString()).toBe("select (1");
+});
+
+test("Mod+/ toggles a line comment with a space after --", async () => {
+  editorMode.real = true;
+  await setup("select 1", "mySql");
+  const view = editorView();
+  press(view, { key: "/", code: "Slash", keyCode: 191, ctrlKey: true });
+  expect(view.state.doc.toString()).toBe("-- select 1");
+  press(view, { key: "/", code: "Slash", keyCode: 191, ctrlKey: true });
+  expect(view.state.doc.toString()).toBe("select 1");
+});
+
+test("history: click inserts at the cursor, double-click replaces, one undo each (real editor)", async () => {
+  editorMode.real = true;
+  vi.mocked(ipc.historyList).mockResolvedValue([
+    { id: 1, connectionId: "c1", sql: "select 42", executedAt: Date.now(), elapsedMs: 1, rows: 1, error: null },
+  ]);
+  await setup("select 1;\n");
+  const view = editorView();
+  act(() => view.dispatch({ selection: { anchor: 10 } }));
+  await userEvent.click(screen.getByRole("button", { name: strings.history.toggle }));
+  const item = await screen.findByRole("button", { name: /select 42/ });
+  fireEvent.click(item, { detail: 0 }); // keyboard activation inserts at once
+  expect(view.state.doc.toString()).toBe("select 1;\nselect 42");
+  await userEvent.dblClick(item);
+  expect(view.state.doc.toString()).toBe("select 42");
+  act(() => {
+    undo(view);
+  });
+  expect(view.state.doc.toString()).toBe("select 1;\nselect 42");
+  act(() => {
+    undo(view);
+  });
+  expect(view.state.doc.toString()).toBe("select 1;\n");
+});
+
+test("a run with a DELIMITER block sends the procedure whole, without the DELIMITER lines", async () => {
+  await setup("DELIMITER //\nCREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END //\nDELIMITER ;\nCALL p();", "mySql");
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual([
+    "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END",
+    "CALL p()",
+  ]);
 });

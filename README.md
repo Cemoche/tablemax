@@ -157,6 +157,24 @@ structure (`Alt+1` / `Alt+2`, `⌥1` / `⌥2` on macOS).
 
 On macOS, `Ctrl` is `⌘` and `Alt` is `⌥` (`Ctrl+T` / `Ctrl+W` stay `Ctrl`).
 
+## SQL editor
+
+- **Shortcuts** (`Ctrl` is `Cmd` on macOS): `Ctrl+Enter` run the statement under the
+  cursor (or the selection), `Ctrl+Shift+Enter` run all, `Ctrl+Shift+F` format,
+  `Ctrl+/` comment, `Ctrl+S` save the query, `Ctrl+Shift+H` history, `Ctrl+K` / `Ctrl+P`
+  command palette, `Ctrl+T` new SQL tab, `Ctrl+W` close tab, `Ctrl+Tab` recent tabs.
+- **History** (right panel): every statement run on a connection, newest first (the last
+  1,000 are kept), with a search box. Click inserts the SQL at the cursor, double-click
+  replaces the editor content. It may hold values you typed: "Clear history" erases it
+  for the connection, and it is deleted with the connection.
+- **Saved queries** (left panel, per connection): `Ctrl+S` asks for a name the first time,
+  then overwrites; the tab takes the name and shows a dot while it differs from the saved
+  file. Open, rename and delete from the panel.
+- **MySQL / MariaDB `DELIMITER`**: scripts from the mysql client run as is — a
+  `DELIMITER //` line changes the statement delimiter and is not sent to the server.
+  Without it, the `BEGIN … END` body of `CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT` is still
+  sent as one statement.
+
 ## Test databases
 
 Host tools needed by `pnpm test:rust`: `docker compose` (v2), `openssl` and `ssh-keygen`

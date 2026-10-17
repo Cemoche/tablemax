@@ -8,13 +8,16 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+use crate::driver::catalog::{Catalog, DbRoutine};
 use crate::driver::dml::{ApplyOutcome, RowChange, RowKey};
 use crate::driver::meta::TableInfo;
 use crate::driver::query::Filter;
 use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::history::HistoryEntry;
 use crate::import::{ImportPreview, ImportResult};
 use crate::manager::{ExecEvent, SessionManager, WorkspaceInfo};
+use crate::saved_queries::SavedQuery;
 use crate::settings::{self, Settings};
 use crate::store::ConnectionConfig;
 use crate::value::CellValue;
@@ -401,6 +404,14 @@ pub fn window_set_title(window: tauri::WebviewWindow, title: String) -> AppResul
         .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))
 }
 
+/// The frontend flushed its session: really close the window (see `close_gate`).
+#[tauri::command]
+pub fn window_close_confirmed(window: tauri::Window, gate: State<'_, crate::close_gate::CloseGate>) {
+    if gate.confirm() {
+        let _ = window.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,4 +446,123 @@ mod tests {
         );
         assert!(!picker_spec(FilePurpose::CaCert).1);
     }
+}
+
+// ---- History, session and saved queries ----
+
+#[tauri::command]
+pub async fn history_list(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    search: Option<String>,
+    limit: u32,
+) -> AppResult<Vec<HistoryEntry>> {
+    state.history_list(&connection_id, search, limit).await
+}
+
+#[tauri::command]
+pub async fn history_clear(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+) -> AppResult<()> {
+    state.history_clear(&connection_id).await
+}
+
+#[tauri::command]
+pub async fn session_save(state: State<'_, SessionManager>, json: String) -> AppResult<()> {
+    state.session_save(json).await
+}
+
+#[tauri::command]
+pub async fn session_load(state: State<'_, SessionManager>) -> AppResult<Option<String>> {
+    state.session_load().await
+}
+
+#[tauri::command]
+pub async fn saved_queries_list(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+) -> AppResult<Vec<SavedQuery>> {
+    state.saved_queries_list(&connection_id).await
+}
+
+#[tauri::command]
+pub async fn saved_query_read(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    name: String,
+) -> AppResult<String> {
+    state.saved_query_read(&connection_id, &name).await
+}
+
+#[tauri::command]
+pub async fn saved_query_write(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    name: String,
+    sql: String,
+) -> AppResult<()> {
+    state.saved_query_write(&connection_id, &name, &sql).await
+}
+
+#[tauri::command]
+pub async fn saved_query_rename(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    from: String,
+    to: String,
+) -> AppResult<()> {
+    state.saved_query_rename(&connection_id, &from, &to).await
+}
+
+#[tauri::command]
+pub async fn saved_query_delete(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    name: String,
+) -> AppResult<()> {
+    state.saved_query_delete(&connection_id, &name).await
+}
+
+// ---- Completion catalog, routines and database switching ----
+
+#[tauri::command]
+pub async fn catalog_get(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    schema: Option<String>,
+    refresh: bool,
+) -> AppResult<Catalog> {
+    state
+        .catalog(&workspace_id, schema.as_deref(), refresh)
+        .await
+}
+
+#[tauri::command]
+pub async fn routines_list(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    schema: Option<String>,
+) -> AppResult<Vec<DbRoutine>> {
+    state.routines_list(&workspace_id, schema.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn databases_list(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+) -> AppResult<Vec<String>> {
+    state.databases_list(&workspace_id).await
+}
+
+/// PostgreSQL only: reconnects the workspace's browse connection to `database`; new SQL
+/// sessions use it, open ones keep theirs. MySQL / MariaDB / SQLite switch schema, not
+/// database: Invalid.
+#[tauri::command]
+pub async fn workspace_switch_database(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    database: String,
+) -> AppResult<WorkspaceInfo> {
+    state.switch_database(&workspace_id, &database).await
 }

@@ -19,6 +19,7 @@
     "test:hooks": "bash scripts/test-claude-hooks.sh"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/language": "^6.13.1",
@@ -28,8 +29,10 @@
     "@lezer/highlight": "^1.2.5",
     "@tauri-apps/api": "^2.12.4",
     "@uiw/react-codemirror": "^4.25.12",
+    "cmdk": "^1.1.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "sql-formatter": "^15.9.0",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

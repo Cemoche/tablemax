@@ -3,9 +3,11 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   ApplyOutcome,
+  Catalog,
   CellValue,
   ConnectionConfig,
   DbObject,
+  DbRoutine,
   ExecEvent,
   FilePurpose,
   Filter,
@@ -20,6 +22,8 @@ import type {
   Settings,
   TableInfo,
   WorkspaceInfo,
+  HistoryEntry,
+  SavedQuery,
 } from "./types";
 
 export const connectionsList = () => invoke<ConnectionConfig[]>("connections_list");
@@ -172,3 +176,55 @@ export const settingsSet = (settings: Settings) => invoke<Settings>("settings_se
 
 /** The app version (from the package info). */
 export const appVersion = () => invoke<string>("app_version");
+
+// ---- History, session and saved queries ----
+
+export const historyList = (connectionId: string, search: string | null, limit: number) =>
+  invoke<HistoryEntry[]>("history_list", { connectionId, search, limit });
+
+export const historyClear = (connectionId: string) =>
+  invoke<void>("history_clear", { connectionId });
+
+/** Stores the session JSON as is (rejected above 5 MB). It must hold no secret. */
+export const sessionSave = (json: string) => invoke<void>("session_save", { json });
+
+/** The stored session text, or null; the caller validates the JSON and its version. */
+export const sessionLoad = () => invoke<string | null>("session_load");
+
+export const savedQueriesList = (connectionId: string) =>
+  invoke<SavedQuery[]>("saved_queries_list", { connectionId });
+
+export const savedQueryRead = (connectionId: string, name: string) =>
+  invoke<string>("saved_query_read", { connectionId, name });
+
+export const savedQueryWrite = (connectionId: string, name: string, sql: string) =>
+  invoke<void>("saved_query_write", { connectionId, name, sql });
+
+export const savedQueryRename = (connectionId: string, from: string, to: string) =>
+  invoke<void>("saved_query_rename", { connectionId, from, to });
+
+export const savedQueryDelete = (connectionId: string, name: string) =>
+  invoke<void>("saved_query_delete", { connectionId, name });
+
+// ---- Completion catalog, routines and database switching ----
+
+/** Tables, views and columns of a schema; cached 5 minutes per workspace and schema. */
+export const catalogGet = (workspaceId: string, schema: string | null, refresh: boolean) =>
+  invoke<Catalog>("catalog_get", { workspaceId, schema, refresh });
+
+export const routinesList = (workspaceId: string, schema: string | null) =>
+  invoke<DbRoutine[]>("routines_list", { workspaceId, schema });
+
+/** PostgreSQL: the databases to switch to. MySQL: the schemas. SQLite: attached databases. */
+export const databasesList = (workspaceId: string) =>
+  invoke<string[]>("databases_list", { workspaceId });
+
+/**
+ * PostgreSQL only: the workspace's browsing moves to `database` (new SQL tabs use it too,
+ * open ones keep theirs). Other engines reject with `invalid`; they switch schema.
+ */
+export const workspaceSwitchDatabase = (workspaceId: string, database: string) =>
+  invoke<WorkspaceInfo>("workspace_switch_database", { workspaceId, database });
+
+/** Really closes the main window once the session was flushed (Rust held the close back). */
+export const windowCloseConfirmed = () => invoke<void>("window_close_confirmed");

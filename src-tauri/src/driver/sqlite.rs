@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use rusqlite::types::{ToSqlOutput, ValueRef};
 use rusqlite::{Connection, InterruptHandle, OpenFlags, OptionalExtension, ToSql};
 
+use super::catalog::{Catalog, CatalogColumn, DbRoutine, group_rows};
 use super::dml::{self, ApplyOutcome};
 use super::meta::{
     ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, derive_row_key, non_null_default,
@@ -639,5 +640,62 @@ impl Session for SqliteSession {
         })
         .await
         .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
+    }
+
+    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
+        let schema = schema.unwrap_or("main").to_string();
+        // One blocking call. Columns are read per object so that a broken view (its base
+        // table dropped) is listed without columns instead of failing the whole catalog.
+        self.with_conn(move |c| {
+            let sql = format!(
+                "SELECT name, type FROM {}.sqlite_schema \
+                 WHERE type IN ('table','view') AND substr(name,1,7) <> 'sqlite_' \
+                 ORDER BY name",
+                super::sql::quote_ident(Dialect::Sqlite, &schema)
+            );
+            let mut stmt = c.prepare(&sql).map_err(map_err)?;
+            let objects = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .map_err(map_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_err)?;
+            let columns_of = |name: &str| -> rusqlite::Result<Vec<CatalogColumn>> {
+                let mut st =
+                    c.prepare("SELECT name, type FROM pragma_table_info(?1, ?2) ORDER BY cid")?;
+                st.query_map([name, schema.as_str()], |r| {
+                    Ok(CatalogColumn {
+                        name: r.get(0)?,
+                        type_name: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    })
+                })?
+                .collect()
+            };
+            Ok(group_rows(
+                Some(schema.clone()),
+                objects.into_iter().flat_map(|(name, ty)| {
+                    let kind = if ty == "view" {
+                        ObjectKind::View
+                    } else {
+                        ObjectKind::Table
+                    };
+                    match columns_of(&name) {
+                        Ok(cols) if !cols.is_empty() => cols
+                            .into_iter()
+                            .map(|col| (name.clone(), kind, Some(col)))
+                            .collect::<Vec<_>>(),
+                        _ => vec![(name, kind, None)],
+                    }
+                }),
+            ))
+        })
+        .await
+    }
+
+    async fn list_routines(&self, _schema: Option<&str>) -> AppResult<Vec<DbRoutine>> {
+        Ok(Vec::new())
+    }
+
+    async fn list_databases(&self) -> AppResult<Vec<String>> {
+        self.list_schemas().await
     }
 }
