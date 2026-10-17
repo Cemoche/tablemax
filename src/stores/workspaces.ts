@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../lib/ipc";
 import { strings } from "../lib/strings";
-import type { ConnectionConfig, Dialect, EnvTag, ObjectRef } from "../lib/types";
+import type { ConnectionConfig, Dialect, EnvTag, ObjectRef, WorkspaceInfo } from "../lib/types";
 import { useConnections } from "./connections";
 import { useGridViews } from "./gridViews";
 import { useQueryRuns } from "./queryRuns";
@@ -10,6 +10,13 @@ export type Tab =
   | { id: string; kind: "table"; object: ObjectRef; title: string; preview: boolean }
   | { id: string; kind: "query"; title: string; sql: string; sqlSessionId: string | null };
 
+/**
+ * `disconnected`: restored from the last session (or a cancelled/failed reconnect); its
+ * id is a frontend placeholder until it connects, and nothing may be asked of the
+ * backend with it. `connecting`: an open is in flight.
+ */
+export type WorkspaceStatus = "connected" | "disconnected" | "connecting";
+
 export interface Workspace {
   id: string;
   connectionId: string;
@@ -17,6 +24,9 @@ export interface Workspace {
   color: string;
   envTag: EnvTag;
   dialect: Dialect;
+  status: WorkspaceStatus;
+  /** Database the workspace browses (WorkspaceInfo.database); restored as is. */
+  database: string | null;
   schemas: string[];
   currentSchema: string | null;
   tabs: Tab[];
@@ -28,6 +38,11 @@ export interface Workspace {
 interface WorkspacesState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
+  /**
+   * Set when the user activates a disconnected workspace (a tab of it, the workspace
+   * itself, or Reconnect). App runs the connect flow (with its prompts) and clears it.
+   */
+  connectRequest: { workspaceId: string } | null;
   /** Secrets typed by the user; `acceptFingerprint` trusts a confirmed unknown host key. */
   openWorkspace: (
     connectionId: string,
@@ -36,6 +51,7 @@ interface WorkspacesState {
     acceptFingerprint?: string | null,
   ) => Promise<void>;
   closeWorkspace: (id: string) => Promise<void>;
+  /** Selecting a disconnected workspace requests its connect. */
   setActiveWorkspace: (id: string) => void;
   setSchema: (wsId: string, schema: string) => void;
   /**
@@ -48,6 +64,7 @@ interface WorkspacesState {
   pinTab: (wsId: string, tabId: string) => void;
   openQueryTab: (wsId: string) => void;
   closeTab: (wsId: string, tabId: string) => void;
+  /** Activating a tab of a disconnected workspace requests its connect. */
   activateTab: (wsId: string, tabId: string) => void;
   /** Patches a query tab (no-op for table tabs). */
   updateTab: (
@@ -55,6 +72,14 @@ interface WorkspacesState {
     tabId: string,
     patch: Partial<{ sql: string; sqlSessionId: string | null; title: string }>,
   ) => void;
+  /**
+   * Adds restored (disconnected) workspaces, skipping connections already open, and
+   * activates `activeId` unless a workspace is already active.
+   */
+  restoreWorkspaces: (workspaces: Workspace[], activeId: string | null) => void;
+  /** Asks App to connect a disconnected workspace (no-op otherwise). */
+  requestConnect: (wsId: string) => void;
+  clearConnectRequest: () => void;
 }
 
 /** Per-workspace query counter: never reused, even after tabs close. */
@@ -82,6 +107,17 @@ const touch = (mru: string[], id: string) => [id, ...mru.filter((x) => x !== id)
 
 const sameObject = (a: ObjectRef, b: ObjectRef) => a.schema === b.schema && a.name === b.name;
 
+/** The highest `n` of the query tabs titled `strings.workspace.queryTitle(n)`. */
+function lastQueryNumber(tabs: Tab[]): number {
+  let max = 0;
+  for (const t of tabs) {
+    if (t.kind !== "query") continue;
+    const n = Number(/(\d+)\D*$/.exec(t.title)?.[1]);
+    if (Number.isSafeInteger(n) && strings.workspace.queryTitle(n) === t.title) max = Math.max(max, n);
+  }
+  return max;
+}
+
 export const useWorkspaces = create<WorkspacesState>((set, get) => {
   const update = (wsId: string, fn: (w: Workspace) => Workspace) =>
     set((s) => ({ workspaces: s.workspaces.map((w) => (w.id === wsId ? fn(w) : w)) }));
@@ -107,6 +143,8 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       color: cfg.color,
       envTag: cfg.envTag,
       dialect: info.dialect,
+      status: "connected",
+      database: info.database,
       schemas,
       currentSchema: defaultSchema(info.dialect, schemas, cfg.database),
       tabs: [],
@@ -117,9 +155,82 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     set((s) => ({ workspaces: [...s.workspaces, ws], activeWorkspaceId: ws.id }));
   };
 
+  /**
+   * Connects a disconnected workspace in place: on success its placeholder id becomes
+   * the backend id (tabs, their ids, mru and preview flags are kept); on failure it is
+   * disconnected again and the error goes to the caller (the connect flow prompts).
+   */
+  const connectInPlace = async (
+    placeholderId: string,
+    cfg: ConnectionConfig,
+    password: string | null,
+    sshSecret: string | null,
+    acceptFingerprint: string | null,
+  ) => {
+    const status = (st: WorkspaceStatus) => update(placeholderId, (w) => ({ ...w, status: st }));
+    status("connecting");
+    let info: WorkspaceInfo;
+    let schemas: string[];
+    try {
+      info = await ipc.workspaceOpen(cfg.id, password, sshSecret, acceptFingerprint);
+    } catch (e) {
+      status("disconnected");
+      throw e;
+    }
+    try {
+      const wanted = get().workspaces.find((w) => w.id === placeholderId)?.database ?? null;
+      // MySQL / SQLite carry the database in the schema; only PostgreSQL switches.
+      if (info.dialect === "postgres" && wanted && wanted !== info.database) {
+        try {
+          info = await ipc.workspaceSwitchDatabase(info.workspaceId, wanted);
+        } catch {
+          // Gone or refused: stay on the connection's default database.
+        }
+      }
+      schemas = await ipc.schemasList(info.workspaceId);
+    } catch (e) {
+      void ipc.workspaceClose(info.workspaceId).catch(() => {});
+      status("disconnected");
+      throw e;
+    }
+    const newId = info.workspaceId;
+    if (!get().workspaces.some((w) => w.id === placeholderId)) {
+      // Closed by the user while connecting.
+      void ipc.workspaceClose(newId).catch(() => {});
+      return;
+    }
+    const counter = queryCounters.get(placeholderId);
+    queryCounters.delete(placeholderId);
+    if (counter !== undefined) queryCounters.set(newId, counter);
+    const dialect = info.dialect;
+    const database = info.database;
+    set((s) => ({
+      workspaces: s.workspaces.map((w) =>
+        w.id === placeholderId
+          ? {
+              ...w,
+              id: newId,
+              dialect,
+              status: "connected",
+              database,
+              schemas,
+              currentSchema:
+                w.currentSchema !== null && schemas.includes(w.currentSchema)
+                  ? w.currentSchema
+                  : defaultSchema(dialect, schemas, cfg.database),
+            }
+          : w,
+      ),
+      activeWorkspaceId: s.activeWorkspaceId === placeholderId ? newId : s.activeWorkspaceId,
+      connectRequest:
+        s.connectRequest?.workspaceId === placeholderId ? null : s.connectRequest,
+    }));
+  };
+
   return {
     workspaces: [],
     activeWorkspaceId: null,
+    connectRequest: null,
 
     openWorkspace: async (
       connectionId,
@@ -128,15 +239,17 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       acceptFingerprint = null,
     ) => {
       const existing = get().workspaces.find((w) => w.connectionId === connectionId);
-      if (existing) {
-        set({ activeWorkspaceId: existing.id });
-        return;
-      }
+      if (existing) set({ activeWorkspaceId: existing.id });
+      if (existing?.status === "connected") return;
       const inflight = opening.get(connectionId);
       if (inflight) return inflight;
       const cfg = useConnections.getState().items.find((c) => c.id === connectionId);
       if (!cfg) throw { kind: "notFound", message: strings.workspace.openFailed };
-      const p = doOpen(cfg, password, sshSecret, acceptFingerprint).finally(() => opening.delete(connectionId));
+      const p = (
+        existing
+          ? connectInPlace(existing.id, cfg, password, sshSecret, acceptFingerprint)
+          : doOpen(cfg, password, sshSecret, acceptFingerprint)
+      ).finally(() => opening.delete(connectionId));
       opening.set(connectionId, p);
       return p;
     },
@@ -144,7 +257,8 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     closeWorkspace: async (id) => {
       // Backend workspaceClose also closes the workspace's SQL sessions.
       queryCounters.delete(id);
-      for (const t of get().workspaces.find((w) => w.id === id)?.tabs ?? []) {
+      const closing = get().workspaces.find((w) => w.id === id);
+      for (const t of closing?.tabs ?? []) {
         useGridViews.getState().dropView(t.id);
         useQueryRuns.getState().drop(t.id);
       }
@@ -155,12 +269,18 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
           s.activeWorkspaceId === id
             ? (workspaces[Math.min(idx, workspaces.length - 1)]?.id ?? null)
             : s.activeWorkspaceId;
-        return { workspaces, activeWorkspaceId };
+        const connectRequest = s.connectRequest?.workspaceId === id ? null : s.connectRequest;
+        return { workspaces, activeWorkspaceId, connectRequest };
       });
-      await ipc.workspaceClose(id);
+      // A placeholder id means nothing to the backend; a workspace still connecting is
+      // closed by its open when it arrives.
+      if (closing?.status === "connected") await ipc.workspaceClose(id);
     },
 
-    setActiveWorkspace: (id) => set({ activeWorkspaceId: id }),
+    setActiveWorkspace: (id) => {
+      set({ activeWorkspaceId: id });
+      get().requestConnect(id);
+    },
 
     setSchema: (wsId, schema) => update(wsId, (w) => ({ ...w, currentSchema: schema })),
 
@@ -240,18 +360,45 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       });
     },
 
-    activateTab: (wsId, tabId) =>
+    activateTab: (wsId, tabId) => {
       update(wsId, (w) =>
         w.tabs.some((t) => t.id === tabId)
           ? { ...w, activeTabId: tabId, mru: touch(w.mru, tabId) }
           : w,
-      ),
+      );
+      get().requestConnect(wsId);
+    },
 
     updateTab: (wsId, tabId, patch) =>
       update(wsId, (w) => ({
         ...w,
         tabs: w.tabs.map((t) => (t.id === tabId && t.kind === "query" ? { ...t, ...patch } : t)),
       })),
+
+    restoreWorkspaces: (list, activeId) => {
+      const open = new Set(get().workspaces.map((w) => w.connectionId));
+      const added: Workspace[] = [];
+      for (const w of list) {
+        if (open.has(w.connectionId)) continue;
+        open.add(w.connectionId);
+        added.push(w);
+        queryCounters.set(w.id, lastQueryNumber(w.tabs));
+      }
+      set((s) => ({
+        workspaces: [...s.workspaces, ...added],
+        activeWorkspaceId:
+          s.activeWorkspaceId ??
+          (added.some((w) => w.id === activeId) ? activeId : (added[0]?.id ?? null)),
+      }));
+    },
+
+    requestConnect: (wsId) => {
+      if (get().workspaces.find((w) => w.id === wsId)?.status === "disconnected") {
+        set({ connectRequest: { workspaceId: wsId } });
+      }
+    },
+
+    clearConnectRequest: () => set({ connectRequest: null }),
   };
 });
 

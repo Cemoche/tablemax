@@ -4,7 +4,7 @@ import type { ConnectionConfig } from "../lib/types";
 import { useConnections } from "./connections";
 import { useGridViews } from "./gridViews";
 import { useQueryRuns } from "./queryRuns";
-import { useWorkspaces } from "./workspaces";
+import { type Workspace, useWorkspaces } from "./workspaces";
 
 vi.mock("../lib/ipc");
 
@@ -37,7 +37,7 @@ const info = (over = {}) => ({
 
 beforeEach(() => {
   vi.resetAllMocks();
-  useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null });
+  useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null, connectRequest: null });
   useGridViews.setState({ views: {} });
   useConnections.setState({ items: [cfg()] });
   vi.mocked(ipc.workspaceOpen).mockResolvedValue(info());
@@ -285,4 +285,169 @@ test("closing the active tab activates the previous one in mru", async () => {
   s.closeTab(id, b); // inactive: the active tab is kept
   expect(ws().activeTabId).toBe(a);
   expect(ws().mru).toEqual([a]);
+});
+
+// ---- Restored (disconnected) workspaces ----
+
+const restored = (over: Partial<Workspace> = {}): Workspace => ({
+  id: "restored:1",
+  connectionId: "c1",
+  name: "Local PG",
+  color: "swatch-1",
+  envTag: "dev",
+  dialect: "postgres",
+  status: "disconnected",
+  database: null,
+  schemas: ["audit"],
+  currentSchema: "audit",
+  tabs: [
+    { id: "t1", kind: "table", object: { schema: "audit", name: "log" }, title: "log", preview: true },
+    { id: "t2", kind: "query", title: "Query 2", sql: "select 1", sqlSessionId: null },
+  ],
+  activeTabId: "t1",
+  mru: ["t1", "t2"],
+  ...over,
+});
+const restore = (over: Partial<Workspace> = {}) => {
+  useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null });
+  useWorkspaces.getState().restoreWorkspaces([restored(over)], "restored:1");
+};
+
+test("a newly opened workspace is connected and remembers its database", async () => {
+  vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ database: "app" }));
+  await open();
+  expect(ws()).toMatchObject({ status: "connected", database: "app" });
+});
+
+test("openWorkspace connects a disconnected workspace in place, keeping its tabs", async () => {
+  restore();
+  await useWorkspaces.getState().openWorkspace("c1", "pw");
+  expect(ipc.workspaceOpen).toHaveBeenCalledWith("c1", "pw", null, null);
+  expect(useWorkspaces.getState().workspaces).toHaveLength(1);
+  expect(ws()).toMatchObject({
+    id: "w1",
+    status: "connected",
+    schemas: ["audit", "public"],
+    currentSchema: "audit",
+    activeTabId: "t1",
+    mru: ["t1", "t2"],
+  });
+  expect(ws().tabs).toEqual(restored().tabs);
+  expect(useWorkspaces.getState().activeWorkspaceId).toBe("w1");
+  // Numbering carries over to the new id.
+  useWorkspaces.getState().openQueryTab("w1");
+  expect(ws().tabs[2].title).toBe("Query 3");
+});
+
+test("a restored schema that no longer exists falls back to the default one", async () => {
+  restore({ currentSchema: "gone", schemas: ["gone"] });
+  await useWorkspaces.getState().openWorkspace("c1");
+  expect(ws().currentSchema).toBe("public");
+});
+
+test("status is connecting during the connect and back to disconnected on error", async () => {
+  restore();
+  let fail!: (e: unknown) => void;
+  vi.mocked(ipc.workspaceOpen).mockReturnValue(new Promise((_, rej) => (fail = rej)));
+  const p = useWorkspaces.getState().openWorkspace("c1");
+  expect(ws().status).toBe("connecting");
+  // A second open while connecting does not open twice.
+  const p2 = useWorkspaces.getState().openWorkspace("c1");
+  fail({ kind: "auth", message: "password required" });
+  await expect(p).rejects.toMatchObject({ message: "password required" });
+  await expect(p2).rejects.toMatchObject({ message: "password required" });
+  expect(ipc.workspaceOpen).toHaveBeenCalledTimes(1);
+  expect(ws()).toMatchObject({ id: "restored:1", status: "disconnected" });
+  expect(ws().tabs).toHaveLength(2);
+});
+
+test("a failed schema list closes the backend workspace and stays disconnected", async () => {
+  restore();
+  vi.mocked(ipc.schemasList).mockRejectedValue({ kind: "connection", message: "boom" });
+  await expect(useWorkspaces.getState().openWorkspace("c1")).rejects.toMatchObject({ message: "boom" });
+  expect(ipc.workspaceClose).toHaveBeenCalledWith("w1");
+  expect(ws()).toMatchObject({ id: "restored:1", status: "disconnected" });
+});
+
+test("postgres switches back to the restored database", async () => {
+  restore({ database: "other" });
+  vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ database: "app" }));
+  vi.mocked(ipc.workspaceSwitchDatabase).mockResolvedValue(info({ database: "other" }));
+  await useWorkspaces.getState().openWorkspace("c1");
+  expect(ipc.workspaceSwitchDatabase).toHaveBeenCalledWith("w1", "other");
+  expect(ipc.schemasList).toHaveBeenCalledWith("w1");
+  expect(vi.mocked(ipc.workspaceSwitchDatabase).mock.invocationCallOrder[0]).toBeLessThan(
+    vi.mocked(ipc.schemasList).mock.invocationCallOrder[0],
+  );
+  expect(ws()).toMatchObject({ status: "connected", database: "other" });
+});
+
+test("a failed database switch keeps the workspace connected on its default database", async () => {
+  restore({ database: "dropped" });
+  vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ database: "app" }));
+  vi.mocked(ipc.workspaceSwitchDatabase).mockRejectedValue({ kind: "notFound", message: "no db" });
+  await useWorkspaces.getState().openWorkspace("c1");
+  expect(ws()).toMatchObject({ status: "connected", database: "app", currentSchema: "audit" });
+});
+
+test("the same database or a mysql workspace does not switch", async () => {
+  restore({ database: "app" });
+  vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ database: "app" }));
+  await useWorkspaces.getState().openWorkspace("c1");
+  restore({ database: "shop", dialect: "mySql" });
+  vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ dialect: "mySql", database: null }));
+  await useWorkspaces.getState().openWorkspace("c1");
+  expect(ipc.workspaceSwitchDatabase).not.toHaveBeenCalled();
+});
+
+test("closing a disconnected workspace does not call the backend", async () => {
+  restore();
+  await useWorkspaces.getState().closeWorkspace("restored:1");
+  expect(ipc.workspaceClose).not.toHaveBeenCalled();
+  expect(useWorkspaces.getState().workspaces).toHaveLength(0);
+});
+
+test("a workspace closed while connecting closes the backend one when it arrives", async () => {
+  restore();
+  let done!: (v: ReturnType<typeof info>) => void;
+  vi.mocked(ipc.workspaceOpen).mockReturnValue(new Promise((r) => (done = r)));
+  const p = useWorkspaces.getState().openWorkspace("c1");
+  await useWorkspaces.getState().closeWorkspace("restored:1");
+  expect(ipc.workspaceClose).not.toHaveBeenCalled();
+  done(info());
+  await p;
+  expect(ipc.workspaceClose).toHaveBeenCalledWith("w1");
+  expect(useWorkspaces.getState().workspaces).toHaveLength(0);
+});
+
+test("activating a tab or selecting a disconnected workspace requests a connect", async () => {
+  restore();
+  useWorkspaces.getState().activateTab("restored:1", "t2");
+  expect(useWorkspaces.getState().connectRequest).toEqual({ workspaceId: "restored:1" });
+  expect(ws().activeTabId).toBe("t2");
+  useWorkspaces.getState().clearConnectRequest();
+  useWorkspaces.getState().setActiveWorkspace("restored:1");
+  expect(useWorkspaces.getState().connectRequest).toEqual({ workspaceId: "restored:1" });
+  useWorkspaces.getState().clearConnectRequest();
+  useWorkspaces.setState({ workspaces: [restored({ status: "connecting" })] });
+  useWorkspaces.getState().activateTab("restored:1", "t1");
+  expect(useWorkspaces.getState().connectRequest).toBeNull();
+});
+
+test("a connected workspace never requests a connect", async () => {
+  const id = await open();
+  useWorkspaces.getState().openQueryTab(id);
+  useWorkspaces.getState().activateTab(id, ws().tabs[0].id);
+  useWorkspaces.getState().setActiveWorkspace(id);
+  expect(useWorkspaces.getState().connectRequest).toBeNull();
+});
+
+test("restoreWorkspaces skips a connection already open and keeps the active workspace", async () => {
+  const id = await open();
+  useWorkspaces.getState().restoreWorkspaces(
+    [restored(), restored({ id: "restored:2", connectionId: "c2" })],
+    "restored:1",
+  );
+  expect(useWorkspaces.getState().workspaces.map((w) => w.id)).toEqual([id, "restored:2"]);
+  expect(useWorkspaces.getState().activeWorkspaceId).toBe(id);
 });

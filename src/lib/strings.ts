@@ -242,6 +242,12 @@ export const strings = {
     reopenHint: "The connection was lost. Close this workspace and reopen the connection.",
     binary: (len: number, hex: string) => `<binary ${len} B> ${hex}`,
   },
+  session: {
+    disconnected: "Disconnected",
+    disconnectedHint: "Select a tab or reconnect to load its data.",
+    reconnect: "Reconnect",
+    connecting: "Connecting…",
+  },
   selectPrompt: "Select a connection or create a new one",
   unknownError: "Something went wrong",
 } as const;

@@ -49,6 +49,8 @@ const setup = async (sql = "select 1; select 2") => {
         color: "swatch-1",
         envTag: "dev",
         dialect: "postgres",
+        status: "connected",
+        database: null,
         schemas: ["public"],
         currentSchema: "public",
         tabs: [{ id: "t1", kind: "query", title: "Query 1", sql, sqlSessionId: null }],

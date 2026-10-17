@@ -29,6 +29,8 @@ beforeEach(() => {
         color: "swatch-1",
         envTag: "dev",
         dialect: "postgres",
+        status: "connected",
+        database: null,
         schemas: [],
         currentSchema: null,
         tabs: [],

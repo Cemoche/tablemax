@@ -29,6 +29,8 @@ test("closing a table tab drops its view", () => {
         color: "swatch-1",
         envTag: "local",
         dialect: "postgres",
+        status: "connected",
+        database: null,
         schemas: ["public"],
         currentSchema: "public",
         tabs: [{ id: "t1", kind: "table", object: { schema: "public", name: "u" }, title: "u", preview: false }],

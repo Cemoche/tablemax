@@ -12,6 +12,8 @@ const workspace: Workspace = {
   color: "swatch-1",
   envTag: "local",
   dialect: "postgres",
+  status: "connected",
+  database: null,
   schemas: ["public", "audit"],
   currentSchema: "public",
   tabs: [
