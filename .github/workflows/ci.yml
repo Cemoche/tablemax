@@ -1,0 +1,83 @@
+name: CI
+
+# Every push to a branch other than main (issue branches get feedback before a PR exists),
+# and every pull request to main (checks the merge result).
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+
+# One run per event and ref: a new push cancels the previous run of the same branch.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend (vitest, tsc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          check-latest: true # jsdom needs Node >= 22.22; a cached older 22.x would fail
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - name: Type check (the TypeScript half of pnpm lint)
+        run: pnpm exec tsc --noEmit
+
+  backend:
+    name: Backend (clippy, cargo test with test databases)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: System packages (Tauri, test tools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev jq openssl openssh-client sqlite3
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Clippy (the Rust half of pnpm lint)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: Start the test databases and sshd
+        run: bash scripts/test-dbs.sh up
+      - name: cargo test (same as pnpm test:rust)
+        run: |
+          eval "$(scripts/test-dbs.sh env)"
+          cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose -p tablemax-test -f docker-compose.test.yml logs --tail 200
+      - name: Stop the test databases
+        if: always()
+        run: bash scripts/test-dbs.sh down
+
+  hygiene:
+    name: Hygiene (Claude hooks, GitHub bootstrap, secrets)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Claude Code hook tests
+        run: bash scripts/test-claude-hooks.sh
+      - name: GitHub bootstrap script (fake gh, no network)
+        run: bash scripts/test-github-bootstrap.sh
+      - name: No secrets in tracked files
+        run: bash scripts/check-no-secrets.sh

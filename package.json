@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:rust": "scripts/test-dbs.sh up && eval \"$(scripts/test-dbs.sh env)\" && cargo test --manifest-path src-tauri/Cargo.toml",
     "demo:db": "bash scripts/demo-db.sh",
-    "lint": "tsc --noEmit && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings"
+    "lint": "tsc --noEmit && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "test:hooks": "bash scripts/test-claude-hooks.sh"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

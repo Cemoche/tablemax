@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install)",
+      "Bash(pnpm install --frozen-lockfile)",
+      "Bash(pnpm test*)",
+      "Bash(pnpm lint*)",
+      "Bash(pnpm build*)",
+      "Bash(pnpm web*)",
+      "Bash(pnpm demo:db*)",
+      "Bash(cargo test *)",
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo tree *)",
+      "Bash(bash scripts/test-dbs.sh *)",
+      "Bash(scripts/test-dbs.sh *)",
+      "Bash(bash scripts/test-claude-hooks.sh)",
+      "Bash(bash scripts/check-no-secrets.sh)",
+      "Bash(bash scripts/test-github-bootstrap.sh)",
+      "Bash(bash scripts/github-bootstrap.sh --dry-run)",
+      "Bash(node scripts/plan-to-issues.mjs * --dry-run)",
+      "Bash(docker compose -f docker-compose.test.yml up*)",
+      "Bash(docker compose -f docker-compose.test.yml down*)",
+      "Bash(docker compose -f docker-compose.test.yml ps*)",
+      "Bash(docker compose -f docker-compose.test.yml logs*)",
+      "Bash(gh issue list*)",
+      "Bash(gh issue view*)",
+      "Bash(gh issue status*)",
+      "Bash(gh issue comment *)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr status*)",
+      "Bash(gh pr diff*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh pr comment *)",
+      "Bash(gh label list*)",
+      "Bash(gh run list*)",
+      "Bash(gh run view*)",
+      "Bash(gh run watch*)",
+      "Bash(gh auth status)",
+      "Bash(gh auth status --active --json hosts --jq '.hosts[][] | select(.active) | .login')",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch)",
+      "Bash(git branch --show-current)",
+      "Bash(git branch -a)",
+      "Bash(git branch -r)",
+      "Bash(git branch -vv)",
+      "Bash(git fetch)",
+      "Bash(git fetch origin)",
+      "Bash(git fetch origin --prune)",
+      "Bash(git fetch origin main)",
+      "Bash(git rev-parse *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git worktree list*)",
+      "Bash(git worktree add *)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(gh pr merge*)",
+      "Bash(gh issue close*)",
+      "Bash(gh pr close*)",
+      "Bash(git worktree remove*)",
+      "Bash(gh issue create *)",
+      "Bash(gh issue edit *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr edit *)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push origin main*)",
+      "Bash(git push * main)",
+      "Bash(git push * HEAD:main*)",
+      "Bash(gh pr merge*--admin*)",
+      "Bash(gh issue delete*)",
+      "Bash(gh issue * delete*)",
+      "Bash(gh issue transfer*)",
+      "Bash(gh auth token*)",
+      "Bash(gh auth status*--show-token*)",
+      "Bash(gh auth status* -t*)",
+      "Bash(git * --upload-*)",
+      "Bash(git * --receive-*)",
+      "Bash(git * --exec=*)",
+      "Bash(git * ext::*)",
+      "Bash(git -c *)",
+      "Bash(git * --ou*)",
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/block-main-edits.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/session-context.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
+  },
+  "worktree": {
+    "baseRef": "fresh"
+  }
+}
