@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 
@@ -43,15 +44,19 @@ export function useTableView() {
 /** The « Data | Structure » switch at the top of a table tab. */
 export function ViewToggle({ view, onChange }: { view: TableView; onChange: (v: TableView) => void }) {
   const v = strings.grid.view;
+  const shortcuts: Record<TableView, string> = {
+    data: useEffectiveShortcut("grid.viewData"),
+    structure: useEffectiveShortcut("grid.viewStructure"),
+  };
   return (
     <div role="tablist" aria-label={v.label} className="flex border-b border-border bg-surface px-2 text-sm">
-      {VIEWS.map(({ view: k, digit }) => (
+      {VIEWS.map(({ view: k }) => (
         <button
           key={k}
           type="button"
           role="tab"
           aria-selected={view === k}
-          title={(k === "data" ? v.dataShortcut : v.structureShortcut)(formatShortcut(`Alt+${digit}`))}
+          title={(k === "data" ? v.dataShortcut : v.structureShortcut)(formatShortcut(shortcuts[k]))}
           onClick={() => onChange(k)}
           className={`border-b-2 px-3 py-1 ${
             view === k ? "border-accent text-fg" : "border-transparent text-muted hover:text-fg"

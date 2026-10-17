@@ -6,6 +6,7 @@ import { strings } from "../../lib/strings";
 import type { Catalog, ConnectionConfig } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
 import { useConnections } from "../../stores/connections";
+import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { registerEditorCommands } from "../editor/editorCommands";
 import { CommandPalette } from "./CommandPalette";
@@ -51,6 +52,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   useCatalog.setState({ catalogs: {}, errors: {}, loading: {} });
   useConnections.setState({ items: [conn] });
+  useSettings.setState({ settings: DEFAULT_SETTINGS });
   useWorkspaces.setState({ workspaces: [workspace()], activeWorkspaceId: "w1", sidebarVisible: true });
   vi.mocked(ipc.catalogGet).mockResolvedValue(catalog(["users", "orders", "order_items"]));
 });
@@ -73,6 +75,21 @@ test("Mod+K shows objects, tabs, connections and actions in a modal dialog", asy
   expect(within(dialog).getByText("Prod PG")).toBeInTheDocument();
   expect(within(dialog).getByText(strings.palette.action.newQuery)).toBeInTheDocument();
   expect(within(dialog).getByText("Ctrl+T")).toBeInTheDocument();
+});
+
+test("actions show their effective shortcut: a custom one replaces the default", async () => {
+  useSettings.setState({
+    settings: { ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+Shift+N", "tab.close": "not a spec" } },
+  });
+  await open(MOD_K);
+  const dialog = await screen.findByRole("dialog");
+  const item = (title: string) => within(dialog).getByText(title).closest("[cmdk-item]") as HTMLElement;
+  expect(within(item(strings.palette.action.newQuery)).getByText("Ctrl+Shift+N")).toBeInTheDocument();
+  expect(within(dialog).queryByText("Ctrl+T")).not.toBeInTheDocument();
+  // An invalid entry falls back to the default.
+  expect(within(item(strings.palette.action.closeTab)).getByText("Ctrl+W")).toBeInTheDocument();
+  // An action without a keymap id shows no shortcut.
+  expect(item(strings.palette.action.newConnection).querySelector("kbd")).toBeNull();
 });
 
 test("Mod+P shows only the objects", async () => {

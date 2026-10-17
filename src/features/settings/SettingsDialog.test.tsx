@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
+import { KEYMAP_ACTIONS } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { SettingsDialog } from "./SettingsDialog";
@@ -181,15 +182,28 @@ test("About shows the version, the license line and the repository as text", asy
   expect(screen.queryByRole("link")).toBeNull();
 });
 
-test("lists the keyboard shortcuts with the platform's modifier names", () => {
+/** The combination shown on the Keyboard row of `label`. */
+const shortcutOf = (label: string) => screen.getByText(label).closest("li")?.querySelector("kbd")?.textContent;
+
+test("lists every keymap action with the platform's modifier names", () => {
   setup();
-  expect(screen.getByText(strings.settings.shortcutRun)).toBeInTheDocument();
-  expect(screen.getByText(strings.settings.shortcutSettings)).toBeInTheDocument();
+  for (const a of KEYMAP_ACTIONS) expect(screen.getByText(a.label)).toBeInTheDocument();
   // jsdom is not macOS: Mod reads Ctrl.
-  expect(screen.getByText("Ctrl+Enter")).toBeInTheDocument();
-  expect(screen.getByText("Ctrl+Shift+Enter")).toBeInTheDocument();
-  expect(screen.getByText("Ctrl+,")).toBeInTheDocument();
+  expect(shortcutOf(strings.keymap["editor.run"])).toBe("Ctrl+Enter");
+  expect(shortcutOf(strings.keymap["editor.runAll"])).toBe("Ctrl+Shift+Enter");
+  expect(shortcutOf(strings.keymap["settings.open"])).toBe("Ctrl+,");
+  expect(shortcutOf(strings.keymap["query.new"])).toBe("Ctrl+T");
   expect(screen.getByRole("dialog").textContent).not.toMatch(/Mod/);
+});
+
+test("the keyboard list shows a custom combination, and the default for an invalid entry", () => {
+  useSettings.setState({
+    settings: { ...DEFAULT_SETTINGS, keymap: { "grid.commit": "Mod+Shift+S", "query.new": "Mod-N" } },
+  });
+  setup();
+  expect(shortcutOf(strings.keymap["grid.commit"])).toBe("Ctrl+Shift+S");
+  expect(shortcutOf(strings.keymap["query.save"])).toBe("Ctrl+S");
+  expect(shortcutOf(strings.keymap["query.new"])).toBe("Ctrl+T");
 });
 
 test("Escape closes, even when focus is outside the dialog", async () => {

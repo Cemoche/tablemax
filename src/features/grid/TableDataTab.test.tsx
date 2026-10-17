@@ -203,6 +203,36 @@ test("a read-only table shows why and offers no + Row", async () => {
   await waitFor(() => expect(grid?.editing?.model.cell(0, 3).editable).toBe(false));
 });
 
+test("the toolbar and view switch name the effective shortcuts", async () => {
+  useSettings.setState({
+    settings: {
+      ...DEFAULT_SETTINGS,
+      keymap: {
+        "grid.commit": "Mod+Shift+S",
+        "grid.rowDetails": "Alt+I",
+        "grid.viewData": "Alt+7",
+        "grid.viewStructure": "Alt+8",
+      },
+    },
+  });
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  expect(await screen.findByRole("button", { name: strings.grid.commit("Ctrl+Shift+S") })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: strings.grid.rowDetails })).toHaveAttribute(
+    "title",
+    strings.grid.rowDetailsShortcut("Alt+I"),
+  );
+  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute(
+    "title",
+    strings.grid.view.dataShortcut("Alt+7"),
+  );
+  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute(
+    "title",
+    strings.grid.view.structureShortcut("Alt+8"),
+  );
+});
+
 test("editing through the grid, then commit applies the changes and reloads", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });

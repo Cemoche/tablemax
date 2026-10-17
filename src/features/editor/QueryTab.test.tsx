@@ -2,7 +2,7 @@ import { undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { ConnectionConfig, Dialect, ExecEvent } from "../../lib/types";
@@ -10,6 +10,7 @@ import { useAutoLimit } from "../../stores/autoLimit";
 import { useCatalog } from "../../stores/catalog";
 import { useConnections } from "../../stores/connections";
 import { useQueryRuns } from "../../stores/queryRuns";
+import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { runEditorCommand } from "./editorCommands";
 import { QueryTab } from "./QueryTab";
@@ -319,7 +320,7 @@ describe("safe mode confirmation", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(ipc.sqlExecute).toHaveBeenCalledTimes(1);
     expect(useQueryRuns.getState().runs["t1"]).toBeUndefined();
-    expect(screen.getByText(strings.query.empty)).toBeInTheDocument();
+    expect(screen.getByText(strings.query.empty("Ctrl+Enter"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run all" })).toBeEnabled();
   });
 
@@ -511,4 +512,20 @@ test("a run with a DELIMITER block sends the procedure whole, without the DELIMI
     "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END",
     "CALL p()",
   ]);
+});
+
+test("the Save and History buttons name the effective shortcuts", async () => {
+  useSettings.setState({
+    settings: { ...DEFAULT_SETTINGS, keymap: { "query.save": "Mod+Shift+S", "history.toggle": "Alt+H" } },
+  });
+  onTestFinished(() => useSettings.setState({ settings: DEFAULT_SETTINGS }));
+  await setup();
+  expect(screen.getByRole("button", { name: strings.savedQueries.save })).toHaveAttribute(
+    "title",
+    strings.savedQueries.saveHint("Ctrl+Shift+S"),
+  );
+  expect(screen.getByRole("button", { name: strings.history.toggle })).toHaveAttribute(
+    "title",
+    strings.history.toggleHint("Alt+H"),
+  );
 });

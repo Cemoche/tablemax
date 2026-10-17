@@ -1,10 +1,11 @@
 import { beforeEach, expect, test, vi } from "vitest";
+import { isKeymapActionId } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Workspace } from "../../stores/workspaces";
 import { useWorkspaces } from "../../stores/workspaces";
 import { registerEditorCommands } from "../editor/editorCommands";
-import { type ActionCtx, visibleActions } from "./actions";
+import { ACTIONS, type ActionCtx, visibleActions } from "./actions";
 
 vi.mock("../../lib/ipc");
 
@@ -85,6 +86,19 @@ test("next and previous follow the MRU order like Ctrl+Tab", () => {
   expect(useWorkspaces.getState().workspaces[0].activeTabId).toBe("q2");
 });
 
+test("the palette actions with a shortcut are the keymap registry's actions of the same id", () => {
+  expect(ACTIONS.filter((a) => isKeymapActionId(a.id)).map((a) => a.id)).toEqual([
+    "query.new",
+    "tab.close",
+    "tab.next",
+    "tab.previous",
+    "editor.format",
+    "editor.comment",
+    "history.toggle",
+  ]);
+  expect(ACTIONS.some((a) => "shortcut" in a)).toBe(false);
+});
+
 test("shortcuts are rendered per platform", () => {
   expect(formatShortcut("Mod+Shift+F")).toBe("Ctrl+Shift+F");
   expect(formatShortcut("Ctrl+Tab")).toBe("Ctrl+Tab");
@@ -99,7 +113,7 @@ test("Open history is offered for a query tab only and toggles its history panel
   const t = strings.palette.action;
   useQueryPanels.setState({ history: {} });
   const action = visibleActions(ctx(ws())).find((a) => a.title === t.openHistory);
-  expect(action?.shortcut).toBe("Mod+Shift+H");
+  expect(action?.id).toBe("history.toggle");
   action?.run(ctx(ws()));
   expect(useQueryPanels.getState().history.q1).toBe(true);
   action?.run(ctx(ws()));

@@ -2,7 +2,9 @@ import type { EditorView } from "@codemirror/view";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { isConfirmationRequired, parseConfirmationIndices, toAppError } from "../../lib/errors";
+import { useEffectiveShortcut } from "../../lib/keymap";
 import { registerPendingFlush } from "../../lib/pendingFlush";
+import { formatShortcut } from "../../lib/platform";
 import { useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { useAutoLimit } from "../../stores/autoLimit";
@@ -289,6 +291,8 @@ export function QueryTab({ workspace, tab }: Props) {
   // Mounted only for the active SQL tab: in a table tab Mod+S stays the grid's commit.
   useShortcut("Mod+S", () => void save());
   useShortcut("Mod+Shift+H", () => useQueryPanels.getState().toggleHistory(tabId));
+  const saveShortcut = useEffectiveShortcut("query.save");
+  const historyShortcut = useEffectiveShortcut("history.toggle");
 
   const cancel = () => {
     const sid = currentSessionId(wsId, tabId);
@@ -342,7 +346,7 @@ export function QueryTab({ workspace, tab }: Props) {
         <button
           type="button"
           className={btn}
-          title={strings.savedQueries.saveHint}
+          title={strings.savedQueries.saveHint(formatShortcut(saveShortcut))}
           onClick={() => void save()}
         >
           {strings.savedQueries.save}
@@ -351,7 +355,7 @@ export function QueryTab({ workspace, tab }: Props) {
           type="button"
           className={btn}
           aria-pressed={historyOpen}
-          title={strings.history.toggleHint}
+          title={strings.history.toggleHint(formatShortcut(historyShortcut))}
           onClick={() => useQueryPanels.getState().toggleHistory(tabId)}
         >
           {strings.history.toggle}

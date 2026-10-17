@@ -1,4 +1,6 @@
 import { Fragment, useEffect } from "react";
+import { useEffectiveShortcut } from "../../lib/keymap";
+import { formatShortcut } from "../../lib/platform";
 import { formatQuickFilter } from "../../lib/quickFilter";
 import { strings } from "../../lib/strings";
 import type { Filter, ObjectRef } from "../../lib/types";
@@ -24,6 +26,7 @@ const EDITABLE = new Set(["INPUT", "TEXTAREA", "SELECT"]);
  */
 export function Breadcrumb({ workspaceId, tabId, object, filters, shortcut = true }: Props) {
   const trail = useGridViews((s) => s.trails[tabId]) ?? [];
+  const backShortcut = useEffectiveShortcut("grid.back");
 
   useEffect(() => {
     if (!shortcut) return;
@@ -47,7 +50,7 @@ export function Breadcrumb({ workspaceId, tabId, object, filters, shortcut = tru
   return (
     <nav
       aria-label={strings.grid.trail.label}
-      title={strings.grid.trail.back}
+      title={strings.grid.trail.back(formatShortcut(backShortcut))}
       className="flex min-w-0 items-center gap-1 overflow-hidden border-b border-border bg-surface px-3 py-1 text-sm"
     >
       {trail.map((entry, i) => (

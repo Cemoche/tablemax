@@ -1,13 +1,16 @@
 import { useState } from "react";
+import { useEffectiveShortcut } from "../../lib/keymap";
+import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { QueryRun } from "../../stores/queryRuns";
 import { DataGrid } from "../grid/DataGrid";
 
 export function ResultsPanel({ run }: { run: QueryRun | undefined }) {
   const [selected, setSelected] = useState<number | null>(null);
+  const runShortcut = useEffectiveShortcut("editor.run");
 
   if (!run) {
-    return <p className="p-3 text-muted">{strings.query.empty}</p>;
+    return <p className="p-3 text-muted">{strings.query.empty(formatShortcut(runShortcut))}</p>;
   }
 
   const sets = run.results.filter((r) => r.outcome.result);

@@ -2,12 +2,14 @@ import { Command } from "cmdk";
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
+import { effectiveShortcut, isKeymapActionId } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { isModalOpen, useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import type { ConnectionConfig } from "../../lib/types";
 import { catalogKey, useCatalog } from "../../stores/catalog";
 import { useConnections } from "../../stores/connections";
+import { useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
 import { runEditorCommand } from "../editor/editorCommands";
 import { tabKindLabel } from "../workspace/tabInfo";
@@ -53,6 +55,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
   const workspaces = useWorkspaces((s) => s.workspaces);
   const activeId = useWorkspaces((s) => s.activeWorkspaceId);
   const connections = useConnections((s) => s.items);
+  const keymap = useSettings((s) => s.settings.keymap);
   const workspace = workspaces.find((w) => w.id === activeId) ?? null;
   const connected = workspace?.status === "connected";
   const schema = workspace?.currentSchema ?? null;
@@ -310,7 +313,11 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
                 }}
               >
                 <span>{a.title}</span>
-                {a.shortcut && <kbd className="font-mono text-sm opacity-70">{formatShortcut(a.shortcut)}</kbd>}
+                {isKeymapActionId(a.id) && (
+                  <kbd className="font-mono text-sm opacity-70">
+                    {formatShortcut(effectiveShortcut(a.id, keymap))}
+                  </kbd>
+                )}
               </Command.Item>
             ))}
           </Command.Group>

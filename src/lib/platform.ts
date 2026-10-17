@@ -27,7 +27,7 @@ export function isModKey(
  * "⌘+Shift+Enter" on macOS, "Ctrl+Shift+Enter" elsewhere, names from strings.ts.
  */
 export function formatShortcut(spec: string, mac: boolean = isMac()): string {
-  const { keyNames, keySeparator } = strings.settings;
+  const { keyNames, keyLabels, keySeparator } = strings.settings;
   const parts = spec.split("+");
   const key = parts.pop() ?? "";
   const names = parts.map((m) => {
@@ -46,6 +46,7 @@ export function formatShortcut(spec: string, mac: boolean = isMac()): string {
         return m;
     }
   });
-  names.push(key.length === 1 ? key.toUpperCase() : key);
+  const label = Object.prototype.hasOwnProperty.call(keyLabels, key) ? keyLabels[key] : key;
+  names.push(key.length === 1 ? key.toUpperCase() : label);
   return names.filter((n) => n !== "").join(keySeparator);
 }

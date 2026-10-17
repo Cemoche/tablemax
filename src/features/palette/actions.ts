@@ -17,10 +17,9 @@ export interface ActionCtx {
 }
 
 export interface Action {
+  /** An action with a shortcut uses its keymap id (src/lib/keymap.ts); the palette shows its effective combination. */
   id: string;
   title: string;
-  /** Spec in `matchShortcut` syntax ("Mod+T"); shown human-readable. */
-  shortcut?: string;
   /** Hidden when it returns false (default: always available). */
   when?: (ctx: ActionCtx) => boolean;
   run: (ctx: ActionCtx) => void;
@@ -39,14 +38,12 @@ export const ACTIONS: Action[] = [
   {
     id: "query.new",
     title: t.newQuery,
-    shortcut: "Mod+T",
     when: (c) => c.workspace !== null,
     run: (c) => c.workspace && useWorkspaces.getState().openQueryTab(c.workspace.id),
   },
   {
     id: "tab.close",
     title: t.closeTab,
-    shortcut: "Mod+W",
     when: (c) => c.workspace !== null && c.workspace.activeTabId !== null,
     run: (c) => {
       if (c.workspace?.activeTabId) useWorkspaces.getState().closeTab(c.workspace.id, c.workspace.activeTabId);
@@ -55,7 +52,6 @@ export const ACTIONS: Action[] = [
   {
     id: "tab.next",
     title: t.nextTab,
-    shortcut: "Ctrl+Tab",
     when: (c) => others(c).length > 0,
     run: (c) => {
       const to = others(c)[0];
@@ -65,7 +61,6 @@ export const ACTIONS: Action[] = [
   {
     id: "tab.previous",
     title: t.previousTab,
-    shortcut: "Ctrl+Shift+Tab",
     when: (c) => others(c).length > 0,
     run: (c) => {
       const to = others(c).slice(-1)[0];
@@ -88,7 +83,6 @@ export const ACTIONS: Action[] = [
   {
     id: "editor.format",
     title: t.format,
-    shortcut: "Mod+Shift+F",
     when: (c) => {
       const q = queryTab(c);
       return q !== null && hasEditorCommand(q.id, "format");
@@ -101,7 +95,6 @@ export const ACTIONS: Action[] = [
   {
     id: "editor.comment",
     title: t.toggleComment,
-    shortcut: "Mod+/",
     when: (c) => {
       const q = queryTab(c);
       return q !== null && hasEditorCommand(q.id, "toggleComment");
@@ -129,7 +122,6 @@ export const ACTIONS: Action[] = [
   {
     id: "history.toggle",
     title: t.openHistory,
-    shortcut: "Mod+Shift+H",
     when: (c) => queryTab(c) !== null,
     run: (c) => {
       const q = queryTab(c);

@@ -20,6 +20,8 @@ const NAMED_CODES: Record<string, string> = {
   "=": "Equal",
   "[": "BracketLeft",
   "]": "BracketRight",
+  "\\": "Backslash",
+  "`": "Backquote",
   arrowup: "ArrowUp",
   arrowdown: "ArrowDown",
   arrowleft: "ArrowLeft",

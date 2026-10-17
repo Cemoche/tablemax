@@ -1,3 +1,5 @@
+import { useEffectiveShortcut } from "../../lib/keymap";
+import { formatShortcut } from "../../lib/platform";
 import { useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { usePendingChanges } from "../../stores/pendingChanges";
@@ -60,6 +62,7 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   const { id, activeTabId } = workspace;
   const active = workspace.tabs.find((t) => t.id === activeTabId) ?? null;
   const liveEnv = useLiveEnv(workspace);
+  const newTabShortcut = useEffectiveShortcut("query.new");
 
   // A restored workspace has a placeholder id until it connects: nothing below may
   // reach the backend with it.
@@ -99,7 +102,7 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
             ) : (
               <div className="p-5">
                 <p>{strings.workspace.noTabs}</p>
-                <p className="text-muted">{strings.workspace.noTabsHint}</p>
+                <p className="text-muted">{strings.workspace.noTabsHint(formatShortcut(newTabShortcut))}</p>
               </div>
             )}
           </div>

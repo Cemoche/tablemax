@@ -5,6 +5,7 @@ import { strings } from "../../lib/strings";
 import type { Filter, ObjectRef, RowKey } from "../../lib/types";
 import { type GridView, useGridViews } from "../../stores/gridViews";
 import { usePendingChanges } from "../../stores/pendingChanges";
+import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
 import { Breadcrumb } from "./Breadcrumb";
 
@@ -18,6 +19,7 @@ const ordersView: GridView = { page: 2, sort: ["total", "desc"], filters: [eq("s
 const linesView: GridView = { page: 0, sort: null, filters: [eq("order_id", "7")] };
 
 beforeEach(() => {
+  useSettings.setState({ settings: DEFAULT_SETTINGS });
   usePendingChanges.setState({
     tabs: {},
     blocked: {},
@@ -87,6 +89,16 @@ test("clicking the first item restores its object, filters, sort and page", asyn
   expect(useGridViews.getState().getView("t1")).toEqual(ordersView);
   expect(useGridViews.getState().getTrail("t1")).toEqual([]);
   expect(screen.queryByRole("navigation")).toBeNull();
+});
+
+test("the trail's tooltip names the effective Back shortcut", () => {
+  const { unmount } = render(<Harness />);
+  const nav = () => screen.getByRole("navigation", { name: strings.grid.trail.label });
+  expect(nav()).toHaveAttribute("title", strings.grid.trail.back("Alt+←"));
+  unmount();
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "grid.back": "Alt+Backspace" } } });
+  render(<Harness />);
+  expect(nav()).toHaveAttribute("title", strings.grid.trail.back("Alt+Backspace"));
 });
 
 test("Alt+← goes back one step", async () => {

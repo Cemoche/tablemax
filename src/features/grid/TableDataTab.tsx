@@ -1,4 +1,5 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
+import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, ObjectRef } from "../../lib/types";
@@ -122,6 +123,8 @@ function TableDataView({
   refocusCommit,
 }: Props & { detail: ReturnType<typeof useRowDetail>; active: boolean; refocusCommit: RefObject<boolean> }) {
   const pageSizeSetting = useSettings((s) => s.settings.pageSize);
+  const commitShortcut = useEffectiveShortcut("grid.commit");
+  const rowDetailsShortcut = useEffectiveShortcut("grid.rowDetails");
   const t = usePagedTable(workspaceId, object, tabId, pageSizeSetting);
   const e = useTableEditing({ workspaceId, tabId, object, result: t.result, reload: t.reload });
   const links = useFkLinks({ workspaceId, tabId, object, dialect, info: e.info, data: t.result, model: e.model });
@@ -195,7 +198,7 @@ function TableDataView({
             disabled={e.count === 0 || e.locked || e.outcomeUnknown || e.otherCommitting}
             title={e.otherCommitting ? strings.grid.otherTabCommitting : undefined}
           >
-            {e.committing ? strings.grid.committing : strings.grid.commit(formatShortcut("Mod+S"))}
+            {e.committing ? strings.grid.committing : strings.grid.commit(formatShortcut(commitShortcut))}
           </button>
           {e.committing ? (
             <button
@@ -296,7 +299,7 @@ function TableDataView({
           type="button"
           className={`${btn} aria-pressed:bg-surface-2`}
           aria-pressed={detail.open}
-          title={strings.grid.rowDetailsShortcut(formatShortcut("Mod+I"))}
+          title={strings.grid.rowDetailsShortcut(formatShortcut(rowDetailsShortcut))}
           onClick={detail.toggle}
         >
           {strings.grid.rowDetails}

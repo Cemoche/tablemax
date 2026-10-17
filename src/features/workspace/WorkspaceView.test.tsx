@@ -1,5 +1,7 @@
-import { act, render } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { strings } from "../../lib/strings";
+import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { WorkspaceView } from "./WorkspaceView";
 
@@ -39,6 +41,13 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   document.body.innerHTML = "";
+  useSettings.setState({ settings: DEFAULT_SETTINGS });
+});
+
+test("the empty-workspace hint names the effective new-tab shortcut", () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+Shift+N" } } });
+  render(<WorkspaceView workspace={{ ...workspace, tabs: [], activeTabId: null, mru: [] }} />);
+  expect(screen.getByText(strings.workspace.noTabsHint("Ctrl+Shift+N"))).toBeInTheDocument();
 });
 
 test("Mod+T opens a query tab and Mod+W closes the active tab", () => {

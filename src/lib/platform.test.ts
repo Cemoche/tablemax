@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { SHORTCUTS } from "../features/settings/shortcuts";
+import { KEYMAP_ACTIONS } from "./keymap";
 import { currentPlatform, formatShortcut, isMac, isModKey } from "./platform";
 
 afterEach(() => vi.restoreAllMocks());
@@ -59,8 +59,17 @@ test("odd specs do not crash", () => {
   expect(formatShortcut("", false)).toBe("");
 });
 
-test("no listed shortcut is shown with a literal Mod", () => {
+test("no keymap default is shown with a literal Mod", () => {
   for (const mac of [false, true]) {
-    for (const s of SHORTCUTS) expect(formatShortcut(s.spec, mac)).not.toMatch(/Mod/);
+    for (const a of KEYMAP_ACTIONS) expect(formatShortcut(a.defaultShortcut, mac)).not.toMatch(/Mod/);
   }
+});
+
+test("arrow keys read as arrows", () => {
+  expect(formatShortcut("Alt+ArrowLeft", false)).toBe("Alt+←");
+  expect(formatShortcut("Alt+ArrowLeft", true)).toBe("⌥+←");
+  expect(formatShortcut("Mod+ArrowRight", false)).toBe("Ctrl+→");
+  expect(formatShortcut("Shift+ArrowUp", false)).toBe("Shift+↑");
+  expect(formatShortcut("Shift+ArrowDown", false)).toBe("Shift+↓");
+  expect(formatShortcut("Mod+Backspace", false)).toBe("Ctrl+Backspace");
 });

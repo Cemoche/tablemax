@@ -1,0 +1,20 @@
+[
+  "query.new",
+  "tab.close",
+  "tab.next",
+  "tab.previous",
+  "palette.all",
+  "palette.objects",
+  "settings.open",
+  "query.save",
+  "history.toggle",
+  "editor.run",
+  "editor.runAll",
+  "editor.format",
+  "editor.comment",
+  "grid.commit",
+  "grid.rowDetails",
+  "grid.viewData",
+  "grid.viewStructure",
+  "grid.back"
+]
