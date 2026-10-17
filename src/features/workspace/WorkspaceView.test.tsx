@@ -53,7 +53,7 @@ beforeEach(() => {
 });
 
 test("Ctrl+S commits the pending changes of the active table tab", async () => {
-  usePendingChanges.getState().addInsert("t1");
+  usePendingChanges.getState().addInsert("t1", object);
   render(<View />);
   await userEvent.keyboard("{Control>}s{/Control}");
   await waitFor(() =>
@@ -63,7 +63,7 @@ test("Ctrl+S commits the pending changes of the active table tab", async () => {
 });
 
 test("Ctrl+S does nothing in a query tab or while a modal is open", async () => {
-  usePendingChanges.getState().addInsert("t1");
+  usePendingChanges.getState().addInsert("t1", object);
   render(<View />);
   // The close confirmation is a modal.
   await userEvent.keyboard("{Control>}w{/Control}");
@@ -77,8 +77,8 @@ test("Ctrl+S does nothing in a query tab or while a modal is open", async () => 
 });
 
 test("closing a tab with pending changes asks to discard them", async () => {
-  usePendingChanges.getState().addInsert("t1");
-  usePendingChanges.getState().addInsert("t1");
+  usePendingChanges.getState().addInsert("t1", object);
+  usePendingChanges.getState().addInsert("t1", object);
   render(<View />);
   await userEvent.click(screen.getByRole("button", { name: strings.workspace.closeTab("users") }));
   const dialog = await screen.findByRole("dialog", { name: strings.grid.discardTitle });
@@ -92,7 +92,7 @@ test("closing a tab with pending changes asks to discard them", async () => {
 });
 
 test("Ctrl+S does nothing while the grid's cell editor is open", async () => {
-  usePendingChanges.getState().addInsert("t1");
+  usePendingChanges.getState().addInsert("t1", object);
   usePendingChanges.getState().setEditorOpen("t1", true);
   render(<View />);
   await userEvent.keyboard("{Control>}s{/Control}");
@@ -104,7 +104,7 @@ test("Ctrl+S does nothing while the grid's cell editor is open", async () => {
 
 test("closing the workspace with pending changes asks with the tab count", async () => {
   vi.mocked(ipc.workspaceClose).mockResolvedValue(undefined);
-  usePendingChanges.getState().addInsert("t1");
+  usePendingChanges.getState().addInsert("t1", object);
   render(<View />);
   void useWorkspaces.getState().closeWorkspace("w1");
   const dialog = await screen.findByRole("dialog", { name: strings.grid.discardTitle });

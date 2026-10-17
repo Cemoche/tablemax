@@ -32,3 +32,18 @@ of the plan.
   depends on `max_allowed_packet`).
 - The MySQL SQL preview always doubles backslashes (right under the default sql_mode;
   shows them doubled under `NO_BACKSLASH_ESCAPES`).
+
+## Deferred (Task 7)
+
+- Foreign key jumps filter the referenced table with `ref_column = '<value>'`. A value is
+  bound as text: PostgreSQL casts it to the column's type, MySQL and SQLite compare it as
+  is. So a jump can show 0 rows when:
+  - the referenced SQLite column has no type affinity (declared without a type, or with a
+    type that gives it none): an integer stored there never equals the bound text `'42'`;
+  - the referenced MySQL column is `FLOAT` (single precision): the value loaded as a
+    double never compares equal (same cause as the `FLOAT` key editing limit above).
+    `DOUBLE` is fine.
+- No link for binary key values (filters bind text) or when the referenced column is a
+  PostgreSQL `json` column (no `=` operator; the load error shows, the breadcrumb goes back).
+- After a jump no row is selected: an open row details panel waits for a click on the
+  (usually single) referenced row.

@@ -28,10 +28,10 @@ const SQL = [
 
 /** An update (2 columns), an insert and a delete, in that order. */
 function threeChanges() {
-  pending().setCell("t1", key(1), "note", text("x"), row(1), names);
-  pending().setCell("t1", key(1), "qty", text("2"), row(1), names);
-  pending().addInsert("t1", { note: text("new") });
-  pending().toggleDelete("t1", key(2));
+  pending().setCell("t1", obj, key(1), "note", text("x"), row(1), names);
+  pending().setCell("t1", obj, key(1), "qty", text("2"), row(1), names);
+  pending().addInsert("t1", obj, { note: text("new") });
+  pending().toggleDelete("t1", obj, key(2));
 }
 
 const items = () => within(screen.getByRole("list", { name: strings.grid.changes.label })).getAllByRole("listitem");
@@ -118,13 +118,13 @@ test("an Invalid preview shows on the change it names", async () => {
 test("the preview waits 200 ms after the last change and ignores stale answers", async () => {
   const first = deferred<string[]>();
   vi.mocked(ipc.changesPreview).mockReturnValueOnce(first.promise).mockResolvedValue(["NEW SQL"]);
-  pending().toggleDelete("t1", key(1));
+  pending().toggleDelete("t1", obj, key(1));
   render(<PendingChangesPanel workspaceId="w1" tabId="t1" object={obj} />);
   await waitFor(() => expect(ipc.changesPreview).toHaveBeenCalledTimes(1));
   // Two quick changes while the first preview is in flight: one more call, not two.
   act(() => {
-    pending().toggleDelete("t1", key(1));
-    pending().toggleDelete("t1", key(3));
+    pending().toggleDelete("t1", obj, key(1));
+    pending().toggleDelete("t1", obj, key(3));
   });
   expect(ipc.changesPreview).toHaveBeenCalledTimes(1);
   expect(await screen.findByText("NEW SQL")).toBeInTheDocument();
@@ -136,7 +136,7 @@ test("the preview waits 200 ms after the last change and ignores stale answers",
 
 test("collapses, hides when nothing is pending and opens again on the next change", async () => {
   vi.mocked(ipc.changesPreview).mockResolvedValue(["SQL 1"]);
-  pending().toggleDelete("t1", key(1));
+  pending().toggleDelete("t1", obj, key(1));
   render(<PendingChangesPanel workspaceId="w1" tabId="t1" object={obj} />);
   await screen.findByText("SQL 1");
   const header = screen.getByRole("button", { name: strings.grid.changes.title(1) });
@@ -145,7 +145,7 @@ test("collapses, hides when nothing is pending and opens again on the next chang
   expect(screen.queryByText("SQL 1")).toBeNull();
   act(() => void pending().discard("t1"));
   expect(screen.queryByRole("button", { name: /Pending changes/ })).toBeNull();
-  act(() => void pending().toggleDelete("t1", key(1)));
+  act(() => void pending().toggleDelete("t1", obj, key(1)));
   expect(screen.getByRole("button", { name: strings.grid.changes.title(1) })).toHaveAttribute(
     "aria-expanded",
     "true",
@@ -156,7 +156,7 @@ test("Undo is disabled while a commit runs", async () => {
   vi.mocked(ipc.changesPreview).mockResolvedValue(["SQL 1"]);
   const apply = deferred<Awaited<ReturnType<typeof ipc.changesApply>>>();
   vi.mocked(ipc.changesApply).mockReturnValue(apply.promise);
-  pending().toggleDelete("t1", key(1));
+  pending().toggleDelete("t1", obj, key(1));
   render(<PendingChangesPanel workspaceId="w1" tabId="t1" object={obj} />);
   let done: Promise<boolean> = Promise.resolve(true);
   act(() => {
@@ -174,11 +174,11 @@ test("a changed line hides its old SQL until the new preview arrives", async () 
   vi.mocked(ipc.changesPreview)
     .mockResolvedValueOnce(["OLD UPDATE", "DELETE 2"])
     .mockReturnValueOnce(second.promise);
-  pending().setCell("t1", key(1), "note", text("x"), row(1), names);
-  pending().toggleDelete("t1", key(2));
+  pending().setCell("t1", obj, key(1), "note", text("x"), row(1), names);
+  pending().toggleDelete("t1", obj, key(2));
   render(<PendingChangesPanel workspaceId="w1" tabId="t1" object={obj} />);
   await screen.findByText("OLD UPDATE");
-  act(() => void pending().setCell("t1", key(1), "qty", text("9"), row(1), names));
+  act(() => void pending().setCell("t1", obj, key(1), "qty", text("9"), row(1), names));
   // The update changed: its SQL is stale; the delete did not.
   expect(screen.queryByText("OLD UPDATE")).toBeNull();
   expect(screen.getByText("DELETE 2")).toBeInTheDocument();
@@ -189,7 +189,7 @@ test("a changed line hides its old SQL until the new preview arrives", async () 
 
 test("text key values are quoted", () => {
   vi.mocked(ipc.changesPreview).mockResolvedValue([]);
-  pending().toggleDelete("t1", [
+  pending().toggleDelete("t1", obj, [
     ["name", { t: "text", v: "O'Brien, a" }],
     ["n", int(3)],
   ]);

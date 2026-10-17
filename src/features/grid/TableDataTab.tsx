@@ -121,9 +121,17 @@ function TableDataView({
       {copy.notice && (
         <div
           role={copy.notice.error ? "alert" : "status"}
-          className={`border-b border-border px-3 py-1 text-sm ${copy.notice.error ? "text-danger" : "text-muted"}`}
+          className={`flex items-center gap-2 border-b border-border px-3 py-1 text-sm ${copy.notice.error ? "text-danger" : "text-muted"}`}
         >
-          {copy.notice.text}
+          <span className="min-w-0 flex-1 break-words">{copy.notice.text}</span>
+          <button
+            type="button"
+            aria-label={strings.grid.dismiss}
+            onClick={copy.dismiss}
+            className="shrink-0 rounded-sm px-1.5 text-fg hover:bg-surface-2"
+          >
+            {strings.grid.dismissText}
+          </button>
         </div>
       )}
       {e.blocked && e.count > 0 && (

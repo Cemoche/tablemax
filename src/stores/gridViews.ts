@@ -24,9 +24,8 @@ interface GridViewsState {
   getView: (tabId: string) => GridView;
   setView: (tabId: string, patch: Partial<GridView>) => void;
   getTrail: (tabId: string) => TrailEntry[];
-  pushTrail: (tabId: string, entry: TrailEntry) => void;
-  /** Keeps the first `length` entries. */
-  truncateTrail: (tabId: string, length: number) => void;
+  /** Replaces the tab's view and trail at once (foreign key navigation, see workspaces). */
+  setNavigation: (tabId: string, view: GridView, trail: TrailEntry[]) => void;
   /** Forgets the tab's view and trail. */
   dropView: (tabId: string) => void;
 }
@@ -47,10 +46,8 @@ export const useGridViews = create<GridViewsState>((set, get) => ({
       views: { ...s.views, [tabId]: { ...(s.views[tabId] ?? DEFAULT_VIEW), ...patch } },
     })),
   getTrail: (tabId) => get().trails[tabId] ?? NO_TRAIL,
-  pushTrail: (tabId, entry) =>
-    set((s) => ({ trails: { ...s.trails, [tabId]: [...(s.trails[tabId] ?? []), entry] } })),
-  truncateTrail: (tabId, length) =>
-    set((s) => ({ trails: { ...s.trails, [tabId]: (s.trails[tabId] ?? []).slice(0, length) } })),
+  setNavigation: (tabId, view, trail) =>
+    set((s) => ({ views: { ...s.views, [tabId]: view }, trails: { ...s.trails, [tabId]: trail } })),
   dropView: (tabId) =>
     set((s) => {
       if (!(tabId in s.views) && !(tabId in s.trails)) return s;

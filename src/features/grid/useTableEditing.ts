@@ -58,6 +58,16 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
       ? readOnlyReason(info)
       : null;
 
+  // False once unmounted: the tab may show another table by then (the table view is keyed
+  // by its object), so a load that finishes late must not add a change for it.
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+
   // A successful commit (from the toolbar or Mod+S) reloads the page and the count.
   const seenApplied = useRef(appliedSeq);
   useEffect(() => {
@@ -99,7 +109,7 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     const name = model?.columns[col];
     if (!model || !r || name === undefined || !result) return;
     if (r.kind === "insert") store().setInsertCell(tabId, r.tempId, name, value);
-    else if (r.key) store().setCell(tabId, r.key, name, value, result.rows[r.index], model.columns);
+    else if (r.key) store().setCell(tabId, object, r.key, name, value, result.rows[r.index], model.columns);
   };
 
   const loadFull = async (row: number, col: number) => {
@@ -114,7 +124,7 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     const r = model?.rows[row];
     if (!model || !r || !info || !result) return;
     if (r.kind === "insert") {
-      store().addInsert(tabId, r.values);
+      store().addInsert(tabId, object, r.values);
       return;
     }
     const { values, truncated } = insertValuesOf(
@@ -130,10 +140,10 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
         values[name] = { t: "text", v: cellText(v) };
       }
     } catch (e) {
-      setHint(strings.grid.editorLoadFailed(toAppError(e).message));
+      if (live.current) setHint(strings.grid.editorLoadFailed(toAppError(e).message));
       return;
     }
-    store().addInsert(tabId, values);
+    if (live.current) store().addInsert(tabId, object, values);
   };
 
   const runAction = (a: MenuAction, row: number, col: number | null) => {
@@ -159,7 +169,7 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
       case "deleteRow":
       case "restoreRow":
         if (r.kind === "insert") store().removeInsert(tabId, r.tempId);
-        else if (r.key) store().toggleDelete(tabId, r.key);
+        else if (r.key) store().toggleDelete(tabId, object, r.key);
         break;
     }
   };
@@ -226,7 +236,7 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     /** A context-menu action on a cell or row. */
     runAction,
     commit: () => void store().commit(tabId, workspaceId, object),
-    addRow: () => store().addInsert(tabId),
+    addRow: () => store().addInsert(tabId, object),
     discard: () => store().discard(tabId),
   };
 }

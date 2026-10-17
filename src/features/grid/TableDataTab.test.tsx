@@ -133,8 +133,8 @@ test("a failed change shows its message and every change stays pending", async (
     failedIndex: 1,
     error: { kind: "query", message: "the row changed or was deleted since it was loaded" },
   });
-  pending().setCell("t1", key(0), "note", { t: "null" }, lines(1).rows[0], names);
-  pending().toggleDelete("t1", key(2));
+  pending().setCell("t1", obj, key(0), "note", { t: "null" }, lines(1).rows[0], names);
+  pending().toggleDelete("t1", obj, key(2));
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await userEvent.click(await screen.findByRole("button", { name: strings.grid.commit("Ctrl+S") }));
   expect(
@@ -150,7 +150,7 @@ test("a failed change shows its message and every change stays pending", async (
 test("paging and sorting are blocked while changes are pending", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(300));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
-  pending().toggleDelete("t1", key(0));
+  pending().toggleDelete("t1", obj, key(0));
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
@@ -219,7 +219,7 @@ test("the editor loads the full value of a truncated cell", async () => {
 test("Reload is blocked while changes are pending", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
-  pending().toggleDelete("t1", key(0));
+  pending().toggleDelete("t1", obj, key(0));
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–2 of 2"));
   await userEvent.click(screen.getByRole("button", { name: "Reload" }));
@@ -497,7 +497,7 @@ test("opening a referenced row is blocked while changes are pending", async () =
   vi.mocked(ipc.tableInfo).mockResolvedValue(fkInfo());
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
-  pending().toggleDelete("t1", key(1));
+  pending().toggleDelete("t1", obj, key(1));
   render(<StoreTab />);
   await waitFor(() => expect(grid?.editing?.linkAt(0, 1)).toBe(true));
   act(() => grid!.editing!.onOpenLink(0, 1));
@@ -597,4 +597,50 @@ test("a column in two foreign keys offers one menu entry per referenced table", 
   expect(screen.queryByRole("menuitem", { name: strings.grid.menu.openReferenced })).toBeNull();
   await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.openReferencedIn("orders_archive") }));
   await waitFor(() => expect(theTab()).toMatchObject({ object: { schema: "public", name: "orders_archive" } }));
+});
+
+test("a Duplicate row still loading when the tab navigates adds nothing", async () => {
+  setTab();
+  const data = lines(1);
+  data.rows[0][3] = { t: "longText", v: { preview: "abc", len: 20000 } };
+  vi.mocked(ipc.tableInfo).mockResolvedValue(fkInfo());
+  vi.mocked(ipc.tablePage).mockResolvedValue(data);
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
+  let resolve: (v: CellValue) => void = () => {};
+  vi.mocked(ipc.cellValue).mockReturnValue(new Promise<CellValue>((r) => (resolve = r)));
+  render(<StoreTab />);
+  await waitFor(() => expect(grid?.editing?.linkAt(0, 1)).toBe(true));
+  act(() => grid!.editing!.onContextMenu(0, 3, 5, 5));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.duplicateRow }));
+  expect(ipc.cellValue).toHaveBeenCalled();
+  act(() => grid!.editing!.onOpenLink(0, 1));
+  await waitFor(() => expect(theTab()).toMatchObject({ object: ordersRef }));
+  await act(async () => resolve({ t: "text", v: "full text" }));
+  expect(pending().count("t1")).toBe(0);
+});
+
+test("a copy notice can be dismissed and clears itself after a while", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
+    vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    // After setup(), which installs its own clipboard.
+    const clip = stubClipboard();
+    clip.writeText.mockRejectedValue(new Error("denied"));
+    render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+    await waitFor(() => expect(grid?.editing).toBeDefined());
+    act(() => grid!.editing!.onContextMenu(0, 3, 5, 5));
+    await user.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.tsv }));
+    expect(await screen.findByText(strings.grid.copyFailed("denied"))).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: strings.grid.dismiss }));
+    expect(screen.queryByText(strings.grid.copyFailed("denied"))).toBeNull();
+    act(() => grid!.editing!.onContextMenu(0, 3, 5, 5));
+    await user.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.tsv }));
+    expect(await screen.findByText(strings.grid.copyFailed("denied"))).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(6000));
+    expect(screen.queryByText(strings.grid.copyFailed("denied"))).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });

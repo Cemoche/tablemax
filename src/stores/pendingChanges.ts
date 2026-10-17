@@ -31,6 +31,12 @@ export interface PendingTab {
   errors: Record<string, string>;
   /** Apply failure not tied to one change (the commit itself, a cancel). */
   error: string | null;
+  /**
+   * The table the changes belong to: set by the first change, null when nothing is
+   * pending. Changes and commits for another table are refused (a table tab can show
+   * another table after a foreign key jump).
+   */
+  object: ObjectRef | null;
 }
 
 export interface ChangeEntry {
@@ -41,7 +47,9 @@ export interface ChangeEntry {
 
 export const rowKeyId = (key: RowKey) => JSON.stringify(key);
 
-const EMPTY: PendingTab = { edits: {}, inserts: [], deletes: {}, errors: {}, error: null };
+const EMPTY: PendingTab = { edits: {}, inserts: [], deletes: {}, errors: {}, error: null, object: null };
+
+const sameObject = (a: ObjectRef, b: ObjectRef) => a.schema === b.schema && a.name === b.name;
 
 interface PendingState {
   tabs: Record<string, PendingTab>;
@@ -54,10 +62,12 @@ interface PendingState {
   /** The grid's cell editor is open (Mod+S waits until it is closed). */
   editorOpen: Record<string, boolean>;
   setEditorOpen: (tabId: string, open: boolean) => void;
-  // The mutations return false (addInsert: null) while a commit runs: nothing changes then.
+  // The mutations return false (addInsert: null) while a commit runs, and those taking an
+  // `object` also when the tab's changes belong to another table: nothing changes then.
   /** `original`/`columns` = the loaded row, to drop the edit when the value comes back. */
   setCell: (
     tabId: string,
+    object: ObjectRef,
     key: RowKey,
     column: string,
     value: EditValue,
@@ -66,12 +76,12 @@ interface PendingState {
   ) => boolean;
   revertCell: (tabId: string, key: RowKey, column: string) => boolean;
   /** A new row (all defaults), or a duplicate when `values` is given; returns its temp id. */
-  addInsert: (tabId: string, values?: Readonly<Record<string, EditValue>>) => string | null;
+  addInsert: (tabId: string, object: ObjectRef, values?: Readonly<Record<string, EditValue>>) => string | null;
   /** `default` removes the column from the insert. */
   setInsertCell: (tabId: string, tempId: string, column: string, value: EditValue) => boolean;
   removeInsert: (tabId: string, tempId: string) => boolean;
   /** Deleting drops the row's edits; deleting again restores the row (without them). */
-  toggleDelete: (tabId: string, key: RowKey) => boolean;
+  toggleDelete: (tabId: string, object: ObjectRef, key: RowKey) => boolean;
   revertChange: (tabId: string, changeId: string) => boolean;
   discard: (tabId: string) => boolean;
   /** The tab is gone: forget everything about it (allowed during a commit). */
@@ -83,7 +93,8 @@ interface PendingState {
   /** True when nothing is pending; else flags the tab (strings.grid.commitOrDiscardFirst). */
   guardPending: (tabId: string) => boolean;
   /**
-   * Applies every change in one transaction (never two at once for a tab). Success:
+   * Applies every change in one transaction (never two at once for a tab); refused (false,
+   * tab error) when the changes belong to another table than `object`. Success:
    * discard + `applied` bump, true. Failure: nothing is removed, the failing change (or
    * the tab) gets the message, false.
    */
@@ -107,18 +118,30 @@ export function refusedChange(err: AppError): { index: number; reason: string } 
 export const usePendingChanges = create<PendingState>((set, get) => {
   const tab = (tabId: string) => get().tabs[tabId] ?? EMPTY;
   const locked = (tabId: string) => get().committing[tabId] === true;
+  /** The tab's changes belong to `object` (or nothing is pending). */
+  const sameTable = (tabId: string, object: ObjectRef) => {
+    const bound = tab(tabId).object;
+    return bound === null || sameObject(bound, object);
+  };
   /**
    * Applies `fn` to the tab, clearing the error of `touched` changes and the tab error.
-   * Refused (false) while a commit runs.
+   * Refused (false) while a commit runs, or when `object` is given and the tab's changes
+   * belong to another table; else `object` becomes the tab's table. An empty tab has none.
    */
-  const update = (tabId: string, touched: string[], fn: (t: PendingTab) => PendingTab) => {
-    if (locked(tabId)) return false;
+  const update = (
+    tabId: string,
+    touched: string[],
+    fn: (t: PendingTab) => PendingTab,
+    object?: ObjectRef,
+  ) => {
+    if (locked(tabId) || (object && !sameTable(tabId, object))) return false;
     set((s) => {
       const next = fn(s.tabs[tabId] ?? EMPTY);
       const errors = { ...next.errors };
       for (const id of touched) delete errors[id];
-      const tabs = { ...s.tabs, [tabId]: { ...next, errors, error: null } };
-      const empty = changeCount(tabs[tabId]) === 0;
+      const empty = changeCount(next) === 0;
+      const bound = empty ? null : (next.object ?? object ?? null);
+      const tabs = { ...s.tabs, [tabId]: { ...next, errors, error: null, object: bound } };
       return { tabs, blocked: empty ? { ...s.blocked, [tabId]: false } : s.blocked };
     });
     return true;
@@ -139,7 +162,7 @@ export const usePendingChanges = create<PendingState>((set, get) => {
     setEditorOpen: (tabId, open) =>
       set((s) => ({ editorOpen: { ...s.editorOpen, [tabId]: open } })),
 
-    setCell: (tabId, key, column, value, original, columns) => {
+    setCell: (tabId, object, key, column, value, original, columns) => {
       const id = rowKeyId(key);
       if (tab(tabId).deletes[id]) return false;
       return update(tabId, [`update:${id}`], (t) => {
@@ -153,7 +176,7 @@ export const usePendingChanges = create<PendingState>((set, get) => {
         if (Object.keys(setCols).length === 0) delete edits[id];
         else edits[id] = { key, set: setCols, original: orig };
         return { ...t, edits };
-      });
+      }, object);
     },
 
     revertCell: (tabId, key, column) => {
@@ -170,12 +193,14 @@ export const usePendingChanges = create<PendingState>((set, get) => {
       });
     },
 
-    addInsert: (tabId, values) => {
+    addInsert: (tabId, object, values) => {
       const tempId = `new-${++insertSeq}`;
-      const ok = update(tabId, [], (t) => ({
-        ...t,
-        inserts: [...t.inserts, { tempId, values: dict(values) }],
-      }));
+      const ok = update(
+        tabId,
+        [],
+        (t) => ({ ...t, inserts: [...t.inserts, { tempId, values: dict(values) }] }),
+        object,
+      );
       return ok ? tempId : null;
     },
 
@@ -197,7 +222,7 @@ export const usePendingChanges = create<PendingState>((set, get) => {
         inserts: t.inserts.filter((i) => i.tempId !== tempId),
       })),
 
-    toggleDelete: (tabId, key) => {
+    toggleDelete: (tabId, object, key) => {
       const id = rowKeyId(key);
       return update(tabId, [`delete:${id}`, `update:${id}`], (t) => {
         const deletes = { ...t.deletes };
@@ -208,7 +233,7 @@ export const usePendingChanges = create<PendingState>((set, get) => {
           delete edits[id];
         }
         return { ...t, deletes, edits };
-      });
+      }, object);
     },
 
     revertChange: (tabId, changeId) => {
@@ -284,6 +309,13 @@ export const usePendingChanges = create<PendingState>((set, get) => {
       if (locked(tabId)) return false;
       const list = get().changeList(tabId);
       if (list.length === 0) return true;
+      const bound = tab(tabId).object;
+      if (bound && !sameObject(bound, object)) {
+        set((s) => ({
+          tabs: { ...s.tabs, [tabId]: { ...tab(tabId), errors: {}, error: strings.grid.otherTableChanges(bound.name) } },
+        }));
+        return false;
+      }
       // The tab may be closed (dropped) while the commit runs: then nothing is written back.
       const gone = () => get().tabs[tabId] === undefined;
       const setCommitting = (on: boolean) =>

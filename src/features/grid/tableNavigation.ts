@@ -19,9 +19,8 @@ export function openReferenced(
 ): boolean {
   if (!guardPending(tabId)) return false;
   const views = useGridViews.getState();
-  views.pushTrail(tabId, { object: from, view: views.getView(tabId) });
-  views.setView(tabId, { page: 0, sort: null, filters });
-  useWorkspaces.getState().navigateTableTab(workspaceId, tabId, to);
+  const trail = [...views.getTrail(tabId), { object: from, view: views.getView(tabId) }];
+  useWorkspaces.getState().navigateTableTab(workspaceId, tabId, to, { page: 0, sort: null, filters }, trail);
   return true;
 }
 
@@ -30,12 +29,10 @@ export function openReferenced(
  * the entries after it are dropped. False when there is no such entry or when refused.
  */
 export function backTo(workspaceId: string, tabId: string, index: number): boolean {
-  const views = useGridViews.getState();
-  const entry = views.getTrail(tabId)[index];
+  const trail = useGridViews.getState().getTrail(tabId);
+  const entry = trail[index];
   if (!entry || !guardPending(tabId)) return false;
-  views.truncateTrail(tabId, index);
-  views.setView(tabId, entry.view);
-  useWorkspaces.getState().navigateTableTab(workspaceId, tabId, entry.object);
+  useWorkspaces.getState().navigateTableTab(workspaceId, tabId, entry.object, entry.view, trail.slice(0, index));
   return true;
 }
 

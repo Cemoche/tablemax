@@ -2,6 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../lib/ipc";
 import type { ConnectionConfig } from "../lib/types";
 import { useConnections } from "./connections";
+import { useGridViews } from "./gridViews";
 import { usePendingChanges } from "./pendingChanges";
 import { useQueryRuns } from "./queryRuns";
 import { useWorkspaces } from "./workspaces";
@@ -49,6 +50,7 @@ const open = async () => {
   await useWorkspaces.getState().openWorkspace("c1");
   return useWorkspaces.getState().workspaces[0].id;
 };
+const obj = { schema: "public", name: "t" };
 const ws = () => useWorkspaces.getState().workspaces[0];
 
 test("openWorkspace forwards the secrets and the accepted fingerprint", async () => {
@@ -184,8 +186,8 @@ test("closing a table tab with pending changes asks first", async () => {
   const s = useWorkspaces.getState();
   s.openTableTab(id, { schema: "public", name: "t" });
   const tab = ws().tabs[0];
-  usePendingChanges.getState().addInsert(tab.id);
-  usePendingChanges.getState().addInsert(tab.id);
+  usePendingChanges.getState().addInsert(tab.id, obj);
+  usePendingChanges.getState().addInsert(tab.id, obj);
   s.closeTab(id, tab.id);
   expect(ws().tabs).toHaveLength(1);
   expect(useWorkspaces.getState().closeRequest).toEqual({ wsId: id, tabId: tab.id, count: 2, tabs: 1 });
@@ -214,9 +216,9 @@ test("closing a workspace with pending changes asks first, then drops them", asy
   s.openTableTab(id, { schema: "public", name: "u" });
   s.openQueryTab(id);
   const [t, u] = ws().tabs;
-  usePendingChanges.getState().addInsert(t.id);
-  usePendingChanges.getState().addInsert(u.id);
-  usePendingChanges.getState().addInsert(u.id);
+  usePendingChanges.getState().addInsert(t.id, obj);
+  usePendingChanges.getState().addInsert(u.id, obj);
+  usePendingChanges.getState().addInsert(u.id, obj);
   await s.closeWorkspace(id);
   expect(ipc.workspaceClose).not.toHaveBeenCalled();
   expect(useWorkspaces.getState().closeRequest).toEqual({ wsId: id, tabId: null, count: 3, tabs: 2 });
@@ -235,14 +237,18 @@ test("navigateTableTab changes the object and title of a table tab, in place", a
   useWorkspaces.getState().openTableTab(id, { schema: "public", name: "orders" });
   useWorkspaces.getState().openQueryTab(id);
   const [table, query] = ws().tabs;
-  useWorkspaces.getState().navigateTableTab(id, table.id, { schema: "sales", name: "customers" });
+  const view = { page: 0, sort: null, filters: [] };
+  const trail = [{ object: { schema: "public", name: "orders" }, view: { ...view, page: 3 } }];
+  useWorkspaces.getState().navigateTableTab(id, table.id, { schema: "sales", name: "customers" }, view, trail);
   expect(ws().tabs[0]).toEqual({
     id: table.id,
     kind: "table",
     object: { schema: "sales", name: "customers" },
     title: "customers",
   });
+  expect(useGridViews.getState().getTrail(table.id)).toEqual(trail);
   // Query tabs have no object: unchanged.
-  useWorkspaces.getState().navigateTableTab(id, query.id, { schema: "x", name: "y" });
+  useWorkspaces.getState().navigateTableTab(id, query.id, { schema: "x", name: "y" }, view, trail);
   expect(ws().tabs[1]).toEqual(query);
+  expect(useGridViews.getState().getTrail(query.id)).toEqual([]);
 });

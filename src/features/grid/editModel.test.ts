@@ -6,6 +6,7 @@ import { tableInfo } from "../../test/tableInfo";
 import { buildGridModel, menuActions } from "./editModel";
 
 const T = "tab1";
+const obj = { schema: "public", name: "order_lines" };
 const int = (v: number): CellValue => ({ t: "int", v });
 const names = ["id", "order_id", "line", "note", "total", "data"];
 const rs = (rows: CellValue[][]): ResultSet => ({
@@ -35,9 +36,9 @@ beforeEach(() => {
 
 test("inserts come first, then the page rows with their pending state", () => {
   const data = rs([row(1), row(2), row(3)]);
-  s().setCell(T, key(1), "note", { t: "null" }, row(1), names);
-  s().toggleDelete(T, key(2));
-  const a = s().addInsert(T, { note: { t: "text", v: "fresh" } });
+  s().setCell(T, obj, key(1), "note", { t: "null" }, row(1), names);
+  s().toggleDelete(T, obj, key(2));
+  const a = s().addInsert(T, obj, { note: { t: "text", v: "fresh" } });
   const m = model(data);
   expect(m.rows.length).toBe(4);
   expect(m.rowState(0)).toBe("insert");
@@ -55,7 +56,7 @@ test("inserts come first, then the page rows with their pending state", () => {
 
 test("a failed change marks its row", () => {
   const data = rs([row(1)]);
-  s().toggleDelete(T, key(1));
+  s().toggleDelete(T, obj, key(1));
   usePendingChanges.setState((st) => ({
     tabs: { ...st.tabs, [T]: { ...st.tabs[T], errors: { [`delete:${rowKeyId(key(1))}`]: "stale" } } },
   }));
@@ -80,9 +81,9 @@ test("read-only tables, locked grids and rows without a usable key", () => {
 
 test("menu actions depend on the row and the cell", () => {
   const data = rs([row(1), row(2)]);
-  s().setCell(T, key(1), "note", { t: "null" }, row(1), names);
-  s().toggleDelete(T, key(2));
-  s().addInsert(T, { note: { t: "text", v: "x" } });
+  s().setCell(T, obj, key(1), "note", { t: "null" }, row(1), names);
+  s().toggleDelete(T, obj, key(2));
+  s().addInsert(T, obj, { note: { t: "text", v: "x" } });
   const m = model(data);
   // Insert row, nullable cell that was set.
   expect(menuActions(m, 0, 3)).toEqual([

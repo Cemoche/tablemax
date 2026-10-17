@@ -86,7 +86,7 @@ test("Alt+← goes back one step", async () => {
 
 test("going back is blocked while changes are pending", async () => {
   const key: RowKey = [["id", { t: "int", v: 42 }]];
-  usePendingChanges.getState().toggleDelete("t1", key);
+  usePendingChanges.getState().toggleDelete("t1", customers, key);
   render(<Harness />);
   await userEvent.keyboard("{Alt>}{ArrowLeft}{/Alt}");
   await userEvent.click(screen.getByRole("button", { name: strings.grid.trail.crumb("orders", "status = paid") }));

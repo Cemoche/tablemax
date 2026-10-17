@@ -42,18 +42,18 @@ test("closing a table tab drops its view", () => {
   expect(useGridViews.getState().views).not.toHaveProperty("t1");
 });
 
-test("the trail pushes, truncates and is dropped with the view", () => {
+test("setNavigation replaces view and trail; both are dropped with the view", () => {
   const v = useGridViews.getState();
   const entry = (name: string) => ({
     object: { schema: "public", name },
     view: { page: 1, sort: null, filters: [] },
   });
   expect(v.getTrail("t1")).toEqual([]);
-  v.pushTrail("t1", entry("a"));
-  v.pushTrail("t1", entry("b"));
+  v.setView("t1", { page: 4 });
+  const view = { page: 0, sort: null, filters: [{ column: "id", op: "eq" as const, values: ["1"] }] };
+  v.setNavigation("t1", view, [entry("a"), entry("b")]);
   expect(useGridViews.getState().getTrail("t1")).toEqual([entry("a"), entry("b")]);
-  useGridViews.getState().truncateTrail("t1", 1);
-  expect(useGridViews.getState().getTrail("t1")).toEqual([entry("a")]);
+  expect(useGridViews.getState().getView("t1")).toEqual(view);
   useGridViews.getState().dropView("t1");
   expect(useGridViews.getState().getTrail("t1")).toEqual([]);
   expect(useGridViews.getState().trails).not.toHaveProperty("t1");

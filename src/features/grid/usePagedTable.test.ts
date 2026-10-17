@@ -118,7 +118,7 @@ test("unmounting before the response resolves updates no state", async () => {
 test("pending changes block paging and sorting", async () => {
   const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
   await waitFor(() => expect(result.current.pageCount).toBe(3));
-  act(() => usePendingChanges.getState().addInsert("t1"));
+  act(() => usePendingChanges.getState().addInsert("t1", obj));
   act(() => result.current.reload());
   act(() => result.current.nextPage());
   act(() => result.current.setSort("id"));
@@ -162,7 +162,7 @@ test("changed filters restart at page 0 and go to tablePage and tableCount", asy
 test("pending changes block a filter change", async () => {
   const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
   await waitFor(() => expect(result.current.pageCount).toBe(3));
-  act(() => usePendingChanges.getState().addInsert("t1"));
+  act(() => usePendingChanges.getState().addInsert("t1", obj));
   let applied = true;
   act(() => {
     applied = result.current.setFilters([{ column: "id", op: "eq", values: ["1"] }]);

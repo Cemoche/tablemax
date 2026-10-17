@@ -252,6 +252,8 @@ export const strings = {
     changeFailed: (n: number, message: string) => `Change ${n} failed: ${message}`,
     commitFailed: (message: string) => `Commit failed: ${message}`,
     commitCancelled: "The commit was cancelled: nothing was written.",
+    otherTableChanges: (table: string) =>
+      `These changes belong to the table ${table}: nothing was written. Go back to it to commit them.`,
     nothingWritten: "Nothing was written; the changes are still pending.",
     editorLabel: "Cell value",
     editorLoading: "loading…",
@@ -279,6 +281,8 @@ export const strings = {
       insert: "Copy as SQL INSERT",
     },
     copyFailed: (message: string) => `Could not copy: ${message}`,
+    dismiss: "Dismiss",
+    dismissText: "×",
     copySkippedInserts: (n: number) =>
       `${n.toLocaleString("en-US")} new ${n === 1 ? "row was" : "rows were"} not copied (not committed yet).`,
     trail: {

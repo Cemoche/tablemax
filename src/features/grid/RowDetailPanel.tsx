@@ -236,9 +236,9 @@ function Field({
         {cell.edited && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-warning" />}
         {links.length > 0 && (
           <span className="ml-auto flex min-w-0 shrink-0 gap-1">
-            {links.map((l) => (
+            {links.map((l, i) => (
               <button
-                key={l.fk.name}
+                key={`${i}\u0000${l.fk.name}`}
                 type="button"
                 aria-label={strings.grid.openReferencedIn(l.object.name)}
                 title={strings.grid.openReferencedIn(l.object.name)}

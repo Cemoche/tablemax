@@ -3,7 +3,7 @@ import * as ipc from "../lib/ipc";
 import { strings } from "../lib/strings";
 import type { ConnectionConfig, Dialect, EnvTag, ObjectRef } from "../lib/types";
 import { useConnections } from "./connections";
-import { useGridViews } from "./gridViews";
+import { type GridView, type TrailEntry, useGridViews } from "./gridViews";
 import { usePendingChanges } from "./pendingChanges";
 import { useQueryRuns } from "./queryRuns";
 
@@ -40,10 +40,17 @@ interface WorkspacesState {
   setSchema: (wsId: string, schema: string) => void;
   openTableTab: (wsId: string, object: ObjectRef) => void;
   /**
-   * Shows another table in a table tab (foreign key navigation); the title follows. The
-   * caller keeps the tab's view and trail in step (features/grid/tableNavigation).
+   * Shows another table in a table tab (foreign key navigation): its object and title,
+   * and its view and trail (gridViews), in one action. Callers check pending changes
+   * first (features/grid/tableNavigation). No-op for a query tab.
    */
-  navigateTableTab: (wsId: string, tabId: string, object: ObjectRef) => void;
+  navigateTableTab: (
+    wsId: string,
+    tabId: string,
+    object: ObjectRef,
+    view: GridView,
+    trail: TrailEntry[],
+  ) => void;
   openQueryTab: (wsId: string) => void;
   /**
    * Closes a tab. A table tab with pending changes is not closed: `closeRequest` asks the
@@ -213,13 +220,16 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
         return { ...w, tabs: [...w.tabs, tab], activeTabId: tab.id };
       }),
 
-    navigateTableTab: (wsId, tabId, object) =>
+    navigateTableTab: (wsId, tabId, object, view, trail) => {
+      const tab = get().workspaces.find((w) => w.id === wsId)?.tabs.find((t) => t.id === tabId);
+      if (tab?.kind !== "table") return;
+      // Both stores change before React renders again (one batch).
+      useGridViews.getState().setNavigation(tabId, view, trail);
       update(wsId, (w) => ({
         ...w,
-        tabs: w.tabs.map((t) =>
-          t.id === tabId && t.kind === "table" ? { ...t, object, title: object.name } : t,
-        ),
-      })),
+        tabs: w.tabs.map((t) => (t.id === tabId && t.kind === "table" ? { ...t, object, title: object.name } : t)),
+      }));
+    },
 
     openQueryTab: (wsId) =>
       update(wsId, (w) => {

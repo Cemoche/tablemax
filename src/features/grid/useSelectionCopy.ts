@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toCsv, toInsert, toJson, toTsv } from "../../lib/copyFormats";
 import { strings } from "../../lib/strings";
 import type { CellValue, Dialect, ObjectRef } from "../../lib/types";
@@ -8,6 +8,8 @@ import type { CellBlock } from "./gridSelection";
 
 export type CopyFormat = "tsv" | "csv" | "json" | "insert";
 const FORMATS: readonly CopyFormat[] = ["tsv", "csv", "json", "insert"];
+/** How long a copy notice stays (it can also be dismissed). */
+export const NOTICE_MS = 6000;
 
 /**
  * What a block shows: its columns and the values of its loaded rows, pending edits
@@ -37,9 +39,15 @@ export function blockValues(
   return { columns: cols.map((c) => model.columns[c]), rows, skipped };
 }
 
-/** The grid menu's "Copy as …" entries, and what the last copy has to say (inline). */
+/** The grid menu's "Copy as …" entries, and what the last copy has to say (inline, for NOTICE_MS). */
 export function useSelectionCopy(model: GridModel | null, dialect: Dialect, object: ObjectRef) {
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const copy = (format: CopyFormat, columns: string[], rows: CellValue[][], skipped: number) => {
     const text =
@@ -71,5 +79,5 @@ export function useSelectionCopy(model: GridModel | null, dialect: Dialect, obje
     }));
   };
 
-  return { notice, menuItems };
+  return { notice, menuItems, dismiss: () => setNotice(null) };
 }
