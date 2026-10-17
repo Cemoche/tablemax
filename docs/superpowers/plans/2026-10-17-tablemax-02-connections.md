@@ -59,7 +59,7 @@
   - `#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)] #[serde(rename_all = "camelCase")] pub struct SslConfig { pub mode: SslMode, pub ca_file: Option<String>, pub cert_file: Option<String>, pub key_file: Option<String> }`
   - `pub fn rustls_client_config(ssl: &SslConfig) -> AppResult<Option<Arc<rustls::ClientConfig>>>` (`None` pour `Disable`) ; fichiers illisibles ou PEM invalides → `ErrorKind::Invalid` avec le chemin et la nature du fichier (« CA file », « client certificate », « client key »), jamais leur contenu ; `cert_file` sans `key_file` (ou l'inverse) → `Invalid`.
   - `pub fn install_crypto_provider()` (idempotent).
-- Produces (`driver/mod.rs`) : `ConnectParams` gagne `pub ssl: SslConfig` et `pub dial: Option<std::net::SocketAddr>` (quand `Some`, la connexion TCP part vers cette adresse ; `host` reste le nom utilisé pour la vérification TLS et l'affichage). `ensure_local_host` et son test sont **supprimés**, ainsi que les appels dans les drivers.
+- Produces (`driver/mod.rs`) : `ConnectParams` gagne `pub ssl: SslConfig` et `pub dial: Option<std::net::SocketAddr>` (quand `Some`, la connexion TCP part vers cette adresse ; `host` reste le nom utilisé pour la vérification TLS et l'affichage). `ensure_local_host` reste, mais n'est appelé que si `dial` est `None` **et** que le mode ne vérifie pas le serveur (`Disable`, `Prefer`, `Require`) ; message : `unverified TLS is only allowed for local hosts: use verify-full or verify-ca, or an SSH tunnel` (règle intérimaire jusqu'à la Task 4).
 - Test infra : `scripts/test-certs.sh` génère dans `.test-secrets/tls/` (si absent) un CA, un certificat serveur signé (SAN `DNS:localhost, DNS:pg16, DNS:mysql8, DNS:mariadb11` — **sans** `IP:127.0.0.1`, pour tester l'erreur de nom), un second CA « étranger », et un certificat client `CN=certuser` signé par le CA. `test-dbs.sh up` l'appelle avant `docker compose up`. Les trois serveurs activent TLS avec ce certificat ; PG ajoute `hostssl all certuser 0.0.0.0/0 cert` (en tête de `pg_hba.conf`) et crée le rôle `certuser`. `test-dbs.sh env` exporte en plus `TABLEMAX_TEST_TLS_DIR=<chemin absolu de .test-secrets/tls>`.
 
 - [ ] **Step 1: Tests unitaires qui échouent (`tls.rs`)**
@@ -243,6 +243,8 @@ git add -A && git commit -m "✨ feat(ssh): open SSH tunnels with password, key 
   - Résolution SSH : `user_config().resolve(ssh.host)` puis champs du formulaire prioritaires ; `user` absent partout → `Invalid "ssh user required"` ; clé : `key_file` sinon le premier `IdentityFile` existant, sinon le premier fichier existant parmi `~/.ssh/id_ed25519`, `~/.ssh/id_ecdsa`, `~/.ssh/id_rsa` (comme OpenSSH), sinon `Invalid "ssh key file required"`.
   - Le workspace garde `Option<Arc<SshTunnel>>` et les secrets SSH saisis (mode `Ask`, comme `held_password`) ; la connexion de navigation, chaque onglet SQL et les annulations passent par ce tunnel (`ConnectParams.dial = Some(tunnel.local_addr())`, `host` = hôte DB de la config). `open_sql_session` rouvre le tunnel s'il est mort (`!is_alive()`), avec les secrets tenus ou le trousseau ; `close_workspace` ferme le tunnel après les sessions.
   - Pas de tunnel pour SQLite (`ssh` ignoré et forcé à `None` à l'enregistrement).
+  - `ensure_local_host` est supprimé (fonction, appels et test) : le mode SSL devient un choix explicite de l'utilisateur, protégé par les défauts ci-dessous et l'avertissement du formulaire.
+- Produces (`driver/tls.rs`) : `pub fn default_ssl_mode(host: &str, over_ssh: bool) -> SslMode` = `VerifyFull` si l'hôte n'est pas local (loopback, `localhost`, chemin de socket) et qu'il n'y a pas de tunnel, sinon `Prefer`. Utilisé par l'import TablePlus (Task 7) ; le frontend applique la même règle (Task 5/6).
 - Produces (`commands.rs`) — contrat frontend :
   - `connection_save(config, password, sshSecret)`, `connection_test(config, password, sshSecret, acceptFingerprint)`, `workspace_open(connectionId, password, sshSecret, acceptFingerprint)` (paramètres ajoutés, tous optionnels/null).
   - `ssh_hosts_list() -> Vec<String>` (alias de `~/.ssh/config`).
@@ -290,6 +292,7 @@ git add -A && git commit -m "✨ feat(manager): connect saved connections throug
 - Produces (`ipc.ts`) : signatures étendues `connectionSave(config, password, sshSecret)`, `connectionTest(config, password, sshSecret, acceptFingerprint)`, `workspaceOpen(connectionId, password, sshSecret, acceptFingerprint)`, `sshHostsList()`, `filePick(purpose)`.
 - Produces (`useConnectFlow.ts`) : `useConnectFlow(run: (secrets: FlowSecrets) => Promise<T>)` → `{ start(initial: FlowSecrets): Promise<T | undefined>; prompt: FlowPrompt | null }` avec `FlowSecrets { password: string | null; sshSecret: string | null; acceptFingerprint: string | null }` et `FlowPrompt = { kind: "password" | "sshPassword" | "sshPassphrase"; error: string | null } | { kind: "hostKey"; fingerprint: string; host: string }`. Sur chaque erreur reconnue, le flux affiche l'invite correspondante, garde les secrets déjà saisis et relance `run` ; `hostKeyChanged` termine en erreur avec le texte `strings.ssh.hostKeyChanged` (qui explique que la clé a changé, affiche l'empreinte reçue et dit de vérifier avec l'administrateur avant de modifier `known_hosts`). Utilisé par `App.tsx` (ouverture) et par le bouton Test du formulaire.
 - UI :
+  - Défaut du mode SSL pour une **nouvelle** connexion (et pour une URL sans `sslmode`) : `verifyFull` si l'hôte n'est pas local et sans SSH, sinon `prefer` — `defaultSslMode(host, overSsh)` dans `src/lib/ssl.ts`, mêmes règles que `default_ssl_mode` côté Rust ; le mode suit l'hôte et la case SSH tant que l'utilisateur n'a pas touché au select.
   - Section **SSL** (masquée pour SQLite) : select des modes (sans `verifyCa` pour MySQL/MariaDB), champs CA / certificat / clé en lecture seule + bouton « Browse… » (`filePick`) + bouton d'effacement. Si l'hôte n'est pas local, qu'il n'y a pas de SSH et que le mode est `disable`/`prefer`, une ligne d'avertissement `strings.ssl.cleartextWarning`.
   - Section **SSH tunnel** (case à cocher, masquée pour SQLite) : hôte avec `<datalist>` des alias (`sshHostsList`), port et utilisateur optionnels (placeholder « from ~/.ssh/config » quand l'hôte est un alias connu), auth (Password / Private key / SSH agent), fichier de clé + « Browse… » (`filePick("sshKey")`), secret (mot de passe ou passphrase) + stockage (Keyring / Ask / None).
   - `HostKeyPrompt` : hôte, empreinte en police monospace, texte `strings.ssh.unknownHostExplain`, boutons « Trust and connect » / « Cancel ». Échap = Cancel.
@@ -352,6 +355,7 @@ test("ssh param round-trips", () => { /* ssh=deploy@bastion.example:2200 */ });
 test("rejects unknown scheme", () => { expect(() => parseConnectionUrl("redis://x")).toThrow(); });
 ```
 `ConnectionList.test.tsx` : deux groupes + des connexions sans groupe → en-têtes de groupe dans l'ordre alphabétique puis « Ungrouped » ; cliquer un en-tête replie ; une recherche sur le nom d'un groupe montre ses connexions.
+`connectionUrl.test.ts` ajoute : `postgresql://u@db.example.com/x` sans `sslmode` → `ssl.mode === "verifyFull"` ; `postgresql://u@localhost/x` → `"prefer"` (via `defaultSslMode`, Task 5).
 
 - [ ] **Step 2: Vérifier l'échec** — Run: `pnpm test` → Expected: FAIL.
 
@@ -391,7 +395,7 @@ git add -A && git commit -m "✨ feat(connections): connection groups and URL im
 | `ServerPassword` / `DatabaseKeyPassword` | `ssh_secret` (mot de passe SSH / **passphrase de la clé SSH**, malgré le nom) |
 | `Tag`, sinon `Enviroment` | `env_tag` : `local`→Local, `development`/`dev`→Dev, `testing`/`staging`→Staging, `production`/`prod`→Prod, absent ou autre → Local |
 | groupes imbriqués (`Name`) | `group` = noms du chemin joints par `" / "` (ex. `"Fixture Group / Sub"`) ; connexion hors groupe → `None` |
-| (non exporté) couleur, SSL | `color` = `"swatch-1"`, `ssl` = `SslConfig::default()` |
+| (non exporté) couleur, SSL | `color` = `"swatch-1"`, `ssl.mode` = `default_ssl_mode(host, over_ssh)` (Task 4), fichiers SSL vides |
 | `Favorites`, `DriverVersion`, `SafeModeLevel`, `RecentlySchema`, `Schema`, `image`, `GroupID` | ignorés |
 
     Une connexion SSH par clé importée reçoit en plus l'avertissement `"SSH key file not included in the export: choose it in the connection settings"` (la résolution de la Task 4 retombe sinon sur `~/.ssh/config` et les clés par défaut).
