@@ -6,8 +6,10 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use common::CountingSecrets;
 use tablemax_lib::driver::DriverKind;
 use tablemax_lib::driver::tls::SslConfig;
+use tablemax_lib::error::ErrorKind;
 use tablemax_lib::manager::{ExecEvent, SessionManager};
 use tablemax_lib::secrets::MemorySecretStore;
 use tablemax_lib::ssh::known_hosts::KnownHosts;
@@ -157,4 +159,106 @@ async fn test_connection_reuses_keyring_only_for_unchanged_identity_pg() {
         .unwrap_err();
     assert_eq!(err.kind, tablemax_lib::error::ErrorKind::Auth);
     assert_eq!(err.message, "password required");
+}
+
+/// PostgreSQL 16 on `host` (`127.0.0.1` or `localhost`: the same server, two identities).
+fn pg_cfg(host: &str, mode: PasswordMode) -> (ConnectionConfig, Option<String>) {
+    let p = common::params_from_url(&common::pg_urls()[0], DriverKind::Postgres);
+    let cfg = ConnectionConfig {
+        id: String::new(),
+        name: "pg".into(),
+        color: "#888".into(),
+        env_tag: EnvTag::Local,
+        kind: DriverKind::Postgres,
+        host: host.into(),
+        port: p.port,
+        user: p.user.clone(),
+        database: p.database.clone(),
+        sqlite_path: None,
+        password_mode: mode,
+        group: None,
+        ssl: SslConfig::default(),
+        ssh: None,
+    };
+    (cfg, p.password)
+}
+
+fn counting_manager(dir: &tempfile::TempDir) -> (Arc<CountingSecrets>, SessionManager) {
+    let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
+    let secrets = Arc::new(CountingSecrets::default());
+    let mgr = SessionManager::new(Arc::new(store), secrets.clone(), known_hosts(dir));
+    (secrets, mgr)
+}
+
+/// An open workspace keeps the config it was opened with. Once the saved connection
+/// points elsewhere, the keyring holds the new target's secret: reconnecting the old
+/// workspace must never read it (it would be sent to the old server).
+#[tokio::test]
+async fn reconnect_never_reads_the_keyring_after_the_connection_was_retargeted() {
+    let dir = tempfile::tempdir().unwrap();
+    let (secrets, mgr) = counting_manager(&dir);
+    let (cfg, pw) = pg_cfg("127.0.0.1", PasswordMode::Keyring);
+    let saved = mgr.save_connection(cfg, pw.clone(), None).await.unwrap();
+    let ws = mgr
+        .open_workspace(&saved.id, None, None, None)
+        .await
+        .unwrap();
+
+    // Unchanged identity (a rename): the stored password is still the workspace's.
+    let renamed = ConnectionConfig {
+        name: "pg renamed".into(),
+        ..saved.clone()
+    };
+    let renamed = mgr.save_connection(renamed, None, None).await.unwrap();
+    let sid = mgr.open_sql_session(&ws.workspace_id).await.unwrap();
+    mgr.close_sql_session(&sid).await.unwrap();
+
+    // Another host with a new password.
+    let moved = ConnectionConfig {
+        host: "localhost".into(),
+        ..renamed
+    };
+    mgr.save_connection(moved, Some("new-target-secret".into()), None)
+        .await
+        .unwrap();
+    secrets.reset();
+    let e = mgr.open_sql_session(&ws.workspace_id).await.unwrap_err();
+    assert_eq!(
+        (e.kind, e.message.as_str()),
+        (ErrorKind::Auth, "password required")
+    );
+    assert_eq!(
+        secrets.gets(),
+        0,
+        "the keyring must not be read for the old target"
+    );
+
+    // Deleted: same.
+    mgr.delete_connection(&saved.id).await.unwrap();
+    let e = mgr.open_sql_session(&ws.workspace_id).await.unwrap_err();
+    assert_eq!(
+        (e.kind, e.message.as_str()),
+        (ErrorKind::Auth, "password required")
+    );
+    assert_eq!(secrets.gets(), 0);
+    mgr.close_workspace(&ws.workspace_id).await.unwrap();
+}
+
+#[tokio::test]
+async fn reconnect_after_retarget_uses_the_held_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let (secrets, mgr) = counting_manager(&dir);
+    let (cfg, pw) = pg_cfg("127.0.0.1", PasswordMode::Ask);
+    let saved = mgr.save_connection(cfg, None, None).await.unwrap();
+    let ws = mgr.open_workspace(&saved.id, pw, None, None).await.unwrap();
+    let moved = ConnectionConfig {
+        host: "localhost".into(),
+        ..saved
+    };
+    mgr.save_connection(moved, None, None).await.unwrap();
+    secrets.reset();
+    let sid = mgr.open_sql_session(&ws.workspace_id).await.unwrap();
+    assert_eq!(secrets.gets(), 0);
+    mgr.close_sql_session(&sid).await.unwrap();
+    mgr.close_workspace(&ws.workspace_id).await.unwrap();
 }

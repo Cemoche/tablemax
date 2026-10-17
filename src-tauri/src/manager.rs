@@ -803,6 +803,42 @@ impl SessionManager {
         })
     }
 
+    /// Guards the keyring on reconnect paths. A workspace keeps the config it was
+    /// opened with, but the keyring follows the saved connection: once that was edited
+    /// to another identity (`same_identity`) or deleted, the stored secrets belong to
+    /// another target and must never be read for this one. Then only the secrets held
+    /// by the workspace are used: no DB password held in Keyring mode is Auth "password
+    /// required", and the SSH secret is treated as not stored (Auth "ssh password
+    /// required" / "ssh passphrase required" when the tunnel needs it).
+    async fn unbind_stale_keyring(&self, r: &mut Reconnect) -> AppResult<()> {
+        let cfg = &r.config;
+        if cfg.kind == DriverKind::Sqlite || cfg.id.is_empty() {
+            return Ok(());
+        }
+        let db_from_keyring = cfg.password_mode == PasswordMode::Keyring && r.password.is_none();
+        let ssh_from_keyring = r.ssh_secret.is_none()
+            && ssh_of(cfg).is_some_and(|s| {
+                s.secret_kind().is_some() && s.secret_mode == PasswordMode::Keyring
+            });
+        if !db_from_keyring && !ssh_from_keyring {
+            return Ok(());
+        }
+        let store = self.store.clone();
+        let id = cfg.id.clone();
+        match blocking(move || store.get(&id)).await {
+            Ok(stored) if same_identity(&stored, cfg) => return Ok(()),
+            Ok(_) => {}
+            Err(e) if e.kind == ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+        if db_from_keyring {
+            return Err(AppError::new(ErrorKind::Auth, "password required"));
+        }
+        // No id: resolve_password / resolve_ssh_secret never read the keyring.
+        r.config.id.clear();
+        Ok(())
+    }
+
     /// The browse connection, unless the tunnel it went through has died.
     fn usable_browse(&self, workspace_id: &str) -> AppResult<Option<Arc<dyn Session>>> {
         let st = self.state();
@@ -819,12 +855,15 @@ impl SessionManager {
     /// With SSH, once the tunnel it went through has died, the browse connection is
     /// rebuilt (tunnel reopened if no SQL session did it yet, held secrets or keyring)
     /// and swapped into the workspace, so browsing recovers without reopening the
-    /// workspace. Concurrent callers share one reopen (tunnel slot lock).
+    /// workspace. Concurrent callers share one reopen (tunnel slot lock). Keyring
+    /// secrets are only read while the saved connection still has the workspace's
+    /// identity ([`Self::unbind_stale_keyring`]).
     pub async fn browse(&self, workspace_id: &str) -> AppResult<Arc<dyn Session>> {
         if let Some(browse) = self.usable_browse(workspace_id)? {
             return Ok(browse);
         }
-        let r = self.reconnect_material(workspace_id)?;
+        let mut r = self.reconnect_material(workspace_id)?;
+        self.unbind_stale_keyring(&mut r).await?;
         let mut current = r.slot.lock().await;
         // Another caller may have rebuilt it while we waited for the lock.
         if let Some(browse) = self.usable_browse(workspace_id)? {
@@ -858,9 +897,10 @@ impl SessionManager {
     }
 
     /// Opens a dedicated connection with the workspace's parameters, through its
-    /// tunnel (reopened first if it died).
+    /// tunnel (reopened first if it died). Same keyring rule as [`Self::browse`].
     pub async fn open_sql_session(&self, workspace_id: &str) -> AppResult<String> {
-        let r = self.reconnect_material(workspace_id)?;
+        let mut r = self.reconnect_material(workspace_id)?;
+        self.unbind_stale_keyring(&mut r).await?;
         let password = self.resolve_password(&r.config, r.password).await?;
         let tunnel = self
             .live_tunnel(workspace_id, &r.config, &r.slot, r.ssh_secret)

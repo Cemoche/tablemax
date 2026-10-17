@@ -1,8 +1,46 @@
 //! Shared helpers for the database integration tests (PostgreSQL, MySQL/MariaDB).
 #![allow(dead_code)]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use tablemax_lib::driver::tls::{SslConfig, SslMode, install_crypto_provider};
 use tablemax_lib::driver::{ConnectParams, DriverKind};
+use tablemax_lib::error::AppResult;
+use tablemax_lib::secrets::{MemorySecretStore, SecretKey, SecretStore};
+
+/// An in-memory keyring that counts its reads.
+#[derive(Default)]
+pub struct CountingSecrets {
+    inner: MemorySecretStore,
+    gets: AtomicUsize,
+}
+
+impl CountingSecrets {
+    /// Keyring reads so far.
+    pub fn gets(&self) -> usize {
+        self.gets.load(Ordering::SeqCst)
+    }
+
+    pub fn reset(&self) {
+        self.gets.store(0, Ordering::SeqCst);
+    }
+}
+
+impl SecretStore for CountingSecrets {
+    fn available(&self) -> bool {
+        true
+    }
+    fn set(&self, k: &SecretKey, v: &str) -> AppResult<()> {
+        self.inner.set(k, v)
+    }
+    fn get(&self, k: &SecretKey) -> AppResult<Option<String>> {
+        self.gets.fetch_add(1, Ordering::SeqCst);
+        self.inner.get(k)
+    }
+    fn delete(&self, k: &SecretKey) -> AppResult<()> {
+        self.inner.delete(k)
+    }
+}
 
 fn urls_from_env(var: &str) -> Vec<String> {
     let raw = std::env::var(var).unwrap_or_else(|_| {

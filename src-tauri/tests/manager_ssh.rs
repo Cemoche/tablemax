@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{mysql_urls, params_from_url, pg_urls, ssh_addr, ssh_file};
+use common::{CountingSecrets, mysql_urls, params_from_url, pg_urls, ssh_addr, ssh_file};
 use tablemax_lib::driver::DriverKind;
 use tablemax_lib::driver::tls::SslConfig;
 use tablemax_lib::error::{AppResult, ErrorKind};
@@ -383,6 +383,63 @@ async fn reopens_tunnel_after_it_dies() {
     assert_sleep_is_cancelled(&fx.mgr, &sid, "select pg_sleep(30)").await;
     fx.mgr.close_workspace(&ws.workspace_id).await.unwrap();
     assert!(!new.is_alive());
+}
+
+/// After the saved connection was moved to another SSH account (with its own stored
+/// password), a workspace still on the old one must not read the keyring to reopen its
+/// tunnel: that secret belongs to the new target.
+#[tokio::test]
+async fn reopened_tunnel_never_reads_the_keyring_after_ssh_retarget() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ConnectionStore::open(&dir.path().join("app.db")).unwrap();
+    let secrets = Arc::new(CountingSecrets::default());
+    let known_hosts = KnownHosts {
+        system: None,
+        app: dir.path().join("known_hosts"),
+    };
+    let mgr = Arc::new(
+        SessionManager::new(Arc::new(store), secrets.clone(), known_hosts)
+            .with_ssh_config(SshConfigFile::default()),
+    );
+    // `fx.secrets` is not the manager's keyring here: `secrets` (counting) is.
+    let fx = Fx {
+        dir,
+        secrets: Arc::new(MemorySecretStore::new()),
+        mgr,
+    };
+    let (cfg, pw) = pg_over_ssh(ssh_settings(SshAuth::Password, PasswordMode::Keyring));
+    let saved = fx
+        .mgr
+        .save_connection(cfg, pw.clone(), Some(SSH_PASSWORD.into()))
+        .await
+        .unwrap();
+    // DB password typed (held), SSH password from the keyring.
+    let ws = open_confirming(&fx, &saved.id, pw.as_deref(), None).await;
+    let id = ws.workspace_id.as_str();
+
+    let mut moved = saved.clone();
+    moved.ssh.as_mut().unwrap().user = Some("someone-else".into());
+    fx.mgr
+        .save_connection(moved, pw.clone(), Some("their-ssh-password".into()))
+        .await
+        .unwrap();
+    fx.mgr.workspace_tunnel(id).await.unwrap().close().await;
+    secrets.reset();
+    for e in [
+        fx.mgr.open_sql_session(id).await.unwrap_err(),
+        fx.mgr.browse(id).await.err().unwrap(),
+    ] {
+        assert_eq!(
+            (e.kind, e.message.as_str()),
+            (ErrorKind::Auth, "ssh password required")
+        );
+    }
+    assert_eq!(
+        secrets.gets(),
+        0,
+        "the keyring must not be read for the old target"
+    );
+    fx.mgr.close_workspace(id).await.unwrap();
 }
 
 /// Browsing (schemas, objects, pages) recovers by itself: no need to reopen the
