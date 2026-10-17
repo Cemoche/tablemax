@@ -12,6 +12,11 @@ pub struct ColumnInfo {
     pub name: String,
     /// PostgreSQL: `format_type`; MySQL/MariaDB: `COLUMN_TYPE`; SQLite: the declared type.
     pub type_name: String,
+    /// The type without its modifier, for casting a value compared with or written to the
+    /// column (a cast to `varchar(5)` / `numeric(12,2)` would truncate or round it first;
+    /// the column itself enforces the modifier on write). PostgreSQL:
+    /// `format_type(atttypid, NULL)`; MySQL/MariaDB and SQLite: same as `type_name`.
+    pub base_type: String,
     pub nullable: bool,
     /// The default as an SQL expression (string literals quoted, e.g. `'abc'`, `0`,
     /// `CURRENT_TIMESTAMP`); `None` without a default or with `DEFAULT NULL`.
@@ -123,6 +128,7 @@ mod tests {
         ColumnInfo {
             name: name.into(),
             type_name: "int".into(),
+            base_type: "int".into(),
             nullable,
             default: None,
             auto_increment: false,

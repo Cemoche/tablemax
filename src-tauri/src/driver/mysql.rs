@@ -1001,9 +1001,11 @@ impl MySession {
                 |(col, column_type, data_type, nullable, default, extra, comment)| {
                     let extra = extra.unwrap_or_default();
                     let is_json = data_type.eq_ignore_ascii_case("longtext") && json.contains(&col);
+                    let type_name: String = if is_json { "json".into() } else { column_type };
                     ColumnInfo {
                         default: normalize_default(default, &data_type, &extra, self.mariadb),
-                        type_name: if is_json { "json".into() } else { column_type },
+                        base_type: type_name.clone(),
+                        type_name,
                         name: col,
                         nullable: nullable == "YES",
                         auto_increment: extra_has(&extra, "auto_increment"),

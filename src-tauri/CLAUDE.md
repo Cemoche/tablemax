@@ -6,7 +6,9 @@ Rust 1.96, edition 2024, Tauri 2, tokio. Library crate `tablemax_lib` (`src/lib.
 
 - `driver/` — `Session` / `Canceller` traits and one driver per engine: `postgres.rs`
   (tokio-postgres), `mysql.rs` (mysql_async, MySQL + MariaDB), `sqlite.rs` (rusqlite),
-  shared SQL helpers `sql.rs`, TLS settings `tls.rs`.
+  shared SQL helpers `sql.rs`, TLS settings `tls.rs`. `meta.rs`: table metadata
+  (`TableInfo`: columns, keys, indexes, foreign keys, row key). `query.rs`: parameterized
+  grid statements (`Statement`/`SqlParam`, filters, page and capped filtered count).
 - `ssh/` — tunnels with russh (`tunnel.rs`), `~/.ssh/config` aliases (`config.rs`),
   host key checks (`known_hosts.rs`).
 - `import/` — connection import from other tools' exports (`tableplus.rs`, `rncryptor.rs`);

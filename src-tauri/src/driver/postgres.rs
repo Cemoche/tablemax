@@ -26,6 +26,7 @@
 //! value with its type's output function: `WITH q(c1, ..) AS (<sql>) SELECT CASE WHEN
 //! num_nulls(q.c1) = 0 THEN format('%s', q.c1) END, .. FROM q` (`format('%s')` calls the
 //! output function; `num_nulls` keeps NULL apart from an all-NULL composite).
+//! A statement without parameters takes the simple-query path above instead.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -399,8 +400,10 @@ fn text_wrapper(sql: &str, n: usize) -> String {
         .iter()
         .map(|c| format!("CASE WHEN num_nulls(q.{c}) = 0 THEN format('%s', q.{c}) END"))
         .collect();
+    // The outer query only projects: rows keep the inner ORDER BY (a plain subquery scan).
+    // The SQL sits on its own lines so a trailing `--` comment cannot swallow the paren.
     format!(
-        "WITH q({}) AS ({sql}) SELECT {} FROM q",
+        "WITH q({}) AS (\n{sql}\n) SELECT {} FROM q",
         aliases.join(", "),
         cells.join(", ")
     )
@@ -541,7 +544,8 @@ impl PgSession {
                  format_type(a.atttypid, a.atttypmod), a.attnotnull, \
                  pg_get_expr(d.adbin, d.adrelid), a.attidentity::text, a.attgenerated::text, \
                  col_description(a.attrelid, a.attnum), \
-                 quote_literal(col_description(a.attrelid, a.attnum)) \
+                 quote_literal(col_description(a.attrelid, a.attnum)), \
+                 format_type(a.atttypid, NULL) \
                  FROM pg_attribute a \
                  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
                  WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped \
@@ -568,6 +572,7 @@ impl PgSession {
                     info: ColumnInfo {
                         name: r.get(0),
                         type_name: r.get(2),
+                        base_type: r.get(9),
                         nullable: !r.get::<_, bool>(3),
                         auto_increment: !identity.is_empty() || serial,
                         default,
@@ -828,6 +833,15 @@ impl Session for PgSession {
     }
 
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        if stmt.params.is_empty() {
+            // Nothing to bind: the simple-query path, no text wrapper.
+            let (rs, _) = self.run(&stmt.sql).await?;
+            return Ok(rs.unwrap_or(ResultSet {
+                columns: vec![],
+                rows: vec![],
+                truncated: false,
+            }));
+        }
         self.query_bound(stmt).await
     }
 
@@ -986,7 +1000,7 @@ mod tests {
     fn text_wrapper_renders_every_column() {
         assert_eq!(
             text_wrapper("SELECT a, b FROM t", 2),
-            "WITH q(c1, c2) AS (SELECT a, b FROM t) SELECT \
+            "WITH q(c1, c2) AS (\nSELECT a, b FROM t\n) SELECT \
              CASE WHEN num_nulls(q.c1) = 0 THEN format('%s', q.c1) END, \
              CASE WHEN num_nulls(q.c2) = 0 THEN format('%s', q.c2) END FROM q"
         );

@@ -234,6 +234,8 @@ fn names(v: &[String]) -> Vec<&str> {
 
 struct Expect {
     amount_type: &'static str,
+    /// The type without its modifier (PostgreSQL); the full type elsewhere.
+    amount_base: &'static str,
     amount_default: &'static str,
     /// Engines that keep column comments.
     comments: bool,
@@ -256,6 +258,8 @@ async fn check_columns(fx: &Fx, ex: &Expect) {
 
     let amount = col(&order, "amount");
     assert_eq!(amount.type_name, ex.amount_type);
+    assert_eq!(amount.base_type, ex.amount_base);
+    assert_eq!(col(&order, "note").base_type, col(&order, "note").type_name);
     assert!(amount.nullable);
     assert_eq!(amount.default.as_deref(), Some(ex.amount_default));
     assert!(!amount.auto_increment && !amount.generated);
@@ -363,6 +367,7 @@ async fn check_view_ddl(fx: &Fx) {
 
 const PG: Expect = Expect {
     amount_type: "numeric(12,2)",
+    amount_base: "numeric",
     amount_default: "0",
     comments: true,
     fk_name: "order_parent_fk",
@@ -481,6 +486,7 @@ async fn pg_missing_table_is_not_found() {
 
 const MYSQL: Expect = Expect {
     amount_type: "decimal(12,2)",
+    amount_base: "decimal(12,2)",
     amount_default: "0.00",
     comments: true,
     fk_name: "order_parent_fk",
@@ -632,6 +638,7 @@ async fn mysql_missing_table_is_not_found() {
 
 const SQLITE: Expect = Expect {
     amount_type: "NUMERIC(12,2)",
+    amount_base: "NUMERIC(12,2)",
     amount_default: "0",
     comments: false,
     // SQLite keeps no name for an unnamed foreign key: `<table>_<columns>_fkey`.

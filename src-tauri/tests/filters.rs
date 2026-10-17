@@ -17,6 +17,7 @@ use tablemax_lib::driver::query::{Filter, FilterOp, build_filtered_count, build_
 use tablemax_lib::driver::sqlite::connect_sqlite;
 use tablemax_lib::driver::{
     ConnectParams, Dialect, DriverKind, ObjectRef, PageRequest, ResultSet, RowCount, Session,
+    SortDir,
 };
 use tablemax_lib::error::{AppResult, ErrorKind};
 use tablemax_lib::value::{CellValue, MAX_RESULT_ROWS};
@@ -122,13 +123,17 @@ impl Fx {
         limit: u32,
         offset: u64,
     ) -> AppResult<ResultSet> {
-        let req = PageRequest {
+        self.run_page(PageRequest {
             object: self.obj(name),
             limit,
             offset,
             sort: None,
             filters,
-        };
+        })
+        .await
+    }
+
+    async fn run_page(&self, req: PageRequest) -> AppResult<ResultSet> {
         let info = self.s.table_info(&req.object).await?;
         let stmt = build_page(self.d(), &info, &req)?;
         self.s.query(&stmt).await
@@ -424,6 +429,19 @@ async fn in_and_between() {
             )
             .await,
             [3, 4, 6],
+            "{d:?}"
+        );
+        // A trailing line comment in Raw cannot swallow the closing parenthesis.
+        assert_eq!(
+            fx.ids(
+                "item",
+                vec![
+                    raw("n >= 50 -- the big ones"),
+                    f("id", FilterOp::Gt, &["0"])
+                ]
+            )
+            .await,
+            [5, 6],
             "{d:?}"
         );
         let e = fx.page("item", vec![raw("no_such_column = 1")]).await;
@@ -757,5 +775,134 @@ async fn mysql_filters_work_across_collations() {
             [1],
             "{kind:?}"
         );
+    }
+}
+
+/// Contains/NotContains with `!` as the LIKE escape: independent of how the session reads
+/// backslashes in string literals.
+async fn check_portable_escape(fx: &Fx) {
+    let d = fx.d();
+    fx.run(&format!(
+        "UPDATE {} SET note = 'zz top!' WHERE id = 6",
+        fx.q("item")
+    ))
+    .await;
+    let contains = |v: &str| vec![f("note", FilterOp::Contains, &[v])];
+    assert_eq!(fx.ids("item", contains("50%")).await, [1], "{d:?}");
+    assert_eq!(fx.ids("item", contains("5_0")).await, [3], "{d:?}");
+    assert_eq!(fx.ids("item", contains("a\\b")).await, [4], "{d:?}");
+    assert_eq!(fx.ids("item", contains("p!")).await, [6], "{d:?}");
+    assert_eq!(
+        fx.ids("item", contains("!%")).await,
+        Vec::<i64>::new(),
+        "{d:?}"
+    );
+    assert_eq!(
+        fx.ids("item", vec![f("note", FilterOp::NotContains, &["50"])])
+            .await,
+        [3, 4, 6],
+        "{d:?}"
+    );
+    assert_eq!(
+        fx.ids("item", vec![any(FilterOp::Contains, "top!")]).await,
+        [6],
+        "{d:?}"
+    );
+}
+
+#[tokio::test]
+async fn like_escape_is_portable() {
+    for url in pg_urls() {
+        let fx = pg_fixture(&url).await;
+        // Backslashes in '...' become escapes (pre-9.1 behaviour, still settable).
+        fx.run("SET standard_conforming_strings = off").await;
+        check_portable_escape(&fx).await;
+    }
+    for (url, kind) in mysql_targets() {
+        let fx = mysql_fixture(&url, kind).await;
+        // Backslashes in '...' become plain characters.
+        fx.run("SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')")
+            .await;
+        check_portable_escape(&fx).await;
+    }
+    check_portable_escape(&sqlite_fixture().await).await;
+}
+
+/// Values are cast to the column's type without its modifier: a varchar(5), numeric(12,2)
+/// or timestamp(0) cast would truncate or round the value before comparing.
+#[tokio::test]
+async fn pg_casts_ignore_typmod() {
+    for url in pg_urls() {
+        let fx = pg_fixture(&url).await;
+        let t = fx.q("tm");
+        fx.run(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, s varchar(5), amount numeric(12,2), \
+             ts timestamp(0))"
+        ))
+        .await;
+        fx.run(&format!(
+            "INSERT INTO {t} VALUES (1, 'abcde', 10.56, '2024-01-01 00:00:01')"
+        ))
+        .await;
+        let ids = |col: &'static str, op: FilterOp, v: &'static str| {
+            let fx = &fx;
+            async move { fx.ids("tm", vec![f(col, op, &[v])]).await }
+        };
+        assert_eq!(ids("s", FilterOp::Eq, "abcdefgh").await, Vec::<i64>::new());
+        assert_eq!(ids("s", FilterOp::Eq, "abcde").await, [1]);
+        assert_eq!(ids("amount", FilterOp::Gt, "10.555").await, [1]);
+        assert_eq!(ids("amount", FilterOp::Lt, "10.565").await, [1]);
+        assert_eq!(ids("ts", FilterOp::Gt, "2024-01-01 00:00:00.6").await, [1]);
+        let info = fx.s.table_info(&fx.obj("tm")).await.unwrap();
+        let base: Vec<&str> = info.columns.iter().map(|c| c.base_type.as_str()).collect();
+        assert_eq!(
+            base,
+            [
+                "integer",
+                "character varying",
+                "numeric",
+                "timestamp without time zone"
+            ]
+        );
+    }
+}
+
+/// An explicit sort on a column with ties is completed by the key: OFFSET pages never
+/// repeat or skip a row.
+#[tokio::test]
+async fn sorted_pages_are_stable() {
+    for fx in all_fixtures().await {
+        let d = fx.d();
+        let t = fx.q("dup");
+        fx.run(&format!("CREATE TABLE {t} (id int PRIMARY KEY, g int)"))
+            .await;
+        // 30 rows, ids in shuffled order (7 is coprime with 30), g = 0 or 1.
+        for i in 0..30 {
+            let id = (i * 7) % 30 + 1;
+            fx.run(&format!("INSERT INTO {t} VALUES ({id}, {})", id % 2))
+                .await;
+        }
+        for (dir, first) in [(SortDir::Asc, 0), (SortDir::Desc, 1)] {
+            let mut seen = Vec::new();
+            for offset in (0..30).step_by(5) {
+                let rs = fx
+                    .run_page(PageRequest {
+                        object: fx.obj("dup"),
+                        limit: 5,
+                        offset,
+                        sort: Some(("g".into(), dir)),
+                        filters: vec![],
+                    })
+                    .await
+                    .unwrap();
+                seen.extend(rs.rows.iter().map(|r| int(&r[0])));
+            }
+            // Within one g, ascending ids.
+            let want: Vec<i64> = (1..=30)
+                .filter(|i| i % 2 == first)
+                .chain((1..=30).filter(|i| i % 2 != first))
+                .collect();
+            assert_eq!(seen, want, "{d:?} {dir:?}");
+        }
     }
 }

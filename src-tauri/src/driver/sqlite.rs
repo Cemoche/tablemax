@@ -259,6 +259,7 @@ fn table_info_of(c: &Connection, schema: &str, name: &str) -> AppResult<TableInf
             ColumnInfo {
                 name: x.0.clone(),
                 type_name: x.1.clone(),
+                base_type: x.1.clone(),
                 nullable: !not_null,
                 default: non_null_default(x.3.clone()),
                 auto_increment: alias,

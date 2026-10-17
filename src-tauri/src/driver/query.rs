@@ -2,9 +2,13 @@
 //! its capped filtered count. Every value typed by the user is a bound parameter; only
 //! identifiers (always quoted) and the explicit "Raw SQL" filter are written into the SQL.
 //!
-//! PostgreSQL binds each value as text and casts it to the column's type in SQL
-//! (`CAST($n::text AS numeric(12,2))`), so the server parses it like a literal. MySQL and
+//! PostgreSQL binds each value as text and casts it to the column's type without its
+//! modifier (`CAST($n::text AS numeric)` for `numeric(12,2)`: a typmod cast would round or
+//! truncate the value before comparing), so the server parses it like a literal. MySQL and
 //! SQLite bind the text as is (`?`) and convert it with their own comparison rules.
+//!
+//! LIKE patterns escape with `!` (`ESCAPE '!'`): a backslash literal would depend on
+//! MySQL's NO_BACKSLASH_ESCAPES and PostgreSQL's standard_conforming_strings.
 
 use serde::{Deserialize, Serialize};
 
@@ -73,26 +77,32 @@ pub struct Filter {
     pub values: Vec<String>,
 }
 
-/// `SELECT * FROM t [WHERE …] [ORDER BY …] LIMIT n OFFSET m`. Without an explicit sort the
-/// order is the row key, else SQLite's rowid, else none.
+/// `SELECT * FROM t [WHERE …] [ORDER BY …] LIMIT n OFFSET m`. The order is the explicit
+/// sort, then the default order (row key, else SQLite's rowid) as a tiebreaker so OFFSET
+/// paging stays stable; without a key or rowid, the sort alone (or no ORDER BY).
 pub fn build_page(d: Dialect, info: &TableInfo, req: &PageRequest) -> AppResult<Statement> {
     let mut b = Builder::new(d);
     b.sql = format!("SELECT * FROM {}", qualified(d, &info.object));
     b.push_where(info, &req.filters)?;
-    let order = match &req.sort {
-        Some((col, dir)) => {
-            known_column(info, col)?;
-            let dir = match dir {
-                SortDir::Asc => "ASC",
-                SortDir::Desc => "DESC",
-            };
-            Some(format!("{} {dir}", quote_ident(d, col)))
-        }
-        None => default_order(d, info),
-    };
-    if let Some(order) = order {
+    let mut order = Vec::new();
+    if let Some((col, dir)) = &req.sort {
+        known_column(info, col)?;
+        let dir = match dir {
+            SortDir::Asc => "ASC",
+            SortDir::Desc => "DESC",
+        };
+        order.push(format!("{} {dir}", quote_ident(d, col)));
+    }
+    let sorted = req.sort.as_ref().map(|(c, _)| c.as_str());
+    order.extend(
+        default_order(d, info)
+            .into_iter()
+            .filter(|(name, _)| Some(name.as_str()) != sorted)
+            .map(|(_, sql)| sql),
+    );
+    if !order.is_empty() {
         b.sql.push_str(" ORDER BY ");
-        b.sql.push_str(&order);
+        b.sql.push_str(&order.join(", "));
     }
     b.sql
         .push_str(&format!(" LIMIT {} OFFSET {}", req.limit, req.offset));
@@ -143,10 +153,10 @@ fn known_column(info: &TableInfo, name: &str) -> AppResult<()> {
     }
 }
 
-fn default_order(d: Dialect, info: &TableInfo) -> Option<String> {
+/// The default order as (column name, SQL) pairs: the row key, else SQLite's rowid.
+fn default_order(d: Dialect, info: &TableInfo) -> Vec<(String, String)> {
     if let Some(key) = info.row_key.as_ref().filter(|k| !k.is_empty()) {
-        let cols: Vec<String> = key.iter().map(|c| quote_ident(d, c)).collect();
-        return Some(cols.join(", "));
+        return key.iter().map(|c| (c.clone(), quote_ident(d, c))).collect();
     }
     if d == Dialect::Sqlite && info.has_rowid {
         // A real column may shadow one of the rowid's names.
@@ -158,9 +168,10 @@ fn default_order(d: Dialect, info: &TableInfo) -> Option<String> {
                     .iter()
                     .any(|c| c.name.eq_ignore_ascii_case(alias))
             })
-            .map(String::from);
+            .map(|a| vec![(a.to_string(), a.to_string())])
+            .unwrap_or_default();
     }
-    None
+    Vec::new()
 }
 
 /// Binary columns are left out of the any-column search.
@@ -226,11 +237,11 @@ impl Builder {
         }
     }
 
-    /// A value compared with a column of type `type_name`.
-    fn typed(&mut self, v: &str, type_name: &str) -> String {
+    /// A value compared with a column whose type without modifier is `base_type`.
+    fn typed(&mut self, v: &str, base_type: &str) -> String {
         let p = self.bind(v);
         match self.d {
-            Dialect::Postgres => format!("CAST({p}::text AS {type_name})"),
+            Dialect::Postgres => format!("CAST({p}::text AS {base_type})"),
             Dialect::MySql | Dialect::Sqlite => p,
         }
     }
@@ -244,12 +255,9 @@ impl Builder {
         }
     }
 
-    /// `%value%` with the value's own `%`, `_` and `\` escaped (`ESCAPE '\'`).
+    /// `%value%` with the value's own `!`, `%` and `_` escaped (`ESCAPE '!'`).
     fn contains_pattern(&mut self, v: &str) -> String {
-        let escaped = v
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_");
+        let escaped = v.replace('!', "!!").replace('%', "!%").replace('_', "!_");
         let p = self.text(&escaped);
         match self.d {
             Dialect::MySql => format!("CONCAT('%', {p}, '%')"),
@@ -258,11 +266,7 @@ impl Builder {
     }
 
     fn escape_clause(&self) -> &'static str {
-        match self.d {
-            // MySQL string literals use backslash escapes: '\\' is one backslash.
-            Dialect::MySql => " ESCAPE '\\\\'",
-            Dialect::Postgres | Dialect::Sqlite => " ESCAPE '\\'",
-        }
+        " ESCAPE '!'"
     }
 
     /// A column as text (any-column search, and LIKE on PostgreSQL where non-text types
@@ -291,7 +295,8 @@ impl Builder {
     fn condition(&mut self, info: &TableInfo, f: &Filter) -> AppResult<String> {
         if f.op == FilterOp::Raw {
             return match f.values.as_slice() {
-                [sql] if !sql.trim().is_empty() => Ok(format!("({sql})")),
+                // Own lines: a trailing `--` comment cannot swallow the parenthesis.
+                [sql] if !sql.trim().is_empty() => Ok(format!("(\n{sql}\n)")),
                 _ => Err(invalid("filter on raw SQL: expected 1 value(s)")),
             };
         }
@@ -306,7 +311,7 @@ impl Builder {
             .column(col)
             .ok_or_else(|| invalid(format!("unknown column {col}")))?;
         check_values(col, f)?;
-        let ty = column.type_name.as_str();
+        let ty = column.base_type.as_str();
         let q = quote_ident(self.d, col);
         let v = &f.values;
         use FilterOp::*;
@@ -436,10 +441,13 @@ mod tests {
     use crate::driver::meta::ColumnInfo;
     use crate::driver::{ObjectKind, ObjectRef};
 
+    /// `base_type` = `type_name` without its modifier, like PostgreSQL's
+    /// `format_type(atttypid, NULL)` for these simple types.
     fn column(name: &str, type_name: &str) -> ColumnInfo {
         ColumnInfo {
             name: name.into(),
             type_name: type_name.into(),
+            base_type: type_name.split('(').next().unwrap_or("").to_string(),
             nullable: true,
             default: None,
             auto_increment: false,
@@ -532,7 +540,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             s.sql,
-            r#"SELECT * FROM "public"."order" WHERE "amount" = CAST($1::text AS numeric(12,2)) ORDER BY "id" LIMIT 300 OFFSET 0"#
+            r#"SELECT * FROM "public"."order" WHERE "amount" = CAST($1::text AS numeric) ORDER BY "id" LIMIT 300 OFFSET 0"#
         );
         assert_eq!(s.params, vec![SqlParam::Text("10.5".into())]);
     }
@@ -562,20 +570,21 @@ mod tests {
         let s = build_page(Dialect::MySql, &my_info(), &req).unwrap();
         assert_eq!(
             s.sql,
-            "SELECT * FROM `shop`.`order` WHERE `note` LIKE CONCAT('%', ?, '%') ESCAPE '\\\\' ORDER BY `id` LIMIT 300 OFFSET 0"
+            "SELECT * FROM `shop`.`order` WHERE `note` LIKE CONCAT('%', ?, '%') ESCAPE '!' ORDER BY `id` LIMIT 300 OFFSET 0"
         );
-        assert_eq!(s.params, texts(&["50\\%"]));
+        assert_eq!(s.params, texts(&["50!%"]));
 
-        let req = req_with(vec![f("note", FilterOp::NotContains, &["a_b\\c"])]);
+        let req = req_with(vec![f("note", FilterOp::NotContains, &["a_b\\c!"])]);
         let s = build_page(Dialect::Postgres, &pg_info(), &req).unwrap();
         assert!(
             s.sql.contains(
-                r#"WHERE CAST("note" AS text) NOT LIKE '%' || $1::text || '%' ESCAPE '\' ORDER"#
+                r#"WHERE CAST("note" AS text) NOT LIKE '%' || $1::text || '%' ESCAPE '!' ORDER"#
             ),
             "{}",
             s.sql
         );
-        assert_eq!(s.params, texts(&["a\\_b\\\\c"]));
+        // `!` is the escape character: backslashes are plain data.
+        assert_eq!(s.params, texts(&["a!_b\\c!!"]));
 
         // Like keeps the user's pattern as is; Ilike is plain LIKE outside PostgreSQL.
         let req = req_with(vec![
@@ -610,7 +619,7 @@ mod tests {
             Filter {
                 column: Some("ignored".into()),
                 op: FilterOp::Raw,
-                values: vec!["id % 2 = 0 OR note = 'x'".into()],
+                values: vec!["id % 2 = 0 OR note = 'x' -- trailing comment".into()],
             },
             f("id", FilterOp::NotIn, &["7"]),
         ]);
@@ -619,9 +628,9 @@ mod tests {
             s.sql,
             "SELECT * FROM \"public\".\"order\" WHERE \
              \"id\" IN (CAST($1::text AS integer), CAST($2::text AS integer), CAST($3::text AS integer)) \
-             AND \"amount\" NOT BETWEEN CAST($4::text AS numeric(12,2)) AND CAST($5::text AS numeric(12,2)) \
+             AND \"amount\" NOT BETWEEN CAST($4::text AS numeric) AND CAST($5::text AS numeric) \
              AND \"note\" IS NULL AND \"note\" IS NOT NULL \
-             AND (id % 2 = 0 OR note = 'x') \
+             AND (\nid % 2 = 0 OR note = 'x' -- trailing comment\n) \
              AND \"id\" NOT IN (CAST($6::text AS integer)) \
              ORDER BY \"id\" LIMIT 300 OFFSET 0"
         );
@@ -648,9 +657,9 @@ mod tests {
         assert_eq!(
             s.sql,
             "SELECT * FROM \"public\".\"order\" WHERE (\
-             CAST(\"id\" AS text) LIKE '%' || $1::text || '%' ESCAPE '\\' \
-             OR CAST(\"amount\" AS text) LIKE '%' || $2::text || '%' ESCAPE '\\' \
-             OR CAST(\"note\" AS text) LIKE '%' || $3::text || '%' ESCAPE '\\') \
+             CAST(\"id\" AS text) LIKE '%' || $1::text || '%' ESCAPE '!' \
+             OR CAST(\"amount\" AS text) LIKE '%' || $2::text || '%' ESCAPE '!' \
+             OR CAST(\"note\" AS text) LIKE '%' || $3::text || '%' ESCAPE '!') \
              ORDER BY \"id\" LIMIT 300 OFFSET 0"
         );
         assert_eq!(s.params, texts(&["x", "x", "x"]));
@@ -658,8 +667,8 @@ mod tests {
         let s = build_page(Dialect::MySql, &my_info(), &req).unwrap();
         assert!(
             s.sql.contains(
-                "WHERE (CAST(`id` AS CHAR) LIKE CONCAT('%', ?, '%') ESCAPE '\\\\' \
-                 OR CAST(`note` AS CHAR) LIKE CONCAT('%', ?, '%') ESCAPE '\\\\') ORDER"
+                "WHERE (CAST(`id` AS CHAR) LIKE CONCAT('%', ?, '%') ESCAPE '!' \
+                 OR CAST(`note` AS CHAR) LIKE CONCAT('%', ?, '%') ESCAPE '!') ORDER"
             ),
             "{}",
             s.sql
@@ -696,7 +705,7 @@ mod tests {
         .unwrap();
         assert!(
             s.sql.contains(
-                r#"WHERE (("id" IS NULL OR CAST("id" AS TEXT) NOT LIKE '%' || ? || '%' ESCAPE '\') AND ("n" IS NULL OR CAST("n" AS TEXT) NOT LIKE '%' || ? || '%' ESCAPE '\')) ORDER"#
+                r#"WHERE (("id" IS NULL OR CAST("id" AS TEXT) NOT LIKE '%' || ? || '%' ESCAPE '!') AND ("n" IS NULL OR CAST("n" AS TEXT) NOT LIKE '%' || ? || '%' ESCAPE '!')) ORDER"#
             ),
             "{}",
             s.sql
@@ -794,10 +803,43 @@ mod tests {
         let mut req = req_with(vec![]);
         req.sort = Some(("b".into(), SortDir::Desc));
         req.offset = 600;
+        // An explicit sort is completed by the key (ties would make OFFSET paging unstable).
         let s = build_page(Dialect::Sqlite, &info, &req).unwrap();
         assert_eq!(
             s.sql,
-            r#"SELECT * FROM "main"."order" ORDER BY "b" DESC LIMIT 300 OFFSET 600"#
+            r#"SELECT * FROM "main"."order" ORDER BY "b" DESC, "id" LIMIT 300 OFFSET 600"#
+        );
+        // Key columns already sorted on are not repeated.
+        info.row_key = Some(vec!["b".into(), "a".into()]);
+        let s = build_page(Dialect::Sqlite, &info, &req).unwrap();
+        assert!(
+            s.sql
+                .ends_with(r#"ORDER BY "b" DESC, "a" LIMIT 300 OFFSET 600"#),
+            "{}",
+            s.sql
+        );
+        info.row_key = Some(vec!["b".into()]);
+        let s = build_page(Dialect::Sqlite, &info, &req).unwrap();
+        assert!(
+            s.sql.ends_with(r#"ORDER BY "b" DESC LIMIT 300 OFFSET 600"#),
+            "{}",
+            s.sql
+        );
+        info.row_key = None;
+        info.has_rowid = true;
+        let s = build_page(Dialect::Sqlite, &info, &req).unwrap();
+        assert!(
+            s.sql
+                .ends_with(r#"ORDER BY "b" DESC, rowid LIMIT 300 OFFSET 600"#),
+            "{}",
+            s.sql
+        );
+        info.has_rowid = false;
+        let s = build_page(Dialect::Sqlite, &info, &req).unwrap();
+        assert!(
+            s.sql.ends_with(r#"ORDER BY "b" DESC LIMIT 300 OFFSET 600"#),
+            "{}",
+            s.sql
         );
         req.sort = None;
         info.row_key = Some(vec!["a".into(), "b".into()]);
