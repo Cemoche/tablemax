@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import * as ipc from "./ipc";
 import type { ThemeSetting } from "./types";
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
@@ -8,6 +9,17 @@ export function applyTheme(theme: ThemeSetting) {
   const root = document.documentElement;
   if (theme === "system") delete root.dataset.theme;
   else root.dataset.theme = theme;
+}
+
+/**
+ * Applies the interface size: native zoom of the webview, so the canvas grid, menus and
+ * popovers follow. A failure (no window, e.g. in a test or the browser preview) leaves the
+ * zoom as it is; it never fails the settings.
+ */
+export function applyInterfaceScale(scale: number): void {
+  // Called synchronously (the zoom moves with the optimistic settings); `?.` because a
+  // mocked ipc in tests returns undefined.
+  ipc.windowSetZoom(scale)?.catch(() => {});
 }
 
 function resolveDark(): boolean {

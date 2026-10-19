@@ -39,6 +39,8 @@ const SPECS = {
   "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1" },
   "grid.viewStructure": { scope: "tableTab", defaultShortcut: "Alt+2" },
   "grid.back": { scope: "tableTab", defaultShortcut: "Alt+ArrowLeft" },
+  "font.increase": { scope: "global", defaultShortcut: "Mod+=" },
+  "font.decrease": { scope: "global", defaultShortcut: "Mod+-" },
 } as const satisfies Record<keyof typeof strings.keymap, { scope: ShortcutScope; defaultShortcut: string }>;
 
 export type KeymapActionId = keyof typeof SPECS;

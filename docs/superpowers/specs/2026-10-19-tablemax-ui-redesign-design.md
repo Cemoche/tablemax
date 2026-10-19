@@ -168,7 +168,7 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 | `--row-a` / `--row-b` | #1E1E1E / #2A2A2A | #FFFFFF / #F4F5F5 | lignes alternées |
 | `--grid-sep` | #303030 | #E3E3E3 | séparateurs de la grille |
 | `--cell-text` | #E6E6E6 | #262626 | texte des cellules |
-| `--placeholder` | #6A6A6A | #9A9A9A | NULL / EMPTY / DEFAULT |
+| `--placeholder` | #737373 | #8D8D8D | NULL / EMPTY / DEFAULT (ajusté pour un contraste ≥ 3:1 sur les deux couleurs de ligne) |
 | `--rownum` | #8A8A8A | #8A8A8A | numéros de ligne |
 | `--bottom` / `--btn` | #242424 / #343434 | #F3F3F3 / #FFFFFF | barre du bas / boutons |
 | `--accent` | #3A7BF6 | #007AFF | segment actif, sélection, bouton principal |

@@ -12,10 +12,37 @@ test("empty tokens fall back to usable values", () => {
   expect(t.fontFamily).toBeTruthy();
 });
 
-test("reads tokens", () => {
-  const t = buildGridTheme((n) => (n === "--surface" ? "#111" : n === "--text-muted" ? "#888" : ""));
-  expect(t.bgCell).toBe("#111");
-  expect(t.textMedium).toBe("#888");
+test("reads the grid tokens", () => {
+  const vars: Record<string, string> = {
+    "--row-a": "#111",
+    "--grid-head": "#222",
+    "--head-text": "#333",
+    "--cell-text": "#444",
+    "--text-2": "#555",
+    "--placeholder": "#666",
+    "--grid-sep": "#777",
+    "--accent": "#888",
+    "--row-selected-text": "#999",
+  };
+  const t = buildGridTheme((n) => vars[n] ?? "");
+  expect(t).toMatchObject({
+    bgCell: "#111",
+    bgHeader: "#222",
+    textHeader: "#333",
+    textDark: "#444",
+    textMedium: "#555",
+    textLight: "#666",
+    borderColor: "#777",
+    horizontalBorderColor: "#777",
+    accentColor: "#888",
+    accentFg: "#999",
+  });
+});
+
+test("NULL cells use the placeholder token", () => {
+  const read = (n: string) => (n === "--placeholder" ? "#8d8d8d" : "");
+  const { result } = renderHook(() => useGridTheme(read));
+  expect(result.current.muted).toEqual({ textDark: "#8d8d8d" });
 });
 
 test("theme is rebuilt on a color-scheme media change and listener is removed", () => {
@@ -26,7 +53,7 @@ test("theme is rebuilt on a color-scheme media change and listener is removed", 
     removeEventListener,
   }));
   let bg = "#fff";
-  const read = (n: string) => (n === "--surface" ? bg : "");
+  const read = (n: string) => (n === "--row-a" ? bg : "");
   const { result, unmount } = renderHook(() => useGridTheme(read));
   expect(result.current.theme.bgCell).toBe("#fff");
   bg = "#000";
@@ -38,11 +65,11 @@ test("theme is rebuilt on a color-scheme media change and listener is removed", 
 
 test("pending-change themes read their tokens", () => {
   const vars: Record<string, string> = {
-    "--pending-edit": "#e1",
-    "--pending-insert": "#e2",
-    "--pending-delete": "#e3",
+    "--modified": "#e1",
+    "--inserted": "#e2",
+    "--deleted": "#e3",
     "--danger": "#e4",
-    "--text-muted": "#e5",
+    "--text-2": "#e5",
   };
   const t = buildEditThemes((n) => vars[n] ?? "");
   expect(t.edited.bgCell).toBe("#e1");
@@ -60,7 +87,7 @@ test("theme is rebuilt when data-theme changes while the OS stays light", async 
     removeEventListener: () => {},
   }));
   const read = (n: string) =>
-    n === "--surface" ? (document.documentElement.dataset.theme === "dark" ? "#000" : "#fff") : "";
+    n === "--row-a" ? (document.documentElement.dataset.theme === "dark" ? "#000" : "#fff") : "";
   const { result } = renderHook(() => useGridTheme(read));
   expect(result.current.theme.bgCell).toBe("#fff");
   act(() => {

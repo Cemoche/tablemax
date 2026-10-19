@@ -16,5 +16,7 @@
   "grid.rowDetails",
   "grid.viewData",
   "grid.viewStructure",
-  "grid.back"
+  "grid.back",
+  "font.increase",
+  "font.decrease"
 ]

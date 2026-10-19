@@ -2,6 +2,47 @@
 @import "./styles/tokens.css";
 
 @theme inline {
+  /* Spec §5.1 tokens (bg-win, text-text-2, border-grid-sep…). */
+  --color-win: var(--win);
+  --color-side: var(--side);
+  --color-content: var(--content);
+  --color-sep: var(--sep);
+  --color-pill: var(--pill);
+  --color-pill-border: var(--pill-border);
+  --color-icon: var(--icon);
+  --color-icon-dim: var(--icon-dim);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-seg-sel: var(--seg-sel);
+  --color-search: var(--search);
+  --color-sel: var(--sel);
+  --color-tab: var(--tab);
+  --color-tab-sel: var(--tab-sel);
+  --color-grid-head: var(--grid-head);
+  --color-head-text: var(--head-text);
+  --color-row-a: var(--row-a);
+  --color-row-b: var(--row-b);
+  --color-grid-sep: var(--grid-sep);
+  --color-cell-text: var(--cell-text);
+  --color-placeholder: var(--placeholder);
+  --color-rownum: var(--rownum);
+  --color-bottom: var(--bottom);
+  --color-btn: var(--btn);
+  --color-cell-focus: var(--cell-focus);
+  --color-row-selected: var(--row-selected);
+  --color-row-selected-text: var(--row-selected-text);
+  --color-inserted: var(--inserted);
+  --color-modified: var(--modified);
+  --color-deleted: var(--deleted);
+  --color-tag-local-bg: var(--tag-local-bg);
+  --color-tag-local-text: var(--tag-local-text);
+  --color-tag-dev-bg: var(--tag-dev-bg);
+  --color-tag-dev-text: var(--tag-dev-text);
+  --color-tag-staging-bg: var(--tag-staging-bg);
+  --color-tag-staging-text: var(--tag-staging-text);
+  --color-tag-prod-bg: var(--tag-prod-bg);
+  --color-tag-prod-text: var(--tag-prod-text);
+  /* Previous names, still used by components not yet redone. */
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);

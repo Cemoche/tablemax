@@ -1,7 +1,11 @@
+/* Design tokens. Values: spec 2026-10-19-tablemax-ui-redesign-design.md §5.1 (dark / light,
+   after TablePlus macOS). The light values are the :root defaults; the dark ones are
+   written twice below. Only these tokens carry colors: components use them through the
+   Tailwind names of src/index.css, the grid through gridTheme.ts. */
 :root {
   color-scheme: dark light;
-  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --font-ui: system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --text-xs: 11px;
   --text-sm: 12px;
   --text-md: 13px;
@@ -14,22 +18,53 @@
   --space-6: 24px;
   --radius: 4px;
 
-  --swatch-1: #3b82f6;
-  --swatch-2: #22c55e;
-  --swatch-3: #eab308;
-  --swatch-4: #f97316;
-  --swatch-5: #ef4444;
-  --swatch-6: #a855f7;
-
   /* light */
-  --bg: #f4f5f7;
-  --surface: #ffffff;
-  --surface-2: #eceef2;
-  --text: #1c1f26;
-  --text-muted: #5f6675;
-  --border: #d5d9e0;
-  --accent: #2563eb;
-  --accent-contrast: #ffffff;
+  --win: #ECECEC;
+  --side: #F5F5F5;
+  --content: #FFFFFF;
+  --sep: #CFCFCF;
+  --pill: #FFFFFF;
+  --pill-border: #D6D6D6;
+  --icon: #3A3A3A;
+  --icon-dim: #B0B0B0;
+  --text: #1E1E1E;
+  --text-2: #6B6B6B;
+  --seg-sel: #DCDCDC;
+  --search: #FFFFFF;
+  --sel: #D4D4D4;
+  --tab: #DCDCDC;
+  --tab-sel: #FFFFFF;
+  --grid-head: #F5F5F5;
+  --head-text: #262626;
+  --row-a: #FFFFFF;
+  --row-b: #F4F5F5;
+  --grid-sep: #E3E3E3;
+  --cell-text: #262626;
+  --placeholder: #8D8D8D;
+  --rownum: #8A8A8A;
+  --bottom: #F3F3F3;
+  --btn: #FFFFFF;
+  --accent: #007AFF;
+  --cell-focus: #FF4245;
+  --inserted: #DAEBC2;
+  --modified: #FFE18E;
+  --deleted: #F5A6B0;
+  --tag-local-bg: #E6E6E6;
+  --tag-local-text: #4A4A4A;
+  --tag-dev-bg: #DCE8FB;
+  --tag-dev-text: #1F4F9A;
+  --tag-staging-bg: #FBF0CF;
+  --tag-staging-text: #7A5A0B;
+  --tag-prod-bg: #FBDADB;
+  --tag-prod-text: #8E1C22;
+  /* Connection colors, kept by hue for the saved ids: blue, green, amber, gray, red, violet. */
+  --swatch-1: #BDCFF4;
+  --swatch-2: #BFE3A8;
+  --swatch-3: #F6E8A8;
+  --swatch-4: #E6E6E6;
+  --swatch-5: #F7C7C9;
+  --swatch-6: #DCCBF3;
+  /* Not in §5.1: status colors, kept until the components using them are redone. */
   --danger: #c62828;
   --success: #2e7d32;
   --warning: #b26a00;
@@ -37,25 +72,73 @@
   --env-dev: #2563eb;
   --env-staging: #b26a00;
   --env-prod: #c62828;
-  --pending-edit: #fff3c4;
-  --pending-insert: #dcf3e2;
-  --pending-delete: #fadcdc;
+
+  /* Same in both themes. */
+  --row-selected: var(--accent);
+  --row-selected-text: #FFFFFF;
+  --accent-contrast: #FFFFFF;
+
+  /* Previous names, aliases of the new tokens until the components move to them. */
+  --bg: var(--win);
+  --surface: var(--content);
+  --surface-2: var(--seg-sel);
+  --text-muted: var(--text-2);
+  --border: var(--sep);
+  --pending-edit: var(--modified);
+  --pending-insert: var(--inserted);
+  --pending-delete: var(--deleted);
 }
 
 /* Dark values apply when the OS asks for dark, unless the user forced light with
    data-theme="light"; data-theme="dark" forces them whatever the OS says. The values
    are written twice because CSS cannot share a declaration block between a media
-   query and an attribute selector. */
+   query and an attribute selector (tokens.test.ts checks both blocks are equal). */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #14161a;
-    --surface: #1b1e24;
-    --surface-2: #242830;
-    --text: #e4e7ec;
-    --text-muted: #8c93a3;
-    --border: #2f343e;
-    --accent: #4f8cff;
-    --accent-contrast: #0b1020;
+    --win: #1A1A1A;
+    --side: #1F1F1F;
+    --content: #1E1E1E;
+    --sep: #0A0A0A;
+    --pill: #383838;
+    --pill-border: #2C2C2C;
+    --icon: #EDEDED;
+    --icon-dim: #6B6B6B;
+    --text: #F2F2F2;
+    --text-2: #AFAFAF;
+    --seg-sel: #3B3B3B;
+    --search: #151515;
+    --sel: #464646;
+    --tab: #2C2C2C;
+    --tab-sel: #5C5C5C;
+    --grid-head: #242424;
+    --head-text: #E9E9E9;
+    --row-a: #1E1E1E;
+    --row-b: #2A2A2A;
+    --grid-sep: #303030;
+    --cell-text: #E6E6E6;
+    --placeholder: #737373;
+    --rownum: #8A8A8A;
+    --bottom: #242424;
+    --btn: #343434;
+    --accent: #3A7BF6;
+    --cell-focus: #FF4245;
+    --inserted: #558C3A;
+    --modified: #8B6826;
+    --deleted: #8F2F31;
+    --tag-local-bg: #3A3A3A;
+    --tag-local-text: #D6D6D6;
+    --tag-dev-bg: #173E73;
+    --tag-dev-text: #9CC4FF;
+    --tag-staging-bg: #5A4512;
+    --tag-staging-text: #F5D27A;
+    --tag-prod-bg: #6A1C1F;
+    --tag-prod-text: #FFB3B5;
+    --swatch-1: #1F5FA8;
+    --swatch-2: #2E8B57;
+    --swatch-3: #A3793E;
+    --swatch-4: #4A5160;
+    --swatch-5: #8E1C22;
+    --swatch-6: #6B3FA0;
     --danger: #ff6b6b;
     --success: #4cc38a;
     --warning: #f0b429;
@@ -63,22 +146,55 @@
     --env-dev: #4f8cff;
     --env-staging: #f0b429;
     --env-prod: #ff6b6b;
-    --pending-edit: #3b3416;
-    --pending-insert: #173628;
-    --pending-delete: #3e1c20;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #14161a;
-  --surface: #1b1e24;
-  --surface-2: #242830;
-  --text: #e4e7ec;
-  --text-muted: #8c93a3;
-  --border: #2f343e;
-  --accent: #4f8cff;
-  --accent-contrast: #0b1020;
+  --win: #1A1A1A;
+  --side: #1F1F1F;
+  --content: #1E1E1E;
+  --sep: #0A0A0A;
+  --pill: #383838;
+  --pill-border: #2C2C2C;
+  --icon: #EDEDED;
+  --icon-dim: #6B6B6B;
+  --text: #F2F2F2;
+  --text-2: #AFAFAF;
+  --seg-sel: #3B3B3B;
+  --search: #151515;
+  --sel: #464646;
+  --tab: #2C2C2C;
+  --tab-sel: #5C5C5C;
+  --grid-head: #242424;
+  --head-text: #E9E9E9;
+  --row-a: #1E1E1E;
+  --row-b: #2A2A2A;
+  --grid-sep: #303030;
+  --cell-text: #E6E6E6;
+  --placeholder: #737373;
+  --rownum: #8A8A8A;
+  --bottom: #242424;
+  --btn: #343434;
+  --accent: #3A7BF6;
+  --cell-focus: #FF4245;
+  --inserted: #558C3A;
+  --modified: #8B6826;
+  --deleted: #8F2F31;
+  --tag-local-bg: #3A3A3A;
+  --tag-local-text: #D6D6D6;
+  --tag-dev-bg: #173E73;
+  --tag-dev-text: #9CC4FF;
+  --tag-staging-bg: #5A4512;
+  --tag-staging-text: #F5D27A;
+  --tag-prod-bg: #6A1C1F;
+  --tag-prod-text: #FFB3B5;
+  --swatch-1: #1F5FA8;
+  --swatch-2: #2E8B57;
+  --swatch-3: #A3793E;
+  --swatch-4: #4A5160;
+  --swatch-5: #8E1C22;
+  --swatch-6: #6B3FA0;
   --danger: #ff6b6b;
   --success: #4cc38a;
   --warning: #f0b429;
@@ -86,9 +202,6 @@
   --env-dev: #4f8cff;
   --env-staging: #f0b429;
   --env-prod: #ff6b6b;
-  --pending-edit: #3b3416;
-  --pending-insert: #173628;
-  --pending-delete: #3e1c20;
 }
 
 :root[data-theme="light"] {

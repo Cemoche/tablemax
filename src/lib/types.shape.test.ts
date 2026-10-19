@@ -204,16 +204,20 @@ test("Settings", () => {
   const s: Settings = JSON.parse(`{
     "version":1,"theme":"dark","editorFontFamily":"","editorFontSize":13,"pageSize":300,
     "exactCountThreshold":500000,"autoLimitDefault":false,"autoLimitValue":1000,
-    "keymap":{"run":"Mod-Enter"}
+    "keymap":{"run":"Mod-Enter"},"interfaceScale":1.15,"dataFontSize":14
   }`);
   expect(s.theme).toBe("dark");
   expect(s.keymap.run).toBe("Mod-Enter");
+  expect(s.interfaceScale).toBe(1.15);
+  expect(s.dataFontSize).toBe(14);
   expect(Object.keys(s).sort()).toEqual([
     "autoLimitDefault",
     "autoLimitValue",
+    "dataFontSize",
     "editorFontFamily",
     "editorFontSize",
     "exactCountThreshold",
+    "interfaceScale",
     "keymap",
     "pageSize",
     "theme",

@@ -1,6 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { applyTheme, useResolvedDark } from "./theme";
+import * as ipc from "./ipc";
+import { applyInterfaceScale, applyTheme, useResolvedDark } from "./theme";
+
+vi.mock("./ipc");
 
 function stubOs(dark: boolean) {
   vi.stubGlobal("matchMedia", () => ({
@@ -62,4 +65,12 @@ test("useResolvedDark reacts to an OS color-scheme change", () => {
   expect(result.current).toBe(true);
   unmount();
   expect(mq.removeEventListener).toHaveBeenCalled();
+});
+
+test("applyInterfaceScale sets the native zoom and swallows a failure", async () => {
+  vi.mocked(ipc.windowSetZoom).mockRejectedValue({ kind: "io", message: "no window" });
+  expect(() => applyInterfaceScale(1.3)).not.toThrow();
+  expect(ipc.windowSetZoom).toHaveBeenCalledWith(1.3);
+  // The rejection is handled: no unhandled rejection fails the run.
+  await Promise.resolve();
 });

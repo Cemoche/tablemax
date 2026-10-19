@@ -17,6 +17,10 @@ use crate::error::{AppError, AppResult, ErrorKind};
 
 pub const SETTINGS_VERSION: u32 = 1;
 pub const EDITOR_FONT_SIZE: (u32, u32) = (10, 24);
+/// Font size of the data (grid, sidebar tree), same bounds as the editor's.
+pub const DATA_FONT_SIZE: (u32, u32) = (10, 24);
+/// Native webview zoom of the whole interface, 90 % to 130 % in steps of 5 %.
+pub const INTERFACE_SCALE: (f32, f32) = (0.9, 1.3);
 pub const PAGE_SIZE: (u32, u32) = (50, 5000);
 pub const EXACT_COUNT_THRESHOLD: (u64, u64) = (10_000, 100_000_000);
 pub const AUTO_LIMIT_VALUE: (u32, u32) = (1, 1_000_000);
@@ -70,6 +74,8 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "grid.viewData",
     "grid.viewStructure",
     "grid.back",
+    "font.increase",
+    "font.decrease",
 ];
 /// At most this many keymap entries are kept (defensive: one per known id fits well below).
 pub const KEYMAP_MAX_ENTRIES: usize = 64;
@@ -160,7 +166,8 @@ pub enum Theme {
     Dark,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// PartialEq only: `interface_scale` is a float.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub version: u32,
@@ -175,6 +182,10 @@ pub struct Settings {
     /// Action id to shortcut; empty = defaults. Cleaned by `clamped` (`clean_keymap`).
     #[serde(deserialize_with = "lenient_keymap")]
     pub keymap: BTreeMap<String, String>,
+    /// Zoom factor of the whole interface (`commands::window_set_zoom`); 1.0 = 100 %.
+    pub interface_scale: f32,
+    /// Font size of the data: grid and sidebar tree.
+    pub data_font_size: u32,
 }
 
 impl Default for Settings {
@@ -189,14 +200,17 @@ impl Default for Settings {
             auto_limit_default: false,
             auto_limit_value: 1000,
             keymap: BTreeMap::new(),
+            interface_scale: 1.0,
+            data_font_size: 13,
         }
     }
 }
 
 impl Settings {
-    /// Returns these settings with every numeric value brought into its bounds, an
-    /// unsafe editor font family replaced by "" (the default font) and the keymap entries
-    /// with an unknown action id or an invalid spec dropped (at most 64 kept).
+    /// Returns these settings with every numeric value brought into its bounds (the
+    /// interface scale also on a 5 % step), an unsafe editor font family replaced by ""
+    /// (the default font) and the keymap entries with an unknown action id or an invalid
+    /// spec dropped (at most 64 kept).
     pub fn clamped(mut self) -> Self {
         self.version = SETTINGS_VERSION;
         self.keymap = clean_keymap(std::mem::take(&mut self.keymap), KEYMAP_MAX_ENTRIES);
@@ -204,6 +218,8 @@ impl Settings {
             self.editor_font_family = String::new();
         }
         self.editor_font_size = self.editor_font_size.clamp(EDITOR_FONT_SIZE.0, EDITOR_FONT_SIZE.1);
+        self.data_font_size = self.data_font_size.clamp(DATA_FONT_SIZE.0, DATA_FONT_SIZE.1);
+        self.interface_scale = clamp_interface_scale(self.interface_scale);
         self.page_size = self.page_size.clamp(PAGE_SIZE.0, PAGE_SIZE.1);
         self.exact_count_threshold = self
             .exact_count_threshold
@@ -211,6 +227,15 @@ impl Settings {
         self.auto_limit_value = self.auto_limit_value.clamp(AUTO_LIMIT_VALUE.0, AUTO_LIMIT_VALUE.1);
         self
     }
+}
+
+/// `scale` within `INTERFACE_SCALE`, on a 5 % step; 1.0 when it is not a number.
+pub fn clamp_interface_scale(scale: f32) -> f32 {
+    if !scale.is_finite() {
+        return 1.0;
+    }
+    ((scale.clamp(INTERFACE_SCALE.0, INTERFACE_SCALE.1) * 20.0).round() / 20.0)
+        .clamp(INTERFACE_SCALE.0, INTERFACE_SCALE.1)
 }
 
 /// Reads the settings file. A missing, unreadable or invalid file gives the defaults and
@@ -312,6 +337,62 @@ mod tests {
         let loaded = load(&path(&dir));
         assert_eq!(loaded.editor_font_size, 10);
         assert_eq!(loaded.page_size, 5000);
+    }
+
+    #[test]
+    fn interface_scale_and_data_font_size_clamped() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Settings {
+            interface_scale: 3.0,
+            data_font_size: 99,
+            ..Settings::default()
+        };
+        save(&path(&dir), &s).unwrap();
+        let loaded = load(&path(&dir));
+        assert_eq!(loaded.interface_scale, 1.3);
+        assert_eq!(loaded.data_font_size, 24);
+        // Hand-edited file: clamped on load, and the scale snaps to a 5 % step.
+        std::fs::write(path(&dir), r#"{"interfaceScale":0.2,"dataFontSize":2}"#).unwrap();
+        let loaded = load(&path(&dir));
+        assert_eq!(loaded.interface_scale, 0.9);
+        assert_eq!(loaded.data_font_size, 10);
+        let snapped = Settings {
+            interface_scale: 1.12,
+            ..Settings::default()
+        }
+        .clamped();
+        assert_eq!(snapped.interface_scale, 1.1);
+        let not_a_number = Settings {
+            interface_scale: f32::NAN,
+            ..Settings::default()
+        }
+        .clamped();
+        assert_eq!(not_a_number.interface_scale, 1.0);
+        // On the wire (JSON text) the scale stays a round number, not 1.149999976….
+        let json = serde_json::to_string(&Settings {
+            interface_scale: 1.15,
+            ..Settings::default()
+        })
+        .unwrap();
+        assert!(json.contains(r#""interfaceScale":1.15,"#), "{json}");
+        assert!(json.contains(r#""dataFontSize":13"#), "{json}");
+    }
+
+    #[test]
+    fn old_settings_get_new_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        // A file written before the interface size and the data font size existed.
+        std::fs::write(
+            path(&dir),
+            r#"{"version":1,"theme":"dark","editorFontFamily":"","editorFontSize":16,"pageSize":300,
+                "exactCountThreshold":500000,"autoLimitDefault":false,"autoLimitValue":1000,"keymap":{}}"#,
+        )
+        .unwrap();
+        let s = load(&path(&dir));
+        assert_eq!(s.theme, Theme::Dark);
+        assert_eq!(s.editor_font_size, 16, "saved editor size kept");
+        assert_eq!(s.interface_scale, 1.0);
+        assert_eq!(s.data_font_size, 13);
     }
 
     #[test]

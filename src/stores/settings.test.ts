@@ -113,3 +113,36 @@ test("update sends and keeps a cleaned keymap", async () => {
   expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+Shift+N" } });
   expect(useSettings.getState().settings.keymap).toEqual({ "query.new": "Mod+Shift+N" });
 });
+
+test("interface_scale_applied_on_load_and_change", async () => {
+  vi.mocked(ipc.windowSetZoom).mockResolvedValue(undefined);
+  vi.mocked(ipc.settingsGet).mockResolvedValue({ ...DEFAULT_SETTINGS, interfaceScale: 1.15 });
+  await useSettings.getState().load();
+  expect(ipc.windowSetZoom).toHaveBeenLastCalledWith(1.15);
+
+  // A change applies at once (optimistic), then the value the backend stored.
+  vi.mocked(ipc.settingsSet).mockResolvedValue({ ...DEFAULT_SETTINGS, interfaceScale: 1.3 });
+  const p = useSettings.getState().update({ interfaceScale: 1.5 });
+  expect(ipc.windowSetZoom).toHaveBeenLastCalledWith(1.5);
+  await p;
+  expect(ipc.windowSetZoom).toHaveBeenLastCalledWith(1.3);
+
+  // Another setting does not re-apply the zoom.
+  vi.mocked(ipc.windowSetZoom).mockClear();
+  vi.mocked(ipc.settingsSet).mockResolvedValue({ ...DEFAULT_SETTINGS, interfaceScale: 1.3, pageSize: 100 });
+  await useSettings.getState().update({ pageSize: 100 });
+  expect(ipc.windowSetZoom).not.toHaveBeenCalled();
+
+  // A failed update reverts the zoom with the settings.
+  vi.mocked(ipc.settingsSet).mockRejectedValue({ kind: "io", message: "boom" });
+  await useSettings.getState().update({ interfaceScale: 0.9 });
+  expect(ipc.windowSetZoom).toHaveBeenLastCalledWith(1.3);
+});
+
+test("a failing zoom call does not fail the settings load", async () => {
+  vi.mocked(ipc.windowSetZoom).mockRejectedValue({ kind: "io", message: "no webview" });
+  vi.mocked(ipc.settingsGet).mockResolvedValue({ ...DEFAULT_SETTINGS, theme: "dark" });
+  await useSettings.getState().load();
+  expect(useSettings.getState().error).toBeNull();
+  expect(useSettings.getState().settings.theme).toBe("dark");
+});

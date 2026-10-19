@@ -3,6 +3,7 @@ import { KEYMAP_ACTIONS, isValidShortcut } from "../../lib/keymapRegistry";
 /** Inclusive bounds of the numeric settings. They mirror the constants of src-tauri/src/settings.rs. */
 export const SETTINGS_BOUNDS = {
   editorFontSize: { min: 10, max: 24 },
+  dataFontSize: { min: 10, max: 24 },
   pageSize: { min: 50, max: 5000 },
   exactCountThreshold: { min: 10_000, max: 100_000_000 },
   autoLimitValue: { min: 1, max: 1_000_000 },
