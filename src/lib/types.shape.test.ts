@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import type {
+  AppFlags,
   ApplyOutcome,
   Catalog,
   Capabilities,
@@ -267,4 +268,22 @@ test("Catalog and DbRoutine", () => {
   expect(c.tables[0].kind).toBe("view");
   const r: DbRoutine = JSON.parse('{"schema":"s","name":"f","kind":"procedure"}');
   expect(r.kind).toBe("procedure");
+});
+
+// Literal JSON as store.rs (MongoSettings) and flags.rs (AppFlags) serialise it.
+test("MongoDB connection settings and app flags", () => {
+  const c: ConnectionConfig = JSON.parse(`{
+    "id":"m","name":"n","color":"swatch-1","envTag":"dev","kind":"mongoDb",
+    "host":"h","port":27017,"user":"u","database":"shop","sqlitePath":null,
+    "passwordMode":"keyring","group":null,
+    "ssl":{"mode":"verifyFull","caFile":null,"certFile":null,"keyFile":null},"ssh":null,
+    "safeMode":null,
+    "mongo":{"srv":true,"extraHosts":["h2:27018"],"authSource":"admin","authMechanism":"scramSha256",
+      "replicaSet":null,"options":[["appName","tm"]]}
+  }`);
+  expect(c.kind).toBe("mongoDb");
+  expect(c.mongo?.authMechanism).toBe("scramSha256");
+  expect(c.mongo?.options[0]).toEqual(["appName", "tm"]);
+  const flags: AppFlags = JSON.parse('{"mongodb":false}');
+  expect(flags.mongodb).toBe(false);
 });

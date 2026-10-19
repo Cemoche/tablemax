@@ -430,6 +430,7 @@ async fn save(m: &Mgr, url: &str, kind: DriverKind) -> String {
         ssl: SslConfig::default(),
         ssh: None,
         safe_mode: None,
+        mongo: None,
     };
     m.mgr
         .save_connection(cfg, p.password.clone(), None)

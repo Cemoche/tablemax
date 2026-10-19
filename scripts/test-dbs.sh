@@ -41,6 +41,8 @@ case "${1:-}" in
     echo "export TABLEMAX_TEST_TLS_DIR=$(pwd)/.test-secrets/tls"
     echo "export TABLEMAX_TEST_SSH=127.0.0.1:${TABLEMAX_TEST_SSH_PORT}"
     echo "export TABLEMAX_TEST_SSH_DIR=$(pwd)/.test-secrets/ssh"
+    # MongoDB is experimental until it ships (flags.rs); removed with the flag.
+    echo "export TABLEMAX_EXPERIMENTAL=mongodb"
     ;;
   *)
     echo "usage: $0 up|down|env" >&2

@@ -20,6 +20,7 @@ const DEFAULT_PORT: Record<DriverKind, number> = {
   mySql: 3306,
   mariaDb: 3306,
   sqlite: 0,
+  mongoDb: 27017,
 };
 
 export const blankConnection = (): ConnectionConfig => ({

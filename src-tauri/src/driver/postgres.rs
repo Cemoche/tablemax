@@ -1152,6 +1152,7 @@ mod tests {
                 ..Default::default()
             },
             dial: None,
+            mongo: None,
         };
         let start = Instant::now();
         let res = tokio::time::timeout(

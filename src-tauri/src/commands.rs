@@ -39,6 +39,12 @@ pub async fn connection_save(
     state.save_connection(config, password, ssh_secret).await
 }
 
+/// The experimental features switched on for this run (`TABLEMAX_EXPERIMENTAL`).
+#[tauri::command]
+pub fn app_flags() -> crate::flags::AppFlags {
+    crate::flags::app_flags()
+}
+
 #[tauri::command]
 pub async fn connection_delete(state: State<'_, SessionManager>, id: String) -> AppResult<()> {
     state.delete_connection(&id).await

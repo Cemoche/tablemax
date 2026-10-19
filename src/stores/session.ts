@@ -151,7 +151,9 @@ export function parseSnapshot(json: string): SessionSnapshot | null {
   return { version: 1, activeWorkspaceIndex: v.activeWorkspaceIndex, workspaces };
 }
 
-const dialectOf = (kind: DriverKind): Dialect => (kind === "mariaDb" ? "mySql" : kind);
+/** No dialect for a document connection (MongoDB). */
+const dialectOf = (kind: DriverKind): Dialect | null =>
+  kind === "mongoDb" ? null : kind === "mariaDb" ? "mySql" : kind;
 
 /** Disconnected workspaces for `snap`; connections deleted since are dropped. */
 function restoredWorkspaces(snap: SessionSnapshot): { workspaces: Workspace[]; activeId: string | null } {

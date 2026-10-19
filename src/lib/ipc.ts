@@ -2,6 +2,7 @@
 // Rejected promises carry an AppError (use toAppError from ./errors to normalise).
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
+  AppFlags,
   ApplyOutcome,
   Catalog,
   CellValue,
@@ -177,6 +178,9 @@ export const settingsGet = () => invoke<Settings>("settings_get");
 
 /** Saves the settings; resolves with the stored value (out-of-range numbers clamped). */
 export const settingsSet = (settings: Settings) => invoke<Settings>("settings_set", { settings });
+
+/** Feature flags of the running app (MongoDB is experimental, see flags.rs). */
+export const appFlags = () => invoke<AppFlags>("app_flags");
 
 /** The app version (from the package info). */
 export const appVersion = () => invoke<string>("app_version");

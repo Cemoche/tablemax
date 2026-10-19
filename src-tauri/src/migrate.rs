@@ -233,6 +233,7 @@ mod tests {
             ssl: SslConfig::default(),
             ssh: None,
             safe_mode: None,
+            mongo: None,
         }
     }
 

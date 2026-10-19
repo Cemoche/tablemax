@@ -92,6 +92,7 @@ fn pg_over_ssh(ssh: SshSettings) -> (ConnectionConfig, Option<String>) {
         ssl: SslConfig::default(),
         ssh: Some(ssh),
         safe_mode: None,
+        mongo: None,
     };
     (cfg, p.password)
 }
@@ -294,6 +295,7 @@ async fn mysql_and_mariadb_over_ssh_with_key_auth() {
             ssl: SslConfig::default(),
             ssh: Some(ssh),
             safe_mode: None,
+            mongo: None,
         };
         let saved = fx.mgr.save_connection(cfg, p.password, None).await.unwrap();
         // The app known_hosts is shared by both connections: confirm only once.

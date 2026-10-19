@@ -333,8 +333,25 @@ async fn connect(
         sqlite_path: cfg.sqlite_path.as_ref().map(Into::into),
         ssl: cfg.ssl.clone(),
         dial: tunnel.map(SshTunnel::local_addr),
+        mongo: cfg.mongo.clone(),
     })
     .await
+}
+
+/// Refuses to save a MongoDB connection while the feature is off, or one with an SSL mode
+/// the driver does not offer, or without its MongoDB settings.
+fn check_mongo_config(cfg: &ConnectionConfig) -> AppResult<()> {
+    if cfg.kind != DriverKind::MongoDb {
+        return Ok(());
+    }
+    crate::flags::ensure_mongodb_enabled(crate::flags::experimental("mongodb"))?;
+    if !driver::tls::ssl_modes_for(cfg.kind).contains(&cfg.ssl.mode) {
+        return Err(AppError::new(
+            ErrorKind::Invalid,
+            "MongoDB connections support the TLS modes disable, require and verify-full only",
+        ));
+    }
+    Ok(())
 }
 
 /// The SQL session of `session`; a session of another family is closed and refused.
@@ -549,6 +566,7 @@ impl SessionManager {
         password: Option<String>,
         ssh_secret: Option<String>,
     ) -> AppResult<ConnectionConfig> {
+        check_mongo_config(&cfg)?;
         let (st, sec) = (self.store.clone(), self.secrets.clone());
         blocking(move || store::save_connection(&st, sec.as_ref(), cfg, password, ssh_secret)).await
     }
@@ -1397,7 +1415,7 @@ impl SessionManager {
     ) -> AppResult<String> {
         let mut r = self.reconnect_material(workspace_id)?;
         if let Some(db) = database {
-            if r.config.kind != DriverKind::Postgres {
+            if !driver::capabilities(r.config.kind).database_switch {
                 return Err(AppError::new(
                     ErrorKind::Invalid,
                     "only PostgreSQL connections switch database; use the schema instead",
@@ -1648,7 +1666,7 @@ impl SessionManager {
         database: &str,
     ) -> AppResult<WorkspaceInfo> {
         let mut r = self.reconnect_material(workspace_id)?;
-        if r.config.kind != DriverKind::Postgres {
+        if !driver::capabilities(r.config.kind).database_switch {
             return Err(AppError::new(
                 ErrorKind::Invalid,
                 "only PostgreSQL connections switch database; use the schema instead",
@@ -1921,6 +1939,7 @@ mod tests {
             ssl: SslConfig::default(),
             ssh: None,
             safe_mode: None,
+            mongo: None,
         }
     }
 

@@ -24,6 +24,7 @@ use rustls::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::DriverKind;
 use crate::error::{AppError, AppResult, ErrorKind};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -64,6 +65,18 @@ pub fn default_ssl_mode(host: &str, over_ssh: bool) -> SslMode {
         SslMode::Prefer
     } else {
         SslMode::VerifyFull
+    }
+}
+
+/// The SSL modes a driver offers: MySQL/MariaDB have no `VerifyCa` (mysql_async), MongoDB
+/// only `Disable`, `Require` and `VerifyFull` (the `mongodb` crate cannot verify a
+/// certificate without verifying the host name).
+pub fn ssl_modes_for(kind: DriverKind) -> &'static [SslMode] {
+    use SslMode::*;
+    match kind {
+        DriverKind::Postgres | DriverKind::Sqlite => &[Disable, Prefer, Require, VerifyCa, VerifyFull],
+        DriverKind::MySql | DriverKind::MariaDb => &[Disable, Prefer, Require, VerifyFull],
+        DriverKind::MongoDb => &[Disable, Require, VerifyFull],
     }
 }
 
@@ -468,5 +481,20 @@ mod tests {
             assert_eq!(default_ssl_mode(h, false), SslMode::Prefer, "{h}");
             assert_eq!(default_ssl_mode(h, true), SslMode::Prefer, "{h} over ssh");
         }
+    }
+}
+
+#[cfg(test)]
+mod mongo_tests {
+    use super::*;
+
+    #[test]
+    fn ssl_modes_for_mongo() {
+        assert_eq!(
+            ssl_modes_for(DriverKind::MongoDb),
+            [SslMode::Disable, SslMode::Require, SslMode::VerifyFull]
+        );
+        assert!(ssl_modes_for(DriverKind::Postgres).contains(&SslMode::Prefer));
+        assert!(!ssl_modes_for(DriverKind::MySql).contains(&SslMode::VerifyCa));
     }
 }

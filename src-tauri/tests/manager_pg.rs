@@ -52,6 +52,7 @@ async fn cancel_marks_batch_cancelled_pg() {
         ssl: SslConfig::default(),
         ssh: None,
         safe_mode: None,
+        mongo: None,
     };
     let saved = mgr
         .save_connection(cfg, p.password.clone(), None)
@@ -145,6 +146,7 @@ async fn test_connection_reuses_keyring_only_for_unchanged_identity_pg() {
         ssl: SslConfig::default(),
         ssh: None,
         safe_mode: None,
+        mongo: None,
     };
     let saved = mgr
         .save_connection(cfg, p.password.clone(), None)
@@ -183,6 +185,7 @@ fn pg_cfg(host: &str, mode: PasswordMode) -> (ConnectionConfig, Option<String>) 
         ssl: SslConfig::default(),
         ssh: None,
         safe_mode: None,
+        mongo: None,
     };
     (cfg, p.password)
 }

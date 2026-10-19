@@ -750,3 +750,16 @@ test("toggleSidebar flips the app-level sidebar flag", () => {
   useWorkspaces.getState().toggleSidebar();
   expect(useWorkspaces.getState().sidebarVisible).toBe(true);
 });
+
+test("before its first connect a document workspace has the document capabilities", () => {
+  restore();
+  expect(capabilitiesOf({ ...ws(), dialect: null })).toEqual({
+    sqlEditor: false,
+    gridEditing: false,
+    routines: false,
+    ddl: false,
+    foreignKeys: false,
+    documents: true,
+    databaseSwitch: false,
+  });
+});

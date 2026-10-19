@@ -3,7 +3,7 @@
 // driver/{mod,tls,meta,query,dml}.rs and import/{mod,tableplus}.rs.
 // Pinned by types.shape.test.ts.
 
-export type DriverKind = "postgres" | "mySql" | "mariaDb" | "sqlite";
+export type DriverKind = "postgres" | "mySql" | "mariaDb" | "sqlite" | "mongoDb";
 export type Dialect = "postgres" | "mySql" | "sqlite";
 export type EnvTag = "local" | "dev" | "staging" | "prod";
 export type PasswordMode = "keyring" | "ask" | "none";
@@ -57,7 +57,10 @@ export type CellValue =
   | { t: "json"; v: string }
   | { t: "temporal"; v: string };
 
-/** libpq-style TLS modes (driver/tls.rs). MySQL/MariaDB do not support verifyCa yet. */
+/**
+ * libpq-style TLS modes (driver/tls.rs). MySQL/MariaDB do not support verifyCa yet;
+ * MongoDB offers disable, require and verifyFull only.
+ */
 export type SslMode = "disable" | "prefer" | "require" | "verifyCa" | "verifyFull";
 
 export interface SslConfig {
@@ -87,6 +90,27 @@ export interface SshSettings {
 /** What file_pick picks a file for (commands.rs FilePurpose). */
 export type FilePurpose = "caCert" | "clientCert" | "clientKey" | "sshKey" | "tableplusExport";
 
+export type MongoAuth = "default" | "scramSha1" | "scramSha256" | "plain";
+
+/** MongoDB-only connection settings (store.rs MongoSettings); no secret fields. */
+export interface MongoSettings {
+  /** `mongodb+srv://`: `host` is the SRV name and `port` is unused. */
+  srv: boolean;
+  /** Hosts after the first one, as "host:port". */
+  extraHosts: string[];
+  /** Authentication database; null: the connection's database, else admin. */
+  authSource: string | null;
+  authMechanism: MongoAuth;
+  replicaSet: string | null;
+  /** Allowed advanced URI options, in the order they were given. */
+  options: [string, string][];
+}
+
+/** Feature flags of the running app (flags.rs AppFlags). */
+export interface AppFlags {
+  mongodb: boolean;
+}
+
 /**
  * Persisted connection settings (no secret fields).
  * `color` stores a swatch id "swatch-1".."swatch-6" (see SWATCHES), which maps to the
@@ -110,6 +134,8 @@ export interface ConnectionConfig {
   ssh: SshSettings | null;
   /** null or absent: Default (by environment). */
   safeMode?: SafeMode | null;
+  /** MongoDB settings; null or absent for the other drivers. */
+  mongo?: MongoSettings | null;
 }
 
 /** Something an import could not carry over as is (import/tableplus.rs ImportWarning). */

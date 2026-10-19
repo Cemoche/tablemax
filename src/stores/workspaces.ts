@@ -195,22 +195,24 @@ export function sqlCapabilities(dialect: Dialect): Capabilities {
   };
 }
 
-const NO_CAPABILITIES: Capabilities = {
+/** The capabilities of a document connection (mirror of `driver::capabilities(MongoDb)`). */
+export const documentCapabilities: Capabilities = {
   sqlEditor: false,
   gridEditing: false,
   routines: false,
   ddl: false,
   foreignKeys: false,
-  documents: false,
+  documents: true,
   databaseSwitch: false,
 };
 
 /**
  * What the interface may offer on `w`: what its connection reported, else (before its
- * first connect) the SQL capabilities of its dialect.
+ * first connect) the SQL capabilities of its dialect, or the document capabilities
+ * when it has none (MongoDB).
  */
 export function capabilitiesOf(w: Pick<Workspace, "capabilities" | "dialect">): Capabilities {
-  return w.capabilities ?? (w.dialect ? sqlCapabilities(w.dialect) : NO_CAPABILITIES);
+  return w.capabilities ?? (w.dialect ? sqlCapabilities(w.dialect) : documentCapabilities);
 }
 
 /**

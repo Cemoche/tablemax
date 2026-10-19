@@ -130,6 +130,7 @@ impl Parsed {
             ssl: SslConfig::default(),
             ssh: None,
             safe_mode: None,
+            mongo: None,
         };
         if kind == DriverKind::Sqlite {
             config.sqlite_path = Some(text(obj, "DatabasePath")).filter(|p| !p.is_empty());
@@ -217,6 +218,7 @@ fn default_port(kind: DriverKind) -> u16 {
         DriverKind::Postgres => 5432,
         DriverKind::MySql | DriverKind::MariaDb => 3306,
         DriverKind::Sqlite => 0,
+        DriverKind::MongoDb => 27017,
     }
 }
 

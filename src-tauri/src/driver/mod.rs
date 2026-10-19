@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::store::MongoSettings;
 use crate::value::CellValue;
 use catalog::{Catalog, DbRoutine};
 use dml::ApplyOutcome;
@@ -30,6 +31,7 @@ pub enum DriverKind {
     MySql,
     MariaDb,
     Sqlite,
+    MongoDb,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -41,11 +43,13 @@ pub enum Dialect {
 }
 
 impl DriverKind {
-    pub fn dialect(self) -> Dialect {
+    /// The SQL dialect of the driver; `None` for a document database.
+    pub fn dialect(self) -> Option<Dialect> {
         match self {
-            DriverKind::Postgres => Dialect::Postgres,
-            DriverKind::MySql | DriverKind::MariaDb => Dialect::MySql,
-            DriverKind::Sqlite => Dialect::Sqlite,
+            DriverKind::Postgres => Some(Dialect::Postgres),
+            DriverKind::MySql | DriverKind::MariaDb => Some(Dialect::MySql),
+            DriverKind::Sqlite => Some(Dialect::Sqlite),
+            DriverKind::MongoDb => None,
         }
     }
 }
@@ -65,6 +69,8 @@ pub struct ConnectParams {
     /// When set, the TCP connection goes to this address (e.g. an SSH tunnel's local
     /// end) while `host` stays the name used for TLS verification and display.
     pub dial: Option<SocketAddr>,
+    /// MongoDB-only settings (`None` for the other drivers).
+    pub mongo: Option<MongoSettings>,
 }
 
 impl std::fmt::Debug for ConnectParams {
@@ -80,6 +86,7 @@ impl std::fmt::Debug for ConnectParams {
             .field("sqlite_path", &self.sqlite_path)
             .field("ssl", &self.ssl)
             .field("dial", &self.dial)
+            .field("mongo", &self.mongo)
             .finish()
     }
 }
@@ -272,19 +279,43 @@ pub struct Capabilities {
 }
 
 pub fn capabilities(kind: DriverKind) -> Capabilities {
-    Capabilities {
+    let sql = Capabilities {
         sql_editor: true,
         grid_editing: true,
         routines: true,
         ddl: true,
         foreign_keys: true,
         documents: false,
-        database_switch: kind == DriverKind::Postgres,
+        database_switch: false,
+    };
+    match kind {
+        DriverKind::Postgres => Capabilities {
+            database_switch: true,
+            ..sql
+        },
+        DriverKind::MySql | DriverKind::MariaDb | DriverKind::Sqlite => sql,
+        DriverKind::MongoDb => Capabilities {
+            sql_editor: false,
+            grid_editing: false,
+            routines: false,
+            ddl: false,
+            foreign_keys: false,
+            documents: true,
+            database_switch: false,
+        },
     }
 }
 
 pub async fn connect(params: &ConnectParams) -> AppResult<AnySession> {
     let session = match params.kind {
+        DriverKind::MongoDb => {
+            crate::flags::ensure_mongodb_enabled(crate::flags::experimental("mongodb"))?;
+            // The driver arrives with the next task.
+            return Err(AppError::new(
+                ErrorKind::Invalid,
+                "MongoDB connections are not implemented yet",
+            ));
+        }
         DriverKind::Sqlite => match &params.sqlite_path {
             Some(path) => sqlite::connect_sqlite(path).await,
             None => Err(AppError::new(ErrorKind::Invalid, "sqlite_path is required")),
@@ -311,6 +342,7 @@ mod tests {
             sqlite_path: None,
             ssl: SslConfig::default(),
             dial: None,
+            mongo: None,
         };
         let out = format!("{:?}", params);
         assert!(!out.contains("s3cret-value"));
@@ -338,6 +370,16 @@ mod tests {
         for kind in [DriverKind::MySql, DriverKind::MariaDb, DriverKind::Sqlite] {
             assert_eq!(capabilities(kind), sql_but_switch, "{kind:?}");
         }
+        let only_documents = Capabilities {
+            sql_editor: false,
+            grid_editing: false,
+            routines: false,
+            ddl: false,
+            foreign_keys: false,
+            documents: true,
+            database_switch: false,
+        };
+        assert_eq!(capabilities(DriverKind::MongoDb), only_documents);
         let wire = serde_json::to_value(capabilities(DriverKind::Postgres)).unwrap();
         assert_eq!(
             wire,

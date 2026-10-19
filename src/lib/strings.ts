@@ -24,6 +24,7 @@ export const strings = {
     invalidSslMode: (value: string) => `invalid sslmode "${value}"`,
     invalidSshAuth: (value: string) => `invalid ssh-auth "${value}"`,
     sshPasswordIgnored: "ssh password in the URL was ignored",
+    mongoRefused: (names: string[]) => `MongoDB options not supported: ${names.join(", ")}`,
     dialogTitle: "New connection from URL",
     label: "Connection URL",
     placeholder: "postgresql://user@host:5432/database",
@@ -112,6 +113,7 @@ export const strings = {
     mySql: "MySQL",
     mariaDb: "MariaDB",
     sqlite: "SQLite",
+    mongoDb: "MongoDB",
   },
   passwordMode: {
     keyring: "Keyring",

@@ -55,8 +55,14 @@ export function defaultSslMode(host: string, overSsh: boolean): SslMode {
 
 const ALL_MODES: SslMode[] = ["disable", "prefer", "require", "verifyCa", "verifyFull"];
 
-/** Modes offered for a driver: MySQL/MariaDB do not support verifyCa yet (mysql_async). */
+const MONGO_MODES: SslMode[] = ["disable", "require", "verifyFull"];
+
+/**
+ * Modes offered for a driver: MySQL/MariaDB do not support verifyCa yet (mysql_async);
+ * MongoDB only disable, require and verifyFull (mirror of `tls::ssl_modes_for`).
+ */
 export function sslModesFor(kind: DriverKind): SslMode[] {
+  if (kind === "mongoDb") return MONGO_MODES;
   return kind === "mySql" || kind === "mariaDb" ? ALL_MODES.filter((m) => m !== "verifyCa") : ALL_MODES;
 }
 

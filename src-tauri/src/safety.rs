@@ -912,6 +912,7 @@ mod tests {
             ssl: SslConfig::default(),
             ssh: None,
             safe_mode,
+            mongo: None,
         }
     }
 
