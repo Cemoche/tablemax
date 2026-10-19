@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Checks that a release tag matches the app version everywhere it is written.
+# Checks that a release tag matches the app version everywhere it is written
+# (package.json, tauri.conf.json, Cargo.toml and, when present, Cargo.lock).
 # Usage: bash scripts/release-check-version.sh <tag>   (e.g. v0.1.0 or v0.1.0-beta.1)
 # Prints the version on success; exits 1 with the mismatches otherwise. Needs jq.
 set -euo pipefail
@@ -19,8 +20,16 @@ conf="$(jq -r .version "$ROOT/src-tauri/tauri.conf.json")"
 cargo="$(awk '/^\[/ { in_pkg = ($0 == "[package]") } in_pkg && /^version *=/ { gsub(/.*= *"|".*/, ""); print; exit }' \
   "$ROOT/src-tauri/Cargo.toml")"
 
+pairs=("package.json:$pkg" "src-tauri/tauri.conf.json:$conf" "src-tauri/Cargo.toml:$cargo")
+# The tablemax entry of Cargo.lock, when the lock file is there (it is in the repository).
+if [[ -f "$ROOT/src-tauri/Cargo.lock" ]]; then
+  lock="$(awk '/^\[\[package\]\]/ { want = 0 } /^name = "tablemax"$/ { want = 1; next }
+               want && /^version = / { gsub(/.*= *"|".*/, ""); print; exit }' "$ROOT/src-tauri/Cargo.lock")"
+  pairs+=("src-tauri/Cargo.lock:$lock")
+fi
+
 status=0
-for pair in "package.json:$pkg" "src-tauri/tauri.conf.json:$conf" "src-tauri/Cargo.toml:$cargo"; do
+for pair in "${pairs[@]}"; do
   file="${pair%%:*}" have="${pair#*:}"
   if [[ "$have" != "$want" ]]; then
     echo "error: $file has version '$have', tag $tag wants '$want'" >&2

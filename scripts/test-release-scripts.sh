@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for scripts/release-check-version.sh, the glibc check of scripts/release-smoke.sh
-# and scripts/release-files.sh.
+# Tests for scripts/release-check-version.sh, the glibc check of scripts/release-smoke.sh,
+# scripts/release-files.sh and scripts/release-bump.sh.
 # Usage: bash scripts/test-release-scripts.sh   (needs jq, dpkg-deb, objdump; no network)
 set -uo pipefail
 
@@ -67,6 +67,11 @@ fixture "$TMP/conf" 0.2.0 0.1.9 0.2.0
 expect "tauri.conf.json version is checked" 1 "src-tauri/tauri.conf.json has version '0.1.9'" \
   env RELEASE_ROOT="$TMP/conf" bash "$CHECK" v0.2.0
 
+mkdir -p "$TMP/lock"; cp -r "$TMP/same/." "$TMP/lock/"
+printf '[[package]]\nname = "tablemax"\nversion = "0.1.0"\n' >"$TMP/lock/src-tauri/Cargo.lock"
+expect "Cargo.lock's tablemax entry is checked when the file exists" 1 \
+  "src-tauri/Cargo.lock has version '0.1.0'" env RELEASE_ROOT="$TMP/lock" bash "$CHECK" v0.2.0
+
 expect "the repository itself has one version everywhere" 0 "" \
   bash "$CHECK" "v$(jq -r .version "$ROOT/package.json")"
 
@@ -117,6 +122,98 @@ expect "an empty directory is refused" 1 "expected 1 .AppImage" bash "$FILES" "$
 mk "$TMP/rel-hidden" "$TMP/rel-hidden/T.deb" "$TMP/rel-hidden/T.AppImage" "$TMP/rel-hidden/.env"
 expect "a hidden file is refused" 1 ".env" bash "$FILES" "$TMP/rel-hidden"
 expect "a missing directory is refused" 1 "no such directory" bash "$FILES" "$TMP/nope"
+
+# --- version bump --------------------------------------------------------------------
+
+BUMP="$ROOT/scripts/release-bump.sh"
+bump_fixture() { # $1 = dir, $2 = current version
+  mkdir -p "$1/src-tauri"
+  cat >"$1/package.json" <<EOF
+{
+  "name": "tablemax",
+  "private": true,
+  "version": "$2",
+  "dependencies": {
+    "react": "^19.0.0"
+  }
+}
+EOF
+  cat >"$1/src-tauri/tauri.conf.json" <<EOF
+{
+  "\$schema": "https://schema.tauri.app/config/2",
+  "productName": "TableMax",
+  "version": "$2",
+  "identifier": "io.github.cemoche.tablemax"
+}
+EOF
+  cat >"$1/src-tauri/Cargo.toml" <<EOF
+[package]
+name = "tablemax"
+version = "$2"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0.0" }
+tokio = "1"
+EOF
+  cat >"$1/src-tauri/Cargo.lock" <<EOF
+version = 4
+
+[[package]]
+name = "serde"
+version = "$2"
+
+[[package]]
+name = "tablemax"
+version = "$2"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "tablemax-extra"
+version = "$2"
+EOF
+}
+
+bump_fixture "$TMP/bump" 0.1.0
+cp -r "$TMP/bump" "$TMP/bump-before"
+expect "bump sets the new version" 0 "0.2.0" env RELEASE_ROOT="$TMP/bump" bash "$BUMP" 0.2.0
+expect "after a bump the tag check passes" 0 "0.2.0" \
+  env RELEASE_ROOT="$TMP/bump" bash "$CHECK" v0.2.0
+changed="$(diff -r "$TMP/bump-before" "$TMP/bump" | grep -c '^>' || true)"
+if [[ "$changed" == 4 ]]; then ok "bump changes exactly 4 lines (3 manifests + Cargo.lock)"; else
+  fail "bump changes exactly 4 lines (changed: $changed)"; diff -r "$TMP/bump-before" "$TMP/bump"
+fi
+if grep -q 'serde = { version = "1.0.0" }' "$TMP/bump/src-tauri/Cargo.toml"; then
+  ok "dependency versions in Cargo.toml are untouched"
+else
+  fail "dependency versions in Cargo.toml are untouched"
+fi
+if [[ "$(grep -A1 '^name = "tablemax-extra"' "$TMP/bump/src-tauri/Cargo.lock" | tail -1)" == 'version = "0.1.0"' \
+   && "$(grep -A1 '^name = "serde"' "$TMP/bump/src-tauri/Cargo.lock" | tail -1)" == 'version = "0.1.0"' ]]; then
+  ok "only the tablemax entry of Cargo.lock moves"
+else
+  fail "only the tablemax entry of Cargo.lock moves"
+fi
+
+bump_fixture "$TMP/bump-bad" 0.1.0
+cp -r "$TMP/bump-bad" "$TMP/bump-bad-before"
+expect "a non-semver version is refused" 1 "not a version" env RELEASE_ROOT="$TMP/bump-bad" bash "$BUMP" 0.2
+expect "a v prefix is refused (the script takes the version, the tag adds v)" 1 "not a version" \
+  env RELEASE_ROOT="$TMP/bump-bad" bash "$BUMP" v0.2.0
+if diff -r "$TMP/bump-bad-before" "$TMP/bump-bad" >/dev/null; then ok "a refused bump changes nothing"; else
+  fail "a refused bump changes nothing"
+fi
+expect "a prerelease version is accepted" 0 "0.2.0-beta.1" \
+  env RELEASE_ROOT="$TMP/bump-bad" bash "$BUMP" 0.2.0-beta.1
+expect "bumping to the current version says so and changes nothing" 0 "already" \
+  env RELEASE_ROOT="$TMP/bump-bad" bash "$BUMP" 0.2.0-beta.1
+
+bump_fixture "$TMP/bump-drift" 0.1.0
+sed -i 's/^version = "0.1.0"$/version = "0.0.9"/' "$TMP/bump-drift/src-tauri/Cargo.toml"
+expect "files that disagree before the bump are refused" 1 "disagree" \
+  env RELEASE_ROOT="$TMP/bump-drift" bash "$BUMP" 0.2.0
 
 echo
 if [[ $failures -eq 0 ]]; then echo "all release script tests passed"; else
