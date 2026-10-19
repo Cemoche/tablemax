@@ -114,14 +114,26 @@ fn map_error(e: &mongodb::error::Error, connected: bool) -> AppError {
     AppError::new(kind, message)
 }
 
-/// `map_error` with every occurrence of `password` removed (defence in depth: the driver
-/// never puts it in a message).
+/// `map_error` for a connection attempt, through [`withhold_if_password`].
 fn map_connect_error(e: &mongodb::error::Error, password: Option<&str>) -> AppError {
-    let mut err = map_error(e, false);
-    if let Some(p) = password.filter(|p| !p.is_empty()) {
-        err.message = err.message.replace(p, "<redacted>");
+    withhold_if_password(map_error(e, false), password)
+}
+
+/// Defence in depth: the driver never puts the password in a message, so a message that
+/// contains it does so by coincidence (password `admin`, "not authorized on admin").
+/// Substituting it would point at the password; the whole message is replaced instead,
+/// by a generic one of the same kind.
+fn withhold_if_password(err: AppError, password: Option<&str>) -> AppError {
+    match password {
+        Some(p) if !p.is_empty() && err.message.contains(p) => {
+            let message = match err.kind {
+                ErrorKind::Auth => "authentication failed",
+                _ => "cannot connect to the MongoDB server",
+            };
+            AppError::new(err.kind, message)
+        }
+        _ => err,
     }
-    err
 }
 
 fn cancelled() -> AppError {
@@ -444,6 +456,34 @@ mod tests {
              driver requires at least 9 (MongoDB 4.4)."
         ));
         assert!(!is_too_old("Authentication failed."));
+    }
+
+    #[test]
+    fn a_message_containing_the_password_is_withheld_whole() {
+        let err = AppError::new(
+            ErrorKind::Query,
+            "not authorized on admin to execute command { hello: 1 }",
+        );
+        let out = withhold_if_password(err, Some("admin"));
+        assert_eq!(out.kind, ErrorKind::Query);
+        assert_eq!(out.message, "cannot connect to the MongoDB server");
+        assert!(!out.message.contains("<redacted>"));
+        assert!(!out.message.contains("admin"));
+
+        let auth = AppError::new(
+            ErrorKind::Auth,
+            "SCRAM failure for user a: Authentication failed.",
+        );
+        let out = withhold_if_password(auth, Some("a"));
+        assert_eq!(out.kind, ErrorKind::Auth);
+        assert_eq!(out.message, "authentication failed");
+
+        // No password, an empty one, or no match: the message is kept as is.
+        for pw in [None, Some(""), Some("s3cret-pw")] {
+            let err = AppError::new(ErrorKind::Connection, "cannot reach the server: refused");
+            let out = withhold_if_password(err, pw);
+            assert_eq!(out.message, "cannot reach the server: refused", "{pw:?}");
+        }
     }
 
     #[tokio::test]

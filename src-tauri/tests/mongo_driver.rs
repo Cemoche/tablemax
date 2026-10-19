@@ -294,11 +294,14 @@ async fn wrong_password_is_auth_error() {
         let e = connect(&p).await.err().expect("a wrong password must fail");
         assert_eq!(e.kind, ErrorKind::Auth, "{}", e.message);
         assert!(!e.message.contains(WRONG), "{}", e.message);
+        assert!(!e.message.contains("<redacted>"), "{}", e.message);
     }
     let mut p = fail_fast(mongo_params(&mongo_reader_url()));
     p.password = Some(WRONG.into());
     let e = connect(&p).await.err().expect("a wrong password must fail");
     assert_eq!(e.kind, ErrorKind::Auth, "{}", e.message);
+    assert!(!e.message.contains(WRONG), "{}", e.message);
+    assert!(!e.message.contains("<redacted>"), "{}", e.message);
 }
 
 #[tokio::test]
