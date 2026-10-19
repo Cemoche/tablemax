@@ -78,7 +78,7 @@ acceptée sous cette même licence.
   (c'est le propriétaire qui merge).
 - Committer un secret (jeton, mot de passe réel, clé privée).
 
-Le dépôt est privé sur un compte gratuit : GitHub n'offre pas de protection de branche. Les
+Aucune protection de branche n'est configurée sur GitHub pour l'instant. Les
 garde-fous sont côté Claude Code (hook qui refuse l'édition et les commits sur `main`,
 permissions qui demandent avant `git push` et les écritures GitHub, et refusent `--force` et
 les pushs sur `main`) et la CI, qui
@@ -86,19 +86,17 @@ signale mais ne bloque pas. Sans Claude, ces règles tiennent par convention.
 
 ### Ajouter une issue
 
-**New issue** sur GitHub (ou `gh issue create --web`) et le formulaire **Task** (labels
-`type:task`, `status:ready`) ou **Bug** (`type:bug`, `status:triage`). Pour un plan entier :
-`/plan-to-issues docs/superpowers/plans/<plan>.md --dry-run`, puis sans `--dry-run` (une issue
-par `### Task N`, les issues existantes sont ignorées).
+Le plus simple : décrire le problème, le correctif ou la feature à Claude, en français ou en
+anglais, en une phrase ou en vrac (« crée une issue : quand je ferme un onglet avec des
+modifs en attente, rien ne me prévient »), ou **`/new-issue <description>`**. Claude classe la
+demande (bug, tâche, chore, epic), repère les fichiers concernés, cherche les doublons, rédige
+l'issue en anglais avec les sections du formulaire, choisit labels et taille, **montre un
+aperçu**, puis la crée après ton accord et l'ajoute au board (colonne Triage ou Ready).
 
-### Pas encore actif
-
-- Les labels (`type:*`, `status:*`, `area:*`, `size:*`, `plan:*`…), jalons, epics et le board
-  GitHub sont créés par `scripts/github-bootstrap.sh`, lancé une fois par le propriétaire
-  (voir `docs/notes/team-setup.md`). Avant cela, les skills le détectent, sautent les étapes de
-  label et prennent l'issue par la seule assignation.
-- La CI (`.github/workflows/ci.yml`) n'a pas encore tourné sur GitHub : ses premiers
-  résultats peuvent demander des corrections de la CI elle-même.
+À la main : **New issue** sur GitHub (ou `gh issue create --web`) et le formulaire **Task**
+(labels `type:task`, `status:ready`) ou **Bug** (`type:bug`, `status:triage`). Pour un plan
+entier : `/plan-to-issues docs/superpowers/plans/<plan>.md --dry-run`, puis sans `--dry-run`
+(une issue par `### Task N`, les issues existantes sont ignorées).
 
 ---
 
@@ -172,23 +170,21 @@ accepted under the same license.
   `git merge origin/main`, not a rebase; merge a PR (the owner merges).
 - Commit a secret (token, real password, private key).
 
-The repository is private on a free plan: GitHub offers no branch protection. The guards
+No branch protection is configured on GitHub yet. The guards
 live in Claude Code (a hook refusing edits and commits on `main`, permissions that ask before
 `git push` and GitHub writes and deny `--force` and pushes to `main`) and in CI, which reports but does not block.
 Without Claude, these rules hold by convention.
 
 ### Adding an issue
 
-**New issue** on GitHub (or `gh issue create --web`) and the **Task** form (labels
+The easiest way: describe the problem, the fix or the feature to Claude, in French or
+English, in one sentence or loosely ("file an issue: closing a tab with pending edits gives
+no warning"), or run **`/new-issue <description>`**. Claude classifies it (bug, task, chore,
+epic), finds the files involved, checks for duplicates, writes the issue in English with the
+form's sections, picks labels and size, **shows a preview**, then creates it once you agree
+and adds it to the board (Triage or Ready).
+
+By hand: **New issue** on GitHub (or `gh issue create --web`) and the **Task** form (labels
 `type:task`, `status:ready`) or the **Bug** form (`type:bug`, `status:triage`). For a whole
 plan: `/plan-to-issues docs/superpowers/plans/<plan>.md --dry-run`, then without `--dry-run`
 (one issue per `### Task N`; existing issues are skipped).
-
-### Not live yet
-
-- GitHub labels (`type:*`, `status:*`, `area:*`, `size:*`, `plan:*`…), milestones, epics and
-  the board are created by `scripts/github-bootstrap.sh`, run once by the owner (see
-  `docs/notes/team-setup.md`). Until then the skills detect it, skip the label steps and claim
-  by assignment only.
-- CI (`.github/workflows/ci.yml`) has not run on GitHub yet: its first results may need fixes
-  to the CI itself.

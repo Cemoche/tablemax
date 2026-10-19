@@ -9,7 +9,7 @@ Plan: `docs/superpowers/plans/2026-10-17-tablemax-team-setup.md`. Branch `feat/t
 | Shared Claude Code settings: permissions, hooks, superpowers enabled, `worktree.baseRef: fresh` | `.claude/settings.json` | `jq`, review |
 | Hook refusing file edits and `git commit`/`cherry-pick`/`revert`/`am` on a `main`/`master` checkout of this repo (gitignored files and other repos allowed) | `.claude/hooks/block-main-edits.sh` | `bash scripts/test-claude-hooks.sh` |
 | Hook giving each session its branch and issue (issue title marked as untrusted data) | `.claude/hooks/session-context.sh` | same |
-| Skills `/pick-issue`, `/work-issue`, `/ship`, `/issue-comment`, `/plan-to-issues` | `.claude/skills/*/SKILL.md` | `gh` flags checked against `gh <cmd> --help` (gh 2.94) |
+| Skills `/pick-issue`, `/work-issue`, `/ship`, `/issue-comment`, `/plan-to-issues`, `/new-issue` (free-text description → issue in the form's sections, on the board) | `.claude/skills/*/SKILL.md` | `gh` flags checked against `gh <cmd> --help` (gh 2.94) |
 | Plan → issues script | `scripts/plan-to-issues.mjs` | `scripts/plan-to-issues.test.mjs` (in `pnpm test`) |
 | CI: frontend, backend (clippy `--all-targets` + cargo test on the test databases), hygiene | `.github/workflows/ci.yml` | actionlint 1.7.7, YAML parse; **not run on GitHub yet** |
 | Secret scan of tracked files | `scripts/check-no-secrets.sh` (+ `.allow`) | run on the repo and on a throwaway repo with planted tokens |
