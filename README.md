@@ -4,35 +4,44 @@ A free, fast desktop database client. Tauri 2 + React + TypeScript + Rust.
 
 **New here? Take the 10-minute tour: [docs/DEMO.md](docs/DEMO.md).**
 
-## Installation (Linux)
+## Download (Linux)
 
-`pnpm build:app` (`tauri build`) produces two packages under
-`src-tauri/target/release/bundle/`:
+Ready-made packages are on the **[Releases page](https://github.com/Cemoche/tablemax/releases)**
+(Linux x86_64 only for now; Windows and macOS are planned: [#21](https://github.com/Cemoche/tablemax/issues/21), [#20](https://github.com/Cemoche/tablemax/issues/20)). They are built on
+Ubuntu 22.04 by `.github/workflows/release.yml`, so they run on **Ubuntu 22.04, Debian 12
+and newer** (glibc 2.35), and each release is smoke-tested on Ubuntu 24.04.
 
-- **`.deb`** (`deb/TableMax_<version>_amd64.deb`, Debian package name `table-max`):
-  `sudo apt install ./TableMax_<version>_amd64.deb`. It declares
-  `libwebkit2gtk-4.1-0` and `libgtk-3-0` (satisfied by `libgtk-3-0t64` on Ubuntu 24.04),
-  which apt pulls in. Run `tablemax` or use the "TableMax" desktop entry (category
-  Development). Remove with `sudo apt remove table-max`.
-- **AppImage** (`appimage/TableMax_<version>_amd64.AppImage`), bundles WebKitGTK, GTK
-  and their libraries from the build machine:
-  `chmod +x TableMax_*.AppImage && ./TableMax_*.AppImage`. It needs FUSE 2
-  (`libfuse2t64` on Ubuntu); without it, run it with `APPIMAGE_EXTRACT_AND_RUN=1`. Its
-  GTK hook picks a light or dark Adwaita theme from the desktop's `color-scheme`
-  setting, and the app's "System" theme follows that. This was only simulated, not
-  checked on a real dark desktop; `APPIMAGE_GTK_THEME=Adwaita:dark` forces dark.
+- **Ubuntu / Debian — `.deb`** (`TableMax_<version>_amd64.deb`, Debian package name
+  `table-max`): `sudo apt install ./TableMax_<version>_amd64.deb`. apt pulls in WebKitGTK
+  4.1 and GTK 3 from the distribution. Run `tablemax` or use the "TableMax" desktop entry
+  (category Development). Remove with `sudo apt remove table-max`.
+- **Other distributions — AppImage** (`TableMax_<version>_amd64.AppImage`), bundles
+  WebKitGTK, GTK and their libraries (X11/Wayland, fonts and Mesa EGL/GL come from the
+  system, as for any AppImage): `chmod +x TableMax_*.AppImage && ./TableMax_*.AppImage`.
+  It needs FUSE 2 (`libfuse2t64` on Ubuntu 24.04, `libfuse2` on 22.04, `fuse-libs` on
+  Fedora); without it, run it with `APPIMAGE_EXTRACT_AND_RUN=1`. Its GTK hook picks a light
+  or dark Adwaita theme from the desktop's `color-scheme` setting, and the app's "System"
+  theme follows that; `APPIMAGE_GTK_THEME=Adwaita:dark` forces dark.
+- Check a download: `sha256sum -c SHA256SUMS --ignore-missing`.
 
-Both packages depend on the build machine's glibc (none bundles its own libc). For a
-build made on Ubuntu 26.04 (checked in a clean `ubuntu:24.04` container):
+### Build the packages yourself
 
-- the `.deb` needs glibc 2.39 or newer: it installs and every library resolves on
-  Ubuntu 24.04 (its WebKitGTK/GTK come from the distribution);
-- the AppImage needs glibc 2.43 or newer, because its bundled WebKitGTK, GLib, GnuTLS…
-  were built on 26.04: on Ubuntu 24.04 (glibc 2.39) it fails with
-  ``version `GLIBC_2.43' not found``. It only runs on distributions as new as the build
-  host.
+`pnpm build:app` (`tauri build`) writes `src-tauri/target/release/bundle/deb/*.deb` and
+`bundle/appimage/*.AppImage`. Neither bundles its own libc: they need a glibc at least as
+new as the build machine's (an AppImage built on Ubuntu 26.04 needs glibc 2.43 and fails on
+24.04 with ``version `GLIBC_2.43' not found``). Build on the oldest distribution you want to
+support. Check a build with `bash scripts/release-smoke.sh glibc 2.35 <package>…`,
+`… deb <file.deb>` (clean `ubuntu:24.04` container) and `… appimage <file.AppImage>` (Xvfb).
 
-Build on the oldest distribution you want to support.
+### Cutting a release (maintainers)
+
+1. Set the same version in `package.json`, `src-tauri/tauri.conf.json` and
+   `src-tauri/Cargo.toml` (then `cargo check` to update `Cargo.lock`), through a normal PR.
+2. Once it is merged: `git tag v<version> origin/main && git push origin v<version>`
+   (`v<version>-beta.1` and the like make a prerelease).
+3. The Release workflow checks that the tag matches the three versions, builds, smoke-tests
+   and publishes the GitHub Release with both packages, `SHA256SUMS` and generated notes.
+   A failed run publishes nothing: fix, delete the tag, tag again.
 
 Runtime notes: saving passwords in the keyring needs a Secret Service provider
 (GNOME Keyring or KWallet, present on standard desktops); without one, choose "Ask each

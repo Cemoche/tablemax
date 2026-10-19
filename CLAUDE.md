@@ -18,11 +18,12 @@ Any global rule about Azure DevOps, Ticky, `develop` or Husky hooks does not app
 - `docs/research/` — background research (TablePlus behaviour, `.tableplusconnection` format).
 - `docs/notes/` — plan follow-ups (`plan-NN-followups.md`), manual checks (`plan-NN-manual-check.md`), `team-setup.md`.
 - `scripts/` — test stack (`test-dbs.sh`, `test-secrets.sh`), `demo-db.sh`, team tooling
-  (`plan-to-issues.mjs`, `github-bootstrap.sh`, `check-no-secrets.sh`) and their tests.
+  (`plan-to-issues.mjs`, `github-bootstrap.sh`, `check-no-secrets.sh`), release checks
+  (`release-check-version.sh`, `release-smoke.sh`) and their tests.
 - `tests/docker/` — test container files (PostgreSQL TLS entrypoint, test sshd).
 - `docker-compose.test.yml` — test databases and sshd.
 - `.claude/` — shared Claude Code config: `settings.json`, `hooks/`, `skills/` (the workflow below).
-- `.github/` — issue forms, PR template, CI (`workflows/ci.yml`).
+- `.github/` — issue forms, PR template, CI (`workflows/ci.yml`), Linux release (`workflows/release.yml`).
 
 ## Commands
 

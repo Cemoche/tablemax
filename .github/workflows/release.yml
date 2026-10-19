@@ -1,0 +1,126 @@
+name: Release
+
+# Linux packages (.deb + AppImage) built on Ubuntu 22.04, so they run on 22.04 and newer
+# (glibc 2.35), smoke-tested on Ubuntu 24.04.
+# - tag v<version> (e.g. v0.2.0, v0.2.0-beta.1): build, test, publish a GitHub Release;
+# - pull request touching the packaging, or a manual run: build and test only, the
+#   packages are kept as workflow artifacts for 14 days.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - scripts/release-*.sh
+      - src-tauri/tauri.conf.json
+      - src-tauri/Cargo.toml
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  GLIBC_FLOOR: "2.35" # Ubuntu 22.04
+
+jobs:
+  build:
+    name: Build on Ubuntu 22.04
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: bash scripts/release-check-version.sh "$GITHUB_REF_NAME"
+      - name: System packages (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libfuse2 jq
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          check-latest: true
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Build the packages
+        run: pnpm build:app
+      - name: Collect the packages
+        run: |
+          mkdir -p dist
+          cp src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/appimage/*.AppImage dist/
+          ls -l dist
+      - name: No binary needs a glibc newer than Ubuntu 22.04's
+        run: bash scripts/release-smoke.sh glibc "$GLIBC_FLOOR" dist/*.deb dist/*.AppImage
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tablemax-linux
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke test on Ubuntu 24.04
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: tablemax-linux
+          path: dist
+      - name: .deb installs in a clean ubuntu:24.04 container
+        run: bash scripts/release-smoke.sh deb dist/*.deb ubuntu:24.04
+      - name: AppImage starts and stays up in a clean ubuntu:24.04 container (desktop libraries only)
+        run: bash scripts/release-smoke.sh appimage dist/*.AppImage 20 ubuntu:24.04
+
+  publish:
+    name: Publish the GitHub Release
+    needs: smoke
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: tablemax-linux
+          path: dist
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * | tee SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(bash scripts/release-check-version.sh "$GITHUB_REF_NAME")"
+          prerelease=()
+          if [[ "$version" == *-* ]]; then prerelease=(--prerelease); fi
+          notes="$(cat <<EOF
+          Linux x86_64, built on Ubuntu 22.04: runs on Ubuntu 22.04 / Debian 12 and newer.
+
+          - **Ubuntu / Debian**: download the \`.deb\`, then \`sudo apt install ./TableMax_${version}_amd64.deb\` and run \`tablemax\`.
+          - **Other distributions**: download the \`.AppImage\`, \`chmod +x\` it and run it (needs FUSE 2, or \`APPIMAGE_EXTRACT_AND_RUN=1\`).
+          - Check the download: \`sha256sum -c SHA256SUMS --ignore-missing\`.
+
+          Windows and macOS builds are not available yet (#20, #21).
+          EOF
+          )"
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag --title "TableMax $version" --generate-notes --notes "$notes" "${prerelease[@]}"

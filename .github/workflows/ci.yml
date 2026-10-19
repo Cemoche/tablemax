@@ -80,7 +80,7 @@ jobs:
   hygiene:
     # The keymap action-id fixture (src/lib/keymap-actions.json) is checked by vitest
     # (src/lib/keymap.test.ts, frontend job) and cargo test (settings.rs, backend job).
-    name: Hygiene (Claude hooks, GitHub bootstrap, secrets)
+    name: Hygiene (Claude hooks, GitHub bootstrap, release scripts, secrets)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -89,5 +89,7 @@ jobs:
         run: bash scripts/test-claude-hooks.sh
       - name: GitHub bootstrap script (fake gh, no network)
         run: bash scripts/test-github-bootstrap.sh
+      - name: Release scripts (version check, glibc floor)
+        run: bash scripts/test-release-scripts.sh
       - name: No secrets in tracked files
         run: bash scripts/check-no-secrets.sh
