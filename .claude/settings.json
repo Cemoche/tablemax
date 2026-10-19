@@ -39,6 +39,9 @@
       "Bash(gh pr checks*)",
       "Bash(gh pr comment *)",
       "Bash(gh label list*)",
+      "Bash(gh project view*)",
+      "Bash(gh project field-list*)",
+      "Bash(gh project item-list*)",
       "Bash(gh run list*)",
       "Bash(gh run view*)",
       "Bash(gh run watch*)",
@@ -72,7 +75,9 @@
       "Bash(gh issue create *)",
       "Bash(gh issue edit *)",
       "Bash(gh pr create *)",
-      "Bash(gh pr edit *)"
+      "Bash(gh pr edit *)",
+      "Bash(gh project item-add *)",
+      "Bash(gh project item-edit *)"
     ],
     "deny": [
       "Bash(git push --force*)",
