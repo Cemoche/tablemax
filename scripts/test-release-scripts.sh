@@ -76,10 +76,14 @@ mkdir -p "$TMP/deb/DEBIAN" "$TMP/deb/usr/bin"
 cp "$(type -P true)" "$TMP/deb/usr/bin/fake"
 printf 'Package: fake\nVersion: 1\nArchitecture: amd64\nMaintainer: t <t@example.com>\nDescription: t\n' \
   >"$TMP/deb/DEBIAN/control"
+# An ELF file without any glibc symbol (only the magic, so objdump finds nothing) must not
+# stop the scan.
+printf '\177ELF\002\001\001' >"$TMP/deb/usr/bin/no-glibc"
 dpkg-deb -b --root-owner-group "$TMP/deb" "$TMP/fake.deb" >/dev/null
 host="$(objdump -T "$(type -P true)" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)"
 
-expect "glibc floor above the binary's needs passes" 0 "newest glibc symbol $host" \
+expect "glibc floor above the binary's needs passes (an ELF file without glibc symbols is fine)" 0 \
+  "2 ELF files, newest glibc symbol $host" \
   bash "$SMOKE" glibc 99.0 "$TMP/fake.deb"
 expect "glibc floor below the binary's needs fails and names the file" 1 \
   "usr/bin/fake needs GLIBC_$host (max 2.0)" bash "$SMOKE" glibc 2.0 "$TMP/fake.deb"

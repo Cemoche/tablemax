@@ -30,7 +30,8 @@ extract() {
 
 # Highest GLIBC_x.y[.z] version referenced by an ELF file's dynamic symbols ("" if none).
 max_glibc() {
-  objdump -T "$1" 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1
+  { objdump -T "$1" 2>/dev/null || true; } | { grep -o 'GLIBC_[0-9][0-9.]*' || true; } \
+    | sed 's/GLIBC_//' | sort -uV | tail -1
 }
 
 cmd_glibc() {
