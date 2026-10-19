@@ -48,6 +48,7 @@ jobs:
       TABLEMAX_TEST_MYSQL_PORT: "33061"
       TABLEMAX_TEST_MARIADB_PORT: "33062"
       TABLEMAX_TEST_SSH_PORT: "2222"
+      TABLEMAX_TEST_MONGO_PORT: "27117"
     steps:
       - uses: actions/checkout@v7
       - name: System packages (Tauri, test tools)

@@ -40,6 +40,8 @@ hmac = "0.13.0"
 sha1 = "0.11.0"
 sha2 = "0.11.1"
 pbkdf2 = { version = "0.13.0", default-features = false, features = ["hmac"] }
+# rustls with ring only (no aws-lc, no OpenSSL): re-check `cargo tree` when adding a feature.
+mongodb = { version = "3.9", default-features = false, features = ["compat-3-0-0", "rustls-tls", "dns-resolver"] }
 
 [dev-dependencies]
 tempfile = "3"

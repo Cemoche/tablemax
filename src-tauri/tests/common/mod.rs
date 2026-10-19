@@ -1,4 +1,4 @@
-//! Shared helpers for the database integration tests (PostgreSQL, MySQL/MariaDB).
+//! Shared helpers for the database integration tests (PostgreSQL, MySQL/MariaDB, MongoDB).
 #![allow(dead_code)]
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,6 +7,7 @@ use tablemax_lib::driver::tls::{SslConfig, SslMode, install_crypto_provider};
 use tablemax_lib::driver::{ConnectParams, DriverKind};
 use tablemax_lib::error::AppResult;
 use tablemax_lib::secrets::{MemorySecretStore, SecretKey, SecretStore};
+use tablemax_lib::store::{MongoAuth, MongoSettings};
 
 /// An in-memory keyring that counts its reads.
 #[derive(Default)]
@@ -65,6 +66,40 @@ pub fn pg_urls() -> Vec<String> {
 
 pub fn mysql_urls() -> Vec<String> {
     urls_from_env("TABLEMAX_TEST_MYSQL_URLS")
+}
+
+/// MongoDB servers, user `root` (every right).
+pub fn mongo_urls() -> Vec<String> {
+    urls_from_env("TABLEMAX_TEST_MONGO_URLS")
+}
+
+/// User `reader` (`read` on tablemax_test only) on the first MongoDB server.
+pub fn mongo_reader_url() -> String {
+    urls_from_env("TABLEMAX_TEST_MONGO_READER_URL").remove(0)
+}
+
+/// MongoDB params from `mongodb://user:pass@host:port/db?authSource=…` (TLS `Disable`;
+/// only `authSource` is read from the query).
+pub fn mongo_params(url: &str) -> ConnectParams {
+    let mut p = params_from_url(url, DriverKind::MongoDb);
+    let u = url::Url::parse(url).unwrap_or_else(|e| panic!("bad test url {url}: {e}"));
+    let auth_source = u
+        .query_pairs()
+        .find(|(k, _)| k == "authSource")
+        .map(|(_, v)| v.into_owned());
+    p.ssl = SslConfig {
+        mode: SslMode::Disable,
+        ..Default::default()
+    };
+    p.mongo = Some(MongoSettings {
+        srv: false,
+        extra_hosts: Vec::new(),
+        auth_source,
+        auth_mechanism: MongoAuth::Default,
+        replica_set: None,
+        options: Vec::new(),
+    });
+    p
 }
 
 /// Parses `scheme://user:pass@host:port/db` into connect params (default TLS: `Prefer`).

@@ -66,8 +66,36 @@ services:
       timeout: 3s
       retries: 40
 
+  # MongoDB 7.0. TLS is accepted but optional (preferTLS); mongo.pem = server cert + key.
+  # tests/docker/mongo-init.js seeds tablemax_test and the `reader` user (read only).
+  mongo7:
+    image: mongo:7.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: tablemax
+    command:
+      - --tlsMode
+      - preferTLS
+      - --tlsCertificateKeyFile
+      - /tls/mongo.pem
+      - --tlsCAFile
+      - /tls/ca.pem
+      - --tlsAllowConnectionsWithoutCertificates
+    volumes:
+      - ./.test-secrets/tls:/tls:ro,z
+      - ./tests/docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro,z
+    ports:
+      - "127.0.0.1:${TABLEMAX_TEST_MONGO_PORT:-27117}:27017"
+    healthcheck:
+      # Through the service name, not localhost: the entrypoint's init server (seeding)
+      # listens on 127.0.0.1 only, so this passes once the real server is up.
+      test: ["CMD-SHELL", "mongosh --quiet --host mongo7 --eval 'db.runCommand({ping:1}).ok'"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
   # SSH tunnel endpoint. On the project's default network, so it reaches the databases
-  # as pg16:5432, mysql8:3306 and mariadb11:3306.
+  # as pg16:5432, mysql8:3306, mariadb11:3306 and mongo7:27017.
   sshd:
     build: tests/docker/sshd
     volumes:

@@ -6,8 +6,9 @@ Rust 1.96, edition 2024, Tauri 2, tokio. Library crate `tablemax_lib` (`src/lib.
 
 - `driver/` — `Session` / `Canceller` traits and one driver per engine: `postgres.rs`
   (tokio-postgres), `mysql.rs` (mysql_async, MySQL + MariaDB), `sqlite.rs` (rusqlite),
-  shared SQL helpers `sql.rs`, TLS settings `tls.rs`. `meta.rs`: table metadata
-  (`TableInfo`: columns, keys, indexes, foreign keys, row key). `query.rs`: parameterized
+  shared SQL helpers `sql.rs`, TLS settings `tls.rs`; `mongo/` (official `mongodb` crate,
+  read only, experimental; `options.rs`: client options and SSH refusals). `meta.rs`:
+  table metadata (`TableInfo`: columns, keys, indexes, foreign keys, row key). `query.rs`: parameterized
   grid statements (`Statement`/`SqlParam`, filters, page and capped filtered count).
   `dml.rs`: row changes from the grid (`RowChange` → UPDATE/INSERT/DELETE, display-only
   preview, full cell value statements); `Session::apply` runs them in one transaction.
@@ -83,8 +84,9 @@ A new command = function in `commands.rs` + entry in `tauri::generate_handler!` 
 - Unit tests in `#[cfg(test)] mod tests` next to the code; integration tests in `tests/`
   (helpers in `tests/common/mod.rs`, TablePlus fixtures in `tests/fixtures/`).
 - Integration tests run against real servers and read `TABLEMAX_TEST_*`
-  (`TABLEMAX_TEST_PG_URLS`, `TABLEMAX_TEST_MYSQL_URLS`, `TABLEMAX_TEST_TLS_DIR`,
-  `TABLEMAX_TEST_SSH`, `TABLEMAX_TEST_SSH_DIR`), printed by `scripts/test-dbs.sh env`.
+  (`TABLEMAX_TEST_PG_URLS`, `TABLEMAX_TEST_MYSQL_URLS`, `TABLEMAX_TEST_MONGO_URLS`,
+  `TABLEMAX_TEST_MONGO_READER_URL`, `TABLEMAX_TEST_TLS_DIR`, `TABLEMAX_TEST_SSH`,
+  `TABLEMAX_TEST_SSH_DIR`), printed by `scripts/test-dbs.sh env`.
   They panic with a hint when the variables are missing. Each test loops over every URL
   (the version matrix).
 - Run everything: `pnpm test:rust`. One file, containers already up:
