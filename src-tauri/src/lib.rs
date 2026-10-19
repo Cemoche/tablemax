@@ -5,6 +5,7 @@ pub mod error;
 pub mod history;
 pub mod import;
 pub mod manager;
+pub mod migrate;
 pub mod safety;
 pub mod saved_queries;
 pub mod secrets;
@@ -32,7 +33,30 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
+            // Before anything opens the data: an install from an earlier identifier keeps its
+            // connections, settings and queries. A failure leaves the old directory intact.
+            let moved_from = match migrate::migrate_data_dir(&dir, migrate::PREVIOUS_IDENTIFIERS) {
+                Ok(migrate::Outcome::Moved { from, left, .. }) => {
+                    if left > 0 {
+                        eprintln!(
+                            "tablemax: moved data from {} ({left} entries already existed and stayed there)",
+                            from.display()
+                        );
+                    }
+                    Some(from)
+                }
+                Ok(migrate::Outcome::NothingToDo) => None,
+                Err(e) => {
+                    eprintln!("tablemax: could not move the previous data directory: {e}");
+                    None
+                }
+            };
             let store = ConnectionStore::open(&dir.join("app.db"))?;
+            if let Some(from) = moved_from
+                && let Err(e) = migrate::rebase_sqlite_paths(&store, &from, &dir)
+            {
+                eprintln!("tablemax: could not update SQLite paths after the move: {}", e.message);
+            }
             let known_hosts = KnownHosts {
                 system: app
                     .path()

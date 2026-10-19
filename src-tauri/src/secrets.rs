@@ -3,6 +3,8 @@ use std::sync::Mutex;
 
 use crate::error::{AppError, AppResult, ErrorKind};
 
+/// Keyring service name. It was the app identifier until that changed to
+/// `io.github.cemoche.tablemax` (#49); kept as is so saved passwords stay readable.
 pub const SERVICE: &str = "dev.tablemax.app";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
