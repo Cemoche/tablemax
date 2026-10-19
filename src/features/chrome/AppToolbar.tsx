@@ -1,0 +1,272 @@
+import { CircleX, Database, Eye, ListChecks, PanelLeft, PanelRight, Plug, RotateCw, Search } from "lucide-react";
+import { type MouseEvent, type ReactNode, useRef, useState } from "react";
+import * as ipc from "../../lib/ipc";
+import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
+import { formatShortcut } from "../../lib/platform";
+import { strings } from "../../lib/strings";
+import type { ConnectionConfig } from "../../lib/types";
+import { useCatalog } from "../../stores/catalog";
+import { useChrome } from "../../stores/chrome";
+import { useConnections } from "../../stores/connections";
+import { usePendingChanges } from "../../stores/pendingChanges";
+import { useSettings } from "../../stores/settings";
+import { type Workspace, capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
+import { ConnectionPopover } from "./ConnectionPopover";
+import { SafeModeMenu } from "./SafeModeMenu";
+import { StatusPill } from "./StatusPill";
+import { ICON, iconButton, pillGroup } from "./toolbarStyles";
+import { WindowControls } from "./WindowControls";
+
+const t = strings.toolbar;
+
+/** Presses on these never move the window. */
+const INTERACTIVE = "button, a, input, select, textarea, [role='menu'], [role='dialog']";
+
+function Group({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div role="group" aria-label={label} className={pillGroup}>
+      {children}
+    </div>
+  );
+}
+
+/** Tooltip with the action's effective shortcut. */
+function useHint(label: string, id: KeymapActionId): string {
+  return t.hint(label, formatShortcut(useEffectiveShortcut(id)));
+}
+
+/** Reloads what the workspace shows: its sidebar, its catalog and the active table tab's page. */
+function reloadWorkspace(ws: Workspace | null) {
+  if (!ws || ws.status !== "connected") return;
+  const chrome = useChrome.getState();
+  chrome.requestReload(ws.id);
+  if (ws.currentSchema !== null) void useCatalog.getState().refreshCatalog(ws.id, ws.currentSchema);
+  const tab = ws.tabs.find((x) => x.id === ws.activeTabId);
+  if (tab?.kind === "table") chrome.requestReload(tab.id);
+}
+
+interface Props {
+  /** The workspace on screen; null on the connections screen. */
+  workspace: Workspace | null;
+  /** Why the last connect of the shown (disconnected) workspace failed. */
+  connectError?: string | null;
+  /** Shows the form of a saved connection (the popover's Edit). */
+  onEditConnection: (cfg: ConnectionConfig) => void;
+}
+
+/**
+ * The unified toolbar (spec §2.3), which is also the title bar of the frameless window:
+ * [sidebar · connection] [Discard · Preview · Commit] [safe mode · database · SQL]
+ * status pill [reload · Open anything] [row details] and the window buttons. A press on
+ * its empty space moves the window; a double press maximizes or restores it.
+ */
+export function AppToolbar({ workspace, connectError = null, onEditConnection }: Props) {
+  const systemTitleBar = useSettings((s) => s.systemTitleBar);
+  useAction("workspace.reload", () => reloadWorkspace(workspace));
+
+  const onMouseDown = (e: MouseEvent<HTMLElement>) => {
+    if (systemTitleBar || e.button !== 0) return;
+    if ((e.target as Element).closest(INTERACTIVE)) return;
+    // Like a native title bar: the second press of a double click maximizes or restores
+    // (the move started by the first press swallows the dblclick event itself).
+    if (e.detail === 2) void ipc.windowToggleMaximize()?.catch(() => {});
+    else void ipc.windowStartDrag()?.catch(() => {});
+  };
+
+  return (
+    <header
+      onMouseDown={onMouseDown}
+      className="flex h-13 shrink-0 items-center gap-2 border-b border-sep bg-win px-2.5 select-none"
+    >
+      {workspace ? (
+        <WorkspaceTools workspace={workspace} connectError={connectError} onEditConnection={onEditConnection} />
+      ) : (
+        <span className="flex-1 text-center font-semibold text-text-2">{strings.appName}</span>
+      )}
+      {!systemTitleBar && <WindowControls />}
+    </header>
+  );
+}
+
+function WorkspaceTools({
+  workspace,
+  connectError,
+  onEditConnection,
+}: {
+  workspace: Workspace;
+  connectError: string | null;
+  onEditConnection: (cfg: ConnectionConfig) => void;
+}) {
+  const cfg = useConnections((s) => s.items.find((c) => c.id === workspace.connectionId));
+  const toggleSidebar = useWorkspaces((s) => s.toggleSidebar);
+  const sidebarVisible = useWorkspaces((s) => s.sidebarVisible);
+  const openQueryTab = useWorkspaces((s) => s.openQueryTab);
+  const connected = workspace.status === "connected";
+  const caps = capabilitiesOf(workspace);
+  const tab = workspace.tabs.find((x) => x.id === workspace.activeTabId) ?? null;
+  const table = connected && tab?.kind === "table" ? tab : null;
+  const tableId = table?.id ?? "";
+
+  // The commit group acts on the active table tab's pending changes (as Mod+S does).
+  const count = usePendingChanges((s) => (table ? s.count(table.id) : 0));
+  const busy = usePendingChanges(
+    (s) =>
+      table !== null &&
+      (s.committing[table.id] === true || s.confirming[table.id] !== undefined || s.awaitingReload[table.id] === true),
+  );
+  const outcomeUnknown = usePendingChanges((s) => (table ? s.tabs[table.id]?.outcomeUnknown === true : false));
+  const editorOpen = usePendingChanges((s) => (table ? s.editorOpen[table.id] === true : false));
+  const rowDetails = useChrome((s) => s.rowDetails[tableId] === true);
+
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  const connectionButton = useRef<HTMLButtonElement>(null);
+
+  const commitHint = useHint(t.commit, "grid.commit");
+  const databaseHint = useHint(t.database, "database.open");
+  const sqlHint = useHint(t.sql, "editor.open");
+  const reloadHint = useHint(t.reload, "workspace.reload");
+  const anythingHint = useHint(t.openAnything, "palette.all");
+  const detailsHint = useHint(t.rowDetails, "grid.rowDetails");
+
+  const canPickDatabase = connected && (caps.databaseSwitch || workspace.schemas.length > 0);
+
+  return (
+    <>
+      <Group label={t.groups.navigation}>
+        <button
+          type="button"
+          aria-label={t.sidebar}
+          title={t.sidebar}
+          aria-pressed={connected && sidebarVisible}
+          disabled={!connected}
+          onClick={toggleSidebar}
+          className={iconButton}
+        >
+          <PanelLeft aria-hidden {...ICON} />
+        </button>
+        <div className="relative">
+          <button
+            ref={connectionButton}
+            type="button"
+            aria-label={t.connection}
+            title={t.connection}
+            aria-haspopup="dialog"
+            aria-expanded={connectionOpen}
+            onClick={() => setConnectionOpen((o) => !o)}
+            className={iconButton}
+          >
+            <Plug aria-hidden {...ICON} />
+          </button>
+          {connectionOpen && (
+            <ConnectionPopover
+              workspace={workspace}
+              cfg={cfg}
+              align="start"
+              onEditConnection={onEditConnection}
+              onClose={(refocus) => {
+                setConnectionOpen(false);
+                if (refocus) connectionButton.current?.focus();
+              }}
+            />
+          )}
+        </div>
+      </Group>
+
+      <Group label={t.groups.changes}>
+        <button
+          type="button"
+          aria-label={t.discard}
+          title={t.discard}
+          disabled={count === 0 || busy}
+          onClick={() => table && usePendingChanges.getState().discard(table.id)}
+          className={iconButton}
+        >
+          <CircleX aria-hidden {...ICON} />
+        </button>
+        <button
+          type="button"
+          aria-label={t.preview}
+          title={t.preview}
+          disabled={count === 0}
+          onClick={() => table && useChrome.getState().requestPreview(table.id)}
+          className={iconButton}
+        >
+          <Eye aria-hidden {...ICON} />
+        </button>
+        <button
+          type="button"
+          aria-label={t.commit}
+          title={commitHint}
+          disabled={count === 0 || busy || outcomeUnknown || editorOpen}
+          onClick={() => table && void usePendingChanges.getState().commit(table.id, workspace.id, table.object)}
+          className={iconButton}
+        >
+          <ListChecks aria-hidden {...ICON} />
+        </button>
+      </Group>
+
+      <Group label={t.groups.database}>
+        <SafeModeMenu workspace={workspace} />
+        <button
+          type="button"
+          aria-label={t.database}
+          title={databaseHint}
+          disabled={!canPickDatabase}
+          onClick={() => useChrome.getState().requestPalette("database")}
+          className={iconButton}
+        >
+          <Database aria-hidden {...ICON} />
+        </button>
+        {caps.sqlEditor && (
+          <button
+            type="button"
+            aria-label={t.sql}
+            title={sqlHint}
+            onClick={() => openQueryTab(workspace.id)}
+            className={`${iconButton} w-auto px-2.5 font-sans text-xs font-bold tracking-wide`}
+          >
+            <span aria-hidden>{t.sqlText}</span>
+          </button>
+        )}
+      </Group>
+
+      <StatusPill workspace={workspace} connectError={connectError} onEditConnection={onEditConnection} />
+
+      <Group label={t.groups.search}>
+        <button
+          type="button"
+          aria-label={t.reload}
+          title={reloadHint}
+          disabled={!connected}
+          onClick={() => reloadWorkspace(workspace)}
+          className={iconButton}
+        >
+          <RotateCw aria-hidden {...ICON} />
+        </button>
+        <button
+          type="button"
+          aria-label={t.openAnything}
+          title={anythingHint}
+          onClick={() => useChrome.getState().requestPalette("all")}
+          className={iconButton}
+        >
+          <Search aria-hidden {...ICON} />
+        </button>
+      </Group>
+
+      <Group label={t.groups.panels}>
+        <button
+          type="button"
+          aria-label={t.rowDetails}
+          title={detailsHint}
+          aria-pressed={rowDetails}
+          disabled={table === null}
+          onClick={() => table && useChrome.getState().toggleRowDetails(table.id)}
+          className={iconButton}
+        >
+          <PanelRight aria-hidden {...ICON} />
+        </button>
+      </Group>
+    </>
+  );
+}

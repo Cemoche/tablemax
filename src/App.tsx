@@ -11,6 +11,8 @@ import { blankConnection } from "./features/connections/connectionDraft";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlow";
 import { toAppError } from "./lib/errors";
+import { AppToolbar } from "./features/chrome/AppToolbar";
+import { ResizeHandles } from "./features/chrome/ResizeHandles";
 import { CommandPalette } from "./features/palette/CommandPalette";
 import { useWindowTitle } from "./features/workspace/useWindowTitle";
 import { WorkspaceSwitcher } from "./features/workspace/WorkspaceSwitcher";
@@ -118,8 +120,19 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per request
   }, [connectRequest]);
 
+  const shownConnectError =
+    showWorkspace && connectError?.connectionId === activeWorkspace.connectionId ? connectError.message : null;
+
   return (
     <div className="flex h-screen flex-col bg-bg text-fg">
+      <AppToolbar
+        workspace={showWorkspace ? activeWorkspace : null}
+        connectError={shownConnectError}
+        onEditConnection={(cfg) => {
+          select(cfg);
+          setView("connections");
+        }}
+      />
       <div className="flex items-stretch border-b border-border bg-surface">
         <div className="min-w-0 flex-1">
           {workspaces.length > 0 && (
@@ -149,9 +162,7 @@ function App() {
             <WorkspaceView
               key={activeWorkspace.id}
               workspace={activeWorkspace}
-              connectError={
-                connectError?.connectionId === activeWorkspace.connectionId ? connectError.message : null
-              }
+              connectError={shownConnectError}
             />
           </main>
         ) : (
@@ -205,6 +216,7 @@ function App() {
         onShowWorkspace={() => setView("workspace")}
       />
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />
+      <ResizeHandles />
     </div>
   );
 }

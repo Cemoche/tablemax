@@ -5,12 +5,9 @@ import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Tab, type Workspace, capabilitiesOf, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
-import { EnvBanner } from "./EnvBanner";
-import { ENV_BORDER } from "./envClasses";
 import { ObjectSidebar } from "./ObjectSidebar";
 import { TabBar } from "./TabBar";
 import { TabSwitcher } from "./TabSwitcher";
-import { useLiveEnv } from "./useLiveEnv";
 
 export function TabContent({ workspace, tab }: { workspace: Workspace; tab: Tab }) {
   if (tab.kind === "table") {
@@ -61,7 +58,6 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   const dismissNotice = useWorkspaces((s) => s.dismissNotice);
   const { id, activeTabId } = workspace;
   const active = workspace.tabs.find((t) => t.id === activeTabId) ?? null;
-  const liveEnv = useLiveEnv(workspace);
   const newTabShortcut = useEffectiveShortcut("query.new");
   const { sqlEditor } = capabilitiesOf(workspace);
 
@@ -70,6 +66,10 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   const connected = workspace.status === "connected";
 
   useAction("query.new", () => {
+    if (sqlEditor) openQueryTab(id);
+  });
+  // Ctrl+E (TablePlus ⌘E): the SQL editor, in a new SQL tab like the toolbar's SQL button.
+  useAction("editor.open", () => {
     if (sqlEditor) openQueryTab(id);
   });
   useAction("tab.close", () => {
@@ -86,8 +86,7 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <EnvBanner workspace={workspace} />
-      <div className={`flex min-h-0 flex-1 border-t-2 ${ENV_BORDER[liveEnv.envTag]}`}>
+      <div className="flex min-h-0 flex-1">
         {connected && sidebarVisible && <ObjectSidebar workspace={workspace} />}
         <div className="flex min-w-0 flex-1 flex-col">
           <TabBar workspace={workspace} />

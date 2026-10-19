@@ -252,3 +252,14 @@ test("a changed SSH host key on a restored connection opened from the list is sh
     await screen.findByText(strings.ssh.hostKeyChanged("SHA256:evil", "bastion:22")),
   ).toBeInTheDocument();
 });
+
+test("prod_title_kept: no environment banner, the pill badge and the window title say PROD", async () => {
+  vi.mocked(ipc.windowSetTitle).mockResolvedValue(undefined);
+  render(<App />);
+  await screen.findByRole("tab", { name: "users" });
+  expect(ipc.windowSetTitle).toHaveBeenLastCalledWith("TableMax — Prod PG [PROD]");
+  const header = screen.getByRole("banner");
+  expect(within(header).getByText(strings.statusPill.prod)).toBeInTheDocument();
+  // The old banner is gone.
+  expect(screen.queryByRole("status", { name: "Environment" })).toBeNull();
+});

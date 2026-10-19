@@ -71,6 +71,11 @@ pub fn run() {
                     .with_queries_dir(dir.join("queries")),
             );
             app.manage(close_gate::CloseGate::default());
+            // The frameless window's saved interface size and title bar choice, applied
+            // before the page shows.
+            if let Some(main) = app.get_webview_window("main") {
+                commands::apply_window_settings(&main, &settings::load(&dir.join("settings.json")));
+            }
             Ok(())
         })
         // Closing the main window waits for the frontend to flush its session (see
@@ -147,6 +152,11 @@ pub fn run() {
             commands::databases_list,
             commands::workspace_switch_database,
             commands::window_close_confirmed,
+            commands::window_minimize,
+            commands::window_toggle_maximize,
+            commands::window_start_drag,
+            commands::window_start_resize,
+            commands::window_close,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

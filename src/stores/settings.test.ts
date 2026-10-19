@@ -146,3 +146,14 @@ test("a failing zoom call does not fail the settings load", async () => {
   expect(useSettings.getState().error).toBeNull();
   expect(useSettings.getState().settings.theme).toBe("dark");
 });
+
+test("the title bar choice is the one the window started with: a later update does not change it", async () => {
+  useSettings.setState({ systemTitleBar: false });
+  vi.mocked(ipc.settingsGet).mockResolvedValue({ ...DEFAULT_SETTINGS, useSystemTitleBar: true });
+  await useSettings.getState().load();
+  expect(useSettings.getState().systemTitleBar).toBe(true);
+  vi.mocked(ipc.settingsSet).mockImplementation(async (s) => s);
+  await useSettings.getState().update({ useSystemTitleBar: false });
+  expect(useSettings.getState().settings.useSystemTitleBar).toBe(false);
+  expect(useSettings.getState().systemTitleBar).toBe(true);
+});

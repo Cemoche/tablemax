@@ -14,7 +14,10 @@
       {
         "title": "TableMax",
         "width": 1400,
-        "height": 900
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 600,
+        "decorations": false
       }
     ],
     "security": {

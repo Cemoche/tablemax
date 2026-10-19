@@ -439,6 +439,88 @@ pub fn window_close_confirmed(window: tauri::Window, gate: State<'_, crate::clos
     }
 }
 
+// ---- Frameless window (toolbar title bar) ----
+//
+// The main window has no system decorations (tauri.conf.json); the toolbar moves,
+// maximizes, minimizes, closes and resizes it through these commands rather than the JS
+// window API, so the capabilities stay at `core:default` (that API needs
+// `core:window:allow-start-dragging` and friends).
+
+/// The edge or corner a resize starts from (`window_start_resize`), as the frontend names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+pub enum ResizeDirection {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
+/// `direction` as the runtime's own `ResizeDirection`, which tauri does not re-export: it
+/// derives `Deserialize` with the same variant names, so it is read back from ours.
+fn runtime_direction<T: serde::de::DeserializeOwned>(direction: ResizeDirection) -> AppResult<T> {
+    serde_json::to_value(direction)
+        .and_then(serde_json::from_value)
+        .map_err(|e| AppError::new(ErrorKind::Invalid, e.to_string()))
+}
+
+fn window_error(e: tauri::Error) -> AppError {
+    AppError::new(ErrorKind::Io, e.to_string())
+}
+
+#[tauri::command]
+pub fn window_minimize(window: tauri::Window) -> AppResult<()> {
+    window.minimize().map_err(window_error)
+}
+
+/// Maximizes the window, or restores it when it is maximized (toolbar double-click).
+#[tauri::command]
+pub fn window_toggle_maximize(window: tauri::Window) -> AppResult<()> {
+    if window.is_maximized().map_err(window_error)? {
+        window.unmaximize().map_err(window_error)
+    } else {
+        window.maximize().map_err(window_error)
+    }
+}
+
+/// Starts moving the window with the mouse button held on the toolbar.
+#[tauri::command]
+pub fn window_start_drag(window: tauri::Window) -> AppResult<()> {
+    window.start_dragging().map_err(window_error)
+}
+
+/// Starts resizing the window from `direction` with the mouse button held on a resize handle.
+#[tauri::command]
+pub fn window_start_resize(window: tauri::Window, direction: ResizeDirection) -> AppResult<()> {
+    window
+        .start_resize_dragging(runtime_direction(direction)?)
+        .map_err(window_error)
+}
+
+/// Asks the window to close, exactly like the system close: `CloseRequested` goes through
+/// `close_gate` (session flush) before the window really closes.
+#[tauri::command]
+pub fn window_close(window: tauri::Window) -> AppResult<()> {
+    window.close().map_err(window_error)
+}
+
+/// At startup, before the page shows: the saved interface size (no visible zoom jump; the
+/// frontend still applies later changes with `window_set_zoom`) and, when asked for, the
+/// system title bar instead of the frameless window.
+pub fn apply_window_settings(window: &tauri::WebviewWindow, settings: &Settings) {
+    if let Err(e) = window.set_zoom(f64::from(settings::clamp_interface_scale(settings.interface_scale))) {
+        eprintln!("tablemax: could not apply the interface size: {e}");
+    }
+    if settings.use_system_title_bar
+        && let Err(e) = window.set_decorations(true)
+    {
+        eprintln!("tablemax: could not restore the system title bar: {e}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,6 +534,37 @@ mod tests {
         assert_eq!(p("sshKey"), FilePurpose::SshKey);
         assert_eq!(p("tableplusExport"), FilePurpose::TableplusExport);
     }
+
+    #[test]
+    fn resize_direction_serde() {
+        let all = [
+            ("North", ResizeDirection::North),
+            ("South", ResizeDirection::South),
+            ("East", ResizeDirection::East),
+            ("West", ResizeDirection::West),
+            ("NorthEast", ResizeDirection::NorthEast),
+            ("NorthWest", ResizeDirection::NorthWest),
+            ("SouthEast", ResizeDirection::SouthEast),
+            ("SouthWest", ResizeDirection::SouthWest),
+        ];
+        for (name, dir) in all {
+            let parsed: ResizeDirection = serde_json::from_value(serde_json::json!(name)).unwrap();
+            assert_eq!(parsed, dir, "{name}");
+            assert_eq!(serde_json::to_value(dir).unwrap(), serde_json::json!(name));
+            // The runtime's own enum has the same variant names (it derives Deserialize):
+            // the conversion used by `window_start_resize` succeeds for every direction.
+            let runtime: Result<Mirror, _> = runtime_direction(dir);
+            assert_eq!(runtime.unwrap(), Mirror(name.to_string()), "{name}");
+        }
+        for bad in ["north", "Up", "", "NORTH"] {
+            assert!(serde_json::from_value::<ResizeDirection>(serde_json::json!(bad)).is_err(), "{bad}");
+        }
+    }
+
+    /// Stands for `tauri_runtime::ResizeDirection` (not re-exported by tauri): any type
+    /// deserialized from the variant name.
+    #[derive(Debug, PartialEq, serde::Deserialize)]
+    struct Mirror(String);
 
     #[test]
     fn picker_filters_per_purpose() {

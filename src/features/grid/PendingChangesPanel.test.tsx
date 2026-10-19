@@ -4,6 +4,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { CellValue, RowKey } from "../../lib/types";
+import { useChrome } from "../../stores/chrome";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { PendingChangesPanel } from "./PendingChangesPanel";
 
@@ -205,4 +206,17 @@ test("text key values are quoted", () => {
   ]);
   render(<PendingChangesPanel workspaceId="w1" tabId="t1" object={obj} />);
   expect(items()[0]).toHaveTextContent("name = 'O''Brien, a', n = 3");
+});
+
+test("the toolbar's Preview opens a collapsed panel and focuses it", async () => {
+  vi.mocked(ipc.changesPreview).mockResolvedValue(SQL);
+  threeChanges();
+  render(<PendingChangesPanel workspaceId="w1" tabId="t1" object={obj} />);
+  const header = screen.getByRole("button", { name: strings.grid.changes.title(3) });
+  await userEvent.click(header);
+  expect(header).toHaveAttribute("aria-expanded", "false");
+  act(() => useChrome.getState().requestPreview("t1"));
+  expect(header).toHaveAttribute("aria-expanded", "true");
+  expect(header).toHaveFocus();
+  expect(await screen.findByText(SQL[1])).toBeInTheDocument();
 });

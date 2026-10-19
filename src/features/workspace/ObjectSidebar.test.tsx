@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { Capabilities } from "../../lib/types";
+import { useChrome } from "../../stores/chrome";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { ObjectSidebar } from "./ObjectSidebar";
 
@@ -232,4 +233,15 @@ test("without the capabilities: no routines, no database selector, no New query 
   const menu = await screen.findByRole("menu");
   expect(within(menu).queryByRole("menuitem", { name: strings.sidebar.menu.newQuery })).toBeNull();
   expect(within(menu).getByRole("menuitem", { name: strings.sidebar.menu.open })).toBeTruthy();
+});
+
+test("the toolbar's Reload reloads the objects", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  await screen.findByRole("button", { name: /Accounts/ });
+  expect(ipc.objectsList).toHaveBeenCalledTimes(1);
+  act(() => useChrome.getState().requestReload("w1"));
+  await waitFor(() => expect(ipc.objectsList).toHaveBeenCalledTimes(2));
+  // Another workspace's reload is not ours.
+  act(() => useChrome.getState().requestReload("w2"));
+  expect(ipc.objectsList).toHaveBeenCalledTimes(2);
 });

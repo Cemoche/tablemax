@@ -61,7 +61,6 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "tab.next",
     "tab.previous",
     "palette.all",
-    "palette.objects",
     "settings.open",
     "query.save",
     "history.toggle",
@@ -76,6 +75,9 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "grid.back",
     "font.increase",
     "font.decrease",
+    "database.open",
+    "editor.open",
+    "workspace.reload",
 ];
 /// At most this many keymap entries are kept (defensive: one per known id fits well below).
 pub const KEYMAP_MAX_ENTRIES: usize = 64;
@@ -186,6 +188,9 @@ pub struct Settings {
     pub interface_scale: f32,
     /// Font size of the data: grid and sidebar tree.
     pub data_font_size: u32,
+    /// Native window decorations instead of the frameless window with the toolbar as its
+    /// title bar; applied at startup (`commands::apply_window_settings`).
+    pub use_system_title_bar: bool,
 }
 
 impl Default for Settings {
@@ -202,6 +207,7 @@ impl Default for Settings {
             keymap: BTreeMap::new(),
             interface_scale: 1.0,
             data_font_size: 13,
+            use_system_title_bar: false,
         }
     }
 }
@@ -393,6 +399,24 @@ mod tests {
         assert_eq!(s.editor_font_size, 16, "saved editor size kept");
         assert_eq!(s.interface_scale, 1.0);
         assert_eq!(s.data_font_size, 13);
+    }
+
+    #[test]
+    fn system_title_bar_defaults_off_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!Settings::default().use_system_title_bar);
+        // A file written before the setting existed keeps the frameless window.
+        std::fs::write(path(&dir), r#"{"version":1,"theme":"dark"}"#).unwrap();
+        assert!(!load(&path(&dir)).use_system_title_bar);
+        let s = Settings {
+            use_system_title_bar: true,
+            ..Settings::default()
+        };
+        save(&path(&dir), &s).unwrap();
+        assert!(load(&path(&dir)).use_system_title_bar);
+        let raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path(&dir)).unwrap()).unwrap();
+        assert_eq!(raw["useSystemTitleBar"], true);
     }
 
     #[test]

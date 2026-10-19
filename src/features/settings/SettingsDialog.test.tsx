@@ -132,6 +132,14 @@ test("the auto LIMIT checkbox is saved", async () => {
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, autoLimitDefault: true });
 });
 
+test("the system title bar checkbox is saved and says when it applies", async () => {
+  setup();
+  const box = screen.getByRole("checkbox", { name: strings.settings.systemTitleBar });
+  expect(box).toHaveAccessibleDescription(strings.settings.systemTitleBarHint);
+  await userEvent.click(box);
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, useSystemTitleBar: true });
+});
+
 test("the font family is saved on Enter or blur, not on each keystroke", async () => {
   setup();
   const input = screen.getByLabelText(strings.settings.fontFamily);
@@ -252,10 +260,10 @@ test("recording a combination saves it and the label updates", async () => {
 test("a combination used by another action is refused with its label and saves nothing", async () => {
   setup();
   await userEvent.click(changeButton(paletteLabel));
-  await userEvent.keyboard("{Control>}p{/Control}");
-  expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["palette.objects"]))).toBeInTheDocument();
+  await userEvent.keyboard("{Control>}k{/Control}");
+  expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["database.open"]))).toBeInTheDocument();
   expect(ipc.settingsSet).not.toHaveBeenCalled();
-  expect(shortcutOf(paletteLabel)).toBe("Ctrl+K");
+  expect(shortcutOf(paletteLabel)).toBe("Ctrl+P");
 });
 
 test("a combination the grammar rejects shows an inline error and saves nothing", async () => {
@@ -296,7 +304,7 @@ test("Reset appears only for an overridden action and removes the override", asy
   expect(queryReset(strings.keymap["query.new"])).toBeNull();
   await userEvent.click(queryReset(paletteLabel) as HTMLElement);
   expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "grid.commit": "Mod+Shift+S" } });
-  expect(shortcutOf(paletteLabel)).toBe("Ctrl+K");
+  expect(shortcutOf(paletteLabel)).toBe("Ctrl+P");
 });
 
 test("Reset is refused when the default is now used by another action (rebind, take, reset)", async () => {
@@ -349,7 +357,7 @@ test("recording the default combination removes the override instead of storing 
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K" } }, confirmed: DEFAULT_SETTINGS });
   setup();
   await userEvent.click(changeButton(paletteLabel));
-  await userEvent.keyboard("{Control>}k{/Control}");
+  await userEvent.keyboard("{Control>}p{/Control}");
   expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: {} });
 });
 

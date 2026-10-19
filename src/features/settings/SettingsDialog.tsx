@@ -365,6 +365,18 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </label>
             ))}
           </fieldset>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={settings.useSystemTitleBar}
+              aria-describedby="settings-system-title-bar-hint"
+              onChange={(e) => void update({ useSystemTitleBar: e.target.checked })}
+            />
+            {strings.settings.systemTitleBar}
+          </label>
+          <p id="settings-system-title-bar-hint" className="text-sm text-muted">
+            {strings.settings.systemTitleBarHint}
+          </p>
         </Section>
 
         <Section title={strings.settings.editor}>

@@ -114,3 +114,13 @@ test("fonts: system UI font, bundled JetBrains Mono for data, 13 px base", () =>
   expect(light["--font-mono"]).toBe('"JetBrains Mono", ui-monospace, monospace');
   expect(light["--text-md"]).toBe("13px");
 });
+
+test("the status pill text is readable on every connection color", () => {
+  for (const selector of [LIGHT, DARK_FORCED]) {
+    const v = values(selector);
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      // 12.5 px medium monospace on the swatch (spec §5.1 colors): at least 3.5:1.
+      expect(contrastRatio(v["--status-text"], v[`--swatch-${n}`]), `${selector} swatch-${n}`).toBeGreaterThanOrEqual(3.5);
+    }
+  }
+});
