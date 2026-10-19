@@ -20,6 +20,8 @@
       "Bash(bash scripts/test-claude-hooks.sh)",
       "Bash(bash scripts/check-no-secrets.sh)",
       "Bash(bash scripts/test-github-bootstrap.sh)",
+      "Bash(bash scripts/test-release-scripts.sh)",
+      "Bash(bash scripts/release-check-version.sh *)",
       "Bash(bash scripts/github-bootstrap.sh --dry-run)",
       "Bash(node scripts/plan-to-issues.mjs * --dry-run)",
       "Bash(docker compose -f docker-compose.test.yml up*)",
