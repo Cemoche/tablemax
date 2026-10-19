@@ -45,8 +45,12 @@ support. Check a build with `bash scripts/release-smoke.sh glibc 2.35 <package>â
 
 Runtime notes: saving passwords in the keyring needs a Secret Service provider
 (GNOME Keyring or KWallet, present on standard desktops); without one, choose "Ask each
-time" for passwords. App data (connections, `settings.json`, the app's `known_hosts`) lives
-in `~/.local/share/dev.tablemax.app/`.
+time" for passwords. App data (connections, `settings.json`, the app's `known_hosts`, saved
+queries) lives in `~/.local/share/io.github.cemoche.tablemax/` (the app identifier). Builds
+made before the identifier changed (#49, before the first release) used
+`~/.local/share/dev.tablemax.app/`: its content is moved at the first start of a newer build,
+and SQLite connections to files inside it follow. Saved passwords stay
+under the keyring service `dev.tablemax.app`.
 
 The app icon is drawn for TableMax (`assets/icon/tablemax.svg`); `pnpm icons` regenerates
 `src-tauri/icons/` from it.
