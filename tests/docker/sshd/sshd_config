@@ -1,0 +1,22 @@
+# Test-only sshd: password and public key logins for `tunnel`, local forwarding only.
+Port 22
+# Ed25519 is presented by default; ECDSA when the client asks for it first (a client
+# whose known_hosts records the ECDSA key does).
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+AllowUsers tunnel
+PermitRootLogin no
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+AllowTcpForwarding yes
+AllowAgentForwarding no
+X11Forwarding no
+PermitTunnel no
+GatewayPorts no
+PidFile /run/sshd.pid
+# The tests open many sessions in parallel and fail logins on purpose: no throttling,
+# no per-source penalties (OpenSSH 9.8+).
+MaxStartups 200
+PerSourcePenalties no

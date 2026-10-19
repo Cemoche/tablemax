@@ -1,0 +1,325 @@
+import {
+  type CellClickedEventArgs,
+  CompactSelection,
+  type DrawCellCallback,
+  type GridCell,
+  GridCellKind,
+  type GridColumn,
+  type GridSelection,
+  type Item,
+  type ProvideEditorCallback,
+  type ProvideEditorComponent,
+  type TextCell,
+  type Theme,
+  DataEditor,
+} from "@glideapps/glide-data-grid";
+import "@glideapps/glide-data-grid/dist/index.css";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isModKey } from "../../lib/platform";
+import { strings } from "../../lib/strings";
+import type { ResultSet, SortDir } from "../../lib/types";
+import { CellEditorOverlay } from "./CellEditorOverlay";
+import { type CellContent, cellContent } from "./cellContent";
+import type { GridModel } from "./editModel";
+import { type CellBlock, selectedRowOf, selectionBlock, withSelectedRow } from "./gridSelection";
+import { useGridTheme } from "./gridTheme";
+
+const ROW_HEIGHT = 24;
+const HEADER_HEIGHT = 28;
+
+const DEFAULT_COL_WIDTH = 160;
+
+/** Editing hooks of a table grid; row/col are display indexes of `model`. */
+export interface GridEditing {
+  model: GridModel;
+  onEdit: (row: number, col: number, text: string) => void;
+  /** Loads the whole value of a truncated cell before it is edited. */
+  loadFull: (row: number, col: number) => Promise<string>;
+  /**
+   * Right click; `col` null on the row marker; x/y in viewport pixels; `selection` = the
+   * cells selected at that moment (null: none).
+   */
+  onContextMenu: (row: number, col: number | null, x: number, y: number, selection?: CellBlock | null) => void;
+  /** The cell is a foreign key value that links to a row (indicator, Mod+click). */
+  linkAt: (row: number, col: number) => boolean;
+  /** Opens the row the cell references (Mod+click). */
+  onOpenLink: (row: number, col: number) => void;
+  /** Enter / double click, also on a read-only cell (to say why it is read-only). */
+  onActivate: (row: number, col: number) => void;
+  /** The cell editor opened (true) or closed (false). */
+  onEditorOpen: (open: boolean) => void;
+  /** The selected row changed (the current cell's row; null when nothing is selected). */
+  onSelect: (row: number | null) => void;
+  /** Where the selected record is now (it moves with inserts, reloads and pages). */
+  selectedRow: number | null;
+  /**
+   * Changes whenever display rows are added, removed or reloaded, or a commit locks them:
+   * an open cell editor is then closed (its edit dropped).
+   */
+  rowSignature: string;
+  /** The identity of a display row (stable across renders), null when out of range. */
+  rowIdAt: (row: number) => string | null;
+  /** Where the row with that identity is now (null: gone). */
+  rowById: (id: string) => number | null;
+}
+
+export interface DataGridProps {
+  data: ResultSet;
+  sort?: [string, SortDir] | null;
+  onSort?: (column: string) => void;
+  /** Header clicks request a (server-side) sort. Disable for ad-hoc query results. */
+  sortable?: boolean;
+  /** Table tabs: pending changes laid over `data`, editable cells. Absent = read-only. */
+  editing?: GridEditing;
+}
+
+const DEFAULT_CONTENT: CellContent = { kind: "null", display: strings.grid.defaultText, copyText: "" };
+
+/** Thin adapter over Glide Data Grid (canvas; not testable in jsdom). */
+export function DataGrid({ data, sort = null, onSort, sortable = true, editing }: DataGridProps) {
+  const { theme, muted: mutedOverride, edit: editThemes } = useGridTheme();
+  const colKey = data.columns.map((c) => c.name).join("\u0000");
+  const [widths, setWidths] = useState<{ key: string; w: Record<string, number> }>({
+    key: colKey,
+    w: {},
+  });
+  const colWidths = widths.key === colKey ? widths.w : {};
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  /** The cell last activated (Enter / double click): the one the editor opens on. */
+  const activated = useRef<Item | null>(null);
+  /** Cancels the open cell editor (set while one is open). */
+  const closeEditor = useRef<(() => void) | null>(null);
+  /** The record and column the open editor edits (captured when it opened). */
+  const editorTarget = useRef<{ id: string | null; col: number } | null>(null);
+  /** Controlled for table grids: reports the selected row and follows the selected record. */
+  const [selection, setSelection] = useState<GridSelection>(() => ({
+    columns: CompactSelection.empty(),
+    rows: CompactSelection.empty(),
+  }));
+  if (editing) {
+    const moved = withSelectedRow(selection, editing.selectedRow);
+    if (moved !== selection) setSelection(moved);
+  }
+
+  // New data (a reload), rows added or removed, or a commit closes an open editor: its row
+  // index may now be another row.
+  const shown = useRef({ data, signature: editing?.rowSignature });
+  const signature = editing?.rowSignature;
+  useEffect(() => {
+    if (shown.current.data === data && shown.current.signature === signature) return;
+    shown.current = { data, signature };
+    closeEditor.current?.();
+  }, [data, signature]);
+
+  const columns = useMemo<GridColumn[]>(
+    () =>
+      data.columns.map((c) => {
+        const ind =
+          sort && sort[0] === c.name
+            ? ` ${sort[1] === "asc" ? strings.grid.sortAsc : strings.grid.sortDesc}`
+            : "";
+        return {
+          id: c.name,
+          title: c.name + ind,
+          width: colWidths[c.name] ?? DEFAULT_COL_WIDTH,
+        };
+      }),
+    [data.columns, sort, colWidths],
+  );
+
+  const model = editing?.model;
+  const getCellContent = useCallback(
+    ([col, row]: Item): GridCell => {
+      if (model) {
+        const cell = model.cell(row, col);
+        const c = cell.value === "default" ? DEFAULT_CONTENT : cellContent(cell.value);
+        const rowInserted = model.rows[row]?.kind === "insert";
+        const theme: Partial<Theme> | undefined =
+          c.kind === "null" || (cell.edited && !rowInserted)
+            ? {
+                ...(c.kind === "null" ? mutedOverride : {}),
+                ...(cell.edited && !rowInserted ? editThemes.edited : {}),
+              }
+            : undefined;
+        return {
+          kind: GridCellKind.Text,
+          data: c.copyText,
+          displayData: c.display,
+          copyData: c.copyText,
+          allowOverlay: cell.editable,
+          readonly: !cell.editable,
+          // A link keeps its value on the left: the indicator is drawn on the right.
+          contentAlign:
+            c.kind === "number" && !editingRef.current?.linkAt(row, col) ? "right" : undefined,
+          themeOverride: theme,
+        };
+      }
+      const v = data.rows[row]?.[col];
+      if (!v) {
+        return { kind: GridCellKind.Text, data: "", displayData: "", allowOverlay: false };
+      }
+      const c = cellContent(v);
+      return {
+        kind: GridCellKind.Text,
+        data: c.copyText,
+        displayData: c.display,
+        copyData: c.copyText,
+        allowOverlay: false,
+        readonly: true,
+        contentAlign: c.kind === "number" ? "right" : undefined,
+        themeOverride: c.kind === "null" ? mutedOverride : undefined,
+      };
+    },
+    [model, data.rows, mutedOverride, editThemes],
+  );
+
+  const getRowThemeOverride = useCallback(
+    (row: number): Partial<Theme> | undefined => {
+      if (!model) return undefined;
+      const r = model.rows[row];
+      if (!r) return undefined;
+      const base =
+        r.kind === "insert" ? editThemes.inserted : r.deleted ? editThemes.deleted : undefined;
+      return model.rowError(row) !== null ? { ...base, ...editThemes.failed } : base;
+    },
+    [model, editThemes],
+  );
+
+  // Rows to delete are struck through; foreign key links get an indicator on the right.
+  const drawCell = useCallback<DrawCellCallback>(
+    (args, drawContent) => {
+      drawContent();
+      const { ctx, rect, theme: t } = args;
+      if (editingRef.current?.linkAt(args.row, args.col)) {
+        ctx.save();
+        ctx.fillStyle = t.accentColor;
+        ctx.font = `${t.baseFontStyle} ${t.fontFamily}`;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        ctx.fillText(strings.grid.fkIndicator, rect.x + rect.width - 4, rect.y + rect.height / 2);
+        ctx.restore();
+      }
+      const r = model?.rows[args.row];
+      if (r?.kind !== "row" || !r.deleted) return;
+      const y = Math.round(rect.y + rect.height / 2) + 0.5;
+      ctx.save();
+      ctx.strokeStyle = t.textDark;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(rect.x + 4, y);
+      ctx.lineTo(rect.x + rect.width - 4, y);
+      ctx.stroke();
+      ctx.restore();
+    },
+    [model],
+  );
+
+  // Stable (Glide re-creates the editor when this changes); reads the latest props by ref.
+  const provideEditor = useCallback<ProvideEditorCallback<GridCell>>((cell) => {
+    const ed = editingRef.current;
+    if (!ed || cell.kind !== GridCellKind.Text) return undefined;
+    const at = activated.current;
+    const Editor: ProvideEditorComponent<GridCell> = (p) => {
+      const value = p.value as TextCell;
+      const finish = useRef(p.onFinishedEditing);
+      finish.current = p.onFinishedEditing;
+      // A typed character replaces the value: nothing to load then.
+      const load =
+        p.initialValue === undefined && at && ed.model.cell(at[1], at[0]).truncated
+          ? () => ed.loadFull(at[1], at[0])
+          : undefined;
+      return (
+        <CellEditorOverlay
+          value={value.data}
+          load={load}
+          onChange={(text) => p.onChange({ ...value, data: text })}
+          onMount={() => {
+            const target = at ? { id: ed.rowIdAt(at[1]), col: at[0] } : null;
+            editorTarget.current = target;
+            closeEditor.current = () => finish.current(undefined);
+            editingRef.current?.onEditorOpen(true);
+            return () => {
+              closeEditor.current = null;
+              editingRef.current?.onEditorOpen(false);
+              // After Glide reported the edit (if any) for this editor.
+              setTimeout(() => {
+                if (editorTarget.current === target) editorTarget.current = null;
+              }, 0);
+            };
+          }}
+        />
+      );
+    };
+    return { editor: Editor, disablePadding: true };
+  }, []);
+
+  return (
+    <DataEditor
+      width="100%"
+      height="100%"
+      columns={columns}
+      rows={model ? model.rows.length : data.rows.length}
+      getCellContent={getCellContent}
+      getCellsForSelection={true}
+      theme={theme}
+      rowHeight={ROW_HEIGHT}
+      headerHeight={HEADER_HEIGHT}
+      rowMarkers="number"
+      smoothScrollX
+      smoothScrollY
+      onHeaderClicked={(col) => {
+        const name = data.columns[col]?.name;
+        if (sortable && name && onSort) onSort(name);
+      }}
+      onColumnResize={(col, newSize) =>
+        setWidths({ key: colKey, w: { ...colWidths, [String(col.id)]: newSize } })
+      }
+      {...(editing && {
+        getRowThemeOverride,
+        drawCell,
+        provideEditor,
+        // Delete would clear the selected cells to "": NULL/empty are explicit menu choices.
+        onDelete: () => false,
+        gridSelection: selection,
+        onGridSelectionChange: (s: GridSelection) => {
+          setSelection(s);
+          editingRef.current?.onSelect(selectedRowOf(s));
+        },
+        onCellActivated: ([col, row]: Item) => {
+          activated.current = [col, row];
+          editingRef.current?.onActivate(row, col);
+        },
+        onCellEdited: ([col, row]: Item, v: GridCell) => {
+          const ed = editingRef.current;
+          if (!ed || v.kind !== GridCellKind.Text) return;
+          // The editor's edit goes to the record it was opened on, wherever it is now.
+          const target = editorTarget.current;
+          editorTarget.current = null;
+          if (!target) {
+            ed.onEdit(row, col, v.data);
+            return;
+          }
+          const at = target.id === null ? null : ed.rowById(target.id);
+          if (at !== null) ed.onEdit(at, target.col, v.data);
+        },
+        onCellClicked: ([col, row]: Item, e: CellClickedEventArgs) => {
+          const ed = editingRef.current;
+          if (col < 0 || !isModKey(e) || !ed?.linkAt(row, col)) return;
+          e.preventDefault();
+          ed.onOpenLink(row, col);
+        },
+        onCellContextMenu: ([col, row]: Item, e: CellClickedEventArgs) => {
+          e.preventDefault();
+          editingRef.current?.onContextMenu(
+            row,
+            col < 0 ? null : col,
+            e.bounds.x + e.localEventX,
+            e.bounds.y + e.localEventY,
+            selectionBlock(selection, model ? model.rows.length : data.rows.length, data.columns.length),
+          );
+        },
+      })}
+    />
+  );
+}

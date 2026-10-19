@@ -1,0 +1,81 @@
+# Project name and host ports are overridable (TABLEMAX_TEST_PROJECT, TABLEMAX_TEST_*_PORT,
+# see scripts/test-dbs.sh), e.g. to run the tests of two worktrees side by side.
+name: tablemax-test
+
+# TLS material and SSH keys come from scripts/test-secrets.sh (run by scripts/test-dbs.sh up).
+# Bind mounts carry `z` so SELinux hosts let the containers read them.
+services:
+  pg16:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: tablemax
+      POSTGRES_DB: tablemax_test
+    entrypoint: ["/usr/local/bin/pg-ssl.sh"]
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/tls/server.pem
+      - -c
+      - ssl_key_file=/var/lib/postgresql/tls/server.key
+      - -c
+      - ssl_ca_file=/var/lib/postgresql/tls/ca.pem
+      - -c
+      - hba_file=/var/lib/postgresql/tls/pg_hba.conf
+    volumes:
+      - ./.test-secrets/tls:/tls:ro,z
+      - ./tests/docker/pg-ssl.sh:/usr/local/bin/pg-ssl.sh:ro,z
+    ports:
+      - "127.0.0.1:${TABLEMAX_TEST_PG_PORT:-54321}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d tablemax_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mysql8:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: tablemax
+      MYSQL_DATABASE: tablemax_test
+    command: ["--ssl-ca=/tls/ca.pem", "--ssl-cert=/tls/server.pem", "--ssl-key=/tls/server.key"]
+    volumes:
+      - ./.test-secrets/tls:/tls:ro,z
+    ports:
+      - "127.0.0.1:${TABLEMAX_TEST_MYSQL_PORT:-33061}:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -ptablemax --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  mariadb11:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: tablemax
+      MARIADB_DATABASE: tablemax_test
+    command: ["--ssl-ca=/tls/ca.pem", "--ssl-cert=/tls/server.pem", "--ssl-key=/tls/server.key"]
+    volumes:
+      - ./.test-secrets/tls:/tls:ro,z
+    ports:
+      - "127.0.0.1:${TABLEMAX_TEST_MARIADB_PORT:-33062}:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  # SSH tunnel endpoint. On the project's default network, so it reaches the databases
+  # as pg16:5432, mysql8:3306 and mariadb11:3306.
+  sshd:
+    build: tests/docker/sshd
+    volumes:
+      - ./.test-secrets/ssh:/keys:ro,z
+    ports:
+      - "127.0.0.1:${TABLEMAX_TEST_SSH_PORT:-2222}:22"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

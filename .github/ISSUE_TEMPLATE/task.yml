@@ -1,0 +1,53 @@
+name: Task
+description: A unit of work small enough for one branch and one pull request.
+labels: ["type:task", "status:ready"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One task = one branch `issue-<n>-<slug>` = one PR with `Closes #<n>`.
+        Assign yourself before starting.
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this is needed, what exists today.
+    validations:
+      required: true
+  - type: textarea
+    id: todo
+    attributes:
+      label: To do
+      description: What to build or change.
+      placeholder: |
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checks that prove it is done (tests, commands and their expected output, manual checks for UI).
+      placeholder: |
+        - [ ] `pnpm test && pnpm lint` green
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Files likely touched
+      description: Paths, so teammates can avoid working on the same files at once.
+      placeholder: |
+        - src/features/...
+        - src-tauri/src/...
+    validations:
+      required: false
+  - type: input
+    id: links
+    attributes:
+      label: Related plan / spec
+      description: Link to the plan task or spec section.
+      placeholder: docs/superpowers/plans/<plan>.md#task-1-...
+    validations:
+      required: false

@@ -1,0 +1,55 @@
+[package]
+name = "tablemax"
+version = "0.1.0"
+description = "TableMax, a free desktop database client"
+authors = ["Cem Yildirim and the TableMax contributors"]
+license = "GPL-3.0-or-later"
+edition = "2024"
+
+[lib]
+# A distinct lib name keeps it from clashing with the `tablemax` binary
+# (https://github.com/rust-lang/cargo/issues/8519).
+name = "tablemax_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1.92"
+rusqlite = { version = "0.40", features = ["bundled", "column_decltype"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+tokio-postgres = "0.7"
+tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8.5"
+webpki-roots = "1.0.9"
+futures-util = { version = "0.3", default-features = false }
+mysql_async = { version = "0.37", default-features = false, features = ["minimal-rust", "rustls-tls", "ring", "tls12"] }
+keyring = "4.2"
+uuid = { version = "1", features = ["v4"] }
+russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa", "flate2"] }
+aes = "0.9.3"
+cbc = { version = "0.2.1", features = ["alloc"] }
+hmac = "0.13.0"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+pbkdf2 = { version = "0.13.0", default-features = false, features = ["hmac"] }
+
+[dev-dependencies]
+tempfile = "3"
+url = "2"
+rand = "0.10"
+tokio = { version = "1", features = ["time", "test-util"] }
+
+# Small, fast release binary (https://tauri.app/concept/size/#cargo-configuration).
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true

@@ -1,0 +1,231 @@
+// One function per Tauri command (names mirror src-tauri/src/commands.rs).
+// Rejected promises carry an AppError (use toAppError from ./errors to normalise).
+import { Channel, invoke } from "@tauri-apps/api/core";
+import type {
+  ApplyOutcome,
+  Catalog,
+  CellValue,
+  ConnectionConfig,
+  DbObject,
+  DbRoutine,
+  ExecEvent,
+  FilePurpose,
+  Filter,
+  ImportPreview,
+  ImportResult,
+  ObjectRef,
+  PageRequest,
+  ResultSet,
+  RowChange,
+  RowCount,
+  RowKey,
+  Settings,
+  TableInfo,
+  WorkspaceInfo,
+  HistoryEntry,
+  SavedQuery,
+} from "./types";
+
+export const connectionsList = () => invoke<ConnectionConfig[]>("connections_list");
+
+export const connectionSave = (
+  config: ConnectionConfig,
+  password: string | null,
+  sshSecret: string | null,
+) => invoke<ConnectionConfig>("connection_save", { config, password, sshSecret });
+
+export const connectionDelete = (id: string) => invoke<void>("connection_delete", { id });
+
+/**
+ * Resolves with the server version string. `acceptFingerprint` trusts an unknown SSH
+ * host key the user confirmed (the "SHA256:…" message of a hostKeyUnknown error).
+ */
+export const connectionTest = (
+  config: ConnectionConfig,
+  password: string | null,
+  sshSecret: string | null,
+  acceptFingerprint: string | null,
+) => invoke<string>("connection_test", { config, password, sshSecret, acceptFingerprint });
+
+export const workspaceOpen = (
+  connectionId: string,
+  password: string | null,
+  sshSecret: string | null,
+  acceptFingerprint: string | null,
+) =>
+  invoke<WorkspaceInfo>("workspace_open", { connectionId, password, sshSecret, acceptFingerprint });
+
+/** Concrete host aliases of ~/.ssh/config. */
+export const sshHostsList = () => invoke<string[]>("ssh_hosts_list");
+
+/** Opens the native file picker (from Rust); null when cancelled. */
+export const filePick = (purpose: FilePurpose) => invoke<string | null>("file_pick", { purpose });
+
+/**
+ * Reads a TablePlus export with `password`; null when the picker is cancelled. The file
+ * is picked in Rust; `reusePick` re-reads the last picked file instead (a retry after a
+ * wrong password). Rejects with invalid "wrong password or corrupted file" or
+ * "not a TablePlus export".
+ */
+export const importTablePlusPreview = (password: string, reusePick: boolean) =>
+  invoke<ImportPreview | null>("import_tableplus_preview", { password, reusePick });
+
+/** Saves the previewed items at `indexes`; rejects with notFound "import expired". */
+export const importTablePlusCommit = (importId: string, indexes: number[]) =>
+  invoke<ImportResult>("import_tableplus_commit", { importId, indexes });
+
+/** Drops a previewed import that will not be committed (and its secrets). */
+export const importTablePlusDiscard = (importId: string) =>
+  invoke<void>("import_tableplus_discard", { importId });
+
+export const workspaceClose = (workspaceId: string) =>
+  invoke<void>("workspace_close", { workspaceId });
+
+export const schemasList = (workspaceId: string) =>
+  invoke<string[]>("schemas_list", { workspaceId });
+
+export const objectsList = (workspaceId: string, schema: string | null) =>
+  invoke<DbObject[]>("objects_list", { workspaceId, schema });
+
+export const tablePage = (workspaceId: string, request: PageRequest) =>
+  invoke<ResultSet>("table_page", { workspaceId, request });
+
+/**
+ * Above the exact count threshold (a setting) the count is an estimate; with filters it
+ * is capped (estimate = the threshold beyond).
+ */
+export const tableCount = (workspaceId: string, object: ObjectRef, filters: Filter[] = []) =>
+  invoke<RowCount>("table_count", { workspaceId, object, filters });
+
+/** Cached per workspace; `refresh` re-reads it from the database. */
+export const tableInfo = (workspaceId: string, object: ObjectRef, refresh: boolean) =>
+  invoke<TableInfo>("table_info", { workspaceId, object, refresh });
+
+export const tableDdl = (workspaceId: string, object: ObjectRef) =>
+  invoke<string>("table_ddl", { workspaceId, object });
+
+/**
+ * The SQL of each change, with literals inlined (display only, never run). Rejects with
+ * invalid "change <i>: <reason>" (0-based) for a change that cannot be built.
+ */
+export const changesPreview = (workspaceId: string, object: ObjectRef, changes: RowChange[]) =>
+  invoke<string[]>("changes_preview", { workspaceId, object, changes });
+
+/**
+ * Applies every change in one transaction on the browse connection (all or nothing).
+ * Rejects with invalid "change <i>: <reason>" before running anything, cancelled (rolled
+ * back), or connectionLost / connection (outcome unknown: COMMIT may have been sent or
+ * was interrupted).
+ *
+ * Safe mode: without `confirmed`, a commit the connection's safe mode wants confirmed is
+ * rejected with confirmationRequired (message: the change indices, "0,1") before anything
+ * is built or run; re-send it with `confirmed = true` once the user confirmed. Only one
+ * commit per workspace: another one while it runs rejects with invalid.
+ */
+export const changesApply = (
+  workspaceId: string,
+  object: ObjectRef,
+  changes: RowChange[],
+  confirmed = false,
+) => invoke<ApplyOutcome>("changes_apply", { workspaceId, object, changes, confirmed });
+
+/** Cancels the workspace's commit in flight (no-op when none): it rejects with cancelled. */
+export const changesCancel = (workspaceId: string) =>
+  invoke<void>("changes_cancel", { workspaceId });
+
+/** The whole value of a cell (text/JSON never cut); notFound when the row is gone. */
+export const cellValue = (workspaceId: string, object: ObjectRef, key: RowKey, column: string) =>
+  invoke<CellValue>("cell_value", { workspaceId, object, key, column });
+
+/** `database` (PostgreSQL): open on that database instead of the workspace's current one. */
+export const sqlSessionOpen = (workspaceId: string, database: string | null = null) =>
+  invoke<string>("sql_session_open", { workspaceId, database });
+
+export const sqlSessionClose = (sessionId: string) =>
+  invoke<void>("sql_session_close", { sessionId });
+
+/**
+ * Runs statements, streaming ExecEvents to `onEvent`.
+ * IMPORTANT: the end of the batch is the `batchFinished` event, NOT this promise
+ * resolving. The promise settles after the backend sent `batchFinished` (or rejects
+ * on a pre-flight error such as an unknown session or a query already running);
+ * UI state must be driven by the events.
+ * Safe mode: without `confirmed`, a batch the connection's safe mode wants confirmed
+ * rejects with `confirmationRequired` before anything runs (no event is sent, not even
+ * `batchFinished`); re-run it with `confirmed = true` once the user confirmed.
+ */
+export const sqlExecute = (
+  sessionId: string,
+  statements: string[],
+  onEvent: (e: ExecEvent) => void,
+  confirmed = false,
+) => {
+  const channel = new Channel<ExecEvent>();
+  channel.onmessage = onEvent;
+  return invoke<void>("sql_execute", { sessionId, statements, confirmed, onEvent: channel });
+};
+
+export const sqlCancel = (sessionId: string) => invoke<void>("sql_cancel", { sessionId });
+
+/** Sets the calling window's title (no JS permission needed: done in Rust). */
+export const windowSetTitle = (title: string) => invoke<void>("window_set_title", { title });
+
+export const settingsGet = () => invoke<Settings>("settings_get");
+
+/** Saves the settings; resolves with the stored value (out-of-range numbers clamped). */
+export const settingsSet = (settings: Settings) => invoke<Settings>("settings_set", { settings });
+
+/** The app version (from the package info). */
+export const appVersion = () => invoke<string>("app_version");
+
+// ---- History, session and saved queries ----
+
+export const historyList = (connectionId: string, search: string | null, limit: number) =>
+  invoke<HistoryEntry[]>("history_list", { connectionId, search, limit });
+
+export const historyClear = (connectionId: string) =>
+  invoke<void>("history_clear", { connectionId });
+
+/** Stores the session JSON as is (rejected above 5 MB). It must hold no secret. */
+export const sessionSave = (json: string) => invoke<void>("session_save", { json });
+
+/** The stored session text, or null; the caller validates the JSON and its version. */
+export const sessionLoad = () => invoke<string | null>("session_load");
+
+export const savedQueriesList = (connectionId: string) =>
+  invoke<SavedQuery[]>("saved_queries_list", { connectionId });
+
+export const savedQueryRead = (connectionId: string, name: string) =>
+  invoke<string>("saved_query_read", { connectionId, name });
+
+export const savedQueryWrite = (connectionId: string, name: string, sql: string) =>
+  invoke<void>("saved_query_write", { connectionId, name, sql });
+
+export const savedQueryRename = (connectionId: string, from: string, to: string) =>
+  invoke<void>("saved_query_rename", { connectionId, from, to });
+
+export const savedQueryDelete = (connectionId: string, name: string) =>
+  invoke<void>("saved_query_delete", { connectionId, name });
+
+// ---- Completion catalog, routines and database switching ----
+
+/** Tables, views and columns of a schema; cached 5 minutes per workspace and schema. */
+export const catalogGet = (workspaceId: string, schema: string | null, refresh: boolean) =>
+  invoke<Catalog>("catalog_get", { workspaceId, schema, refresh });
+
+export const routinesList = (workspaceId: string, schema: string | null) =>
+  invoke<DbRoutine[]>("routines_list", { workspaceId, schema });
+
+/** PostgreSQL: the databases to switch to. MySQL: the schemas. SQLite: attached databases. */
+export const databasesList = (workspaceId: string) =>
+  invoke<string[]>("databases_list", { workspaceId });
+
+/**
+ * PostgreSQL only: the workspace's browsing moves to `database` (new SQL tabs use it too,
+ * open ones keep theirs). Other engines reject with `invalid`; they switch schema.
+ */
+export const workspaceSwitchDatabase = (workspaceId: string, database: string) =>
+  invoke<WorkspaceInfo>("workspace_switch_database", { workspaceId, database });
+
+/** Really closes the main window once the session was flushed (Rust held the close back). */
+export const windowCloseConfirmed = () => invoke<void>("window_close_confirmed");

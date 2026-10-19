@@ -1,0 +1,91 @@
+import { strings } from "../../lib/strings";
+import { usePendingChanges } from "../../stores/pendingChanges";
+import { type Workspace, isQueryModified, useWorkspaces } from "../../stores/workspaces";
+import { TabList } from "./TabList";
+
+export function TabBar({ workspace }: { workspace: Workspace }) {
+  const activateTab = useWorkspaces((s) => s.activateTab);
+  const closeTab = useWorkspaces((s) => s.closeTab);
+  const pinTab = useWorkspaces((s) => s.pinTab);
+  const openQueryTab = useWorkspaces((s) => s.openQueryTab);
+  const committing = usePendingChanges((s) => s.committing);
+  const { id } = workspace;
+  return (
+    <div className="flex items-stretch border-b border-border bg-surface">
+      <div
+        role="tablist"
+        aria-label={strings.workspace.tabsLabel}
+        className="flex min-w-0 flex-1 overflow-x-auto"
+      >
+        {workspace.tabs.map((t) => {
+          const active = t.id === workspace.activeTabId;
+          // A running commit must finish before its tab can close.
+          const busy = committing[t.id] === true;
+          return (
+            <div
+              key={t.id}
+              className={`flex shrink-0 items-center border-r border-border ${
+                active ? "bg-bg text-fg" : "bg-surface text-muted hover:bg-surface-2"
+              }`}
+              onMouseDown={(e) => {
+                if (e.button === 1) e.preventDefault(); // suppress autoscroll
+              }}
+              onAuxClick={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault();
+                  closeTab(id, t.id);
+                }
+              }}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => activateTab(id, t.id)}
+                onDoubleClick={() => pinTab(id, t.id)}
+                className={`max-w-48 truncate py-1.5 pl-3 pr-1 ${active ? "font-semibold" : ""} ${
+                  t.kind === "table" && t.preview ? "italic" : ""
+                }`}
+              >
+                {t.title}
+                {t.kind === "query" && t.database && workspace.database && t.database !== workspace.database && (
+                  <span
+                    title={strings.workspace.tabDatabase(t.database)}
+                    className="ml-1 rounded-sm border border-border px-1 text-xs font-normal not-italic text-muted"
+                  >
+                    {t.database}
+                  </span>
+                )}
+                {isQueryModified(t) && (
+                  <span aria-hidden="true" title={strings.savedQueries.modified} className="ml-1 text-warning">
+                    {strings.savedQueries.modifiedDot}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                aria-label={strings.workspace.closeTab(t.title)}
+                title={busy ? strings.grid.closeWhileCommitting : undefined}
+                disabled={busy}
+                onClick={() => closeTab(id, t.id)}
+                className="mr-1 rounded-sm px-1.5 hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        aria-label={strings.workspace.newQueryTab}
+        title={strings.workspace.newQueryTab}
+        onClick={() => openQueryTab(id)}
+        className="shrink-0 px-3 hover:bg-surface-2"
+      >
+        +
+      </button>
+      <TabList workspace={workspace} />
+    </div>
+  );
+}
