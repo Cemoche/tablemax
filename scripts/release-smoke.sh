@@ -6,10 +6,17 @@
 #   bash scripts/release-smoke.sh deb <file.deb> [image]
 #       installs it with apt in a clean container (default ubuntu:24.04) and checks that
 #       every library of /usr/bin/tablemax resolves (needs docker)
-#   bash scripts/release-smoke.sh appimage <file.AppImage> [seconds]
-#       starts it under Xvfb (extract-and-run, no FUSE needed) with an empty HOME and checks
-#       it is still running after <seconds> (default 15) (needs xvfb-run)
+#   bash scripts/release-smoke.sh appimage <file.AppImage> [seconds] [image]
+#       starts it under Xvfb (extract-and-run, no FUSE needed) with an empty HOME, in a clean
+#       container (default ubuntu:24.04) holding only the desktop libraries an AppImage
+#       expects from the host, and checks it is still running after <seconds> (default 15)
+#       (needs docker)
 set -euo pipefail
+
+# What every Linux desktop provides and AppImages leave to the host by convention
+# (linuxdeploy's excludelist): X11/Wayland client libraries, fonts, Mesa EGL/GL/GBM.
+DESKTOP_LIBS="libx11-6 libx11-xcb1 libxcb1 libwayland-client0 libfontconfig1 libfreetype6
+  libharfbuzz0b libfribidi0 libexpat1 libdrm2 libgbm1 libegl1 libgl1"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -80,8 +87,24 @@ cmd_deb() {
 }
 
 cmd_appimage() {
-  local file="$1" seconds="${2:-15}"
+  local file="$1" seconds="${2:-15}" image="${3:-ubuntu:24.04}"
   [[ -f "$file" ]] || die "no such file: $file"
+  local dir name script libs
+  dir="$(cd "$(dirname "$file")" && pwd)"; name="$(basename "$file")"
+  script="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  libs="${DESKTOP_LIBS//$'\n'/ }" # one line for apt-get
+  docker run --rm -v "$dir:/pkg:ro" -v "$script:/smoke.sh:ro" "$image" bash -euo pipefail -c "
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq --no-install-recommends xvfb xauth $libs >/dev/null
+    cp '/pkg/$name' /tmp/app.AppImage
+    bash /smoke.sh appimage-here /tmp/app.AppImage '$seconds' '$image'
+  "
+}
+
+# Inside the container: start the AppImage under Xvfb and expect it still running.
+cmd_appimage_here() {
+  local file="$1" seconds="${2:-15}" image="${3:-this machine}"
   chmod +x "$file"
   local abs home log rc=0
   abs="$(cd "$(dirname "$file")" && pwd)/$(basename "$file")"
@@ -91,10 +114,10 @@ cmd_appimage() {
     APPIMAGE_EXTRACT_AND_RUN=1 GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 \
     xvfb-run -a timeout "$seconds" "$abs" >"$log" 2>&1 || rc=$?
   if [[ $rc -eq 124 ]]; then
-    echo "ok   $(basename "$file") still running after ${seconds}s under Xvfb"
+    echo "ok   AppImage still running after ${seconds}s under Xvfb on $image"
     rm -rf "$home"
   else
-    echo "FAIL $(basename "$file") exited with $rc before ${seconds}s; its output:"
+    echo "FAIL AppImage exited with $rc before ${seconds}s on $image; its output:"
     tail -50 "$log"
     rm -rf "$home"
     return 1
@@ -104,6 +127,7 @@ cmd_appimage() {
 case "${1:-}" in
   glibc) shift; [[ $# -ge 2 ]] || die "usage: glibc <max> <package>..."; cmd_glibc "$@" ;;
   deb) shift; [[ $# -ge 1 ]] || die "usage: deb <file.deb> [image]"; cmd_deb "$@" ;;
-  appimage) shift; [[ $# -ge 1 ]] || die "usage: appimage <file.AppImage> [seconds]"; cmd_appimage "$@" ;;
-  *) sed -n '2,12p' "$0" >&2; exit 2 ;;
+  appimage) shift; [[ $# -ge 1 ]] || die "usage: appimage <file.AppImage> [seconds] [image]"; cmd_appimage "$@" ;;
+  appimage-here) shift; cmd_appimage_here "$@" ;;
+  *) sed -n '2,14p' "$0" >&2; exit 2 ;;
 esac

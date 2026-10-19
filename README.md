@@ -16,7 +16,8 @@ and newer** (glibc 2.35), and each release is smoke-tested on Ubuntu 24.04.
   4.1 and GTK 3 from the distribution. Run `tablemax` or use the "TableMax" desktop entry
   (category Development). Remove with `sudo apt remove table-max`.
 - **Other distributions — AppImage** (`TableMax_<version>_amd64.AppImage`), bundles
-  WebKitGTK, GTK and their libraries: `chmod +x TableMax_*.AppImage && ./TableMax_*.AppImage`.
+  WebKitGTK, GTK and their libraries (X11/Wayland, fonts and Mesa EGL/GL come from the
+  system, as for any AppImage): `chmod +x TableMax_*.AppImage && ./TableMax_*.AppImage`.
   It needs FUSE 2 (`libfuse2t64` on Ubuntu 24.04, `libfuse2` on 22.04, `fuse-libs` on
   Fedora); without it, run it with `APPIMAGE_EXTRACT_AND_RUN=1`. Its GTK hook picks a light
   or dark Adwaita theme from the desktop's `color-scheme` setting, and the app's "System"

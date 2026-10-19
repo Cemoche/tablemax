@@ -83,14 +83,10 @@ jobs:
         with:
           name: tablemax-linux
           path: dist
-      - name: Xvfb
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb xauth
       - name: .deb installs in a clean ubuntu:24.04 container
         run: bash scripts/release-smoke.sh deb dist/*.deb ubuntu:24.04
-      - name: AppImage starts and stays up
-        run: bash scripts/release-smoke.sh appimage dist/*.AppImage 20
+      - name: AppImage starts and stays up in a clean ubuntu:24.04 container (desktop libraries only)
+        run: bash scripts/release-smoke.sh appimage dist/*.AppImage 20 ubuntu:24.04
 
   publish:
     name: Publish the GitHub Release
