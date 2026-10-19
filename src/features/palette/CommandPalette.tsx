@@ -8,9 +8,10 @@ import { isModalOpen } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import type { ConnectionConfig } from "../../lib/types";
 import { catalogKey, useCatalog } from "../../stores/catalog";
+import { useChrome, useOnRequest } from "../../stores/chrome";
 import { useConnections } from "../../stores/connections";
 import { useSettings } from "../../stores/settings";
-import { useWorkspaces } from "../../stores/workspaces";
+import { capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
 import { runEditorCommand } from "../editor/editorCommands";
 import { tabKindLabel } from "../workspace/tabInfo";
 import { type ActionCtx, visibleActions } from "./actions";
@@ -27,7 +28,7 @@ function focusActiveTab() {
 /** At most this many items are rendered per group (a 5 000-table schema stays fluid). */
 export const MAX_PER_GROUP = 200;
 
-type Mode = "all" | "objects";
+type Mode = "all";
 type Sub = "schema" | "database" | null;
 
 interface Props {
@@ -110,7 +111,14 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
   };
   // The palette is itself aria-modal, so its own chords must work while it is open.
   useAction("palette.all", () => toggle("all"), { allowInModal: true });
-  useAction("palette.objects", () => toggle("objects"), { allowInModal: true });
+  // Mod+K: straight to the database list (PostgreSQL), else the schema list.
+  useAction("database.open", () => openPicker(), { allowInModal: true });
+  // The toolbar's Open anything and database buttons.
+  const request = useChrome((s) => s.paletteRequest);
+  useOnRequest(request?.seq ?? 0, () => {
+    if (request?.kind === "database") openPicker();
+    else if (mode === null) toggle("all");
+  });
 
   // The catalog loads once per (workspace, schema); only a connected workspace has one.
   useEffect(() => {
@@ -125,6 +133,25 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
       setDatabases(null);
       ipc.databasesList(workspace.id).then(setDatabases, (e) => setSubError(toAppError(e).message));
     }
+  };
+  /** Opens the palette on the database (or schema) list of a connected workspace. */
+  const openPicker = () => {
+    if (!workspace || !connected) return;
+    const target: Exclude<Sub, null> | null = capabilitiesOf(workspace).databaseSwitch
+      ? "database"
+      : workspace.schemas.length > 0
+        ? "schema"
+        : null;
+    if (!target) return;
+    if (mode === null) {
+      if (isModalOpen()) return;
+      returnFocus.current = document.activeElement;
+      setMode("all");
+    } else if (sub === target) {
+      close();
+      return;
+    }
+    enterSub(target);
   };
   const back = () => {
     setSub(null);
@@ -245,9 +272,9 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
       </Command.Group>
     );
   } else {
-    const showTabs = mode === "all" && tabs.items.length > 0;
-    const showConns = mode === "all" && conns.items.length > 0;
-    const showActions = mode === "all" && actions.length > 0;
+    const showTabs = tabs.items.length > 0;
+    const showConns = conns.items.length > 0;
+    const showActions = actions.length > 0;
     const showObjects = objects.items.length > 0 || catalogError !== null || (catalogLoading && !tables);
     empty = !showObjects && !showTabs && !showConns && !showActions;
     body = (
@@ -330,9 +357,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
     ? sub === "schema"
       ? strings.palette.schemaPlaceholder
       : strings.palette.databasePlaceholder
-    : mode === "objects"
-      ? strings.palette.objectsPlaceholder
-      : strings.palette.placeholder;
+    : strings.palette.placeholder;
 
   return (
     <div

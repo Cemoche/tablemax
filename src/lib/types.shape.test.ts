@@ -28,6 +28,7 @@ import type {
   TableInfo,
   WorkspaceInfo,
 } from "./types";
+import { RESIZE_DIRECTIONS, type ResizeDirection } from "./types";
 
 // Literal fixtures copied from the Rust serde tests (value.rs, manager.rs).
 test("CellValue fixtures", () => {
@@ -205,12 +206,13 @@ test("Settings", () => {
   const s: Settings = JSON.parse(`{
     "version":1,"theme":"dark","editorFontFamily":"","editorFontSize":13,"pageSize":300,
     "exactCountThreshold":500000,"autoLimitDefault":false,"autoLimitValue":1000,
-    "keymap":{"run":"Mod-Enter"},"interfaceScale":1.15,"dataFontSize":14
+    "keymap":{"run":"Mod-Enter"},"interfaceScale":1.15,"dataFontSize":14,"useSystemTitleBar":true
   }`);
   expect(s.theme).toBe("dark");
   expect(s.keymap.run).toBe("Mod-Enter");
   expect(s.interfaceScale).toBe(1.15);
   expect(s.dataFontSize).toBe(14);
+  expect(s.useSystemTitleBar).toBe(true);
   expect(Object.keys(s).sort()).toEqual([
     "autoLimitDefault",
     "autoLimitValue",
@@ -222,6 +224,7 @@ test("Settings", () => {
     "keymap",
     "pageSize",
     "theme",
+    "useSystemTitleBar",
     "version",
   ]);
 });
@@ -286,4 +289,12 @@ test("MongoDB connection settings and app flags", () => {
   expect(c.mongo?.options[0]).toEqual(["appName", "tm"]);
   const flags: AppFlags = JSON.parse('{"mongodb":false}');
   expect(flags.mongodb).toBe(false);
+});
+
+// commands.rs ResizeDirection (window_start_resize; resize_direction_serde on the Rust side).
+test("ResizeDirection", () => {
+  const all: ResizeDirection[] = JSON.parse(
+    '["North","South","East","West","NorthEast","NorthWest","SouthEast","SouthWest"]',
+  );
+  expect(all).toEqual(RESIZE_DIRECTIONS);
 });

@@ -4,6 +4,7 @@ import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { CellValue, ForeignKeyInfo, ResultSet, RowKey } from "../../lib/types";
+import { useChrome } from "../../stores/chrome";
 import { useGridViews } from "../../stores/gridViews";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
@@ -77,6 +78,7 @@ beforeEach(() => {
     epoch: {},
   });
   useSettings.setState({ settings: DEFAULT_SETTINGS });
+  useChrome.setState({ rowDetails: {}, reloads: {}, previews: {}, paletteRequest: null });
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo());
   vi.mocked(ipc.changesPreview).mockResolvedValue([]);
 });
@@ -1354,4 +1356,25 @@ test("Cancel of the commit confirmation raised from the structure view focuses t
   await userEvent.click(within(dialog).getByRole("button", { name: strings.safety.confirmCancel }));
   expect(screen.queryByRole("dialog")).toBeNull();
   await waitFor(() => expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveFocus());
+});
+
+test("the toolbar's Reload and row details buttons act on the tab", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  const { unmount } = render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–2 of 2"));
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
+  act(() => useChrome.getState().requestReload("t1"));
+  await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
+  // Another tab's reload is not ours.
+  act(() => useChrome.getState().requestReload("t2"));
+  expect(ipc.tablePage).toHaveBeenCalledTimes(2);
+
+  const details = screen.getByRole("button", { name: strings.grid.rowDetails });
+  act(() => useChrome.getState().toggleRowDetails("t1"));
+  expect(details).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
+  // Closed again when the tab goes away (as before: the panel starts closed).
+  unmount();
+  expect(useChrome.getState().rowDetails.t1).toBeFalsy();
 });

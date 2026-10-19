@@ -3,6 +3,7 @@ import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, ObjectRef } from "../../lib/types";
+import { useChrome, useOnRequest } from "../../stores/chrome";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
@@ -77,7 +78,7 @@ export function TableDataTab(props: Props) {
   // Kept across foreign key navigation (the panel shows the referenced row once selected).
   const { view, setView } = useTableView();
   // Shortcuts of the data view (Mod+I, Alt+←) only act while it is shown.
-  const detail = useRowDetail(view === "data");
+  const detail = useRowDetail(props.tabId, view === "data");
   // The structure loads when first asked for; then both views stay mounted (hidden) so
   // switching keeps the page, the pending changes and the structure's section.
   const [structureSeen, setStructureSeen] = useState(false);
@@ -134,6 +135,8 @@ function TableDataView({
   const commitShortcut = useEffectiveShortcut("grid.commit");
   const rowDetailsShortcut = useEffectiveShortcut("grid.rowDetails");
   const t = usePagedTable(workspaceId, object, tabId, pageSizeSetting);
+  // The toolbar's Reload (and Mod+R) reload this tab's page like its own Reload button.
+  useOnRequest(useChrome((s) => s.reloads[tabId] ?? 0), t.reload);
   const e = useTableEditing({ workspaceId, tabId, object, result: t.result, reload: t.reload });
   const links = useFkLinks({ workspaceId, tabId, object, dialect, info: e.info, data: t.result, model: e.model });
   const copy = useSelectionCopy(e.model, dialect, object);

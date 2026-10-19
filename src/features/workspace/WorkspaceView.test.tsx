@@ -171,3 +171,13 @@ test("with the SQL capabilities the new SQL tab button and Mod+T stay", async ()
   await userEvent.click(screen.getByRole("button", { name: strings.workspace.newQueryTab }));
   expect(tabs()).toHaveLength(2);
 });
+
+test("Mod+E opens the SQL editor in a new SQL tab", () => {
+  press({ code: "KeyE" });
+  expect(tabs()).toHaveLength(2);
+  expect(tabs()[1].kind).toBe("query");
+});
+
+test("no environment banner above the workspace (the status pill shows it)", () => {
+  expect(screen.queryByRole("status", { name: "Environment" })).toBeNull();
+});

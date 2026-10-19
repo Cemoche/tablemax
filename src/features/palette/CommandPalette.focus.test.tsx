@@ -66,7 +66,7 @@ async function openFromGrid(chord: string) {
 }
 
 test("New SQL tab: the detached opener is replaced by focus in the new editor", async () => {
-  const { user, opener } = await openFromGrid("{Control>}k{/Control}");
+  const { user, opener } = await openFromGrid("{Control>}p{/Control}");
   await user.click(await screen.findByText(strings.palette.action.newQuery));
   await waitFor(() => expect(opener).not.toBeInTheDocument());
   await waitFor(() => {

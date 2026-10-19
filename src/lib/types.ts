@@ -375,6 +375,8 @@ export interface Settings {
   interfaceScale: number;
   /** Font size of the data (grid, sidebar tree), 10–24. */
   dataFontSize: number;
+  /** Native window decorations instead of the frameless window (applied at startup). */
+  useSystemTitleBar: boolean;
 }
 
 // ---- Query history and saved queries (history.rs / saved_queries.rs) ----
@@ -427,3 +429,19 @@ export interface DbRoutine {
   name: string;
   kind: RoutineKind;
 }
+
+// ---- Window (commands.rs) ----
+
+/** The edge or corner a frameless window is resized from (`window_start_resize`). */
+export const RESIZE_DIRECTIONS = [
+  "North",
+  "South",
+  "East",
+  "West",
+  "NorthEast",
+  "NorthWest",
+  "SouthEast",
+  "SouthWest",
+] as const;
+
+export type ResizeDirection = (typeof RESIZE_DIRECTIONS)[number];

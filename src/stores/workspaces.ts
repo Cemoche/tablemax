@@ -53,6 +53,11 @@ export interface Workspace {
    */
   capabilities?: Capabilities;
   status: WorkspaceStatus;
+  /**
+   * Server version reported by the last connect (WorkspaceInfo.serverVersion); absent
+   * until the workspace connected in this session (a restored one).
+   */
+  serverVersion?: string | null;
   /** Database the workspace browses (WorkspaceInfo.database); restored as is. */
   database: string | null;
   schemas: string[];
@@ -285,6 +290,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       dialect: info.dialect,
       capabilities: info.capabilities,
       status: "connected",
+      serverVersion: info.serverVersion,
       database: info.database,
       schemas,
       currentSchema: defaultSchema(info.dialect, schemas, cfg.database),
@@ -404,6 +410,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
               dialect,
               capabilities,
               status: "connected",
+              serverVersion: info.serverVersion,
               database,
               schemas,
               currentSchema:

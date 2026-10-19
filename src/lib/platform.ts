@@ -14,6 +14,15 @@ export function isMac(
   return /mac/i.test(platform) || /Macintosh|Mac OS X/.test(userAgent);
 }
 
+/** Linux (the desktop, not Android), from the platform or the user agent (arguments for tests). */
+export function isLinux(
+  platform: string = currentPlatform(),
+  userAgent: string = typeof navigator === "undefined" ? "" : navigator.userAgent,
+): boolean {
+  if (/android/i.test(platform) || /Android/.test(userAgent)) return false;
+  return /linux/i.test(platform) || (!platform && /Linux/.test(userAgent));
+}
+
 /** The "Mod" key of a shortcut is down: Cmd on macOS, Ctrl elsewhere (not both). */
 export function isModKey(
   e: { ctrlKey: boolean; metaKey: boolean },

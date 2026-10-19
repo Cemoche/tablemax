@@ -64,6 +64,16 @@
   --swatch-4: #E6E6E6;
   --swatch-5: #F7C7C9;
   --swatch-6: #DCCBF3;
+  /* Text on each connection color (status pill), at least 4.5:1. */
+  --swatch-1-text: #1E1E1E;
+  --swatch-2-text: #1E1E1E;
+  --swatch-3-text: #1E1E1E;
+  --swatch-4-text: #1E1E1E;
+  --swatch-5-text: #1E1E1E;
+  --swatch-6-text: #1E1E1E;
+  /* Status pill texts while not connected, on --pill, at least 4.5:1. */
+  --status-connecting: #945A00;
+  --status-error: #C62828;
   /* Not in §5.1: status colors, kept until the components using them are redone. */
   --danger: #c62828;
   --success: #2e7d32;
@@ -139,6 +149,14 @@
     --swatch-4: #4A5160;
     --swatch-5: #8E1C22;
     --swatch-6: #6B3FA0;
+    --swatch-1-text: #FFFFFF;
+    --swatch-2-text: #000000;
+    --swatch-3-text: #000000;
+    --swatch-4-text: #FFFFFF;
+    --swatch-5-text: #FFFFFF;
+    --swatch-6-text: #FFFFFF;
+    --status-connecting: #F0B429;
+    --status-error: #FF8A8A;
     --danger: #ff6b6b;
     --success: #4cc38a;
     --warning: #f0b429;
@@ -195,6 +213,14 @@
   --swatch-4: #4A5160;
   --swatch-5: #8E1C22;
   --swatch-6: #6B3FA0;
+  --swatch-1-text: #FFFFFF;
+  --swatch-2-text: #000000;
+  --swatch-3-text: #000000;
+  --swatch-4-text: #FFFFFF;
+  --swatch-5-text: #FFFFFF;
+  --swatch-6-text: #FFFFFF;
+  --status-connecting: #F0B429;
+  --status-error: #FF8A8A;
   --danger: #ff6b6b;
   --success: #4cc38a;
   --warning: #f0b429;

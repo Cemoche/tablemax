@@ -31,8 +31,7 @@ test("the defaults are the combinations the code binds today", () => {
     "tab.close": "Mod+W",
     "tab.next": "Ctrl+Tab",
     "tab.previous": "Ctrl+Shift+Tab",
-    "palette.all": "Mod+K",
-    "palette.objects": "Mod+P",
+    "palette.all": "Mod+P",
     "settings.open": "Mod+,",
     "query.save": "Mod+S",
     "history.toggle": "Mod+Shift+H",
@@ -47,6 +46,9 @@ test("the defaults are the combinations the code binds today", () => {
     "grid.back": "Alt+ArrowLeft",
     "font.increase": "Mod+=",
     "font.decrease": "Mod+-",
+    "database.open": "Mod+K",
+    "editor.open": "Mod+E",
+    "workspace.reload": "Mod+R",
   });
   const scope = (id: KeymapActionId) => KEYMAP_ACTIONS.find((a) => a.id === id)?.scope;
   expect(scope("query.new")).toBe("global");
@@ -57,6 +59,9 @@ test("the defaults are the combinations the code binds today", () => {
   expect(scope("grid.back")).toBe("tableTab");
   expect(scope("font.increase")).toBe("global");
   expect(scope("font.decrease")).toBe("global");
+  expect(scope("database.open")).toBe("global");
+  expect(scope("editor.open")).toBe("global");
+  expect(scope("workspace.reload")).toBe("global");
   for (const a of KEYMAP_ACTIONS) expect(a.label, a.id).not.toBe("");
 });
 
@@ -183,14 +188,14 @@ test("isKeymapActionId knows the registry ids only", () => {
 });
 
 test("a global combination conflicts with every scope", () => {
-  // Mod+K is the palette (global).
-  expect(conflictFor("grid.rowDetails", "Mod+K", {}, false)).toBe("palette.all");
-  expect(conflictFor("query.save", "Mod+K", {}, false)).toBe("palette.all");
-  expect(conflictFor("editor.run", "Mod+K", {}, false)).toBe("palette.all");
+  // Mod+K opens a database (global).
+  expect(conflictFor("grid.rowDetails", "Mod+K", {}, false)).toBe("database.open");
+  expect(conflictFor("query.save", "Mod+K", {}, false)).toBe("database.open");
+  expect(conflictFor("editor.run", "Mod+K", {}, false)).toBe("database.open");
   // ...and a global action takes nothing any scope already uses.
-  expect(conflictFor("palette.all", "Mod+I", {}, false)).toBe("grid.rowDetails");
-  expect(conflictFor("palette.all", "Mod+Enter", {}, false)).toBe("editor.run");
-  expect(conflictFor("palette.all", "Mod+T", {}, false)).toBe("query.new");
+  expect(conflictFor("database.open", "Mod+I", {}, false)).toBe("grid.rowDetails");
+  expect(conflictFor("database.open", "Mod+Enter", {}, false)).toBe("editor.run");
+  expect(conflictFor("database.open", "Mod+T", {}, false)).toBe("query.new");
 });
 
 test("query tabs and table tabs never conflict with each other", () => {
@@ -214,33 +219,33 @@ test("the editor conflicts with its query tab both ways (ruling B-R1), not with 
 });
 
 test("Mod is resolved per platform: Mod+K is Ctrl+K on Linux, not on macOS", () => {
-  expect(conflictFor("grid.rowDetails", "Ctrl+K", {}, false)).toBe("palette.all");
+  expect(conflictFor("grid.rowDetails", "Ctrl+K", {}, false)).toBe("database.open");
   expect(conflictFor("grid.rowDetails", "Ctrl+K", {}, true)).toBeNull();
-  expect(conflictFor("grid.rowDetails", "Meta+K", {}, true)).toBe("palette.all");
+  expect(conflictFor("grid.rowDetails", "Meta+K", {}, true)).toBe("database.open");
   expect(conflictFor("grid.rowDetails", "Meta+K", {}, false)).toBeNull();
   // Modifier order does not matter.
   expect(conflictFor("editor.format", "Shift+Mod+Enter", {}, false)).toBe("editor.runAll");
 });
 
 test("conflicts use the effective combinations and ignore the action itself", () => {
-  const keymap = { "palette.all": "Mod+Shift+K" };
+  const keymap = { "database.open": "Mod+Shift+K" };
   expect(conflictFor("grid.rowDetails", "Mod+K", keymap, false)).toBeNull();
-  expect(conflictFor("grid.rowDetails", "Mod+Shift+K", keymap, false)).toBe("palette.all");
-  expect(conflictFor("palette.all", "Mod+K", {}, false)).toBeNull();
+  expect(conflictFor("grid.rowDetails", "Mod+Shift+K", keymap, false)).toBe("database.open");
+  expect(conflictFor("database.open", "Mod+K", {}, false)).toBeNull();
   // An invalid override falls back to the default, which still counts.
-  expect(conflictFor("grid.rowDetails", "Mod+K", { "palette.all": "bad" }, false)).toBe("palette.all");
+  expect(conflictFor("grid.rowDetails", "Mod+K", { "database.open": "bad" }, false)).toBe("database.open");
 });
 
 test("conflictAnywhere refuses a combination that conflicts on macOS or on Linux/Windows", () => {
   // Meta+T is free on Linux but is Mod+T (New query) on macOS.
-  expect(conflictFor("palette.all", "Meta+T", {}, false)).toBeNull();
-  expect(conflictAnywhere("palette.all", "Meta+T", {})).toBe("query.new");
-  // Ctrl+K is free on macOS but is Mod+K (the palette) on Linux.
+  expect(conflictFor("database.open", "Meta+T", {}, false)).toBeNull();
+  expect(conflictAnywhere("database.open", "Meta+T", {})).toBe("query.new");
+  // Ctrl+K is free on macOS but is Mod+K (open a database) on Linux.
   expect(conflictFor("grid.rowDetails", "Ctrl+K", {}, true)).toBeNull();
-  expect(conflictAnywhere("grid.rowDetails", "Ctrl+K", {})).toBe("palette.all");
+  expect(conflictAnywhere("grid.rowDetails", "Ctrl+K", {})).toBe("database.open");
   // Free on both platforms.
-  expect(conflictAnywhere("palette.all", "Mod+Shift+K", {})).toBeNull();
-  expect(conflictAnywhere("palette.all", "Mod+K", {})).toBeNull();
+  expect(conflictAnywhere("database.open", "Mod+Shift+K", {})).toBeNull();
+  expect(conflictAnywhere("database.open", "Mod+K", {})).toBeNull();
 });
 
 test("an invalid combination has no conflict to report", () => {
@@ -263,12 +268,12 @@ afterEach(() => {
 test("useAction binds the effective combination: a custom one replaces the default", () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   const handler = vi.fn();
-  renderHook(() => useAction("palette.all", handler));
+  renderHook(() => useAction("database.open", handler));
   const press = (init: KeyboardEventInit) => window.dispatchEvent(new KeyboardEvent("keydown", init));
   press({ code: "KeyK", ctrlKey: true });
   expect(handler).toHaveBeenCalledTimes(1);
   act(() =>
-    useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Alt+Space" } } }),
+    useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "database.open": "Alt+Space" } } }),
   );
   press({ code: "KeyK", ctrlKey: true });
   expect(handler).toHaveBeenCalledTimes(1);

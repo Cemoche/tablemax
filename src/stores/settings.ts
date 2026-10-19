@@ -18,11 +18,17 @@ export const DEFAULT_SETTINGS: Settings = {
   keymap: {},
   interfaceScale: 1,
   dataFontSize: 13,
+  useSystemTitleBar: false,
 };
 
 interface SettingsState {
   settings: Settings;
   loaded: boolean;
+  /**
+   * `useSystemTitleBar` as loaded at startup, which is when Rust applies it: the window
+   * keeps that title bar until the next start, whatever the settings say meanwhile.
+   */
+  systemTitleBar: boolean;
   /** Message of the last failed load/update; cleared by the next successful one. */
   error: string | null;
   /** Last value stored by the backend; what a failed update reverts to. */
@@ -49,6 +55,7 @@ let queue: Promise<void> = Promise.resolve();
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   loaded: false,
+  systemTitleBar: false,
   error: null,
   confirmed: DEFAULT_SETTINGS,
   load: async () => {
@@ -56,7 +63,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
       const settings = cleaned(await ipc.settingsGet());
       applyTheme(settings.theme);
       applyInterfaceScale(settings.interfaceScale);
-      set({ settings, confirmed: settings, loaded: true, error: null });
+      set({ settings, confirmed: settings, loaded: true, error: null, systemTitleBar: settings.useSystemTitleBar });
     } catch (e) {
       set({ loaded: true, error: toAppError(e).message });
     }

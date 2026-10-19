@@ -4,7 +4,6 @@
   "tab.next",
   "tab.previous",
   "palette.all",
-  "palette.objects",
   "settings.open",
   "query.save",
   "history.toggle",
@@ -18,5 +17,8 @@
   "grid.viewStructure",
   "grid.back",
   "font.increase",
-  "font.decrease"
+  "font.decrease",
+  "database.open",
+  "editor.open",
+  "workspace.reload"
 ]

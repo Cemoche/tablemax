@@ -5,6 +5,7 @@ import { qualifiedName } from "../../lib/sqlIdent";
 import { strings } from "../../lib/strings";
 import type { DbObject, DbRoutine } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
+import { useChrome, useOnRequest } from "../../stores/chrome";
 import { type Workspace, capabilitiesOf, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 
 type Entry =
@@ -37,6 +38,11 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const { id, currentSchema, status, database } = workspace;
   const { databaseSwitch, routines: hasRoutines, sqlEditor } = capabilitiesOf(workspace);
+  // The toolbar's Reload (Mod+R) reloads the lists like Refresh; it rebuilds the catalog itself.
+  useOnRequest(
+    useChrome((s) => s.reloads[id] ?? 0),
+    () => setReload((n) => n + 1),
+  );
 
   useEffect(() => {
     let stale = false;

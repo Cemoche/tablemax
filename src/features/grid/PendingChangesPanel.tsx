@@ -3,6 +3,7 @@ import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { CellValue, ObjectRef, RowChange, RowKey } from "../../lib/types";
+import { useChrome, useOnRequest } from "../../stores/chrome";
 import { type ChangeEntry, refusedChange, usePendingChanges } from "../../stores/pendingChanges";
 import { cellText } from "./editing";
 
@@ -161,6 +162,16 @@ export function PendingChangesPanel({ workspaceId, tabId, object }: Props) {
     setEmpty(list.length === 0);
     if (list.length > 0) setOpen(true);
   }
+  // The toolbar's Preview: open the panel and bring the focus to it.
+  const header = useRef<HTMLButtonElement>(null);
+  useOnRequest(
+    useChrome((st) => st.previews[tabId] ?? 0),
+    () => {
+      setOpen(true);
+      header.current?.focus();
+      header.current?.scrollIntoView({ block: "nearest" });
+    },
+  );
 
   if (list.length === 0) return null;
   const errors = tab?.errors ?? {};
@@ -168,6 +179,7 @@ export function PendingChangesPanel({ workspaceId, tabId, object }: Props) {
   return (
     <section className="flex max-h-[40%] min-h-0 shrink-0 flex-col border-t border-border bg-surface text-sm">
       <button
+        ref={header}
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}

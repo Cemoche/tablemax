@@ -26,6 +26,7 @@ import type {
   HistoryEntry,
   SavedQuery,
 } from "./types";
+import type { ResizeDirection } from "./types";
 
 export const connectionsList = () => invoke<ConnectionConfig[]>("connections_list");
 
@@ -236,3 +237,22 @@ export const workspaceSwitchDatabase = (workspaceId: string, database: string) =
 
 /** Really closes the main window once the session was flushed (Rust held the close back). */
 export const windowCloseConfirmed = () => invoke<void>("window_close_confirmed");
+
+// ---- Frameless window (commands.rs): done in Rust so the capabilities stay at core:default ----
+
+export const windowMinimize = () => invoke<void>("window_minimize");
+
+/** Maximizes the window, or restores it when it is maximized; resolves to the new state. */
+export const windowToggleMaximize = () => invoke<boolean>("window_toggle_maximize");
+
+export const windowIsMaximized = () => invoke<boolean>("window_is_maximized");
+
+/** Starts moving the window with the pressed mouse button (toolbar drag area). */
+export const windowStartDrag = () => invoke<void>("window_start_drag");
+
+/** Starts resizing the window from `direction` with the pressed mouse button. */
+export const windowStartResize = (direction: ResizeDirection) =>
+  invoke<void>("window_start_resize", { direction });
+
+/** Asks the window to close: the same path as the system close (session flush, close_gate). */
+export const windowClose = () => invoke<void>("window_close");

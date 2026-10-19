@@ -25,8 +25,7 @@ const SPECS = {
   "tab.close": { scope: "global", defaultShortcut: "Mod+W" },
   "tab.next": { scope: "global", defaultShortcut: "Ctrl+Tab" },
   "tab.previous": { scope: "global", defaultShortcut: "Ctrl+Shift+Tab" },
-  "palette.all": { scope: "global", defaultShortcut: "Mod+K" },
-  "palette.objects": { scope: "global", defaultShortcut: "Mod+P" },
+  "palette.all": { scope: "global", defaultShortcut: "Mod+P" },
   "settings.open": { scope: "global", defaultShortcut: "Mod+," },
   "query.save": { scope: "queryTab", defaultShortcut: "Mod+S" },
   "history.toggle": { scope: "queryTab", defaultShortcut: "Mod+Shift+H" },
@@ -41,6 +40,9 @@ const SPECS = {
   "grid.back": { scope: "tableTab", defaultShortcut: "Alt+ArrowLeft" },
   "font.increase": { scope: "global", defaultShortcut: "Mod+=" },
   "font.decrease": { scope: "global", defaultShortcut: "Mod+-" },
+  "database.open": { scope: "global", defaultShortcut: "Mod+K" },
+  "editor.open": { scope: "global", defaultShortcut: "Mod+E" },
+  "workspace.reload": { scope: "global", defaultShortcut: "Mod+R" },
 } as const satisfies Record<keyof typeof strings.keymap, { scope: ShortcutScope; defaultShortcut: string }>;
 
 export type KeymapActionId = keyof typeof SPECS;

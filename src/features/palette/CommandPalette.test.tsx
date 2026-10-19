@@ -1,10 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { Catalog, ConnectionConfig } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
+import { useChrome } from "../../stores/chrome";
 import { useConnections } from "../../stores/connections";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
@@ -38,6 +39,9 @@ const catalog = (names: string[]): Catalog => ({
 const conn = { id: "c1", name: "Prod PG", envTag: "prod" } as ConnectionConfig;
 
 const firstName = () => screen.getAllByRole("option")[0].firstElementChild?.textContent;
+/** The object items (Open Anything also lists tabs, connections and actions). */
+const objectOptions = () =>
+  screen.queryAllByRole("option").filter((o) => o.getAttribute("data-value")?.startsWith("object:"));
 
 const open = async (chord: string) => {
   const user = userEvent.setup();
@@ -45,8 +49,9 @@ const open = async (chord: string) => {
   await user.keyboard(chord);
   return user;
 };
-const MOD_K = "{Control>}k{/Control}";
+
 const MOD_P = "{Control>}p{/Control}";
+const MOD_K = "{Control>}k{/Control}";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -54,11 +59,12 @@ beforeEach(() => {
   useConnections.setState({ items: [conn] });
   useSettings.setState({ settings: DEFAULT_SETTINGS });
   useWorkspaces.setState({ workspaces: [workspace()], activeWorkspaceId: "w1", sidebarVisible: true });
+  useChrome.setState({ paletteRequest: null });
   vi.mocked(ipc.catalogGet).mockResolvedValue(catalog(["users", "orders", "order_items"]));
 });
 
-test("Mod+K shows objects, tabs, connections and actions in a modal dialog", async () => {
-  await open(MOD_K);
+test("Mod+P (Open Anything) shows objects, tabs, connections and actions in a modal dialog", async () => {
+  await open(MOD_P);
   const dialog = await screen.findByRole("dialog", { name: strings.palette.label });
   expect(dialog).toHaveAttribute("aria-modal", "true");
   expect(screen.getByRole("combobox")).toHaveFocus();
@@ -81,7 +87,7 @@ test("actions show their effective shortcut: a custom one replaces the default",
   useSettings.setState({
     settings: { ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+Shift+N", "tab.close": "not a spec" } },
   });
-  await open(MOD_K);
+  await open(MOD_P);
   const dialog = await screen.findByRole("dialog");
   const item = (title: string) => within(dialog).getByText(title).closest("[cmdk-item]") as HTMLElement;
   expect(within(item(strings.palette.action.newQuery)).getByText("Ctrl+Shift+N")).toBeInTheDocument();
@@ -92,40 +98,64 @@ test("actions show their effective shortcut: a custom one replaces the default",
   expect(item(strings.palette.action.newConnection).querySelector("kbd")).toBeNull();
 });
 
-test("Mod+P shows only the objects", async () => {
-  await open(MOD_P);
-  const dialog = await screen.findByRole("dialog");
-  await screen.findByText("users");
-  expect(within(dialog).queryByText(strings.palette.tabs)).not.toBeInTheDocument();
-  expect(within(dialog).queryByText(strings.palette.connections)).not.toBeInTheDocument();
-  expect(within(dialog).queryByText(strings.palette.actions)).not.toBeInTheDocument();
-  expect(within(dialog).queryByText(strings.palette.action.newQuery)).not.toBeInTheDocument();
-});
-
-test("Escape closes and Mod+K toggles", async () => {
-  const user = await open(MOD_K);
+test("Escape closes and Mod+P toggles", async () => {
+  const user = await open(MOD_P);
   await screen.findByRole("dialog");
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  await user.keyboard(MOD_K);
+  await user.keyboard(MOD_P);
   await screen.findByRole("dialog");
-  await user.keyboard(MOD_K);
+  await user.keyboard(MOD_P);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-test("a custom palette combination opens and closes it; Mod+K no longer does", async () => {
-  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Alt+K", "palette.objects": "Alt+O" } } });
-  const user = await open(MOD_K);
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  await user.keyboard(MOD_P);
+test("a custom palette combination opens and closes it; Mod+P no longer does", async () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Alt+K" } } });
+  const user = await open(MOD_P);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   await user.keyboard("{Alt>}k{/Alt}");
   await screen.findByRole("dialog");
   // Over its own modal: the custom combination still toggles it.
   await user.keyboard("{Alt>}k{/Alt}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  await user.keyboard("{Alt>}o{/Alt}");
-  await screen.findByRole("dialog");
+});
+
+test("ctrl_k_opens_database_picker", async () => {
+  vi.mocked(ipc.databasesList).mockResolvedValue(["app", "other"]);
+  const user = await open(MOD_K);
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("combobox")).toHaveAttribute("placeholder", strings.palette.databasePlaceholder);
+  await screen.findByText("other");
+  expect(within(dialog).queryByText(strings.palette.actions)).not.toBeInTheDocument();
+  vi.mocked(ipc.workspaceSwitchDatabase).mockResolvedValue({ database: "other" } as never);
+  vi.mocked(ipc.schemasList).mockResolvedValue(["public"]);
+  await user.click(screen.getByText("other"));
+  await waitFor(() => expect(ipc.workspaceSwitchDatabase).toHaveBeenCalledWith("w1", "other"));
+});
+
+test("Mod+K picks a schema where the database cannot be switched; nothing when disconnected", async () => {
+  useWorkspaces.setState({ workspaces: [workspace({ dialect: "mySql", capabilities: undefined })] });
+  const user = await open(MOD_K);
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("combobox")).toHaveAttribute("placeholder", strings.palette.schemaPlaceholder);
+  await user.click(await screen.findByText("audit"));
+  expect(useWorkspaces.getState().workspaces[0].currentSchema).toBe("audit");
+
+  useWorkspaces.setState({ workspaces: [workspace({ status: "disconnected" })] });
+  await user.keyboard(MOD_K);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+test("the toolbar's Open Anything and database buttons open the palette", async () => {
+  vi.mocked(ipc.databasesList).mockResolvedValue(["app", "other"]);
+  render(<CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowWorkspace={vi.fn()} />);
+  act(() => useChrome.getState().requestPalette("all"));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("combobox")).toHaveAttribute("placeholder", strings.palette.placeholder);
+  await userEvent.setup().keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  act(() => useChrome.getState().requestPalette("database"));
+  expect(await screen.findByText("other")).toBeInTheDocument();
 });
 
 test("it does not open over another modal dialog", async () => {
@@ -135,7 +165,7 @@ test("it does not open over another modal dialog", async () => {
       <CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowWorkspace={vi.fn()} />
     </>,
   );
-  await userEvent.setup().keyboard(MOD_K);
+  await userEvent.setup().keyboard(MOD_P);
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
 });
 
@@ -160,11 +190,11 @@ test("palette_caps_results: 5 000 tables render at most 200 items and the best m
   vi.mocked(ipc.catalogGet).mockResolvedValue(catalog(names));
   const user = await open(MOD_P);
   const input = await screen.findByRole("combobox");
-  await screen.findAllByRole("option");
-  expect(screen.getAllByRole("option").length).toBeLessThanOrEqual(200);
+  await waitFor(() => expect(objectOptions().length).toBeGreaterThan(0));
+  expect(objectOptions().length).toBeLessThanOrEqual(200);
   await user.type(input, "tbl_4");
   await waitFor(() => expect(firstName()).toBe("tbl_4"));
-  expect(screen.getAllByRole("option").length).toBeLessThanOrEqual(200);
+  expect(objectOptions().length).toBeLessThanOrEqual(200);
   expect(screen.getByText(/^Showing the first 200 of \d+\./)).toBeInTheDocument();
   await user.type(input, "2");
   await waitFor(() => expect(firstName()).toBe("tbl_42"));
@@ -177,17 +207,17 @@ test("a disconnected workspace shows no objects and loads nothing", async () => 
   await open(MOD_P);
   await screen.findByRole("dialog");
   expect(ipc.catalogGet).not.toHaveBeenCalled();
-  expect(screen.queryAllByRole("option")).toHaveLength(0);
+  expect(objectOptions()).toHaveLength(0);
 });
 
 test("a catalog failure is shown in the palette", async () => {
   vi.mocked(ipc.catalogGet).mockRejectedValue({ kind: "io", message: "boom" });
-  await open(MOD_K);
+  await open(MOD_P);
   expect(await screen.findByRole("alert")).toHaveTextContent("boom");
 });
 
 test("an action runs and closes the palette; unavailable actions are hidden", async () => {
-  const user = await open(MOD_K);
+  const user = await open(MOD_P);
   await screen.findByText("users");
   expect(screen.queryByText(strings.palette.action.format)).not.toBeInTheDocument();
   await user.click(screen.getByText(strings.palette.action.newQuery));
@@ -196,7 +226,7 @@ test("an action runs and closes the palette; unavailable actions are hidden", as
 });
 
 test("Change schema opens a sub-list; Escape goes back, a pick applies setSchema", async () => {
-  const user = await open(MOD_K);
+  const user = await open(MOD_P);
   await user.click(await screen.findByText(strings.palette.action.changeSchema));
   await screen.findByText("audit");
   expect(screen.queryByText(strings.palette.actions)).not.toBeInTheDocument();
@@ -209,7 +239,7 @@ test("Change schema opens a sub-list; Escape goes back, a pick applies setSchema
 
 test("Change database lists databasesList and Backspace on empty input goes back", async () => {
   vi.mocked(ipc.databasesList).mockResolvedValue(["app", "other"]);
-  const user = await open(MOD_K);
+  const user = await open(MOD_P);
   await user.click(await screen.findByText(strings.palette.action.changeDatabase));
   await screen.findByText("other");
   await user.keyboard("{Backspace}");
@@ -225,7 +255,7 @@ test("selecting a connection opens it through the callback", async () => {
   const onOpen = vi.fn();
   const user = userEvent.setup();
   render(<CommandPalette onOpenConnection={onOpen} onNewConnection={vi.fn()} onShowWorkspace={vi.fn()} />);
-  await user.keyboard(MOD_K);
+  await user.keyboard(MOD_P);
   await user.click(await screen.findByText("Prod PG"));
   expect(onOpen).toHaveBeenCalledWith(conn);
 });
@@ -241,7 +271,7 @@ test("selecting a tab activates it", async () => {
       }),
     ],
   });
-  const user = await open(MOD_K);
+  const user = await open(MOD_P);
   await user.click(await screen.findByText("Report"));
   expect(useWorkspaces.getState().workspaces[0].activeTabId).toBe("q2");
 });
@@ -250,7 +280,7 @@ test("Escape returns focus to the element focused before opening", async () => {
   const btn = document.createElement("button");
   document.body.appendChild(btn);
   btn.focus();
-  const user = await open(MOD_K);
+  const user = await open(MOD_P);
   await screen.findByRole("dialog");
   await user.keyboard("{Escape}");
   expect(btn).toHaveFocus();
@@ -263,7 +293,7 @@ test("an action that focuses its own target keeps that focus", async () => {
   document.body.append(btn, editor);
   btn.focus();
   const off = registerEditorCommands("q1", { toggleComment: () => editor.focus() });
-  const user = await open(MOD_K);
+  const user = await open(MOD_P);
   await user.click(await screen.findByText(strings.palette.action.toggleComment));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   await new Promise((r) => setTimeout(r, 10));
