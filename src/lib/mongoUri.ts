@@ -109,6 +109,7 @@ export function parseMongoUri(uri: string): {
   let tls: boolean | null = null;
   let insecure = false;
   let caFile: string | null = null;
+  const tlsOptions: string[] = [];
   for (const pair of (m[4] ?? "").split("&")) {
     if (pair === "") continue;
     const eq = pair.indexOf("=");
@@ -116,8 +117,13 @@ export function parseMongoUri(uri: string): {
     const value = eq >= 0 ? decode(pair.slice(eq + 1)) : "";
     const lower = key.toLowerCase();
     if (lower === "tls" || lower === "ssl") tls = isTrue(value);
-    else if (lower === "tlsinsecure" || lower === "tlsallowinvalidcertificates") insecure ||= isTrue(value);
-    else if (lower === "tlscafile") caFile = value || null;
+    else if (lower === "tlsinsecure" || lower === "tlsallowinvalidcertificates") {
+      insecure ||= isTrue(value);
+      if (isTrue(value)) tlsOptions.push(key);
+    } else if (lower === "tlscafile") {
+      caFile = value || null;
+      if (caFile) tlsOptions.push(key);
+    }
     else if (lower === "authsource") authSource = value || null;
     else if (lower === "replicaset") replicaSet = value || null;
     else if (lower === "authmechanism") {
@@ -133,7 +139,9 @@ export function parseMongoUri(uri: string): {
     }
   }
 
-  const enabled = tls ?? (srv || insecure);
+  // Any TLS option implies TLS; an explicit tls=false next to one is a conflict.
+  if (tls === false) for (const k of tlsOptions) refused.push(strings.url.mongoTlsConflict(k));
+  const enabled = tls ?? (srv || insecure || caFile !== null);
   const mode: SslMode = !enabled ? "disable" : insecure ? "require" : "verifyFull";
   const mongo: MongoSettings = {
     srv,

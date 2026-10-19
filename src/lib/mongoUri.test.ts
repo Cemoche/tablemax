@@ -84,6 +84,27 @@ test("tls_ca_file_is_kept", () => {
   expect(r.ignored).toEqual([]);
 });
 
+test("tls_ca_file_alone_enables_verify_full", () => {
+  const r = parseMongoUri("mongodb://h/?tlsCAFile=%2Fetc%2Fca.pem");
+  expect(r.patch.ssl).toEqual({ mode: "verifyFull", caFile: "/etc/ca.pem", certFile: null, keyFile: null });
+});
+
+test("insecure_alone_enables_require", () => {
+  expect(parseMongoUri("mongodb://h/?tlsInsecure=true").patch.ssl?.mode).toBe("require");
+  expect(parseMongoUri("mongodb://h/?tlsAllowInvalidCertificates=true").patch.ssl?.mode).toBe("require");
+});
+
+test("tls_false_with_tls_options_is_refused", () => {
+  for (const q of ["tlsCAFile=%2Fca.pem", "tlsInsecure=true", "tlsAllowInvalidCertificates=true"]) {
+    for (const flag of ["tls=false", "ssl=false"]) {
+      const r = parseMongoUri(`mongodb://h/?${flag}&${q}`);
+      expect(r.refused).toHaveLength(1);
+      expect(r.refused[0]).toContain("tls=false conflicts with");
+    }
+  }
+  expect(parseMongoUri("mongodb://h/?tls=false&tlsInsecure=false").refused).toEqual([]);
+});
+
 test("password_never_in_output", () => {
   const parsed = parseMongoUri("mongodb://app:S3cr%40t@h/shop");
   expect(parsed.password).toBe("S3cr@t");
