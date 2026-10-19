@@ -186,7 +186,10 @@ pub async fn schemas_list(
     workspace_id: String,
 ) -> AppResult<Vec<String>> {
     state
-        .on_browse(&workspace_id, |b| async move { b.list_schemas().await })
+        .on_browse_any(
+            &workspace_id,
+            |b| async move { b.base().list_schemas().await },
+        )
         .await
 }
 
@@ -198,7 +201,9 @@ pub async fn objects_list(
 ) -> AppResult<Vec<DbObject>> {
     let schema = schema.as_deref();
     state
-        .on_browse(&workspace_id, |b| async move { b.list_objects(schema).await })
+        .on_browse_any(&workspace_id, |b| async move {
+            b.base().list_objects(schema).await
+        })
         .await
 }
 

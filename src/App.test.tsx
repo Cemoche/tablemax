@@ -66,6 +66,15 @@ const info = {
   dialect: "postgres" as const,
   serverVersion: "16",
   database: "app",
+  capabilities: {
+    sqlEditor: true,
+    gridEditing: true,
+    routines: true,
+    ddl: true,
+    foreignKeys: true,
+    documents: false,
+    databaseSwitch: true,
+  },
 };
 const passwordRequired = { kind: "auth", message: "password required" };
 

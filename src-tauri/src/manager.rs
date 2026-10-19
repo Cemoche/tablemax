@@ -41,8 +41,8 @@ use crate::driver::dml::{
 use crate::driver::meta::TableInfo;
 use crate::driver::query::{Filter, Statement, build_filtered_count, build_page, read_count};
 use crate::driver::{
-    self, Canceller, ConnectParams, Dialect, DriverKind, ObjectRef, PageRequest, ResultSet,
-    RowCount, Session, StatementOutcome,
+    self, AnySession, Canceller, Capabilities, ConnectParams, Dialect, DriverKind, ObjectRef,
+    PageRequest, ResultSet, RowCount, Session, SessionBase, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::history::{self, HistoryEntry, NewHistoryEntry};
@@ -77,7 +77,10 @@ pub const SSH_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct WorkspaceInfo {
     pub workspace_id: String,
     pub connection_id: String,
-    pub dialect: Dialect,
+    /// `None` for a connection without SQL (documents).
+    pub dialect: Option<Dialect>,
+    /// What the interface may offer on this connection.
+    pub capabilities: Capabilities,
     pub server_version: String,
     /// The database the browse connection is on: the connection's configured one (for
     /// PostgreSQL the one actually connected to), the new one after
@@ -131,7 +134,7 @@ struct Workspace {
     held_password: Option<HeldSecret>,
     held_ssh_secret: Option<HeldSecret>,
     tunnel: TunnelSlot,
-    browse: Arc<dyn Session>,
+    browse: AnySession,
     /// The tunnel `browse` was connected through; once it is dead, `browse` is rebuilt.
     browse_tunnel: Option<Arc<SshTunnel>>,
     /// A call on `browse` failed with `ConnectionLost`: rebuilt by the next `browse()`.
@@ -319,7 +322,7 @@ async fn connect(
     cfg: &ConnectionConfig,
     password: Option<String>,
     tunnel: Option<&SshTunnel>,
-) -> AppResult<Arc<dyn Session>> {
+) -> AppResult<AnySession> {
     driver::connect(&ConnectParams {
         kind: cfg.kind,
         host: cfg.host.clone(),
@@ -334,10 +337,21 @@ async fn connect(
     .await
 }
 
+/// The SQL session of `session`; a session of another family is closed and refused.
+async fn sql_only(session: AnySession) -> AppResult<Arc<dyn Session>> {
+    match session.sql() {
+        Ok(sql) => Ok(sql.clone()),
+        Err(e) => {
+            let _ = session.base().close().await;
+            Err(e)
+        }
+    }
+}
+
 /// The database a freshly opened browse connection is on: the configured one, else (for
 /// PostgreSQL, which then connects to the database named like the user) asked from the
 /// server. Best effort: `None` when unknown.
-async fn opened_database(cfg: &ConnectionConfig, browse: &dyn Session) -> Option<String> {
+async fn opened_database(cfg: &ConnectionConfig, browse: &AnySession) -> Option<String> {
     use crate::value::CellValue;
     if let Some(db) = non_empty(cfg.database.as_deref()) {
         return Some(db.to_string());
@@ -346,6 +360,8 @@ async fn opened_database(cfg: &ConnectionConfig, browse: &dyn Session) -> Option
         return None;
     }
     let out = browse
+        .sql()
+        .ok()?
         .execute("SELECT current_database()::text")
         .await
         .ok()?;
@@ -768,8 +784,8 @@ impl SessionManager {
         if cfg.kind == DriverKind::Sqlite {
             // No password, no keyring, no tunnel, no stored identity to check.
             let session = connect(&cfg, None, None).await?;
-            let version = session.server_version();
-            let _ = session.close().await;
+            let version = session.base().server_version();
+            let _ = session.base().close().await;
             return Ok(version);
         }
         let db_from_keyring = cfg.password_mode == PasswordMode::Keyring && password.is_none();
@@ -799,8 +815,8 @@ impl SessionManager {
             .await?;
         let result = match connect(cfg, password, tunnel.as_deref()).await {
             Ok(session) => {
-                let version = session.server_version();
-                let _ = session.close().await;
+                let version = session.base().server_version();
+                let _ = session.base().close().await;
                 Ok(version)
             }
             Err(e) => Err(e),
@@ -846,12 +862,13 @@ impl SessionManager {
                 return Err(e);
             }
         };
-        let database = opened_database(&config, browse.as_ref()).await;
+        let database = opened_database(&config, &browse).await;
         let info = WorkspaceInfo {
             workspace_id: uuid::Uuid::new_v4().to_string(),
             connection_id: config.id.clone(),
-            dialect: browse.dialect(),
-            server_version: browse.server_version(),
+            dialect: browse.sql().ok().map(|s| s.dialect()),
+            capabilities: driver::capabilities(config.kind),
+            server_version: browse.base().server_version(),
             database,
         };
         self.state().workspaces.insert(
@@ -900,8 +917,8 @@ impl SessionManager {
         }
         // A hung browse query (page, count) would otherwise block the close (MySQL's close
         // waits for the connection lock). Best-effort and bounded.
-        let _ = tokio::time::timeout(CANCEL_TIMEOUT, ws.browse.canceller().cancel()).await;
-        if let Err(e) = ws.browse.close().await {
+        let _ = tokio::time::timeout(CANCEL_TIMEOUT, ws.browse.base().canceller().cancel()).await;
+        if let Err(e) = ws.browse.base().close().await {
             first_err.get_or_insert(e);
         }
         if let Some(t) = ws.tunnel.lock().await.take() {
@@ -980,26 +997,32 @@ impl SessionManager {
     }
 
     /// The browse connection, unless it is lost or the tunnel it went through has died.
-    fn usable_browse(&self, workspace_id: &str) -> AppResult<Option<Arc<dyn Session>>> {
+    fn usable_browse(&self, workspace_id: &str) -> AppResult<Option<AnySession>> {
         let st = self.state();
         let ws = st
             .workspaces
             .get(workspace_id)
             .ok_or_else(|| workspace_not_found(workspace_id))?;
         let usable = !ws.browse_lost
-            && !ws.browse.is_lost()
+            && !ws.browse.base().is_lost()
             && ws.browse_tunnel.as_ref().is_none_or(|t| t.is_alive());
         Ok(usable.then(|| ws.browse.clone()))
     }
 
     /// Records that a call on `session` saw its connection gone, if it is still the
     /// workspace's browse connection (a rebuilt one is left alone).
-    fn mark_browse_lost(&self, workspace_id: &str, session: &Arc<dyn Session>) {
+    fn mark_browse_lost(&self, workspace_id: &str, session: &dyn SessionBase) {
         if let Some(ws) = self.state().workspaces.get_mut(workspace_id)
-            && std::ptr::addr_eq(Arc::as_ptr(&ws.browse), Arc::as_ptr(session))
+            && std::ptr::addr_eq(ws.browse.base(), session)
         {
             ws.browse_lost = true;
         }
+    }
+
+    /// The workspace's shared browse connection as a SQL session (pages, metadata, edits):
+    /// [`Self::browse_any`], `Invalid` when the connection has no SQL.
+    pub async fn browse(&self, workspace_id: &str) -> AppResult<Arc<dyn Session>> {
+        Ok(self.browse_any(workspace_id).await?.sql()?.clone())
     }
 
     /// The workspace's shared browse connection (schemas, objects, pages, counts).
@@ -1011,7 +1034,7 @@ impl SessionManager {
     /// callers share one rebuild per loss (the workspace's reconnect lock). Keyring
     /// secrets are only read while the saved connection still has the workspace's
     /// identity ([`Self::unbind_stale_keyring`]).
-    pub async fn browse(&self, workspace_id: &str) -> AppResult<Arc<dyn Session>> {
+    pub async fn browse_any(&self, workspace_id: &str) -> AppResult<AnySession> {
         if let Some(browse) = self.usable_browse(workspace_id)? {
             return Ok(browse);
         }
@@ -1058,33 +1081,47 @@ impl SessionManager {
         match old {
             Some(old) => {
                 // Its connection is already gone; bounded in case the driver waits.
-                let _ = tokio::time::timeout(CANCEL_TIMEOUT, old.close()).await;
+                let _ = tokio::time::timeout(CANCEL_TIMEOUT, old.base().close()).await;
                 Ok(fresh)
             }
             None => {
                 // The workspace was closed while we were reconnecting.
-                let _ = fresh.close().await;
+                let _ = fresh.base().close().await;
                 Err(workspace_not_found(workspace_id))
             }
         }
     }
 
     /// Runs a read on the browse connection. When it fails because the connection is
-    /// gone, the connection is rebuilt ([`Self::browse`]) and the read retried once.
+    /// gone, the connection is rebuilt ([`Self::browse_any`]) and the read retried once.
     /// Reads only: a write whose outcome is unknown must never be replayed.
+    pub async fn on_browse_any<T, F, Fut>(&self, workspace_id: &str, read: F) -> AppResult<T>
+    where
+        F: Fn(AnySession) -> Fut,
+        Fut: Future<Output = AppResult<T>>,
+    {
+        let browse = self.browse_any(workspace_id).await?;
+        match read(browse.clone()).await {
+            Err(e) if e.kind == ErrorKind::ConnectionLost => {
+                self.mark_browse_lost(workspace_id, browse.base());
+                read(self.browse_any(workspace_id).await?).await
+            }
+            other => other,
+        }
+    }
+
+    /// [`Self::on_browse_any`] for a read that needs SQL (`Invalid` without it).
     pub async fn on_browse<T, F, Fut>(&self, workspace_id: &str, read: F) -> AppResult<T>
     where
         F: Fn(Arc<dyn Session>) -> Fut,
         Fut: Future<Output = AppResult<T>>,
     {
-        let browse = self.browse(workspace_id).await?;
-        match read(browse.clone()).await {
-            Err(e) if e.kind == ErrorKind::ConnectionLost => {
-                self.mark_browse_lost(workspace_id, &browse);
-                read(self.browse(workspace_id).await?).await
-            }
-            other => other,
-        }
+        let read = &read;
+        self.on_browse_any(workspace_id, |b| {
+            let sql = b.sql().cloned();
+            async move { read(sql?).await }
+        })
+        .await
     }
 
     /// The metadata of a table or view, read once through the browse connection and
@@ -1224,7 +1261,7 @@ impl SessionManager {
             Ok(outcome) => outcome,
             Err(e) => {
                 if e.kind == ErrorKind::ConnectionLost {
-                    self.mark_browse_lost(workspace_id, &browse);
+                    self.mark_browse_lost(workspace_id, browse.as_ref());
                 }
                 return Err(e);
             }
@@ -1326,8 +1363,8 @@ impl SessionManager {
     ) -> AppResult<RowCount> {
         if filters.is_empty() {
             return self
-                .on_browse(workspace_id, |b| async move {
-                    b.count_rows(obj, exact_threshold).await
+                .on_browse_any(workspace_id, |b| async move {
+                    b.base().count_rows(obj, exact_threshold).await
                 })
                 .await;
         }
@@ -1379,7 +1416,7 @@ impl SessionManager {
         let tunnel = self
             .live_tunnel(workspace_id, &r.config, &r.slot, r.ssh_secret)
             .await?;
-        let session = connect(&r.config, password, tunnel.as_deref()).await?;
+        let session = sql_only(connect(&r.config, password, tunnel.as_deref()).await?).await?;
         self.register_sql_session(workspace_id, session).await
     }
 
@@ -1571,7 +1608,8 @@ impl SessionManager {
         }
         // Taken before the fetch: a database switch in between discards the result.
         let generation = self.catalogs.generation(workspace_id);
-        let fresh = Arc::new(self.browse(workspace_id).await?.catalog(schema).await?);
+        let browse = self.browse_any(workspace_id).await?;
+        let fresh = Arc::new(browse.base().catalog(schema).await?);
         self.catalogs
             .put(workspace_id, schema, generation, fresh.clone(), || {
                 self.state().workspaces.contains_key(workspace_id)
@@ -1590,7 +1628,11 @@ impl SessionManager {
 
     /// Databases the connection can switch to (MySQL: the schemas, SQLite: attached).
     pub async fn databases_list(&self, workspace_id: &str) -> AppResult<Vec<String>> {
-        self.browse(workspace_id).await?.list_databases().await
+        self.browse_any(workspace_id)
+            .await?
+            .base()
+            .list_databases()
+            .await
     }
 
     /// PostgreSQL only: moves the workspace's browse connection to `database` (same
@@ -1649,17 +1691,18 @@ impl SessionManager {
         drop(current);
         let Some((old, connection_id)) = swapped else {
             // The workspace was closed while we were connecting.
-            let _ = fresh.close().await;
+            let _ = fresh.base().close().await;
             return Err(workspace_not_found(workspace_id));
         };
         self.catalogs.invalidate(workspace_id);
-        // Bounded, like the browse swap in `browse`.
-        let _ = tokio::time::timeout(CANCEL_TIMEOUT, old.close()).await;
+        // Bounded, like the browse swap in `browse_any`.
+        let _ = tokio::time::timeout(CANCEL_TIMEOUT, old.base().close()).await;
         Ok(WorkspaceInfo {
             workspace_id: workspace_id.to_string(),
             connection_id,
-            dialect: fresh.dialect(),
-            server_version: fresh.server_version(),
+            dialect: fresh.sql().ok().map(|s| s.dialect()),
+            capabilities: driver::capabilities(r.config.kind),
+            server_version: fresh.base().server_version(),
             database: Some(database.to_string()),
         })
     }
@@ -1960,7 +2003,7 @@ mod tests {
     async fn open_workspace_and_browse_sqlite() {
         let fx = fixture();
         let ws = sqlite_ws(&fx).await;
-        assert_eq!(ws.dialect, Dialect::Sqlite);
+        assert_eq!(ws.dialect, Some(Dialect::Sqlite));
         assert!(!ws.server_version.is_empty());
         let objs = fx
             .mgr
@@ -2356,14 +2399,17 @@ mod tests {
         let info = serde_json::to_value(WorkspaceInfo {
             workspace_id: "w".into(),
             connection_id: "c".into(),
-            dialect: Dialect::Sqlite,
+            dialect: Some(Dialect::Sqlite),
+            capabilities: driver::capabilities(DriverKind::Sqlite),
             server_version: "3".into(),
             database: None,
         })
         .unwrap();
         assert_eq!(
             info,
-            serde_json::json!({"workspaceId": "w", "connectionId": "c", "dialect": "sqlite", "serverVersion": "3", "database": null})
+            serde_json::json!({"workspaceId": "w", "connectionId": "c", "dialect": "sqlite", "serverVersion": "3", "database": null,
+                "capabilities": {"sqlEditor": true, "gridEditing": true, "routines": true, "ddl": true,
+                    "foreignKeys": true, "documents": false, "databaseSwitch": false}})
         );
     }
 
@@ -2387,10 +2433,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl Session for StubbornSession {
-        fn dialect(&self) -> Dialect {
-            Dialect::Sqlite
-        }
+    impl SessionBase for StubbornSession {
         fn server_version(&self) -> String {
             "stub".into()
         }
@@ -2400,6 +2443,31 @@ mod tests {
         async fn list_objects(&self, _: Option<&str>) -> AppResult<Vec<DbObject>> {
             Ok(vec![])
         }
+        async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
+            Ok(RowCount::Exact(0))
+        }
+        fn canceller(&self) -> Arc<dyn Canceller> {
+            Arc::new(CountingCanceller(self.cancels.clone(), self.cancel_delay))
+        }
+        async fn close(&self) -> AppResult<()> {
+            Ok(())
+        }
+        async fn catalog(&self, _: Option<&str>) -> AppResult<Catalog> {
+            Ok(Catalog {
+                schema: None,
+                tables: vec![],
+            })
+        }
+        async fn list_databases(&self) -> AppResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    #[async_trait]
+    impl Session for StubbornSession {
+        fn dialect(&self) -> Dialect {
+            Dialect::Sqlite
+        }
         async fn query(&self, _: &Statement) -> AppResult<ResultSet> {
             Err(AppError::new(ErrorKind::Invalid, "stub"))
         }
@@ -2408,9 +2476,6 @@ mod tests {
         }
         async fn apply(&self, _: &[Statement], _: &[bool]) -> AppResult<ApplyOutcome> {
             Err(AppError::new(ErrorKind::Invalid, "stub"))
-        }
-        async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
-            Ok(RowCount::Exact(0))
         }
         async fn table_info(&self, _: &ObjectRef) -> AppResult<TableInfo> {
             Err(AppError::new(ErrorKind::Invalid, "stub"))
@@ -2426,22 +2491,7 @@ mod tests {
                 elapsed_ms: 0,
             })
         }
-        fn canceller(&self) -> Arc<dyn Canceller> {
-            Arc::new(CountingCanceller(self.cancels.clone(), self.cancel_delay))
-        }
-        async fn close(&self) -> AppResult<()> {
-            Ok(())
-        }
-        async fn catalog(&self, _: Option<&str>) -> AppResult<Catalog> {
-            Ok(Catalog {
-                schema: None,
-                tables: vec![],
-            })
-        }
         async fn list_routines(&self, _: Option<&str>) -> AppResult<Vec<DbRoutine>> {
-            Ok(vec![])
-        }
-        async fn list_databases(&self) -> AppResult<Vec<String>> {
             Ok(vec![])
         }
     }
@@ -2451,10 +2501,7 @@ mod tests {
     struct CatalogSession(Arc<AtomicUsize>);
 
     #[async_trait]
-    impl Session for CatalogSession {
-        fn dialect(&self) -> Dialect {
-            Dialect::Sqlite
-        }
+    impl SessionBase for CatalogSession {
         fn server_version(&self) -> String {
             "stub".into()
         }
@@ -2464,26 +2511,8 @@ mod tests {
         async fn list_objects(&self, _: Option<&str>) -> AppResult<Vec<DbObject>> {
             Ok(vec![])
         }
-        async fn query(&self, _: &Statement) -> AppResult<ResultSet> {
-            Err(AppError::new(ErrorKind::Invalid, "stub"))
-        }
-        async fn query_full(&self, _: &Statement) -> AppResult<ResultSet> {
-            Err(AppError::new(ErrorKind::Invalid, "stub"))
-        }
-        async fn apply(&self, _: &[Statement], _: &[bool]) -> AppResult<ApplyOutcome> {
-            Err(AppError::new(ErrorKind::Invalid, "stub"))
-        }
         async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
             Ok(RowCount::Exact(0))
-        }
-        async fn table_info(&self, _: &ObjectRef) -> AppResult<TableInfo> {
-            Err(AppError::new(ErrorKind::Invalid, "stub"))
-        }
-        async fn table_ddl(&self, _: &ObjectRef) -> AppResult<String> {
-            Err(AppError::new(ErrorKind::Invalid, "stub"))
-        }
-        async fn execute(&self, _: &str) -> AppResult<StatementOutcome> {
-            Err(AppError::new(ErrorKind::Invalid, "stub"))
         }
         fn canceller(&self) -> Arc<dyn Canceller> {
             Arc::new(CountingCanceller(Arc::default(), Duration::ZERO))
@@ -2498,10 +2527,35 @@ mod tests {
                 tables: vec![],
             })
         }
-        async fn list_routines(&self, _: Option<&str>) -> AppResult<Vec<DbRoutine>> {
+        async fn list_databases(&self) -> AppResult<Vec<String>> {
             Ok(vec![])
         }
-        async fn list_databases(&self) -> AppResult<Vec<String>> {
+    }
+
+    #[async_trait]
+    impl Session for CatalogSession {
+        fn dialect(&self) -> Dialect {
+            Dialect::Sqlite
+        }
+        async fn query(&self, _: &Statement) -> AppResult<ResultSet> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn query_full(&self, _: &Statement) -> AppResult<ResultSet> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn apply(&self, _: &[Statement], _: &[bool]) -> AppResult<ApplyOutcome> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn table_info(&self, _: &ObjectRef) -> AppResult<TableInfo> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn table_ddl(&self, _: &ObjectRef) -> AppResult<String> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn execute(&self, _: &str) -> AppResult<StatementOutcome> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn list_routines(&self, _: Option<&str>) -> AppResult<Vec<DbRoutine>> {
             Ok(vec![])
         }
     }
@@ -2515,7 +2569,7 @@ mod tests {
                 held_password: None,
                 held_ssh_secret: None,
                 tunnel: Default::default(),
-                browse: Arc::new(CatalogSession(calls.clone())),
+                browse: AnySession::Sql(Arc::new(CatalogSession(calls.clone()))),
                 browse_tunnel: None,
                 browse_lost: false,
                 sql_sessions: Vec::new(),
@@ -2662,7 +2716,7 @@ mod tests {
                 held_password: None,
                 held_ssh_secret: None,
                 tunnel: Default::default(),
-                browse,
+                browse: AnySession::Sql(browse),
                 browse_tunnel: None,
                 browse_lost: false,
                 sql_sessions: Vec::new(),
@@ -2681,10 +2735,7 @@ mod tests {
     struct MetaSession(Arc<AtomicUsize>, Arc<tokio::sync::Mutex<()>>);
 
     #[async_trait]
-    impl Session for MetaSession {
-        fn dialect(&self) -> Dialect {
-            Dialect::Postgres
-        }
+    impl SessionBase for MetaSession {
         fn server_version(&self) -> String {
             "meta".into()
         }
@@ -2694,6 +2745,28 @@ mod tests {
         async fn list_objects(&self, _: Option<&str>) -> AppResult<Vec<DbObject>> {
             Ok(vec![])
         }
+        async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
+            Ok(RowCount::Exact(0))
+        }
+        fn canceller(&self) -> Arc<dyn Canceller> {
+            Arc::new(CountingCanceller(Arc::default(), Duration::ZERO))
+        }
+        async fn close(&self) -> AppResult<()> {
+            Ok(())
+        }
+        async fn catalog(&self, _: Option<&str>) -> AppResult<Catalog> {
+            Err(AppError::new(ErrorKind::Invalid, "stub"))
+        }
+        async fn list_databases(&self) -> AppResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    #[async_trait]
+    impl Session for MetaSession {
+        fn dialect(&self) -> Dialect {
+            Dialect::Postgres
+        }
         async fn query(&self, _: &Statement) -> AppResult<ResultSet> {
             Err(AppError::new(ErrorKind::Invalid, "meta"))
         }
@@ -2702,9 +2775,6 @@ mod tests {
         }
         async fn apply(&self, _: &[Statement], _: &[bool]) -> AppResult<ApplyOutcome> {
             Err(AppError::new(ErrorKind::Invalid, "meta"))
-        }
-        async fn count_rows(&self, _: &ObjectRef, _: u64) -> AppResult<RowCount> {
-            Ok(RowCount::Exact(0))
         }
         async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
             self.0.fetch_add(1, Ordering::SeqCst);
@@ -2729,19 +2799,7 @@ mod tests {
         async fn execute(&self, _: &str) -> AppResult<StatementOutcome> {
             Err(AppError::new(ErrorKind::Invalid, "meta"))
         }
-        fn canceller(&self) -> Arc<dyn Canceller> {
-            Arc::new(CountingCanceller(Arc::default(), Duration::ZERO))
-        }
-        async fn close(&self) -> AppResult<()> {
-            Ok(())
-        }
-        async fn catalog(&self, _: Option<&str>) -> AppResult<Catalog> {
-            Err(AppError::new(ErrorKind::Invalid, "stub"))
-        }
         async fn list_routines(&self, _: Option<&str>) -> AppResult<Vec<DbRoutine>> {
-            Ok(vec![])
-        }
-        async fn list_databases(&self) -> AppResult<Vec<String>> {
             Ok(vec![])
         }
     }
@@ -2764,7 +2822,7 @@ mod tests {
                 held_password: None,
                 held_ssh_secret: None,
                 tunnel: Default::default(),
-                browse: Arc::new(MetaSession(calls.clone(), hold)),
+                browse: AnySession::Sql(Arc::new(MetaSession(calls.clone(), hold))),
                 browse_tunnel: None,
                 browse_lost: false,
                 sql_sessions: Vec::new(),

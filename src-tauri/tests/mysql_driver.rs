@@ -95,6 +95,7 @@ async fn mysql_dispatch_routes_both_kinds() {
         let s = tablemax_lib::driver::connect(&params_from_url(&url, kind))
             .await
             .unwrap();
+        let s = s.sql().unwrap();
         assert!(s.execute("select 1").await.is_ok());
         s.close().await.unwrap();
     }

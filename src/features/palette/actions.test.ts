@@ -2,6 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { isKeymapActionId } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
+import type { Capabilities } from "../../lib/types";
 import type { Workspace } from "../../stores/workspaces";
 import { useWorkspaces } from "../../stores/workspaces";
 import { registerEditorCommands } from "../editor/editorCommands";
@@ -53,6 +54,31 @@ test("an action whose when() is false is hidden", () => {
   expect(titles(ctx(ws()))).toContain(t.changeDatabase);
   expect(titles(ctx(ws({ dialect: "sqlite" })))).not.toContain(t.changeDatabase);
   expect(titles(ctx(ws({ dialect: "mySql" })))).not.toContain(t.changeDatabase);
+});
+
+/** A connection without SQL (e.g. a document database). */
+const NO_SQL: Capabilities = {
+  sqlEditor: false,
+  gridEditing: false,
+  routines: false,
+  ddl: false,
+  foreignKeys: false,
+  documents: true,
+  databaseSwitch: false,
+};
+
+test("capabilities decide: no SQL editor, no New SQL tab; no database switch, no Change database", () => {
+  const t = strings.palette.action;
+  const docs = titles(ctx(ws({ dialect: null, capabilities: NO_SQL })));
+  expect(docs).not.toContain(t.newQuery);
+  expect(docs).not.toContain(t.changeDatabase);
+  expect(visibleActions(ctx(ws({ dialect: null, capabilities: NO_SQL }))).map((a) => a.id)).not.toContain(
+    "query.new",
+  );
+  // The capabilities win over the dialect.
+  const pgNoSwitch = titles(ctx(ws({ capabilities: { ...NO_SQL, sqlEditor: true, documents: false } })));
+  expect(pgNoSwitch).toContain(t.newQuery);
+  expect(pgNoSwitch).not.toContain(t.changeDatabase);
 });
 
 test("Format query and Toggle comment need a registered editor command", () => {

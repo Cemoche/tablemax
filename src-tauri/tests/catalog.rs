@@ -37,7 +37,7 @@ impl Drop for Cleanup {
                 .unwrap();
             rt.block_on(async {
                 let s = tablemax_lib::driver::connect(&params).await;
-                if let Ok(s) = s {
+                if let Ok(s) = s.and_then(|s| s.sql().cloned()) {
                     for q in &sql {
                         let _ = s.execute(q).await;
                     }

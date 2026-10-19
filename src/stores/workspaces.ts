@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../lib/ipc";
 import { strings } from "../lib/strings";
-import type { ConnectionConfig, Dialect, EnvTag, ObjectRef, SafeMode, WorkspaceInfo } from "../lib/types";
+import type { Capabilities, ConnectionConfig, Dialect, EnvTag, ObjectRef, SafeMode, WorkspaceInfo } from "../lib/types";
 import { useConnections } from "./connections";
 import { type GridView, type TrailEntry, useGridViews } from "./gridViews";
 import { usePendingChanges } from "./pendingChanges";
@@ -45,7 +45,13 @@ export interface Workspace {
   /** Tag and safe mode the workspace was opened with (the saved connection may change since). */
   envTag: EnvTag;
   safeMode?: SafeMode | null;
-  dialect: Dialect;
+  /** Null for a connection without SQL (documents); decide with `capabilitiesOf`, not this. */
+  dialect: Dialect | null;
+  /**
+   * What the connection offers (WorkspaceInfo.capabilities). Absent until the first
+   * connect (a restored workspace): read it through `capabilitiesOf`.
+   */
+  capabilities?: Capabilities;
   status: WorkspaceStatus;
   /** Database the workspace browses (WorkspaceInfo.database); restored as is. */
   database: string | null;
@@ -176,8 +182,48 @@ const opening = new Map<string, Promise<void>>();
 /** Workspaces with a database switch in flight. */
 const switching = new Set<string>();
 
+/** The capabilities of a SQL connection of `dialect` (mirror of `driver::capabilities`). */
+export function sqlCapabilities(dialect: Dialect): Capabilities {
+  return {
+    sqlEditor: true,
+    gridEditing: true,
+    routines: true,
+    ddl: true,
+    foreignKeys: true,
+    documents: false,
+    databaseSwitch: dialect === "postgres",
+  };
+}
+
+const NO_CAPABILITIES: Capabilities = {
+  sqlEditor: false,
+  gridEditing: false,
+  routines: false,
+  ddl: false,
+  foreignKeys: false,
+  documents: false,
+  databaseSwitch: false,
+};
+
+/**
+ * What the interface may offer on `w`: what its connection reported, else (before its
+ * first connect) the SQL capabilities of its dialect.
+ */
+export function capabilitiesOf(w: Pick<Workspace, "capabilities" | "dialect">): Capabilities {
+  return w.capabilities ?? (w.dialect ? sqlCapabilities(w.dialect) : NO_CAPABILITIES);
+}
+
+/**
+ * The dialect of a workspace whose capabilities offer SQL. SQL components are only
+ * rendered for those, so a missing dialect is a bug, not a state to show.
+ */
+export function sqlDialect(w: Pick<Workspace, "dialect">): Dialect {
+  if (w.dialect === null) throw new Error("SQL component on a connection without SQL");
+  return w.dialect;
+}
+
 export function defaultSchema(
-  dialect: Dialect,
+  dialect: Dialect | null,
   schemas: string[],
   database: string | null,
 ): string | null {
@@ -189,6 +235,8 @@ export function defaultSchema(
       return pick(database) ?? schemas[0] ?? null;
     case "sqlite":
       return pick("main") ?? schemas[0] ?? null;
+    default:
+      return schemas[0] ?? null;
   }
 }
 
@@ -233,6 +281,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
       envTag: cfg.envTag,
       safeMode: cfg.safeMode ?? null,
       dialect: info.dialect,
+      capabilities: info.capabilities,
       status: "connected",
       database: info.database,
       schemas,
@@ -318,7 +367,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     try {
       const wanted = get().workspaces.find((w) => w.id === placeholderId)?.database ?? null;
       // MySQL / SQLite carry the database in the schema; only PostgreSQL switches.
-      if (info.dialect === "postgres" && wanted && wanted !== info.database) {
+      if (info.capabilities.databaseSwitch && wanted && wanted !== info.database) {
         try {
           info = await ipc.workspaceSwitchDatabase(info.workspaceId, wanted);
         } catch {
@@ -342,7 +391,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     const counter = queryCounters.get(placeholderId);
     queryCounters.delete(placeholderId);
     if (counter !== undefined) queryCounters.set(newId, counter);
-    const dialect = info.dialect;
+    const { dialect, capabilities } = info;
     const database = info.database;
     set((s) => ({
       workspaces: s.workspaces.map((w) =>
@@ -351,6 +400,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
               ...w,
               id: newId,
               dialect,
+              capabilities,
               status: "connected",
               database,
               schemas,

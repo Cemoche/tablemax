@@ -58,7 +58,7 @@ use super::sql::qualified;
 use super::tls::{SslMode, rustls_client_config};
 use super::{
     Canceller, ColumnMeta, ConnectParams, DbObject, Dialect, ObjectKind, ObjectRef, ResultSet,
-    RowCount, Session, StatementOutcome,
+    RowCount, Session, SessionBase, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{
@@ -830,11 +830,7 @@ impl PgSession {
 }
 
 #[async_trait]
-impl Session for PgSession {
-    fn dialect(&self) -> Dialect {
-        Dialect::Postgres
-    }
-
+impl SessionBase for PgSession {
     fn server_version(&self) -> String {
         self.version.clone()
     }
@@ -889,6 +885,107 @@ impl Session for PgSession {
         Ok(out)
     }
 
+    async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount> {
+        let _gate = self.gate.read().await;
+        self.check()?;
+        let q = qualified(Dialect::Postgres, obj);
+        let row = self
+            .client
+            .query_opt(
+                "SELECT c.reltuples::float8 FROM pg_class c WHERE c.oid = $1::text::regclass",
+                &[&q],
+            )
+            .await
+            .map_err(map_err)?;
+        if let Some(row) = row {
+            let est: f64 = row.get(0);
+            // reltuples is -1 when the table was never analyzed: unknown, count exactly.
+            if est > exact_threshold as f64 {
+                return Ok(RowCount::Estimate(est as u64));
+            }
+        }
+        let row = self
+            .client
+            .query_one(&format!("SELECT COUNT(*) FROM {q}"), &[])
+            .await
+            .map_err(map_err)?;
+        let n: i64 = row.get(0);
+        Ok(RowCount::Exact(n.max(0) as u64))
+    }
+
+    fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::SeqCst) || self.client.is_closed()
+    }
+
+    fn canceller(&self) -> Arc<dyn Canceller> {
+        Arc::new(PgCanceller {
+            token: self.cancel.clone(),
+            tls: self.tls.clone(),
+        })
+    }
+
+    async fn close(&self) -> AppResult<()> {
+        self.drop_connection();
+        Ok(())
+    }
+
+    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
+        self.check()?;
+        let schema = schema.unwrap_or("public").to_string();
+        // One query; LEFT JOIN keeps column-less tables. Ordered by attnum = definition order.
+        let rows = self
+            .client
+            .query(
+                "SELECT c.relname::text, c.relkind::text, a.attname::text, \
+                 format_type(a.atttypid, a.atttypmod)::text \
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 \
+                 AND NOT a.attisdropped \
+                 WHERE n.nspname = $1::text AND c.relkind IN ('r', 'p', 'v', 'm') \
+                 ORDER BY c.relname, c.oid, a.attnum",
+                &[&schema],
+            )
+            .await
+            .map_err(map_err)?;
+        Ok(group_rows(
+            Some(schema),
+            rows.iter().map(|r| {
+                let kind: String = r.get(1);
+                let kind = if kind == "v" || kind == "m" {
+                    ObjectKind::View
+                } else {
+                    ObjectKind::Table
+                };
+                let col = r.get::<_, Option<String>>(2).map(|name| CatalogColumn {
+                    name,
+                    type_name: r.get::<_, Option<String>>(3).unwrap_or_default(),
+                });
+                (r.get::<_, String>(0), kind, col)
+            }),
+        ))
+    }
+
+    async fn list_databases(&self) -> AppResult<Vec<String>> {
+        self.check()?;
+        let rows = self
+            .client
+            .query(
+                "SELECT datname::text FROM pg_database \
+                 WHERE NOT datistemplate AND datallowconn ORDER BY datname",
+                &[],
+            )
+            .await
+            .map_err(map_err)?;
+        Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
+    }
+}
+
+#[async_trait]
+impl Session for PgSession {
+    fn dialect(&self) -> Dialect {
+        Dialect::Postgres
+    }
+
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
         self.query_with(stmt, false).await
     }
@@ -927,34 +1024,6 @@ impl Session for PgSession {
                 dml::commit_failed(affected, err)
             }
         }
-    }
-
-    async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount> {
-        let _gate = self.gate.read().await;
-        self.check()?;
-        let q = qualified(Dialect::Postgres, obj);
-        let row = self
-            .client
-            .query_opt(
-                "SELECT c.reltuples::float8 FROM pg_class c WHERE c.oid = $1::text::regclass",
-                &[&q],
-            )
-            .await
-            .map_err(map_err)?;
-        if let Some(row) = row {
-            let est: f64 = row.get(0);
-            // reltuples is -1 when the table was never analyzed: unknown, count exactly.
-            if est > exact_threshold as f64 {
-                return Ok(RowCount::Estimate(est as u64));
-            }
-        }
-        let row = self
-            .client
-            .query_one(&format!("SELECT COUNT(*) FROM {q}"), &[])
-            .await
-            .map_err(map_err)?;
-        let n: i64 = row.get(0);
-        Ok(RowCount::Exact(n.max(0) as u64))
     }
 
     async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
@@ -1021,58 +1090,6 @@ impl Session for PgSession {
         })
     }
 
-    fn is_lost(&self) -> bool {
-        self.lost.load(Ordering::SeqCst) || self.client.is_closed()
-    }
-
-    fn canceller(&self) -> Arc<dyn Canceller> {
-        Arc::new(PgCanceller {
-            token: self.cancel.clone(),
-            tls: self.tls.clone(),
-        })
-    }
-
-    async fn close(&self) -> AppResult<()> {
-        self.drop_connection();
-        Ok(())
-    }
-
-    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
-        self.check()?;
-        let schema = schema.unwrap_or("public").to_string();
-        // One query; LEFT JOIN keeps column-less tables. Ordered by attnum = definition order.
-        let rows = self
-            .client
-            .query(
-                "SELECT c.relname::text, c.relkind::text, a.attname::text, \
-                 format_type(a.atttypid, a.atttypmod)::text \
-                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-                 LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 \
-                 AND NOT a.attisdropped \
-                 WHERE n.nspname = $1::text AND c.relkind IN ('r', 'p', 'v', 'm') \
-                 ORDER BY c.relname, c.oid, a.attnum",
-                &[&schema],
-            )
-            .await
-            .map_err(map_err)?;
-        Ok(group_rows(
-            Some(schema),
-            rows.iter().map(|r| {
-                let kind: String = r.get(1);
-                let kind = if kind == "v" || kind == "m" {
-                    ObjectKind::View
-                } else {
-                    ObjectKind::Table
-                };
-                let col = r.get::<_, Option<String>>(2).map(|name| CatalogColumn {
-                    name,
-                    type_name: r.get::<_, Option<String>>(3).unwrap_or_default(),
-                });
-                (r.get::<_, String>(0), kind, col)
-            }),
-        ))
-    }
-
     async fn list_routines(&self, schema: Option<&str>) -> AppResult<Vec<DbRoutine>> {
         self.check()?;
         let schema = schema.map(String::from);
@@ -1102,20 +1119,6 @@ impl Session for PgSession {
                 },
             })
             .collect())
-    }
-
-    async fn list_databases(&self) -> AppResult<Vec<String>> {
-        self.check()?;
-        let rows = self
-            .client
-            .query(
-                "SELECT datname::text FROM pg_database \
-                 WHERE NOT datistemplate AND datallowconn ORDER BY datname",
-                &[],
-            )
-            .await
-            .map_err(map_err)?;
-        Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
     }
 }
 

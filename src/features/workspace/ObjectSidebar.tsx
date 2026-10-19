@@ -5,7 +5,7 @@ import { qualifiedName } from "../../lib/sqlIdent";
 import { strings } from "../../lib/strings";
 import type { DbObject, DbRoutine } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
-import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { type Workspace, capabilitiesOf, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 
 type Entry =
   | { type: "object"; object: DbObject }
@@ -35,8 +35,8 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
   const [reload, setReload] = useState(0);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const { id, currentSchema, dialect, status, database } = workspace;
-  const isPg = dialect === "postgres";
+  const { id, currentSchema, status, database } = workspace;
+  const { databaseSwitch, routines: hasRoutines, sqlEditor } = capabilitiesOf(workspace);
 
   useEffect(() => {
     let stale = false;
@@ -62,6 +62,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
   }, [id, currentSchema, database, reload]);
 
   useEffect(() => {
+    if (!hasRoutines) return;
     let stale = false;
     ipc
       .routinesList(id, currentSchema)
@@ -74,10 +75,10 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
     return () => {
       stale = true;
     };
-  }, [id, currentSchema, database, reload]);
+  }, [id, hasRoutines, currentSchema, database, reload]);
 
   useEffect(() => {
-    if (!isPg || status !== "connected") return;
+    if (!databaseSwitch || status !== "connected") return;
     let stale = false;
     ipc
       .databasesList(id)
@@ -90,7 +91,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
     return () => {
       stale = true;
     };
-  }, [id, isPg, status, reload]);
+  }, [id, databaseSwitch, status, reload]);
 
   // Escape closes the menu; so does any outside click.
   useEffect(() => {
@@ -234,7 +235,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
       className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-surface"
     >
       <div className="flex flex-col gap-2 border-b border-border p-2">
-        {isPg && (
+        {databaseSwitch && (
           <select
             aria-label={strings.sidebar.database}
             value={database ?? ""}
@@ -292,17 +293,14 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
         )}
         {section("tables", strings.sidebar.tables, tables.length, tables.map(objectItem))}
         {section("views", strings.sidebar.views, views.length, views.map(objectItem))}
-        {section(
-          "routines",
-          strings.sidebar.routines,
-          shownRoutines.length,
-          shownRoutines.map(routineItem),
-        )}
+        {hasRoutines &&
+          section("routines", strings.sidebar.routines, shownRoutines.length, shownRoutines.map(routineItem))}
       </div>
       {menu && (
         <ObjectMenu
           menu={menu}
           onClose={() => setMenu(null)}
+          sqlEditor={sqlEditor}
           actions={{
             open: () => {
               if (menu.entry.type === "object") {
@@ -321,7 +319,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
                 const o = menu.entry.object;
                 openQueryTab(
                   id,
-                  `SELECT * FROM ${qualifiedName(dialect, o.schema, o.name)} LIMIT 100;`,
+                  `SELECT * FROM ${qualifiedName(sqlDialect(workspace), o.schema, o.name)} LIMIT 100;`,
                 );
               }
             },
@@ -338,10 +336,13 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
 function ObjectMenu({
   menu,
   onClose,
+  sqlEditor,
   actions,
 }: {
   menu: MenuState;
   onClose: () => void;
+  /** Offer "New query" (a SQL tab on the object). */
+  sqlEditor: boolean;
   actions: { open: () => void; openNewTab: () => void; newQuery: () => void; copyName: () => void };
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -351,7 +352,7 @@ function ObjectMenu({
       ? ([
           [strings.sidebar.menu.open, actions.open],
           [strings.sidebar.menu.openNewTab, actions.openNewTab],
-          [strings.sidebar.menu.newQuery, actions.newQuery],
+          ...(sqlEditor ? [[strings.sidebar.menu.newQuery, actions.newQuery]] : []),
         ] as [string, () => void][])
       : []),
     [strings.sidebar.menu.copyName, actions.copyName],

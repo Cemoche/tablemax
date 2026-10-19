@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import type {
   ApplyOutcome,
   Catalog,
+  Capabilities,
   CellValue,
   ConnectionConfig,
   DbRoutine,
@@ -53,9 +54,23 @@ test("ExecEvent fixtures", () => {
 
 test("WorkspaceInfo, RowCount and ConnectionConfig fixtures", () => {
   const info: WorkspaceInfo = JSON.parse(
-    '{"workspaceId":"w","connectionId":"c","dialect":"sqlite","serverVersion":"3","database":null}',
+    '{"workspaceId":"w","connectionId":"c","dialect":"sqlite","serverVersion":"3","database":null,' +
+      '"capabilities":{"sqlEditor":true,"gridEditing":true,"routines":true,"ddl":true,"foreignKeys":true,' +
+      '"documents":false,"databaseSwitch":false}}',
   );
   expect(info.dialect).toBe("sqlite");
+  const caps: Capabilities = info.capabilities;
+  expect(caps).toEqual({
+    sqlEditor: true,
+    gridEditing: true,
+    routines: true,
+    ddl: true,
+    foreignKeys: true,
+    documents: false,
+    databaseSwitch: false,
+  });
+  const docs: WorkspaceInfo = { ...info, dialect: null, capabilities: { ...caps, documents: true } };
+  expect(docs.dialect).toBeNull();
   expect(info.database).toBeNull();
   const n: RowCount = { t: "estimate", v: 5 };
   expect(n.t).toBe("estimate");

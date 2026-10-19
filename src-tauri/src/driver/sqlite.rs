@@ -27,7 +27,7 @@ use super::query::{SqlParam, Statement, is_binary};
 use super::sql::{qualified, quote_ident};
 use super::{
     Canceller, ColumnMeta, DbObject, Dialect, ObjectKind, ObjectRef, ResultSet, RowCount, Session,
-    StatementOutcome,
+    SessionBase, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, text_cell};
@@ -483,11 +483,7 @@ fn table_ddl_of(c: &Connection, schema: &str, name: &str) -> AppResult<String> {
 }
 
 #[async_trait]
-impl Session for SqliteSession {
-    fn dialect(&self) -> Dialect {
-        Dialect::Sqlite
-    }
-
+impl SessionBase for SqliteSession {
     fn server_version(&self) -> String {
         self.version.clone()
     }
@@ -536,80 +532,11 @@ impl Session for SqliteSession {
         .await
     }
 
-    async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
-        self.query_with(stmt, false).await
-    }
-
-    async fn query_full(&self, stmt: &Statement) -> AppResult<ResultSet> {
-        self.query_with(stmt, true).await
-    }
-
-    async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome> {
-        dml::check_apply_args(stmts, expect_one)?;
-        let (stmts, expect_one) = (stmts.to_vec(), expect_one.to_vec());
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut guard = conn
-                .lock()
-                .map_err(|_| AppError::new(ErrorKind::ConnectionLost, "connection poisoned"))?;
-            let Some(c) = guard.as_ref() else {
-                return Err(AppError::new(ErrorKind::ConnectionLost, "session closed"));
-            };
-            let out = apply_tx(c, &stmts, &expect_one);
-            // Still inside the transaction (the ROLLBACK failed): close the connection,
-            // which rolls it back, rather than leave it open on the session.
-            if !c.is_autocommit() {
-                drop(guard.take());
-            }
-            out
-        })
-        .await
-        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
-    }
-
     async fn count_rows(&self, obj: &ObjectRef, _exact_threshold: u64) -> AppResult<RowCount> {
         let sql = format!("SELECT COUNT(*) FROM {}", qualified(Dialect::Sqlite, obj));
         self.with_conn(move |c| {
             let n: i64 = c.query_row(&sql, [], |r| r.get(0)).map_err(map_err)?;
             Ok(RowCount::Exact(n.max(0) as u64))
-        })
-        .await
-    }
-
-    async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
-        let schema = obj.schema.clone().unwrap_or_else(|| "main".into());
-        let name = obj.name.clone();
-        self.with_conn(move |c| table_info_of(c, &schema, &name))
-            .await
-    }
-
-    async fn table_ddl(&self, obj: &ObjectRef) -> AppResult<String> {
-        let schema = obj.schema.clone().unwrap_or_else(|| "main".into());
-        let name = obj.name.clone();
-        self.with_conn(move |c| table_ddl_of(c, &schema, &name))
-            .await
-    }
-
-    async fn execute(&self, sql: &str) -> AppResult<StatementOutcome> {
-        let sql = sql.to_string();
-        self.with_conn(move |c| {
-            let start = Instant::now();
-            let mut stmt = c.prepare(&sql).map_err(map_err)?;
-            if stmt.column_count() > 0 {
-                let rs = read_rows(&mut stmt, [], false)?;
-                Ok(StatementOutcome {
-                    result: Some(rs),
-                    rows_affected: None,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                })
-            } else {
-                stmt.execute([]).map_err(map_err)?;
-                Ok(StatementOutcome {
-                    result: None,
-                    rows_affected: Some(c.changes()),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                })
-            }
         })
         .await
     }
@@ -691,11 +618,87 @@ impl Session for SqliteSession {
         .await
     }
 
-    async fn list_routines(&self, _schema: Option<&str>) -> AppResult<Vec<DbRoutine>> {
-        Ok(Vec::new())
-    }
-
     async fn list_databases(&self) -> AppResult<Vec<String>> {
         self.list_schemas().await
+    }
+}
+
+#[async_trait]
+impl Session for SqliteSession {
+    fn dialect(&self) -> Dialect {
+        Dialect::Sqlite
+    }
+
+    async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        self.query_with(stmt, false).await
+    }
+
+    async fn query_full(&self, stmt: &Statement) -> AppResult<ResultSet> {
+        self.query_with(stmt, true).await
+    }
+
+    async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome> {
+        dml::check_apply_args(stmts, expect_one)?;
+        let (stmts, expect_one) = (stmts.to_vec(), expect_one.to_vec());
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut guard = conn
+                .lock()
+                .map_err(|_| AppError::new(ErrorKind::ConnectionLost, "connection poisoned"))?;
+            let Some(c) = guard.as_ref() else {
+                return Err(AppError::new(ErrorKind::ConnectionLost, "session closed"));
+            };
+            let out = apply_tx(c, &stmts, &expect_one);
+            // Still inside the transaction (the ROLLBACK failed): close the connection,
+            // which rolls it back, rather than leave it open on the session.
+            if !c.is_autocommit() {
+                drop(guard.take());
+            }
+            out
+        })
+        .await
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))?
+    }
+
+    async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
+        let schema = obj.schema.clone().unwrap_or_else(|| "main".into());
+        let name = obj.name.clone();
+        self.with_conn(move |c| table_info_of(c, &schema, &name))
+            .await
+    }
+
+    async fn table_ddl(&self, obj: &ObjectRef) -> AppResult<String> {
+        let schema = obj.schema.clone().unwrap_or_else(|| "main".into());
+        let name = obj.name.clone();
+        self.with_conn(move |c| table_ddl_of(c, &schema, &name))
+            .await
+    }
+
+    async fn execute(&self, sql: &str) -> AppResult<StatementOutcome> {
+        let sql = sql.to_string();
+        self.with_conn(move |c| {
+            let start = Instant::now();
+            let mut stmt = c.prepare(&sql).map_err(map_err)?;
+            if stmt.column_count() > 0 {
+                let rs = read_rows(&mut stmt, [], false)?;
+                Ok(StatementOutcome {
+                    result: Some(rs),
+                    rows_affected: None,
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                })
+            } else {
+                stmt.execute([]).map_err(map_err)?;
+                Ok(StatementOutcome {
+                    result: None,
+                    rows_affected: Some(c.changes()),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                })
+            }
+        })
+        .await
+    }
+
+    async fn list_routines(&self, _schema: Option<&str>) -> AppResult<Vec<DbRoutine>> {
+        Ok(Vec::new())
     }
 }

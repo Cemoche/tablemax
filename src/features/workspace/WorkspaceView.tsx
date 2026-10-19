@@ -2,7 +2,7 @@ import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import { usePendingChanges } from "../../stores/pendingChanges";
-import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { type Tab, type Workspace, capabilitiesOf, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
 import { EnvBanner } from "./EnvBanner";
@@ -19,7 +19,7 @@ export function TabContent({ workspace, tab }: { workspace: Workspace; tab: Tab 
         workspaceId={workspace.id}
         tabId={tab.id}
         object={tab.object}
-        dialect={workspace.dialect}
+        dialect={sqlDialect(workspace)}
       />
     );
   }
@@ -63,12 +63,15 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   const active = workspace.tabs.find((t) => t.id === activeTabId) ?? null;
   const liveEnv = useLiveEnv(workspace);
   const newTabShortcut = useEffectiveShortcut("query.new");
+  const { sqlEditor } = capabilitiesOf(workspace);
 
   // A restored workspace has a placeholder id until it connects: nothing below may
   // reach the backend with it.
   const connected = workspace.status === "connected";
 
-  useAction("query.new", () => openQueryTab(id));
+  useAction("query.new", () => {
+    if (sqlEditor) openQueryTab(id);
+  });
   useAction("tab.close", () => {
     if (activeTabId) closeTab(id, activeTabId);
   });
@@ -116,7 +119,9 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
             ) : (
               <div className="p-5">
                 <p>{strings.workspace.noTabs}</p>
-                <p className="text-muted">{strings.workspace.noTabsHint(formatShortcut(newTabShortcut))}</p>
+                {sqlEditor && (
+                  <p className="text-muted">{strings.workspace.noTabsHint(formatShortcut(newTabShortcut))}</p>
+                )}
               </div>
             )}
           </div>

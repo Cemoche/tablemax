@@ -1,5 +1,5 @@
 import { strings } from "../../lib/strings";
-import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { type Tab, type Workspace, capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
 import { useCatalog } from "../../stores/catalog";
 import { useQueryPanels } from "../../stores/queryPanels";
 import { hasEditorCommand, runEditorCommand } from "../editor/editorCommands";
@@ -38,7 +38,7 @@ export const ACTIONS: Action[] = [
   {
     id: "query.new",
     title: t.newQuery,
-    when: (c) => c.workspace !== null,
+    when: (c) => c.workspace !== null && capabilitiesOf(c.workspace).sqlEditor,
     run: (c) => c.workspace && useWorkspaces.getState().openQueryTab(c.workspace.id),
   },
   {
@@ -77,7 +77,7 @@ export const ACTIONS: Action[] = [
   {
     id: "database.change",
     title: t.changeDatabase,
-    when: (c) => connected(c) && c.workspace?.dialect === "postgres",
+    when: (c) => connected(c) && c.workspace !== null && capabilitiesOf(c.workspace).databaseSwitch,
     run: (c) => c.pickDatabase(),
   },
   {

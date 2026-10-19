@@ -1,6 +1,6 @@
 import { strings } from "../../lib/strings";
 import { usePendingChanges } from "../../stores/pendingChanges";
-import { type Workspace, isQueryModified, useWorkspaces } from "../../stores/workspaces";
+import { type Workspace, capabilitiesOf, isQueryModified, useWorkspaces } from "../../stores/workspaces";
 import { TabList } from "./TabList";
 
 export function TabBar({ workspace }: { workspace: Workspace }) {
@@ -76,15 +76,17 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
           );
         })}
       </div>
-      <button
-        type="button"
-        aria-label={strings.workspace.newQueryTab}
-        title={strings.workspace.newQueryTab}
-        onClick={() => openQueryTab(id)}
-        className="shrink-0 px-3 hover:bg-surface-2"
-      >
-        +
-      </button>
+      {capabilitiesOf(workspace).sqlEditor && (
+        <button
+          type="button"
+          aria-label={strings.workspace.newQueryTab}
+          title={strings.workspace.newQueryTab}
+          onClick={() => openQueryTab(id)}
+          className="shrink-0 px-3 hover:bg-surface-2"
+        >
+          +
+        </button>
+      )}
       <TabList workspace={workspace} />
     </div>
   );
