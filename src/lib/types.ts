@@ -301,10 +301,24 @@ export interface ApplyOutcome {
 
 export type RowCount = { t: "exact"; v: number } | { t: "estimate"; v: number };
 
+/** What the interface may offer on a connection (driver::Capabilities). */
+export interface Capabilities {
+  sqlEditor: boolean;
+  gridEditing: boolean;
+  routines: boolean;
+  ddl: boolean;
+  foreignKeys: boolean;
+  documents: boolean;
+  /** The workspace can move to another database (PostgreSQL). */
+  databaseSwitch: boolean;
+}
+
 export interface WorkspaceInfo {
   workspaceId: string;
   connectionId: string;
-  dialect: Dialect;
+  /** Null for a connection without SQL (documents). */
+  dialect: Dialect | null;
+  capabilities: Capabilities;
   serverVersion: string;
   /** Database the browse connection is on; null when unknown or not applicable. */
   database: string | null;

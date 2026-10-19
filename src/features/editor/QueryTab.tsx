@@ -14,7 +14,7 @@ import { useLiveEnv } from "../workspace/useLiveEnv";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { useSavedQueries } from "../../stores/savedQueries";
 import { useSettings } from "../../stores/settings";
-import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { type Tab, type Workspace, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 import { buildCompletionSource } from "./completion";
 import { ConfirmDialog, NameDialog } from "./Dialogs";
 import { HistoryPanel } from "./HistoryPanel";
@@ -66,7 +66,7 @@ interface Props {
 export function QueryTab({ workspace, tab }: Props) {
   const wsId = workspace.id;
   const tabId = tab.id;
-  const dialect = workspace.dialect;
+  const dialect = sqlDialect(workspace);
   const [text, setText] = useState(tab.sql);
   const textRef = useRef(tab.sql);
   const selRef = useRef<EditorSelection>({ from: 0, to: 0, head: 0 });

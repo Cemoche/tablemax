@@ -19,6 +19,11 @@ use tablemax_lib::ssh::tunnel::{
 use tablemax_lib::value::CellValue;
 use tempfile::TempDir;
 
+/// `driver::connect` for the SQL engines these tests reach.
+async fn connect_sql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
+    Ok(driver::connect(p).await?.sql()?.clone())
+}
+
 const SSH_USER: &str = "tunnel";
 const SSH_PASSWORD: &str = "tunnel-pass";
 
@@ -125,7 +130,7 @@ async fn assert_select_one(s: &Arc<dyn Session>) {
 }
 
 async fn assert_pg_reachable(tunnel: &SshTunnel) {
-    let s = driver::connect(&pg_via(tunnel, "pg16", ssl(SslMode::Disable, None)))
+    let s = connect_sql(&pg_via(tunnel, "pg16", ssl(SslMode::Disable, None)))
         .await
         .unwrap();
     assert_select_one(&s).await;
@@ -308,7 +313,7 @@ async fn key_auth_reaches_mysql_and_mariadb() {
     for (url, kind, host) in mysql_targets() {
         let (_dir, tunnel) = open_trusted(key("id_ed25519", None), host, 3306).await;
         let tunnel = tunnel.unwrap();
-        let s = driver::connect(&mysql_via(&tunnel, &url, kind, host))
+        let s = connect_sql(&mysql_via(&tunnel, &url, kind, host))
             .await
             .unwrap();
         assert_select_one(&s).await;
@@ -412,7 +417,7 @@ async fn verify_full_through_tunnel_uses_real_host_name() {
     let tunnel = tunnel.unwrap();
     // `pg16` is in the certificate; TCP still goes to the tunnel's local end.
     let p = pg_via(&tunnel, "pg16", ssl(SslMode::VerifyFull, Some("ca.pem")));
-    let s = driver::connect(&p).await.unwrap();
+    let s = connect_sql(&p).await.unwrap();
     assert_select_one(&s).await;
     s.close().await.unwrap();
     // The certificate has no IP:127.0.0.1 SAN: verifying the dial address must fail.
@@ -421,10 +426,7 @@ async fn verify_full_through_tunnel_uses_real_host_name() {
         "127.0.0.1",
         ssl(SslMode::VerifyFull, Some("ca.pem")),
     );
-    let e = driver::connect(&p)
-        .await
-        .err()
-        .expect("wrong name must fail");
+    let e = connect_sql(&p).await.err().expect("wrong name must fail");
     assert_eq!(e.kind, ErrorKind::Connection, "{}", e.message);
     assert!(e.message.contains("not valid for name"), "{}", e.message);
     tunnel.close().await;
@@ -438,14 +440,14 @@ async fn mysql_verify_full_through_tunnel_uses_real_host_name() {
         // `mysql8` / `mariadb11` are in the certificate; TCP goes to the tunnel's end.
         let mut p = mysql_via(&tunnel, &url, kind, host);
         p.ssl = ssl(SslMode::VerifyFull, Some("ca.pem"));
-        let s = driver::connect(&p)
+        let s = connect_sql(&p)
             .await
             .unwrap_or_else(|e| panic!("{host}: {}", e.message));
         assert_select_one(&s).await;
         s.close().await.unwrap();
         // No IP:127.0.0.1 SAN: verifying the dial address instead must fail.
         p.host = "127.0.0.1".into();
-        let e = driver::connect(&p)
+        let e = connect_sql(&p)
             .await
             .err()
             .unwrap_or_else(|| panic!("{host}: wrong name must fail"));
@@ -458,7 +460,7 @@ async fn mysql_verify_full_through_tunnel_uses_real_host_name() {
 async fn cancel_through_tunnel() {
     let (_dir, tunnel) = open_trusted(password(), "pg16", 5432).await;
     let tunnel = tunnel.unwrap();
-    let s = driver::connect(&pg_via(&tunnel, "pg16", ssl(SslMode::Disable, None)))
+    let s = connect_sql(&pg_via(&tunnel, "pg16", ssl(SslMode::Disable, None)))
         .await
         .unwrap();
     assert_sleep_is_cancelled(&s, "select pg_sleep(30)").await;
@@ -468,7 +470,7 @@ async fn cancel_through_tunnel() {
     let (url, kind, host) = mysql_targets().remove(0);
     let (_dir, tunnel) = open_trusted(password(), host, 3306).await;
     let tunnel = tunnel.unwrap();
-    let s = driver::connect(&mysql_via(&tunnel, &url, kind, host))
+    let s = connect_sql(&mysql_via(&tunnel, &url, kind, host))
         .await
         .unwrap();
     assert_sleep_is_cancelled(&s, "select sleep(30)").await;
@@ -481,11 +483,7 @@ async fn several_connections_share_one_tunnel() {
     let (_dir, tunnel) = open_trusted(password(), "pg16", 5432).await;
     let tunnel = tunnel.unwrap();
     let p = pg_via(&tunnel, "pg16", ssl(SslMode::Disable, None));
-    let (a, b, c) = tokio::join!(
-        driver::connect(&p),
-        driver::connect(&p),
-        driver::connect(&p)
-    );
+    let (a, b, c) = tokio::join!(connect_sql(&p), connect_sql(&p), connect_sql(&p));
     let sessions = [a.unwrap(), b.unwrap(), c.unwrap()];
     // All three run a statement at the same time over the same SSH session.
     let pids = futures_util::future::join_all(sessions.iter().map(|s| async move {
@@ -514,7 +512,7 @@ async fn closed_tunnel_reports_dead() {
     assert!(tunnel.is_alive());
     tunnel.close().await;
     assert!(!tunnel.is_alive());
-    let e = driver::connect(&p)
+    let e = connect_sql(&p)
         .await
         .err()
         .expect("closed tunnel must refuse");
@@ -552,7 +550,7 @@ async fn unreachable_forward_target_fails_db_not_tunnel() {
     let (_dir, tunnel) = open_trusted(password(), "no-such-host.invalid", 5432).await;
     let tunnel = tunnel.unwrap();
     let p = pg_via(&tunnel, "no-such-host.invalid", ssl(SslMode::Disable, None));
-    let e = driver::connect(&p)
+    let e = connect_sql(&p)
         .await
         .err()
         .expect("unreachable target must fail");

@@ -1,12 +1,12 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../lib/ipc";
 import { strings } from "../lib/strings";
-import type { ConnectionConfig } from "../lib/types";
+import type { Capabilities, ConnectionConfig, WorkspaceInfo } from "../lib/types";
 import { useConnections } from "./connections";
 import { useGridViews } from "./gridViews";
 import { usePendingChanges } from "./pendingChanges";
 import { useQueryRuns } from "./queryRuns";
-import { type Workspace, useWorkspaces } from "./workspaces";
+import { type Workspace, capabilitiesOf, useWorkspaces } from "./workspaces";
 
 vi.mock("../lib/ipc");
 
@@ -28,12 +28,24 @@ const cfg = (over: Partial<ConnectionConfig> = {}): ConnectionConfig => ({
   ...over,
 });
 
-const info = (over = {}) => ({
+const PG_CAPS: Capabilities = {
+  sqlEditor: true,
+  gridEditing: true,
+  routines: true,
+  ddl: true,
+  foreignKeys: true,
+  documents: false,
+  databaseSwitch: true,
+};
+
+/** The backend's WorkspaceInfo; capabilities follow the dialect unless given. */
+const info = (over: Partial<WorkspaceInfo> = {}): WorkspaceInfo => ({
   workspaceId: "w1",
   connectionId: "c1",
-  dialect: "postgres" as const,
+  dialect: "postgres",
   serverVersion: "16",
   database: null,
+  capabilities: { ...PG_CAPS, databaseSwitch: (over.dialect ?? "postgres") === "postgres" },
   ...over,
 });
 
@@ -484,6 +496,32 @@ test("a newly opened workspace is connected and remembers its database", async (
   vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ database: "app" }));
   await open();
   expect(ws()).toMatchObject({ status: "connected", database: "app" });
+});
+
+test("a workspace keeps the capabilities and dialect its connection reported", async () => {
+  const docs: Capabilities = { ...PG_CAPS, sqlEditor: false, routines: false, documents: true, databaseSwitch: false };
+  vi.mocked(ipc.workspaceOpen).mockResolvedValue(info({ dialect: null, capabilities: docs }));
+  vi.mocked(ipc.schemasList).mockResolvedValue(["app", "logs"]);
+  await open();
+  expect(ws()).toMatchObject({ capabilities: docs, dialect: null, currentSchema: "app" });
+  expect(capabilitiesOf(ws())).toEqual(docs);
+});
+
+test("a restored workspace switches database only when its connection can", async () => {
+  restore({ database: "other" });
+  vi.mocked(ipc.workspaceOpen).mockResolvedValue(
+    info({ database: "app", capabilities: { ...PG_CAPS, databaseSwitch: false } }),
+  );
+  await useWorkspaces.getState().openWorkspace("c1");
+  expect(ipc.workspaceSwitchDatabase).not.toHaveBeenCalled();
+  expect(ws()).toMatchObject({ status: "connected", capabilities: { databaseSwitch: false } });
+});
+
+test("before its first connect a workspace has the SQL capabilities of its dialect", () => {
+  restore();
+  expect(ws().capabilities).toBeUndefined();
+  expect(capabilitiesOf(ws())).toEqual(PG_CAPS);
+  expect(capabilitiesOf({ ...ws(), dialect: "sqlite" })).toEqual({ ...PG_CAPS, databaseSwitch: false });
 });
 
 test("openWorkspace connects a disconnected workspace in place, keeping its tabs", async () => {

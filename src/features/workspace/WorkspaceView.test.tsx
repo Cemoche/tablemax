@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
+import type { Capabilities } from "../../lib/types";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { SettingsDialog } from "../settings/SettingsDialog";
@@ -143,4 +144,30 @@ test("a workspace notice is shown until dismissed", async () => {
   await userEvent.click(screen.getByRole("button", { name: strings.workspace.dismissNotice }));
   expect(screen.queryByText(notice)).toBeNull();
   expect(useWorkspaces.getState().workspaces[0].notice).toBeNull();
+});
+
+/** A connection without SQL (e.g. a document database). */
+const NO_SQL: Capabilities = {
+  sqlEditor: false,
+  gridEditing: false,
+  routines: false,
+  ddl: false,
+  foreignKeys: false,
+  documents: true,
+  databaseSwitch: false,
+};
+
+test("without the SQL editor capability there is no new SQL tab: no button, no Mod+T", () => {
+  renderLive({ capabilities: NO_SQL, tabs: [], activeTabId: null, mru: [] });
+  expect(screen.queryByRole("button", { name: strings.workspace.newQueryTab })).toBeNull();
+  press({ code: "KeyT" });
+  expect(tabs()).toHaveLength(0);
+});
+
+test("with the SQL capabilities the new SQL tab button and Mod+T stay", async () => {
+  renderLive({ capabilities: { ...NO_SQL, sqlEditor: true, documents: false }, tabs: [], activeTabId: null, mru: [] });
+  press({ code: "KeyT" });
+  expect(tabs()).toHaveLength(1);
+  await userEvent.click(screen.getByRole("button", { name: strings.workspace.newQueryTab }));
+  expect(tabs()).toHaveLength(2);
 });

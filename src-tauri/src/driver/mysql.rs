@@ -87,7 +87,7 @@ use super::sql::qualified;
 use super::tls::{SslConfig, SslMode, load_files, native_roots};
 use super::{
     Canceller, ColumnMeta, ConnectParams, DbObject, Dialect, ObjectKind, ObjectRef, ResultSet,
-    RowCount, Session, StatementOutcome,
+    RowCount, Session, SessionBase, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::value::{
@@ -2200,11 +2200,7 @@ impl MySession {
 }
 
 #[async_trait]
-impl Session for MySession {
-    fn dialect(&self) -> Dialect {
-        Dialect::MySql
-    }
-
+impl SessionBase for MySession {
     fn server_version(&self) -> String {
         self.version.clone()
     }
@@ -2264,6 +2260,98 @@ impl Session for MySession {
         Ok(out)
     }
 
+    async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount> {
+        if let Some(schema) = &obj.schema {
+            // TABLE_ROWS is NULL for views: fall through to the exact count.
+            let rows: Vec<(Option<u64>,)> = self
+                .exec_rows(
+                    "SELECT TABLE_ROWS FROM information_schema.TABLES \
+                     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+                    (schema.clone(), obj.name.clone()),
+                )
+                .await?;
+            if let Some((Some(est),)) = rows.into_iter().next()
+                && est > exact_threshold
+            {
+                return Ok(RowCount::Estimate(est));
+            }
+        }
+        let q = qualified(Dialect::MySql, obj);
+        let (rs, _) = self.run(&format!("SELECT COUNT(*) FROM {q}")).await?;
+        match rs
+            .and_then(|r| r.rows.into_iter().next())
+            .map(|mut r| r.remove(0))
+        {
+            Some(CellValue::Int(n)) => Ok(RowCount::Exact(n.max(0) as u64)),
+            Some(CellValue::BigInt(s)) => Ok(RowCount::Exact(s.parse().unwrap_or(u64::MAX))),
+            _ => Err(AppError::new(ErrorKind::Query, "count returned no value")),
+        }
+    }
+
+    fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::SeqCst)
+    }
+
+    fn canceller(&self) -> Arc<dyn Canceller> {
+        self.canceller.clone()
+    }
+
+    async fn close(&self) -> AppResult<()> {
+        self.lost.store(true, Ordering::SeqCst);
+        // Taking the lock waits for an in-flight query; cancel first if that matters.
+        let conn = self.inner.lock().await.conn.take();
+        if let Some(c) = conn {
+            let _ = c.disconnect().await;
+        }
+        Ok(())
+    }
+
+    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
+        let db = self.schema_or_current(schema).await?;
+        // One query; LEFT JOIN keeps column-less objects.
+        let rows: Vec<(String, String, Option<String>, Option<String>)> = self
+            .exec_rows(
+                "SELECT CAST(t.TABLE_NAME AS CHAR), CAST(t.TABLE_TYPE AS CHAR), \
+                 CAST(c.COLUMN_NAME AS CHAR), CAST(c.COLUMN_TYPE AS CHAR) \
+                 FROM information_schema.TABLES t \
+                 LEFT JOIN information_schema.COLUMNS c \
+                 ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME \
+                 AND BINARY c.TABLE_NAME = BINARY t.TABLE_NAME \
+                 AND BINARY c.TABLE_SCHEMA = BINARY t.TABLE_SCHEMA \
+                 WHERE t.TABLE_SCHEMA = ? AND BINARY t.TABLE_SCHEMA = BINARY ? \
+                 AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
+                 ORDER BY BINARY t.TABLE_NAME, c.ORDINAL_POSITION",
+                (db.clone(), db.clone()),
+            )
+            .await?;
+        Ok(group_rows(
+            Some(db),
+            rows.into_iter().map(|(table, ty, name, col_type)| {
+                let kind = if ty == "VIEW" {
+                    ObjectKind::View
+                } else {
+                    ObjectKind::Table
+                };
+                let col = name.map(|name| CatalogColumn {
+                    name,
+                    type_name: col_type.unwrap_or_default(),
+                });
+                (table, kind, col)
+            }),
+        ))
+    }
+
+    async fn list_databases(&self) -> AppResult<Vec<String>> {
+        self.list_schemas().await
+    }
+}
+
+#[async_trait]
+impl Session for MySession {
+    fn dialect(&self) -> Dialect {
+        Dialect::MySql
+    }
+
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet> {
         self.query_with(stmt, false).await
     }
@@ -2318,34 +2406,6 @@ impl Session for MySession {
             let _ = c.disconnect().await;
         }
         out
-    }
-
-    async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount> {
-        if let Some(schema) = &obj.schema {
-            // TABLE_ROWS is NULL for views: fall through to the exact count.
-            let rows: Vec<(Option<u64>,)> = self
-                .exec_rows(
-                    "SELECT TABLE_ROWS FROM information_schema.TABLES \
-                     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
-                    (schema.clone(), obj.name.clone()),
-                )
-                .await?;
-            if let Some((Some(est),)) = rows.into_iter().next()
-                && est > exact_threshold
-            {
-                return Ok(RowCount::Estimate(est));
-            }
-        }
-        let q = qualified(Dialect::MySql, obj);
-        let (rs, _) = self.run(&format!("SELECT COUNT(*) FROM {q}")).await?;
-        match rs
-            .and_then(|r| r.rows.into_iter().next())
-            .map(|mut r| r.remove(0))
-        {
-            Some(CellValue::Int(n)) => Ok(RowCount::Exact(n.max(0) as u64)),
-            Some(CellValue::BigInt(s)) => Ok(RowCount::Exact(s.parse().unwrap_or(u64::MAX))),
-            _ => Err(AppError::new(ErrorKind::Query, "count returned no value")),
-        }
     }
 
     async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo> {
@@ -2416,59 +2476,6 @@ impl Session for MySession {
         })
     }
 
-    fn is_lost(&self) -> bool {
-        self.lost.load(Ordering::SeqCst)
-    }
-
-    fn canceller(&self) -> Arc<dyn Canceller> {
-        self.canceller.clone()
-    }
-
-    async fn close(&self) -> AppResult<()> {
-        self.lost.store(true, Ordering::SeqCst);
-        // Taking the lock waits for an in-flight query; cancel first if that matters.
-        let conn = self.inner.lock().await.conn.take();
-        if let Some(c) = conn {
-            let _ = c.disconnect().await;
-        }
-        Ok(())
-    }
-
-    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog> {
-        let db = self.schema_or_current(schema).await?;
-        // One query; LEFT JOIN keeps column-less objects.
-        let rows: Vec<(String, String, Option<String>, Option<String>)> = self
-            .exec_rows(
-                "SELECT CAST(t.TABLE_NAME AS CHAR), CAST(t.TABLE_TYPE AS CHAR), \
-                 CAST(c.COLUMN_NAME AS CHAR), CAST(c.COLUMN_TYPE AS CHAR) \
-                 FROM information_schema.TABLES t \
-                 LEFT JOIN information_schema.COLUMNS c \
-                 ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME \
-                 AND BINARY c.TABLE_NAME = BINARY t.TABLE_NAME \
-                 AND BINARY c.TABLE_SCHEMA = BINARY t.TABLE_SCHEMA \
-                 WHERE t.TABLE_SCHEMA = ? AND BINARY t.TABLE_SCHEMA = BINARY ? \
-                 AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
-                 ORDER BY BINARY t.TABLE_NAME, c.ORDINAL_POSITION",
-                (db.clone(), db.clone()),
-            )
-            .await?;
-        Ok(group_rows(
-            Some(db),
-            rows.into_iter().map(|(table, ty, name, col_type)| {
-                let kind = if ty == "VIEW" {
-                    ObjectKind::View
-                } else {
-                    ObjectKind::Table
-                };
-                let col = name.map(|name| CatalogColumn {
-                    name,
-                    type_name: col_type.unwrap_or_default(),
-                });
-                (table, kind, col)
-            }),
-        ))
-    }
-
     async fn list_routines(&self, schema: Option<&str>) -> AppResult<Vec<DbRoutine>> {
         let db = self.schema_or_current(schema).await?;
         let rows: Vec<(String, String)> = self
@@ -2491,10 +2498,6 @@ impl Session for MySession {
                 },
             })
             .collect())
-    }
-
-    async fn list_databases(&self) -> AppResult<Vec<String>> {
-        self.list_schemas().await
     }
 }
 

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
+import type { Capabilities } from "../../lib/types";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { ObjectSidebar } from "./ObjectSidebar";
 
@@ -207,4 +208,28 @@ test("switching database reloads objects and routines even when the schema stays
   rerender(view(useWorkspaces.getState().workspaces[0]));
   expect(await screen.findByRole("button", { name: /fresh/ })).toBeTruthy();
   expect(screen.queryByRole("button", { name: /orders/ })).toBeNull();
+});
+
+/** A connection without SQL (e.g. a document database). */
+const NO_SQL: Capabilities = {
+  sqlEditor: false,
+  gridEditing: false,
+  routines: false,
+  ddl: false,
+  foreignKeys: false,
+  documents: true,
+  databaseSwitch: false,
+};
+
+test("without the capabilities: no routines, no database selector, no New query item", async () => {
+  render(<ObjectSidebar workspace={{ ...workspace, dialect: null, capabilities: NO_SQL }} />);
+  await screen.findByRole("button", { name: /orders/ });
+  expect(screen.queryByRole("button", { name: strings.sidebar.routines })).toBeNull();
+  expect(ipc.routinesList).not.toHaveBeenCalled();
+  expect(screen.queryByRole("combobox", { name: strings.sidebar.database })).toBeNull();
+  expect(ipc.databasesList).not.toHaveBeenCalled();
+  fireEvent.contextMenu(screen.getByRole("button", { name: /orders/ }));
+  const menu = await screen.findByRole("menu");
+  expect(within(menu).queryByRole("menuitem", { name: strings.sidebar.menu.newQuery })).toBeNull();
+  expect(within(menu).getByRole("menuitem", { name: strings.sidebar.menu.open })).toBeTruthy();
 });

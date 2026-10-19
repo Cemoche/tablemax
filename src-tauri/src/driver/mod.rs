@@ -163,15 +163,38 @@ pub trait Canceller: Send + Sync {
     async fn cancel(&self) -> AppResult<()>;
 }
 
-/// A live database session. All methods take `&self`: each driver guards its
-/// connection with an internal mutex so `canceller()` stays usable during
-/// `execute`. A cancelled query returns `ErrorKind::Cancelled`.
+/// What every live session does, whatever its data model: list, count, cancel, close.
+/// All methods take `&self`: each driver guards its connection with an internal mutex
+/// so `canceller()` stays usable during a running call. A cancelled call returns
+/// `ErrorKind::Cancelled`.
 #[async_trait]
-pub trait Session: Send + Sync {
-    fn dialect(&self) -> Dialect;
+pub trait SessionBase: Send + Sync {
     fn server_version(&self) -> String;
     async fn list_schemas(&self) -> AppResult<Vec<String>>;
     async fn list_objects(&self, schema: Option<&str>) -> AppResult<Vec<DbObject>>;
+    /// Rows of a table or view without filters: an estimate above `exact_threshold`
+    /// where the engine keeps one (filtered counts use `query::build_filtered_count`).
+    async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount>;
+    fn canceller(&self) -> Arc<dyn Canceller>;
+    async fn close(&self) -> AppResult<()>;
+    /// True once the session knows its connection is gone (closed, dropped after a failed
+    /// ROLLBACK, or a lost link already seen): every call would fail with
+    /// `ConnectionLost`. Never blocks. A link that died unnoticed still reports false.
+    fn is_lost(&self) -> bool {
+        false
+    }
+    /// Tables, views and their columns (definition order) of `schema` in one query,
+    /// for completion and the palette. `None` = the default schema of the engine.
+    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog>;
+    /// Databases the connection can switch to (PostgreSQL), or the schemas for
+    /// MySQL / attached databases for SQLite.
+    async fn list_databases(&self) -> AppResult<Vec<String>>;
+}
+
+/// A live SQL session: statements, grid pages and edits, table metadata.
+#[async_trait]
+pub trait Session: SessionBase {
+    fn dialect(&self) -> Dialect;
     /// Runs a parameterized statement (see `query`) and returns its rows, decoded and
     /// capped (`MAX_RESULT_ROWS`) like `execute`.
     async fn query(&self, stmt: &Statement) -> AppResult<ResultSet>;
@@ -184,43 +207,92 @@ pub trait Session: Send + Sync {
     /// error, or `dml::STALE_ROW`). A lost connection or a cancel (through `canceller()`)
     /// rolls back too and is returned as `Err`. Nothing else runs on the session meanwhile.
     async fn apply(&self, stmts: &[Statement], expect_one: &[bool]) -> AppResult<ApplyOutcome>;
-    /// Rows of a table or view without filters: an estimate above `exact_threshold`
-    /// where the engine keeps one (filtered counts use `query::build_filtered_count`).
-    async fn count_rows(&self, obj: &ObjectRef, exact_threshold: u64) -> AppResult<RowCount>;
     /// Columns, keys, indexes and foreign keys of a table or view (`NotFound` if absent).
     async fn table_info(&self, obj: &ObjectRef) -> AppResult<TableInfo>;
     /// The `CREATE` statement(s) of a table or view (`NotFound` if absent).
     async fn table_ddl(&self, obj: &ObjectRef) -> AppResult<String>;
     async fn execute(&self, sql: &str) -> AppResult<StatementOutcome>;
-    fn canceller(&self) -> Arc<dyn Canceller>;
-    async fn close(&self) -> AppResult<()>;
-    /// True once the session knows its connection is gone (closed, dropped after a failed
-    /// ROLLBACK, or a lost link already seen): every call would fail with
-    /// `ConnectionLost`. Never blocks. A link that died unnoticed still reports false.
-    fn is_lost(&self) -> bool {
-        false
-    }
-    /// Tables, views and their columns (definition order) of `schema` in one query,
-    /// for completion and the palette. `None` = the default schema of the engine.
-    async fn catalog(&self, schema: Option<&str>) -> AppResult<Catalog>;
     /// Functions and procedures of `schema` (PostgreSQL: every non-system schema when
     /// `None`). SQLite has none.
     async fn list_routines(&self, schema: Option<&str>) -> AppResult<Vec<DbRoutine>>;
-    /// Databases the connection can switch to (PostgreSQL), or the schemas for
-    /// MySQL / attached databases for SQLite.
-    async fn list_databases(&self) -> AppResult<Vec<String>>;
 }
 
-pub async fn connect(params: &ConnectParams) -> AppResult<Arc<dyn Session>> {
-    // Driver tasks replace these arms.
-    match params.kind {
+/// A live document session (collections of documents instead of SQL tables).
+pub trait DocumentSession: SessionBase {}
+
+/// A session of either family, as `connect` opens it.
+#[derive(Clone)]
+pub enum AnySession {
+    Sql(Arc<dyn Session>),
+    Documents(Arc<dyn DocumentSession>),
+}
+
+fn not_supported() -> AppError {
+    AppError::new(ErrorKind::Invalid, "not supported by this connection")
+}
+
+impl AnySession {
+    /// What every session does (list, count, cancel, close).
+    pub fn base(&self) -> &dyn SessionBase {
+        match self {
+            AnySession::Sql(s) => s.as_ref(),
+            AnySession::Documents(s) => s.as_ref(),
+        }
+    }
+
+    /// The SQL session; `Invalid` for any other family.
+    pub fn sql(&self) -> AppResult<&Arc<dyn Session>> {
+        match self {
+            AnySession::Sql(s) => Ok(s),
+            AnySession::Documents(_) => Err(not_supported()),
+        }
+    }
+
+    /// The document session; `Invalid` for any other family.
+    pub fn documents(&self) -> AppResult<&Arc<dyn DocumentSession>> {
+        match self {
+            AnySession::Documents(s) => Ok(s),
+            AnySession::Sql(_) => Err(not_supported()),
+        }
+    }
+}
+
+/// What the interface may offer on a connection, by driver kind.
+#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Capabilities {
+    pub sql_editor: bool,
+    pub grid_editing: bool,
+    pub routines: bool,
+    pub ddl: bool,
+    pub foreign_keys: bool,
+    pub documents: bool,
+    /// The workspace can move its connection to another database (PostgreSQL).
+    pub database_switch: bool,
+}
+
+pub fn capabilities(kind: DriverKind) -> Capabilities {
+    Capabilities {
+        sql_editor: true,
+        grid_editing: true,
+        routines: true,
+        ddl: true,
+        foreign_keys: true,
+        documents: false,
+        database_switch: kind == DriverKind::Postgres,
+    }
+}
+
+pub async fn connect(params: &ConnectParams) -> AppResult<AnySession> {
+    let session = match params.kind {
         DriverKind::Sqlite => match &params.sqlite_path {
             Some(path) => sqlite::connect_sqlite(path).await,
             None => Err(AppError::new(ErrorKind::Invalid, "sqlite_path is required")),
         },
         DriverKind::Postgres => postgres::connect_postgres(params).await,
         DriverKind::MySql | DriverKind::MariaDb => mysql::connect_mysql(params).await,
-    }
+    }?;
+    Ok(AnySession::Sql(session))
 }
 
 #[cfg(test)]
@@ -243,5 +315,114 @@ mod tests {
         let out = format!("{:?}", params);
         assert!(!out.contains("s3cret-value"));
         assert!(out.contains("<redacted>"));
+    }
+
+    #[test]
+    fn capabilities_per_kind() {
+        let sql_but_switch = Capabilities {
+            sql_editor: true,
+            grid_editing: true,
+            routines: true,
+            ddl: true,
+            foreign_keys: true,
+            documents: false,
+            database_switch: false,
+        };
+        assert_eq!(
+            capabilities(DriverKind::Postgres),
+            Capabilities {
+                database_switch: true,
+                ..sql_but_switch
+            }
+        );
+        for kind in [DriverKind::MySql, DriverKind::MariaDb, DriverKind::Sqlite] {
+            assert_eq!(capabilities(kind), sql_but_switch, "{kind:?}");
+        }
+        let wire = serde_json::to_value(capabilities(DriverKind::Postgres)).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "sqlEditor": true, "gridEditing": true, "routines": true, "ddl": true,
+                "foreignKeys": true, "documents": false, "databaseSwitch": true
+            })
+        );
+    }
+
+    /// A document session with no data: enough to exercise `AnySession` before the
+    /// first document driver exists.
+    struct StubDocuments;
+
+    struct NoCancel;
+
+    #[async_trait]
+    impl Canceller for NoCancel {
+        async fn cancel(&self) -> AppResult<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl SessionBase for StubDocuments {
+        fn server_version(&self) -> String {
+            "stub 1".into()
+        }
+        async fn list_schemas(&self) -> AppResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn list_objects(&self, _schema: Option<&str>) -> AppResult<Vec<DbObject>> {
+            Ok(vec![])
+        }
+        async fn count_rows(&self, _obj: &ObjectRef, _exact: u64) -> AppResult<RowCount> {
+            Ok(RowCount::Exact(0))
+        }
+        fn canceller(&self) -> Arc<dyn Canceller> {
+            Arc::new(NoCancel)
+        }
+        async fn close(&self) -> AppResult<()> {
+            Ok(())
+        }
+        async fn catalog(&self, _schema: Option<&str>) -> AppResult<Catalog> {
+            Ok(Catalog {
+                schema: None,
+                tables: vec![],
+            })
+        }
+        async fn list_databases(&self) -> AppResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    impl DocumentSession for StubDocuments {}
+
+    #[tokio::test]
+    async fn any_session_family_errors() {
+        let docs = AnySession::Documents(Arc::new(StubDocuments));
+        let err = docs.sql().err().expect("documents are not SQL");
+        assert_eq!(err.kind, ErrorKind::Invalid);
+        assert!(
+            err.message.contains("not supported by this connection"),
+            "{}",
+            err.message
+        );
+        assert!(docs.documents().is_ok());
+        assert_eq!(docs.base().server_version(), "stub 1");
+        assert!(!docs.base().is_lost());
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        std::fs::File::create(&path).unwrap();
+        let sql = sqlite::connect_sqlite(&path).await.unwrap();
+        let sql = AnySession::Sql(sql);
+        let err = sql.documents().err().expect("SQL has no documents");
+        assert_eq!(err.kind, ErrorKind::Invalid);
+        assert!(
+            err.message.contains("not supported by this connection"),
+            "{}",
+            err.message
+        );
+        assert_eq!(sql.sql().unwrap().dialect(), Dialect::Sqlite);
+        let schemas = sql.base().list_schemas().await.unwrap();
+        assert!(schemas.contains(&"main".to_string()), "{schemas:?}");
+        sql.base().close().await.unwrap();
     }
 }
