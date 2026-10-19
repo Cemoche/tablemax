@@ -12,36 +12,39 @@ const FALLBACK_FG = "CanvasText";
 const FALLBACK_FONT = "system-ui, sans-serif";
 const FALLBACK_SIZE = "13px";
 
-/** Builds Glide's canvas theme from the design tokens. */
+/** Builds Glide's canvas theme from the design tokens (spec §5.1: grid tokens). */
 export function buildGridTheme(readVar: ReadVar = readCssVar): Partial<Theme> {
   const v = (name: string, fallback: string) => readVar(name) || fallback;
   const size = v("--text-md", FALLBACK_SIZE);
-  const surface = v("--surface", FALLBACK_BG);
-  const surface2 = v("--surface-2", surface);
-  const text = v("--text", FALLBACK_FG);
-  const muted = v("--text-muted", text);
-  const border = v("--border", muted);
+  const row = v("--row-a", v("--content", FALLBACK_BG));
+  const head = v("--grid-head", row);
+  const text = v("--cell-text", v("--text", FALLBACK_FG));
+  const secondary = v("--text-2", text);
+  const placeholder = v("--placeholder", secondary);
+  const sep = v("--grid-sep", secondary);
   const accent = v("--accent", text);
-  const accentContrast = v("--accent-contrast", surface);
+  const onAccent = v("--row-selected-text", row);
+  const sel = v("--sel", head);
   return {
-    bgCell: surface,
-    bgCellMedium: surface,
-    bgHeader: surface2,
-    bgHeaderHasFocus: surface2,
-    bgHeaderHovered: surface2,
-    bgBubble: surface2,
+    bgCell: row,
+    bgCellMedium: row,
+    bgHeader: head,
+    bgHeaderHasFocus: head,
+    bgHeaderHovered: head,
+    bgBubble: v("--seg-sel", head),
     textDark: text,
-    textMedium: muted,
-    textLight: muted,
-    textHeader: text,
-    textHeaderSelected: accentContrast,
+    textMedium: secondary,
+    // NULL / EMPTY / DEFAULT placeholders (the `muted` override) and row numbers.
+    textLight: placeholder,
+    textHeader: v("--head-text", text),
+    textHeaderSelected: onAccent,
     textBubble: text,
-    borderColor: border,
-    horizontalBorderColor: border,
-    drilldownBorder: border,
+    borderColor: sep,
+    horizontalBorderColor: sep,
+    drilldownBorder: sep,
     accentColor: accent,
-    accentFg: accentContrast,
-    accentLight: surface2,
+    accentFg: onAccent,
+    accentLight: sel,
     linkColor: accent,
     fontFamily: v("--font-ui", FALLBACK_FONT),
     baseFontStyle: size,
@@ -61,21 +64,21 @@ export interface EditThemes {
   failed: Partial<Theme>;
 }
 
-/** Overrides for pending changes (tokens --pending-*); a missing token overrides nothing. */
+/** Overrides for pending changes (tokens --modified, --inserted, --deleted); a missing token overrides nothing. */
 export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
   const only = (key: keyof Theme, token: string): Partial<Theme> => {
     const v = readVar(token);
     return v ? { [key]: v } : {};
   };
   return {
-    edited: only("bgCell", "--pending-edit"),
-    inserted: only("bgCell", "--pending-insert"),
-    deleted: { ...only("bgCell", "--pending-delete"), ...only("textDark", "--text-muted") },
+    edited: only("bgCell", "--modified"),
+    inserted: only("bgCell", "--inserted"),
+    deleted: { ...only("bgCell", "--deleted"), ...only("textDark", "--text-2") },
     failed: only("textDark", "--danger"),
   };
 }
 
-/** Theme + muted-cell override, rebuilt when the OS color scheme or `data-theme` changes. */
+/** Theme + muted-cell (placeholder) override, rebuilt when the OS color scheme or `data-theme` changes. */
 export function useGridTheme(readVar: ReadVar = readCssVar) {
   const [rev, setRev] = useState(0);
   useEffect(() => {
@@ -92,7 +95,7 @@ export function useGridTheme(readVar: ReadVar = readCssVar) {
   }, []);
   return useMemo(() => {
     const theme = buildGridTheme(readVar);
-    const muted: Partial<Theme> = { textDark: theme.textMedium };
+    const muted: Partial<Theme> = { textDark: theme.textLight };
     return { theme, muted, edit: buildEditThemes(readVar) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rev]);

@@ -414,6 +414,17 @@ pub fn window_set_title(window: tauri::WebviewWindow, title: String) -> AppResul
         .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))
 }
 
+/// Sets the interface size: the native zoom of the calling window's webview, so the canvas
+/// grid, menus and popovers all follow without converting sizes in CSS. `scale` is brought
+/// within `settings::INTERFACE_SCALE` (1.0 = 100 %). Done here so the capabilities stay at
+/// `core:default` (the JS zoom API needs `core:webview:allow-set-webview-zoom`).
+#[tauri::command]
+pub fn window_set_zoom(window: tauri::WebviewWindow, scale: f64) -> AppResult<()> {
+    window
+        .set_zoom(f64::from(settings::clamp_interface_scale(scale as f32)))
+        .map_err(|e| AppError::new(ErrorKind::Io, e.to_string()))
+}
+
 /// The frontend flushed its session: really close the window (see `close_gate`).
 #[tauri::command]
 pub fn window_close_confirmed(window: tauri::Window, gate: State<'_, crate::close_gate::CloseGate>) {

@@ -170,6 +170,9 @@ export const sqlCancel = (sessionId: string) => invoke<void>("sql_cancel", { ses
 /** Sets the calling window's title (no JS permission needed: done in Rust). */
 export const windowSetTitle = (title: string) => invoke<void>("window_set_title", { title });
 
+/** Sets the interface size: the native zoom of the calling window's webview (1 = 100 %, clamped to 0.9–1.3 in Rust). */
+export const windowSetZoom = (scale: number) => invoke<void>("window_set_zoom", { scale });
+
 export const settingsGet = () => invoke<Settings>("settings_get");
 
 /** Saves the settings; resolves with the stored value (out-of-range numbers clamped). */

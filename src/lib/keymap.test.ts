@@ -45,6 +45,8 @@ test("the defaults are the combinations the code binds today", () => {
     "grid.viewData": "Alt+1",
     "grid.viewStructure": "Alt+2",
     "grid.back": "Alt+ArrowLeft",
+    "font.increase": "Mod+=",
+    "font.decrease": "Mod+-",
   });
   const scope = (id: KeymapActionId) => KEYMAP_ACTIONS.find((a) => a.id === id)?.scope;
   expect(scope("query.new")).toBe("global");
@@ -53,6 +55,8 @@ test("the defaults are the combinations the code binds today", () => {
   expect(scope("editor.format")).toBe("editor");
   expect(scope("grid.commit")).toBe("tableTab");
   expect(scope("grid.back")).toBe("tableTab");
+  expect(scope("font.increase")).toBe("global");
+  expect(scope("font.decrease")).toBe("global");
   for (const a of KEYMAP_ACTIONS) expect(a.label, a.id).not.toBe("");
 });
 

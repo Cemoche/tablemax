@@ -129,6 +129,7 @@ pub fn run() {
             commands::settings_get,
             commands::settings_set,
             commands::window_set_title,
+            commands::window_set_zoom,
             commands::app_version,
             commands::history_list,
             commands::history_clear,

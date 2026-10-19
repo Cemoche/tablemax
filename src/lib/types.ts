@@ -345,6 +345,10 @@ export interface Settings {
   autoLimitValue: number;
   /** Action id to shortcut; empty = defaults. */
   keymap: Record<string, string>;
+  /** Native zoom of the whole interface, 0.9–1.3 in steps of 0.05 (1 = 100 %). */
+  interfaceScale: number;
+  /** Font size of the data (grid, sidebar tree), 10–24. */
+  dataFontSize: number;
 }
 
 // ---- Query history and saved queries (history.rs / saved_queries.rs) ----

@@ -559,6 +559,8 @@ export const strings = {
     "grid.viewData": "Show the rows (table tabs)",
     "grid.viewStructure": "Show the structure (table tabs)",
     "grid.back": "Go back one table on the trail (table tabs)",
+    "font.increase": "Increase the font size of the data and the editor",
+    "font.decrease": "Decrease the font size of the data and the editor",
   },
   session: {
     disconnected: "Disconnected",
