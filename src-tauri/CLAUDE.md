@@ -27,6 +27,10 @@ Rust 1.96, edition 2024, Tauri 2, tokio. Library crate `tablemax_lib` (`src/lib.
   `src/lib/keymap-actions.json`).
 - `secrets.rs` — `SecretStore` trait, `KeyringSecretStore` (OS keyring),
   `MemorySecretStore` (tests).
+- `migrate.rs` — moves the data directory of an earlier app identifier
+  (`PREVIOUS_IDENTIFIERS`) at startup, before anything opens it; a new identifier change
+  adds the old one at the front of that list. The keyring service name (`secrets::SERVICE`)
+  does not follow the identifier.
 - `commands.rs` — Tauri commands, thin async wrappers over `SessionManager`. Their names
   and parameters are the frontend contract.
 - `error.rs` — `AppError`; `value.rs` — typed cell values.

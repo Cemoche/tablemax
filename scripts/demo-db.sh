@@ -5,7 +5,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dev.tablemax.app"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/io.github.cemoche.tablemax"
 SQLITE_FILE="$DATA_DIR/demo/shop.sqlite"
 APP_DB="$DATA_DIR/app.db"
 # Same overrides as scripts/test-dbs.sh.
