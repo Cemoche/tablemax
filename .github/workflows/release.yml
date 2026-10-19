@@ -58,17 +58,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build the packages
         run: pnpm build:app
+      # Not dist/: that is where Vite writes the frontend build (#60).
       - name: Collect the packages
         run: |
-          mkdir -p dist
-          cp src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/appimage/*.AppImage dist/
-          ls -l dist
+          mkdir -p packages
+          cp src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/appimage/*.AppImage packages/
+          ls -l packages
+          bash scripts/release-files.sh packages
       - name: No binary needs a glibc newer than Ubuntu 22.04's
-        run: bash scripts/release-smoke.sh glibc "$GLIBC_FLOOR" dist/*.deb dist/*.AppImage
+        run: bash scripts/release-smoke.sh glibc "$GLIBC_FLOOR" packages/*.deb packages/*.AppImage
       - uses: actions/upload-artifact@v7
         with:
           name: tablemax-linux
-          path: dist/
+          path: packages/
           retention-days: 14
           if-no-files-found: error
 
@@ -82,11 +84,11 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: tablemax-linux
-          path: dist
+          path: packages
       - name: .deb installs in a clean ubuntu:24.04 container
-        run: bash scripts/release-smoke.sh deb dist/*.deb ubuntu:24.04
+        run: bash scripts/release-smoke.sh deb packages/*.deb ubuntu:24.04
       - name: AppImage starts and stays up in a clean ubuntu:24.04 container (desktop libraries only)
-        run: bash scripts/release-smoke.sh appimage dist/*.AppImage 20 ubuntu:24.04
+        run: bash scripts/release-smoke.sh appimage packages/*.AppImage 20 ubuntu:24.04
 
   publish:
     name: Publish the GitHub Release
@@ -101,10 +103,10 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: tablemax-linux
-          path: dist
+          path: packages
       - name: Checksums
-        working-directory: dist
-        run: sha256sum -- * | tee SHA256SUMS
+        working-directory: packages
+        run: sha256sum -- *.deb *.AppImage | tee SHA256SUMS
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,5 +124,6 @@ jobs:
           Windows and macOS builds are not available yet (#20, #21).
           EOF
           )"
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          mapfile -t files < <(bash scripts/release-files.sh packages)
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" \
             --verify-tag --title "TableMax $version" --generate-notes --notes "$notes" "${prerelease[@]}"
