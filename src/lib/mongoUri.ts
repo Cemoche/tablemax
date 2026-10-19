@@ -108,6 +108,7 @@ export function parseMongoUri(uri: string): {
   let replicaSet: string | null = null;
   let tls: boolean | null = null;
   let insecure = false;
+  let caFile: string | null = null;
   for (const pair of (m[4] ?? "").split("&")) {
     if (pair === "") continue;
     const eq = pair.indexOf("=");
@@ -116,6 +117,7 @@ export function parseMongoUri(uri: string): {
     const lower = key.toLowerCase();
     if (lower === "tls" || lower === "ssl") tls = isTrue(value);
     else if (lower === "tlsinsecure" || lower === "tlsallowinvalidcertificates") insecure ||= isTrue(value);
+    else if (lower === "tlscafile") caFile = value || null;
     else if (lower === "authsource") authSource = value || null;
     else if (lower === "replicaset") replicaSet = value || null;
     else if (lower === "authmechanism") {
@@ -149,7 +151,7 @@ export function parseMongoUri(uri: string): {
       user,
       database,
       sqlitePath: null,
-      ssl: { mode, caFile: null, certFile: null, keyFile: null },
+      ssl: { mode, caFile, certFile: null, keyFile: null },
       ssh: null,
       mongo,
     },
@@ -183,6 +185,7 @@ export function toMongoUri(cfg: ConnectionConfig): string {
   const { mode } = cfg.ssl;
   params.push(mode === "disable" ? "tls=false" : "tls=true");
   if (mode === "require") params.push("tlsAllowInvalidCertificates=true");
+  if (cfg.ssl.caFile && mode !== "disable") params.push(q("tlsCAFile", cfg.ssl.caFile));
   for (const [k, v] of mongo.options) params.push(q(k, v));
   return `mongodb${mongo.srv ? "+srv" : ""}://${user}${hosts}/${db}?${params.join("&")}`;
 }

@@ -78,6 +78,12 @@ test("refused_and_ignored_options_are_reported", () => {
   expect(parseMongoUri("mongodb://u@h/db?autoEncryptionOpts=1").refused).toContain("autoEncryptionOpts");
 });
 
+test("tls_ca_file_is_kept", () => {
+  const r = parseMongoUri("mongodb://h/?tls=true&tlsCAFile=%2Fetc%2Fca.pem");
+  expect(r.patch.ssl).toEqual({ mode: "verifyFull", caFile: "/etc/ca.pem", certFile: null, keyFile: null });
+  expect(r.ignored).toEqual([]);
+});
+
 test("password_never_in_output", () => {
   const parsed = parseMongoUri("mongodb://app:S3cr%40t@h/shop");
   expect(parsed.password).toBe("S3cr@t");
@@ -91,6 +97,7 @@ test("round_trip", () => {
   for (const cfg of [
     base,
     { ...base, ssl: { ...base.ssl, mode: "require" as const } },
+    { ...base, ssl: { ...base.ssl, caFile: "/etc/my ca.pem" } },
     { ...base, ssl: { ...base.ssl, mode: "disable" as const }, mongo: { ...base.mongo!, authMechanism: "plain" as const, authSource: "$external" } },
     { ...base, database: null, host: "cluster.example.net", mongo: { ...base.mongo!, srv: true, extraHosts: [], replicaSet: null } },
   ]) {
