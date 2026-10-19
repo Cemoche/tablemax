@@ -9,8 +9,12 @@
 # .test-secrets/tls/
 #   ca.pem / ca.key                 test CA
 #   server.pem / server.key         server cert signed by the CA; SAN = localhost, pg16,
-#                                   mysql8, mariadb11 (deliberately NO IP:127.0.0.1, so
-#                                   connecting to 127.0.0.1 with verify-full must fail)
+#                                   mysql8, mariadb11, mongo7 (deliberately NO
+#                                   IP:127.0.0.1, so connecting to 127.0.0.1 with
+#                                   verify-full must fail); re-issued by the same CA when
+#                                   its SAN lacks mongo7 (material from before mongo7)
+#   mongo.pem                       server.pem + server.key in one file (mongod),
+#                                   rewritten on every run
 #   foreign-ca.pem / foreign-ca.key an unrelated CA (verify-ca must reject the server)
 #   client.pem / client.key         client cert CN=certuser signed by the CA
 # The TLS keys are world-readable on purpose: the containers' mysql user must read them.
@@ -65,17 +69,20 @@ leaf() { # name subject extfile
     -CAcreateserial -sha256 -days 3650 -extfile "$3" -out "$TMP/$1.pem" 2>/dev/null
 }
 
-tls_material() {
-  ca ca "/CN=TableMax Test CA"
-  ca foreign-ca "/CN=TableMax Foreign Test CA"
-
+server_leaf() { # needs $TMP/ca.pem and $TMP/ca.key
   cat > "$TMP/server.ext" <<'EOF'
 basicConstraints=CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:localhost,DNS:pg16,DNS:mysql8,DNS:mariadb11
+subjectAltName=DNS:localhost,DNS:pg16,DNS:mysql8,DNS:mariadb11,DNS:mongo7
 EOF
   leaf server "/CN=localhost" "$TMP/server.ext"
+}
+
+tls_material() {
+  ca ca "/CN=TableMax Test CA"
+  ca foreign-ca "/CN=TableMax Foreign Test CA"
+  server_leaf
 
   cat > "$TMP/client.ext" <<'EOF'
 basicConstraints=CA:FALSE
@@ -116,5 +123,24 @@ ssh_material() {
   install -m 0644 "$TMP/authorized_keys" "$SSH_DIR/authorized_keys"
 }
 
+# Material generated before mongo7 existed: a new server certificate from the same CA (the
+# other files, and everything that trusts the CA, stay valid).
+renew_server_for_mongo() {
+  openssl x509 -noout -ext subjectAltName -in "$TLS_DIR/server.pem" 2>/dev/null \
+    | grep -q 'DNS:mongo7' && return 0
+  cp "$TLS_DIR/ca.pem" "$TLS_DIR/ca.key" "$TMP/"
+  server_leaf
+  install -m 0644 "$TMP/server.pem" "$TLS_DIR/server.pem"
+  install -m 0644 "$TMP/server.key" "$TLS_DIR/server.key"
+  echo "test server certificate re-issued with mongo7 in $TLS_DIR"
+}
+
+mongo_pem() {
+  cat "$TLS_DIR/server.pem" "$TLS_DIR/server.key" > "$TMP/mongo.pem"
+  install -m 0644 "$TMP/mongo.pem" "$TLS_DIR/mongo.pem"
+}
+
 complete "$TLS_DIR" "${TLS_FILES[@]}" || tls_material
+renew_server_for_mongo
+mongo_pem
 ssh_material

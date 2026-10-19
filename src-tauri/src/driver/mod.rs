@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod dml;
 pub mod meta;
+pub mod mongo;
 pub mod mysql;
 pub mod postgres;
 pub mod query;
@@ -310,11 +311,7 @@ pub async fn connect(params: &ConnectParams) -> AppResult<AnySession> {
     let session = match params.kind {
         DriverKind::MongoDb => {
             crate::flags::ensure_mongodb_enabled(crate::flags::experimental("mongodb"))?;
-            // The driver arrives with the next task.
-            return Err(AppError::new(
-                ErrorKind::Invalid,
-                "MongoDB connections are not implemented yet",
-            ));
+            return mongo::connect_mongo(params).await;
         }
         DriverKind::Sqlite => match &params.sqlite_path {
             Some(path) => sqlite::connect_sqlite(path).await,

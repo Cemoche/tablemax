@@ -95,6 +95,11 @@ without any warranty. See [LICENSE](LICENSE) for the full text.
   SSH agent. `~/.ssh/config` aliases are resolved (`HostName`, `User`, `Port`,
   `IdentityFile`). An unknown host key is shown as a `SHA256:…` fingerprint to confirm,
   then saved in the app's `known_hosts`; a changed key blocks the connection.
+- **MongoDB** (experimental, shown only with `TABLEMAX_EXPERIMENTAL=mongodb`): MongoDB
+  4.4 or newer (older servers are refused with an explanation). TLS modes `disable`,
+  `require` and `verify-full`, checked against the bundled Mozilla roots or the CA file
+  (not the system store: a server signed by a company CA needs its CA file). Through an
+  SSH tunnel only one host, without `mongodb+srv://`, `replicaSet` or `verify-full`.
 - **Groups**: connections can be filed under a group; groups fold in the sidebar.
 - **URLs**: "Copy URL" in the form (never includes the password) and "+ → New from URL…"
   (`postgresql://`, `mysql://`, `mariadb://`, `sqlite://`; `sslmode`, `ssh`, `ssh-auth`
@@ -217,7 +222,8 @@ Host tools needed by `pnpm test:rust`: `docker compose` (v2), `openssl` and `ssh
 Fedora/RHEL hosts work as is.
 
 `scripts/test-dbs.sh up|down|env` manages PostgreSQL 16 (port 54321), MySQL 8.4 (33061),
-MariaDB 11.4 (33062) and a test sshd (2222, user `tunnel`) via `docker-compose.test.yml`
+MariaDB 11.4 (33062), MongoDB 7.0 (27117; users `root` and `reader`, read only on
+`tablemax_test`) and a test sshd (2222, user `tunnel`) via `docker-compose.test.yml`
 (project `tablemax-test`). `up` first runs `scripts/test-secrets.sh`, which generates the
 throwaway TLS certificates and SSH keys into `.test-secrets/` (gitignored; existing keys
 are kept, missing ones are added). `scripts/test-dbs.sh env` prints the `TABLEMAX_TEST_*`
@@ -230,11 +236,13 @@ registers demo connections.
 
 Each checkout has its own `.test-secrets/`. To run the tests of two worktrees at the same
 time, give the second one its own compose project and host ports (the defaults are
-`tablemax-test`, 54321, 33061, 33062 and 2222), and keep them set for every command:
+`tablemax-test`, 54321, 33061, 33062, 2222 and 27117), and keep them set for every
+command:
 
 ```bash
 export TABLEMAX_TEST_PROJECT=tablemax-test-b TABLEMAX_TEST_PG_PORT=55321 \
-  TABLEMAX_TEST_MYSQL_PORT=34061 TABLEMAX_TEST_MARIADB_PORT=34062 TABLEMAX_TEST_SSH_PORT=3222
+  TABLEMAX_TEST_MYSQL_PORT=34061 TABLEMAX_TEST_MARIADB_PORT=34062 TABLEMAX_TEST_SSH_PORT=3222 \
+  TABLEMAX_TEST_MONGO_PORT=27217
 pnpm test:rust               # `env` then exports URLs with these ports
 scripts/test-dbs.sh down     # stops this project only
 ```

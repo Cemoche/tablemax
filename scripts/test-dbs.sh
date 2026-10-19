@@ -9,6 +9,7 @@
 #   TABLEMAX_TEST_MYSQL_PORT    MySQL 8.4 host port      (default 33061)
 #   TABLEMAX_TEST_MARIADB_PORT  MariaDB 11.4 host port   (default 33062)
 #   TABLEMAX_TEST_SSH_PORT      test sshd host port      (default 2222)
+#   TABLEMAX_TEST_MONGO_PORT    MongoDB 7.0 host port    (default 27117)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -16,10 +17,14 @@ export TABLEMAX_TEST_PG_PORT="${TABLEMAX_TEST_PG_PORT:-54321}"
 export TABLEMAX_TEST_MYSQL_PORT="${TABLEMAX_TEST_MYSQL_PORT:-33061}"
 export TABLEMAX_TEST_MARIADB_PORT="${TABLEMAX_TEST_MARIADB_PORT:-33062}"
 export TABLEMAX_TEST_SSH_PORT="${TABLEMAX_TEST_SSH_PORT:-2222}"
+export TABLEMAX_TEST_MONGO_PORT="${TABLEMAX_TEST_MONGO_PORT:-27117}"
 COMPOSE=(docker compose -p "${TABLEMAX_TEST_PROJECT:-tablemax-test}" -f docker-compose.test.yml)
 
 PG_URLS="postgres://postgres:tablemax@127.0.0.1:${TABLEMAX_TEST_PG_PORT}/tablemax_test"
 MYSQL_URLS="mysql://root:tablemax@127.0.0.1:${TABLEMAX_TEST_MYSQL_PORT}/tablemax_test,mysql://root:tablemax@127.0.0.1:${TABLEMAX_TEST_MARIADB_PORT}/tablemax_test"
+# root (every right) and reader (`read` on tablemax_test only), both defined in admin.
+MONGO_URLS="mongodb://root:tablemax@127.0.0.1:${TABLEMAX_TEST_MONGO_PORT}/tablemax_test?authSource=admin"
+MONGO_READER_URL="mongodb://reader:tablemax@127.0.0.1:${TABLEMAX_TEST_MONGO_PORT}/tablemax_test?authSource=admin"
 
 case "${1:-}" in
   up)
@@ -38,6 +43,8 @@ case "${1:-}" in
   env)
     echo "export TABLEMAX_TEST_PG_URLS=${PG_URLS}"
     echo "export TABLEMAX_TEST_MYSQL_URLS=${MYSQL_URLS}"
+    echo "export TABLEMAX_TEST_MONGO_URLS='${MONGO_URLS}'"
+    echo "export TABLEMAX_TEST_MONGO_READER_URL='${MONGO_READER_URL}'"
     echo "export TABLEMAX_TEST_TLS_DIR=$(pwd)/.test-secrets/tls"
     echo "export TABLEMAX_TEST_SSH=127.0.0.1:${TABLEMAX_TEST_SSH_PORT}"
     echo "export TABLEMAX_TEST_SSH_DIR=$(pwd)/.test-secrets/ssh"

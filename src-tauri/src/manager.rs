@@ -323,7 +323,16 @@ async fn connect(
     password: Option<String>,
     tunnel: Option<&SshTunnel>,
 ) -> AppResult<AnySession> {
-    driver::connect(&ConnectParams {
+    check_mongo_config(cfg)?;
+    driver::connect(&connect_params(cfg, password, tunnel)).await
+}
+
+fn connect_params(
+    cfg: &ConnectionConfig,
+    password: Option<String>,
+    tunnel: Option<&SshTunnel>,
+) -> ConnectParams {
+    ConnectParams {
         kind: cfg.kind,
         host: cfg.host.clone(),
         port: cfg.port,
@@ -334,24 +343,45 @@ async fn connect(
         ssl: cfg.ssl.clone(),
         dial: tunnel.map(SshTunnel::local_addr),
         mongo: cfg.mongo.clone(),
-    })
-    .await
+    }
 }
 
-/// Refuses to save a MongoDB connection while the feature is off, or one with an SSL mode
-/// the driver does not offer, or without its MongoDB settings.
+/// [`check_mongo_config_with`] with the `mongodb` experimental flag.
 fn check_mongo_config(cfg: &ConnectionConfig) -> AppResult<()> {
+    check_mongo_config_with(cfg, crate::flags::experimental("mongodb"))
+}
+
+/// Refuses a MongoDB connection (to save or to open) while the feature is off
+/// (`enabled`), with an SSL mode the driver does not offer, or without its MongoDB
+/// settings. Other drivers pass.
+fn check_mongo_config_with(cfg: &ConnectionConfig, enabled: bool) -> AppResult<()> {
     if cfg.kind != DriverKind::MongoDb {
         return Ok(());
     }
-    crate::flags::ensure_mongodb_enabled(crate::flags::experimental("mongodb"))?;
+    crate::flags::ensure_mongodb_enabled(enabled)?;
     if !driver::tls::ssl_modes_for(cfg.kind).contains(&cfg.ssl.mode) {
         return Err(AppError::new(
             ErrorKind::Invalid,
             "MongoDB connections support the TLS modes disable, require and verify-full only",
         ));
     }
+    if cfg.mongo.is_none() {
+        return Err(AppError::new(
+            ErrorKind::Invalid,
+            "the MongoDB settings of this connection are missing",
+        ));
+    }
     Ok(())
+}
+
+/// Before an SSH tunnel opens for a MongoDB connection: [`check_mongo_config_with`], then
+/// what a tunnel cannot carry (`mongo::options::check_tunnel`). Other drivers pass.
+fn check_mongo_tunnel_with(cfg: &ConnectionConfig, enabled: bool) -> AppResult<()> {
+    if cfg.kind != DriverKind::MongoDb {
+        return Ok(());
+    }
+    check_mongo_config_with(cfg, enabled)?;
+    driver::mongo::options::check_tunnel(&connect_params(cfg, None, None))
 }
 
 /// The SQL session of `session`; a session of another family is closed and refused.
@@ -718,6 +748,8 @@ impl SessionManager {
         let Some(ssh) = ssh_of(cfg) else {
             return Ok(None);
         };
+        // Nothing reaches the SSH server for a MongoDB connection that would be refused.
+        check_mongo_tunnel_with(cfg, crate::flags::experimental("mongodb"))?;
         with_ssh_timeout(async {
             let secret = self.resolve_ssh_secret(cfg, ssh, ssh_secret).await?;
             let (config, ssh) = (self.ssh_config.clone(), ssh.clone());
@@ -1874,10 +1906,10 @@ mod tests {
 
     use super::*;
     use crate::driver::query::{FilterOp, Statement};
-    use crate::driver::tls::SslConfig;
+    use crate::driver::tls::{SslConfig, SslMode};
     use crate::driver::{Canceller, DbObject, ObjectKind, ObjectRef, SortDir};
     use crate::secrets::{MemorySecretStore, SecretKey, SecretKind};
-    use crate::store::{EnvTag, PasswordMode, SshAuth, SshSettings};
+    use crate::store::{EnvTag, MongoAuth, MongoSettings, PasswordMode, SshAuth, SshSettings};
     use crate::value::{CellValue, EXACT_COUNT_THRESHOLD};
 
     const WAIT: Duration = Duration::from_secs(10);
@@ -3511,5 +3543,95 @@ mod tests {
         // A result within the bound passes through untouched.
         let ok = with_ssh_timeout(async { Ok::<_, AppError>(7) }).await;
         assert_eq!(ok.unwrap(), 7);
+    }
+
+    fn mongo_cfg(mode: SslMode) -> ConnectionConfig {
+        let mut c = cfg(DriverKind::MongoDb, PasswordMode::Ask);
+        c.port = 27017;
+        c.ssl = SslConfig {
+            mode,
+            ..Default::default()
+        };
+        c.mongo = Some(MongoSettings {
+            srv: false,
+            extra_hosts: vec![],
+            auth_source: None,
+            auth_mechanism: MongoAuth::Default,
+            replica_set: None,
+            options: vec![],
+        });
+        c
+    }
+
+    #[test]
+    fn mongo_config_checks() {
+        let ok = mongo_cfg(SslMode::Disable);
+        let err = check_mongo_config_with(&ok, false).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Invalid);
+        assert!(err.message.contains("experimental"), "{}", err.message);
+        for mode in [SslMode::Disable, SslMode::Require, SslMode::VerifyFull] {
+            check_mongo_config_with(&mongo_cfg(mode), true).unwrap();
+        }
+        for mode in [SslMode::Prefer, SslMode::VerifyCa] {
+            let err = check_mongo_config_with(&mongo_cfg(mode), true).unwrap_err();
+            assert_eq!(err.kind, ErrorKind::Invalid, "{mode:?}");
+            assert!(err.message.contains("TLS modes"), "{}", err.message);
+        }
+        let mut no_settings = mongo_cfg(SslMode::Disable);
+        no_settings.mongo = None;
+        let err = check_mongo_config_with(&no_settings, true).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Invalid);
+        assert!(err.message.contains("MongoDB settings"), "{}", err.message);
+        // Other drivers are not concerned, flag or not.
+        check_mongo_config_with(&cfg(DriverKind::Postgres, PasswordMode::Ask), false).unwrap();
+    }
+
+    fn unreachable_ssh() -> SshSettings {
+        SshSettings {
+            host: "127.0.0.1".into(),
+            port: Some(1),
+            user: Some("nobody".into()),
+            auth: SshAuth::Password,
+            key_file: None,
+            secret_mode: PasswordMode::Ask,
+        }
+    }
+
+    #[test]
+    fn mongo_tunnel_checks() {
+        let mut c = mongo_cfg(SslMode::Require);
+        c.ssh = Some(unreachable_ssh());
+        check_mongo_tunnel_with(&c, true).unwrap();
+        let err = check_mongo_tunnel_with(&c, false).unwrap_err();
+        assert!(err.message.contains("experimental"), "{}", err.message);
+        c.ssl.mode = SslMode::VerifyFull;
+        let err = check_mongo_tunnel_with(&c, true).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Invalid);
+        assert!(err.message.contains("SSH tunnel"), "{}", err.message);
+        check_mongo_tunnel_with(&cfg(DriverKind::Postgres, PasswordMode::Ask), false).unwrap();
+    }
+
+    /// A refused MongoDB connection never reaches the SSH server (here: nothing listens
+    /// on port 1, so trying would be a Connection error, not Invalid).
+    #[tokio::test]
+    async fn mongo_refusals_come_before_the_tunnel() {
+        let fx = fixture();
+        let mut c = mongo_cfg(SslMode::VerifyFull);
+        c.ssh = Some(unreachable_ssh());
+        let err = fx
+            .mgr
+            .test_connection(&c, Some("pw".into()), Some("ssh-pw".into()), None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Invalid, "{}", err.message);
+        let mut srv = mongo_cfg(SslMode::Disable);
+        srv.ssh = Some(unreachable_ssh());
+        srv.mongo.as_mut().unwrap().srv = true;
+        let err = fx
+            .mgr
+            .test_connection(&srv, Some("pw".into()), Some("ssh-pw".into()), None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Invalid, "{}", err.message);
     }
 }
