@@ -73,7 +73,7 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
      reconnecting / erreur ; un badge `PROD` dans la pastille pour une connexion `production`
      (remplace le bandeau d'environnement) ;
   5. reload (`Ctrl+R`) · Open Anything (`Ctrl+P`) ;
-  6. [console (plus tard) | panneau de détail (`Space`)].
+  6. [console (plus tard) | panneau de détail (`Ctrl+Space` / `Space`)].
 - **Colonne des connexions ouvertes** (80 px) : une tuile par workspace ouvert (icône de base
   dans la couleur de la connexion, nom sur deux lignes) ; remplace le sélecteur de workspaces.
 - **Barre latérale** (262 px, redimensionnable, min 240) : segmenté **Items / Queries / History**
@@ -95,7 +95,7 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
   opérateur, valeur, Apply, +, − ; à droite « Apply All » avec AND / OR. Elle remplace le
   constructeur de filtres et la barre de filtre rapide actuels (la syntaxe rapide devient le mode
   « Raw SQL »).
-- **Panneau de détail** à droite (280 px, `Space`) : recherche « Search for field… », liste des
+- **Panneau de détail** à droite (280 px, `Ctrl+Space` comme TablePlus Linux / Windows, et `Space` comme sur Mac, dans la grille) : recherche « Search for field… », liste des
   champs avec leur type, édition sur place.
 
 ### 2.4 Connexions (maquettes « Liste des connexions » et « Formulaire »)
@@ -111,7 +111,7 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 ### 2.5 Éditeur SQL
 - Barre de 36 px sous l'onglet : « No limit ⌄ » (LIMIT automatique), « Beautify », « Run Current
   ⌄ » ; résultats avec onglets Data / Message, mêmes règles de grille que les tables.
-- La complétion `Ctrl+Space` marche toujours, y compris après un changement d'onglet (#79).
+- La complétion `Ctrl+Space` (dans l'éditeur) marche toujours, y compris après un changement d'onglet.
 
 ### 2.6 Raccourcis et interactions
 - Tableau du §5.3 : raccourcis de TablePlus macOS, `⌘` → `Ctrl`, `⌥` → `Alt`, `⌃⌘` →
@@ -202,7 +202,7 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 | Open Anything (objets et actions) | ⌘P | Ctrl+P : objets, et actions avec le préfixe `>` (remplace l'actuelle palette Ctrl+K) |
 | Ouvrir une base / une connexion | ⌘K / ⌘⇧K | Ctrl+K (changer de base ou de schéma) / Ctrl+Shift+K (liste des connexions) |
 | Barre latérale | ⌘0 | Ctrl+0 |
-| Panneau de détail | Space | Space (grille active) |
+| Panneau de détail | Space (Mac) ; Ctrl+Space (TablePlus Linux) | Ctrl+Space et Space (grille active) ; marche après un changement d'onglet (#79) |
 | Chercher dans la barre latérale | ⌘⇧F | Ctrl+Shift+F |
 | Data / Structure | ⌃⌘[ / ⌃⌘] | Ctrl+Alt+[ / Ctrl+Alt+] (Alt+1 / Alt+2 gardés) |
 | Précédent / suivant (navigation) | ⌃⌘← / ⌃⌘→ | Alt+← / Alt+→ |
@@ -222,7 +222,7 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 | Taille de police | ⌘= / ⌘- | Ctrl+= / Ctrl+- |
 | Recharger / recharger l'onglet / reconnecter | ⌘R / ⌥⌘R / ⌘⇧R | Ctrl+R / Ctrl+Alt+R / Ctrl+Shift+R |
 | Nouveau workspace | ⌘N | Ctrl+N |
-| Complétion | ⌃Space | Ctrl+Space |
+| Complétion | ⌃Space | Ctrl+Space (éditeur ; la portée éditeur gagne sur la grille) |
 
 Règle : un raccourci n'existe que dans son contexte (grille, éditeur, barre de filtres) quand
 TablePlus le réutilise (⌘I, ⌘F, ⌘←) ; tous restent réassignables (registre existant) ; un
@@ -235,7 +235,7 @@ conflit avec un raccourci courant du bureau GNOME (Ctrl+Alt+flèches) est évit�
 | clic sur un numéro de ligne | sélectionne la ligne ; Shift+clic étend ; Ctrl+clic ajoute / retire (#78) |
 | clic dans une cellule | cellule active (bordure `--cell-focus`), sa ligne mise en évidence |
 | double-clic dans une cellule / Enter | édition sur place / Quick Look (contenu entier, JSON indenté) |
-| Space | ouvre / ferme le panneau de détail de la ligne active |
+| Ctrl+Space ou Space (grille) | ouvre / ferme le panneau de détail de la ligne active, y compris après un changement d'onglet (#79) |
 | clic sur un en-tête | tri asc → desc → aucun (ne sélectionne pas la colonne) |
 | glisser un en-tête | réordonne la colonne ; double-clic sur sa bordure : ajuste la largeur au contenu |
 | menu d'en-tête | Filter with column, Hide column, Fit to content, Reset positions, Show all, Sort asc / desc / remove, Copy column name |
@@ -243,7 +243,7 @@ conflit avec un raccourci courant du bureau GNOME (Ctrl+Alt+flèches) est évit�
 | menu d'un objet de la barre latérale | Open in new tab, Open structure, Copy name, Copy script as (CREATE, SELECT top 100), Refresh |
 | clic simple / double-clic sur un objet | onglet d'aperçu / onglet permanent (existant) |
 | Échap | ferme le popover, la barre de filtres vide ou annule l'édition en cours |
-| changement d'onglet | conserve le focus et les raccourcis de l'onglet (complétion incluse, #79) |
+| changement d'onglet | conserve le focus et les raccourcis de l'onglet (panneau de détail #79, complétion) |
 
 ### 5.5 Précisions (relecture du 2026-10-19)
 - **Palettes** : l'action existante `palette.all` (aujourd'hui Ctrl+K) devient Open Anything et

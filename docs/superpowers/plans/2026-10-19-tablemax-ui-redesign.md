@@ -8,7 +8,7 @@
 
 **Tech Stack:** existant ; nouveaux paquets npm `@fontsource/jetbrains-mono` (OFL) et un jeu d'icônes libre en traits fins (`lucide-react`, ISC).
 
-**Spec:** `docs/superpowers/specs/2026-10-19-tablemax-ui-redesign-design.md` (§2 objectifs, §3 non- et anti-objectifs, §5.1 tokens, §5.2 dimensions, §5.3 raccourcis, §5.4 interactions, §5.5 précisions) · epic #77 · bugs #78, #79.
+**Spec:** `docs/superpowers/specs/2026-10-19-tablemax-ui-redesign-design.md` (§2 objectifs, §3 non- et anti-objectifs, §5.1 tokens, §5.2 dimensions, §5.3 raccourcis, §5.4 interactions, §5.5 précisions) · epic #77 · bugs #78 (Task 5), #79 (Task 7).
 
 ## Global Constraints
 
@@ -63,7 +63,7 @@
 
 **Interfaces:**
 - Commandes : `window_minimize()`, `window_toggle_maximize()`, `window_start_drag()`, `window_start_resize(direction: ResizeDirection)` (`North`, `South`, `East`, `West`, `NorthEast`, `NorthWest`, `SouthEast`, `SouthWest`) ; fermer passe par le chemin existant (`close_gate`). Avec `use_system_title_bar` vrai, la fenêtre garde ses décorations natives (appliqué au démarrage) et `WindowControls` / `ResizeHandles` ne sont pas rendus.
-- `AppToolbar` : groupes et ordre du §2.3 de la spec ; double-clic sur une zone vide = agrandir / restaurer ; Discard / Preview / Commit actifs selon le store des modifications en attente ; Safe mode = menu des niveaux de la connexion ; base = nouvelle action `database.open` (Ctrl+K) ; SQL = `query.new` / nouvelle action `editor.open` (Ctrl+E) ; reload `workspace.reload` (Ctrl+R) ; Open Anything ; panneau de détail (`grid.rowDetails`, Space).
+- `AppToolbar` : groupes et ordre du §2.3 de la spec ; double-clic sur une zone vide = agrandir / restaurer ; Discard / Preview / Commit actifs selon le store des modifications en attente ; Safe mode = menu des niveaux de la connexion ; base = nouvelle action `database.open` (Ctrl+K) ; SQL = `query.new` / nouvelle action `editor.open` (Ctrl+E) ; reload `workspace.reload` (Ctrl+R) ; Open Anything ; panneau de détail (`grid.rowDetails`, Ctrl+Space et Space).
 - `StatusPill({ workspace })` : texte `"<Engine> <version> : <database> : <schema>.<object>"` (monospace), fond = couleur de la connexion, états `connecting` / `reconnecting` / `error` (tokens d'état), badge `PROD` si tag `production`, jamais tronqué ; clic = `ConnectionPopover` (moteur, serveur, hôte, utilisateur, base, TLS ; Edit, Reconnect, Disconnect).
 
 - [ ] **Step 1: Tests qui échouent** : `toolbar_groups_in_spec_order`, `commit_group_follows_pending_changes`, `status_pill_text_and_color`, `status_pill_keeps_prod_badge_when_truncated`, `prod_title_kept`, `toolbar_is_keyboard_reachable`, `double_click_toolbar_toggles_maximize`, `system_title_bar_setting_hides_window_controls`, Rust `resize_direction_serde`.
@@ -120,7 +120,7 @@
 - Thème de grille : données `--font-mono` à `dataFontSize`, en-têtes `--font-ui` medium, lignes 26, en-tête 30, numéros 46, lignes alternées `--row-a` / `--row-b`, séparateurs `--grid-sep`, placeholders `NULL` / `EMPTY` / `DEFAULT` en majuscules `--placeholder` 11,5 px, lignes sélectionnées `--accent` texte blanc, cellule active bordée `--cell-focus`.
 - Sélection (#78) : clic sur un numéro = ligne ; Shift+clic = plage ; Ctrl+clic = ajoute / retire ; clic sur un en-tête = tri asc → desc → aucun, **sans** sélectionner la colonne.
 - Colonnes : largeur initiale = contenu de la page (bornes 60–400) ; double-clic sur la bordure d'un en-tête = ajuster ; glisser = réordonner ; largeurs et ordre mémorisés par table (`gridViews`).
-- Menus : en-tête et cellule selon le §5.4 de la spec (Copy rows as : TSV, CSV, CSV + header, JSON, Markdown, INSERT ; Set value NULL / EMPTY / DEFAULT ; Quick filter IS NULL / = valeur) ; Enter = Quick Look, Alt+Enter = Set value, Space = panneau de détail, Ctrl+Shift+C = copier les cellules, Ctrl+D = dupliquer, Ctrl+Backspace / Delete = supprimer les lignes.
+- Menus : en-tête et cellule selon le §5.4 de la spec (Copy rows as : TSV, CSV, CSV + header, JSON, Markdown, INSERT ; Set value NULL / EMPTY / DEFAULT ; Quick filter IS NULL / = valeur) ; Enter = Quick Look, Alt+Enter = Set value, Ctrl+Space et Space = panneau de détail (Task 7), Ctrl+Shift+C = copier les cellules, Ctrl+D = dupliquer, Ctrl+Backspace / Delete = supprimer les lignes.
 
 - [ ] **Step 1: Tests qui échouent** : `row_number_click_selects_row` (+ Shift, Ctrl), `header_click_sorts_without_selecting_column`, `placeholders_uppercase_dim`, `zebra_rows`, `columns_autosize_within_bounds`, `double_click_border_fits`, `drag_reorders_and_persists`, `header_menu_items`, `cell_menu_items`, `enter_quick_look_alt_enter_set_value`, `space_toggles_row_detail`.
 - [ ] **Step 2: Vérifier l'échec** — Run: `pnpm test src/features/grid` → Expected: FAIL.
@@ -155,9 +155,9 @@
 - Modify: `src/features/grid/RowDetailPanel.tsx` (+ test), `src/features/workspace/WorkspaceView.tsx`, `src/lib/strings.ts`
 
 **Interfaces:**
-- Panneau à droite de la zone de contenu, 280 px (min 240, redimensionnable, largeur mémorisée), ouvert / fermé par Space et le bouton de la barre du haut ; recherche « Search for field… » ; un champ par colonne : nom, type, valeur éditable sur place (mêmes éditeurs et modifications en attente qu'aujourd'hui), JSON indenté ; « No row selected » quand rien n'est sélectionné.
+- Panneau à droite de la zone de contenu, 280 px (min 240, redimensionnable, largeur mémorisée), ouvert / fermé par **Ctrl+Space** et Space (grille active) et le bouton de la barre du haut, y compris après un changement d'onglet ou de workspace (#79 : écrire d'abord le test qui reproduit la perte du raccourci) ; recherche « Search for field… » ; un champ par colonne : nom, type, valeur éditable sur place (mêmes éditeurs et modifications en attente qu'aujourd'hui), JSON indenté ; « No row selected » quand rien n'est sélectionné.
 
-- [ ] **Step 1: Tests qui échouent** : `space_and_button_toggle_panel`, `field_search_filters_fields`, `edit_in_panel_creates_pending_change`, `no_row_selected_state`, `panel_width_persists`.
+- [ ] **Step 1: Tests qui échouent** : `ctrl_space_space_and_button_toggle_panel`, `ctrl_space_after_tab_switch` (#79), `ctrl_space_in_editor_stays_completion`, `field_search_filters_fields`, `edit_in_panel_creates_pending_change`, `no_row_selected_state`, `panel_width_persists`.
 - [ ] **Step 2: Vérifier l'échec** — Run: `pnpm test src/features/grid` → Expected: FAIL.
 - [ ] **Step 3: Implémenter.**
 - [ ] **Step 4: Vérifier** — Run: `pnpm test && pnpm lint` → Expected: PASS ; manuel et captures.
@@ -183,7 +183,7 @@
 
 ---
 
-### Task 9: Éditeur SQL — barre, résultats, complétion (#79)
+### Task 9: Éditeur SQL — barre, résultats, complétion
 
 **Files:**
 - Modify: `src/features/editor/QueryTab.tsx` (+ test), `src/features/editor/SqlEditor.tsx` (+ test), `src/features/editor/ResultsPanel.tsx` (+ test), `src/features/editor/completion.ts`, `src/lib/keymap-actions.json`, `src/lib/strings.ts`
@@ -191,9 +191,9 @@
 **Interfaces:**
 - Barre de 36 px sous l'onglet : « No limit ⌄ » (LIMIT automatique existant), « Beautify » (Ctrl+I et Ctrl+Shift+F), « Run Current ⌄ » (Ctrl+Enter ; menu Run All Ctrl+Shift+Enter) ; résultats avec onglets Data / Message, grille de la Task 5.
 - Coloration du §5.1 (sombre / clair) ; police `--font-mono` à `editorFontSize`.
-- Complétion : Ctrl+Space ouvre la liste à chaque fois, y compris après un changement d'onglet ou de workspace (#79 : écrire d'abord le test qui reproduit la perte).
+- Complétion : Ctrl+Space (portée éditeur) ouvre la liste à chaque fois, y compris après un changement d'onglet ou de workspace.
 
-- [ ] **Step 1: Tests qui échouent** : `ctrl_space_opens_completion`, `ctrl_space_after_tab_switch` (#79), `toolbar_actions_and_shortcuts`, `results_tabs_data_message`, `editor_colors_follow_theme`.
+- [ ] **Step 1: Tests qui échouent** : `ctrl_space_opens_completion`, `completion_after_tab_switch`, `toolbar_actions_and_shortcuts`, `results_tabs_data_message`, `editor_colors_follow_theme`.
 - [ ] **Step 2: Vérifier l'échec** — Run: `pnpm test src/features/editor` → Expected: FAIL.
 - [ ] **Step 3: Implémenter.**
 - [ ] **Step 4: Vérifier** — Run: `pnpm test && pnpm lint` → Expected: PASS ; manuel et captures.
