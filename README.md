@@ -35,13 +35,18 @@ support. Check a build with `bash scripts/release-smoke.sh glibc 2.35 <package>â
 
 ### Cutting a release (maintainers)
 
-1. Set the same version in `package.json`, `src-tauri/tauri.conf.json` and
-   `src-tauri/Cargo.toml` (then `cargo check` to update `Cargo.lock`), through a normal PR.
-2. Once it is merged: `git tag v<version> origin/main && git push origin v<version>`
+With Claude Code: **`/release [version]`** (or "make a release") runs the steps below, proposes
+the version from the commits since the last tag, and asks before pushing the tag. By hand:
+
+1. `bash scripts/release-bump.sh <version>` sets the version in `package.json`,
+   `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`; commit it
+   through a normal issue and PR (that PR also runs the Release build and smoke tests).
+2. Once it is merged: `git tag -a v<version> origin/main -m "TableMax <version>" && git push origin v<version>`
    (`v<version>-beta.1` and the like make a prerelease).
 3. The Release workflow checks that the tag matches the three versions, builds, smoke-tests
    and publishes the GitHub Release with both packages, `SHA256SUMS` and generated notes.
-   A failed run publishes nothing: fix, delete the tag, tag again.
+   A failed run publishes nothing: fix, delete the tag, tag again. Then check the published
+   files: `gh release download v<version>` and `sha256sum -c SHA256SUMS`.
 
 Runtime notes: saving passwords in the keyring needs a Secret Service provider
 (GNOME Keyring or KWallet, present on standard desktops); without one, choose "Ask each
