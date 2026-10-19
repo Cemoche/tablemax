@@ -45,9 +45,9 @@ export function ConnectionPopover({ workspace, cfg, align, onClose, onEditConnec
     };
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node | null;
-      // The trigger toggles the popover itself.
-      const trigger = ref.current?.parentElement;
-      if (target && trigger?.contains(target)) return;
+      // The trigger toggles the popover itself (the space around it closes the popover).
+      const trigger = ref.current?.parentElement?.querySelector('[aria-haspopup="dialog"]');
+      if (target && (ref.current?.contains(target) || trigger?.contains(target))) return;
       close.current(false);
     };
     document.addEventListener("keydown", onKey);

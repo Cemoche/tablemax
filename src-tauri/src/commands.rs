@@ -477,13 +477,22 @@ pub fn window_minimize(window: tauri::Window) -> AppResult<()> {
 }
 
 /// Maximizes the window, or restores it when it is maximized (toolbar double-click).
+/// Returns whether the window is now maximized.
 #[tauri::command]
-pub fn window_toggle_maximize(window: tauri::Window) -> AppResult<()> {
+pub fn window_toggle_maximize(window: tauri::Window) -> AppResult<bool> {
     if window.is_maximized().map_err(window_error)? {
-        window.unmaximize().map_err(window_error)
+        window.unmaximize().map_err(window_error)?;
+        Ok(false)
     } else {
-        window.maximize().map_err(window_error)
+        window.maximize().map_err(window_error)?;
+        Ok(true)
     }
+}
+
+/// Whether the window is maximized (the toolbar's Restore label, no resize grips then).
+#[tauri::command]
+pub fn window_is_maximized(window: tauri::Window) -> AppResult<bool> {
+    window.is_maximized().map_err(window_error)
 }
 
 /// Starts moving the window with the mouse button held on the toolbar.

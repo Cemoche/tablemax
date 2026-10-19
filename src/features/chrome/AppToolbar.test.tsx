@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
@@ -9,10 +9,12 @@ import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { onWindowResized } from "../../lib/windowResize";
 import { AppToolbar } from "./AppToolbar";
 import { ResizeHandles } from "./ResizeHandles";
 
 vi.mock("../../lib/ipc");
+vi.mock("../../lib/windowResize", () => ({ onWindowResized: vi.fn(async () => () => {}) }));
 
 const t = strings.toolbar;
 const obj = { schema: "public", name: "orders" };
@@ -79,7 +81,8 @@ beforeEach(() => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   useConnections.setState({ items: [cfg()] });
   useSettings.setState({ settings: DEFAULT_SETTINGS, systemTitleBar: false });
-  useChrome.setState({ rowDetails: {}, reloads: {}, previews: {}, paletteRequest: null });
+  useChrome.setState({ rowDetails: {}, reloads: {}, previews: {}, paletteRequest: null, maximized: false });
+  vi.mocked(onWindowResized).mockImplementation(async () => () => {});
   usePendingChanges.getState().drop("t1");
   usePendingChanges.setState({ committing: {}, confirming: {}, awaitingReload: {} });
 });
@@ -195,7 +198,10 @@ test("the window buttons minimize, maximize and close through Rust", async () =>
   expect(ipc.windowClose).toHaveBeenCalledTimes(1);
 });
 
-test("the resize handles start a resize in their direction", () => {
+const onPlatform = (platform: string) => vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+
+test("the resize handles start a resize in their direction (off Linux)", () => {
+  onPlatform("Win32");
   setup();
   const handles = document.querySelectorAll("[data-resize]");
   expect([...handles].map((h) => h.getAttribute("data-resize")).sort()).toEqual(
@@ -204,6 +210,58 @@ test("the resize handles start a resize in their direction", () => {
   const ne = document.querySelector('[data-resize="NorthEast"]') as HTMLElement;
   ne.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   expect(ipc.windowStartResize).toHaveBeenCalledWith("NorthEast");
+});
+
+test("no resize grips on Linux: the runtime gives the undecorated window its own border", () => {
+  setup();
+  expect(document.querySelectorAll("[data-resize]")).toHaveLength(0);
+});
+
+test("no resize grips while maximized; the maximize button says Restore", async () => {
+  onPlatform("Win32");
+  const user = userEvent.setup();
+  vi.mocked(ipc.windowToggleMaximize).mockResolvedValue(true);
+  setup();
+  expect(document.querySelectorAll("[data-resize]")).toHaveLength(8);
+  await user.click(screen.getByRole("button", { name: strings.window.maximize }));
+  expect(await screen.findByRole("button", { name: strings.window.restore })).toBeInTheDocument();
+  expect(document.querySelectorAll("[data-resize]")).toHaveLength(0);
+  vi.mocked(ipc.windowToggleMaximize).mockResolvedValue(false);
+  await user.click(screen.getByRole("button", { name: strings.window.restore }));
+  expect(await screen.findByRole("button", { name: strings.window.maximize })).toBeInTheDocument();
+  expect(document.querySelectorAll("[data-resize]")).toHaveLength(8);
+});
+
+test("a maximize or restore done by the desktop is followed (resize event)", async () => {
+  let resized: () => void = () => {};
+  vi.mocked(onWindowResized).mockImplementation(async (h) => {
+    resized = h;
+    return () => {};
+  });
+  vi.mocked(ipc.windowIsMaximized).mockResolvedValue(false);
+  setup();
+  await waitFor(() => expect(ipc.windowIsMaximized).toHaveBeenCalled());
+  vi.mocked(ipc.windowIsMaximized).mockResolvedValue(true);
+  act(() => resized());
+  expect(await screen.findByRole("button", { name: strings.window.restore })).toBeInTheDocument();
+});
+
+test("the space around the capped status pill moves and maximizes the window", async () => {
+  const user = userEvent.setup();
+  setup();
+  const pill = screen.getByRole("button", { name: /^PostgreSQL 16\.4/ });
+  // Capped and centred in a wrapper that takes the free space.
+  expect(pill.className).toContain("max-w-140");
+  const area = pill.parentElement as HTMLElement;
+  expect(area).toHaveAttribute("data-pill-area");
+  expect(area.className).toContain("flex-1");
+  await user.dblClick(area);
+  expect(ipc.windowStartDrag).toHaveBeenCalledTimes(1);
+  expect(ipc.windowToggleMaximize).toHaveBeenCalledTimes(1);
+  // The pill itself still opens the connection popover, and never moves the window.
+  await user.click(pill);
+  expect(screen.getByRole("dialog", { name: strings.connectionPopover.label })).toBeInTheDocument();
+  expect(ipc.windowStartDrag).toHaveBeenCalledTimes(1);
 });
 
 test("system_title_bar_setting_hides_window_controls", async () => {

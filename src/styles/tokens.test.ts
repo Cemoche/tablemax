@@ -115,12 +115,16 @@ test("fonts: system UI font, bundled JetBrains Mono for data, 13 px base", () =>
   expect(light["--text-md"]).toBe("13px");
 });
 
-test("the status pill text is readable on every connection color", () => {
-  for (const selector of [LIGHT, DARK_FORCED]) {
+test("the status pill text is readable on every connection color and in every state", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
     const v = values(selector);
+    const ratio = (fg: string, bg: string) => contrastRatio(v[fg], v[bg]);
+    // ~12 px text: WCAG AA for small text, 4.5:1.
     for (const n of [1, 2, 3, 4, 5, 6]) {
-      // 12.5 px medium monospace on the swatch (spec §5.1 colors): at least 3.5:1.
-      expect(contrastRatio(v["--status-text"], v[`--swatch-${n}`]), `${selector} swatch-${n}`).toBeGreaterThanOrEqual(3.5);
+      expect(ratio(`--swatch-${n}-text`, `--swatch-${n}`), `${selector} swatch-${n}`).toBeGreaterThanOrEqual(4.5);
+    }
+    for (const state of ["--status-connecting", "--status-error", "--text-2"]) {
+      expect(ratio(state, "--pill"), `${selector} ${state}`).toBeGreaterThanOrEqual(4.5);
     }
   }
 });

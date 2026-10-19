@@ -242,8 +242,10 @@ export const windowCloseConfirmed = () => invoke<void>("window_close_confirmed")
 
 export const windowMinimize = () => invoke<void>("window_minimize");
 
-/** Maximizes the window, or restores it when it is maximized. */
-export const windowToggleMaximize = () => invoke<void>("window_toggle_maximize");
+/** Maximizes the window, or restores it when it is maximized; resolves to the new state. */
+export const windowToggleMaximize = () => invoke<boolean>("window_toggle_maximize");
+
+export const windowIsMaximized = () => invoke<boolean>("window_is_maximized");
 
 /** Starts moving the window with the pressed mouse button (toolbar drag area). */
 export const windowStartDrag = () => invoke<void>("window_start_drag");

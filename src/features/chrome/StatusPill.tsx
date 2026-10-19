@@ -7,23 +7,26 @@ import { ConnectionPopover, engineLabel } from "./ConnectionPopover";
 
 const s = strings.statusPill;
 
-/** Tailwind needs the literal class names. Unknown ids fall back to the gray swatch. */
-const SWATCH_BG: Record<string, string> = {
-  "swatch-1": "bg-swatch-1",
-  "swatch-2": "bg-swatch-2",
-  "swatch-3": "bg-swatch-3",
-  "swatch-4": "bg-swatch-4",
-  "swatch-5": "bg-swatch-5",
-  "swatch-6": "bg-swatch-6",
+/**
+ * The connection color and its text color (≥ 4.5:1, tokens.test.ts). Tailwind needs the
+ * literal class names. Unknown ids fall back to the gray swatch.
+ */
+const SWATCH: Record<string, string> = {
+  "swatch-1": "bg-swatch-1 text-swatch-1-text",
+  "swatch-2": "bg-swatch-2 text-swatch-2-text",
+  "swatch-3": "bg-swatch-3 text-swatch-3-text",
+  "swatch-4": "bg-swatch-4 text-swatch-4-text",
+  "swatch-5": "bg-swatch-5 text-swatch-5-text",
+  "swatch-6": "bg-swatch-6 text-swatch-6-text",
 };
 
 type PillState = "connected" | "connecting" | "reconnecting" | "error" | "disconnected";
 
 /** Pill colors per state: the connection color once connected, state tokens otherwise. */
 const STATE_CLASS: Record<Exclude<PillState, "connected">, { pill: string; dot: string }> = {
-  connecting: { pill: "border border-pill-border bg-pill text-warning", dot: "bg-warning animate-pulse" },
-  reconnecting: { pill: "border border-pill-border bg-pill text-warning", dot: "bg-warning animate-pulse" },
-  error: { pill: "border border-pill-border bg-pill text-danger", dot: "bg-danger" },
+  connecting: { pill: "border border-pill-border bg-pill text-status-connecting", dot: "bg-status-connecting animate-pulse" },
+  reconnecting: { pill: "border border-pill-border bg-pill text-status-connecting", dot: "bg-status-connecting animate-pulse" },
+  error: { pill: "border border-pill-border bg-pill text-status-error", dot: "bg-status-error" },
   disconnected: { pill: "border border-pill-border bg-pill text-text-2", dot: "bg-icon-dim" },
 };
 
@@ -93,10 +96,12 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
             ? s.error(workspace.name)
             : s.disconnected(workspace.name);
   const look =
-    state === "connected" ? `${SWATCH_BG[color] ?? SWATCH_BG["swatch-4"]} text-status-text` : STATE_CLASS[state].pill;
+    state === "connected" ? (SWATCH[color] ?? SWATCH["swatch-4"]) : STATE_CLASS[state].pill;
 
   return (
-    <div className="relative flex min-w-0 flex-1 basis-48">
+    // The wrapper takes the free space; the pill is capped and centred so the space on its
+    // sides stays a drag area of the title bar (AppToolbar handles presses there).
+    <div data-pill-area="" className="relative flex min-w-0 flex-1 basis-48 justify-center">
       <button
         ref={trigger}
         type="button"
@@ -104,7 +109,7 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
         aria-expanded={open}
         title={state === "error" && connectError ? s.errorTitle(text, connectError) : text}
         onClick={() => setOpen((o) => !o)}
-        className={`flex h-8.5 w-full min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full px-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent ${look}`}
+        className={`flex h-8.5 w-full max-w-140 min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full px-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent ${look}`}
       >
         {state !== "connected" && <span aria-hidden className={`size-2 shrink-0 rounded-full ${STATE_CLASS[state].dot}`} />}
         <span className="min-w-0 truncate">{text}</span>

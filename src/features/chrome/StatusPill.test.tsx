@@ -64,6 +64,8 @@ test("status_pill_text_and_color", () => {
   const { rerender } = render(<StatusPill workspace={ws()} />);
   expect(pill()).toHaveTextContent(/^PostgreSQL 16\.4 : tablemax_demo : public\.orders$/);
   expect(pill().className).toContain("bg-swatch-2");
+  // Its own text color, readable on that swatch in both themes (tokens.test.ts).
+  expect(pill().className).toContain("text-swatch-2-text");
   expect(pill().className).toContain("font-mono");
 
   // A SQL tab: the schema only.
@@ -98,7 +100,7 @@ test("connecting, reconnecting and error use the state tokens", () => {
   const { rerender } = render(<StatusPill workspace={ws({ status: "connecting", serverVersion: undefined })} />);
   expect(pill()).toHaveTextContent(s.connecting("Demo"));
   expect(pill().className).not.toContain("bg-swatch");
-  expect(pill().className).toContain("text-warning");
+  expect(pill().className).toContain("text-status-connecting");
 
   // Connected before in this session: reconnecting.
   rerender(<StatusPill workspace={ws({ status: "connecting" })} />);
@@ -106,7 +108,7 @@ test("connecting, reconnecting and error use the state tokens", () => {
 
   rerender(<StatusPill workspace={ws({ status: "disconnected" })} connectError="password authentication failed" />);
   expect(pill()).toHaveTextContent(s.error("Demo"));
-  expect(pill().className).toContain("text-danger");
+  expect(pill().className).toContain("text-status-error");
   expect(pill()).toHaveAttribute("title", expect.stringContaining("password authentication failed"));
 
   rerender(<StatusPill workspace={ws({ status: "disconnected" })} />);
@@ -209,4 +211,14 @@ test("SQLite shows its file and no TLS", async () => {
   expect(value(p.file)).toBe("/data/demo.db");
   expect(within(dialog).queryByText(p.host)).toBeNull();
   expect(within(dialog).queryByText(p.tls)).toBeNull();
+});
+
+test("a press beside the pill closes the popover", async () => {
+  const user = userEvent.setup();
+  render(<StatusPill workspace={ws()} />);
+  const trigger = pill();
+  await user.click(trigger);
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  await user.click(trigger.parentElement as HTMLElement);
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

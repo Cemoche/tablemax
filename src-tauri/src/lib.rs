@@ -154,6 +154,7 @@ pub fn run() {
             commands::window_close_confirmed,
             commands::window_minimize,
             commands::window_toggle_maximize,
+            commands::window_is_maximized,
             commands::window_start_drag,
             commands::window_start_resize,
             commands::window_close,

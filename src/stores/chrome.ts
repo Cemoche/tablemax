@@ -27,6 +27,9 @@ interface ChromeState {
   requestPreview: (tabId: string) => void;
   paletteRequest: PaletteRequest | null;
   requestPalette: (kind: PaletteRequest["kind"]) => void;
+  /** The frameless window is maximized (Restore label, no resize grips). */
+  maximized: boolean;
+  setMaximized: (maximized: boolean) => void;
 }
 
 const bump = (m: Record<string, number>, id: string) => ({ ...m, [id]: (m[id] ?? 0) + 1 });
@@ -42,6 +45,8 @@ export const useChrome = create<ChromeState>((set) => ({
   requestPreview: (tabId) => set((s) => ({ previews: bump(s.previews, tabId) })),
   paletteRequest: null,
   requestPalette: (kind) => set((s) => ({ paletteRequest: { kind, seq: (s.paletteRequest?.seq ?? 0) + 1 } })),
+  maximized: false,
+  setMaximized: (maximized) => set({ maximized }),
 }));
 
 /**

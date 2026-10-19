@@ -67,7 +67,14 @@
   --color-swatch-4: var(--swatch-4);
   --color-swatch-5: var(--swatch-5);
   --color-swatch-6: var(--swatch-6);
-  --color-status-text: var(--status-text);
+  --color-swatch-1-text: var(--swatch-1-text);
+  --color-swatch-2-text: var(--swatch-2-text);
+  --color-swatch-3-text: var(--swatch-3-text);
+  --color-swatch-4-text: var(--swatch-4-text);
+  --color-swatch-5-text: var(--swatch-5-text);
+  --color-swatch-6-text: var(--swatch-6-text);
+  --color-status-connecting: var(--status-connecting);
+  --color-status-error: var(--status-error);
   --font-sans: var(--font-ui);
   --font-mono: var(--font-mono);
   --text-xs: var(--text-xs);

@@ -699,6 +699,7 @@ export const strings = {
     controls: "Window",
     minimize: "Minimize",
     maximize: "Maximize",
+    restore: "Restore",
     close: "Close",
   },
   statusPill: {

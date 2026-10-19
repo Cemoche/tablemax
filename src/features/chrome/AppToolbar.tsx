@@ -16,6 +16,7 @@ import { SafeModeMenu } from "./SafeModeMenu";
 import { StatusPill } from "./StatusPill";
 import { ICON, iconButton, pillGroup } from "./toolbarStyles";
 import { WindowControls } from "./WindowControls";
+import { toggleMaximize, useTrackMaximized } from "./windowState";
 
 const t = strings.toolbar;
 
@@ -62,6 +63,7 @@ interface Props {
  */
 export function AppToolbar({ workspace, connectError = null, onEditConnection }: Props) {
   const systemTitleBar = useSettings((s) => s.systemTitleBar);
+  useTrackMaximized();
   useAction("workspace.reload", () => reloadWorkspace(workspace));
 
   const onMouseDown = (e: MouseEvent<HTMLElement>) => {
@@ -69,7 +71,7 @@ export function AppToolbar({ workspace, connectError = null, onEditConnection }:
     if ((e.target as Element).closest(INTERACTIVE)) return;
     // Like a native title bar: the second press of a double click maximizes or restores
     // (the move started by the first press swallows the dblclick event itself).
-    if (e.detail === 2) void ipc.windowToggleMaximize()?.catch(() => {});
+    if (e.detail === 2) toggleMaximize();
     else void ipc.windowStartDrag()?.catch(() => {});
   };
 
