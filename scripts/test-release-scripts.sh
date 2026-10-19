@@ -67,6 +67,11 @@ fixture "$TMP/conf" 0.2.0 0.1.9 0.2.0
 expect "tauri.conf.json version is checked" 1 "src-tauri/tauri.conf.json has version '0.1.9'" \
   env RELEASE_ROOT="$TMP/conf" bash "$CHECK" v0.2.0
 
+mkdir -p "$TMP/lock"; cp -r "$TMP/same/." "$TMP/lock/"
+printf '[[package]]\nname = "tablemax"\nversion = "0.1.0"\n' >"$TMP/lock/src-tauri/Cargo.lock"
+expect "Cargo.lock's tablemax entry is checked when the file exists" 1 \
+  "src-tauri/Cargo.lock has version '0.1.0'" env RELEASE_ROOT="$TMP/lock" bash "$CHECK" v0.2.0
+
 expect "the repository itself has one version everywhere" 0 "" \
   bash "$CHECK" "v$(jq -r .version "$ROOT/package.json")"
 
