@@ -2,6 +2,7 @@ pub mod close_gate;
 pub mod commands;
 pub mod driver;
 pub mod error;
+pub mod flags;
 pub mod history;
 pub mod import;
 pub mod manager;
@@ -101,6 +102,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::app_flags,
             commands::connections_list,
             commands::connection_save,
             commands::connection_delete,

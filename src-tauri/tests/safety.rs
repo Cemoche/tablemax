@@ -65,6 +65,7 @@ fn cfg(path: &Path, env_tag: EnvTag, safe_mode: Option<SafeMode>) -> ConnectionC
         ssl: SslConfig::default(),
         ssh: None,
         safe_mode,
+        mongo: None,
     }
 }
 
@@ -245,6 +246,7 @@ async fn stricter_setting_applies_to_an_open_workspace() {
         .unwrap();
     let stricter = ConnectionConfig {
         safe_mode: Some(SafeMode::ConfirmWrites),
+        mongo: None,
         ..saved
     };
     fx.mgr.save_connection(stricter, None, None).await.unwrap();
@@ -272,6 +274,7 @@ async fn looser_setting_waits_for_the_next_open() {
         let looser = ConnectionConfig {
             env_tag: loosened.0,
             safe_mode: loosened.1,
+            mongo: None,
             ..saved.clone()
         };
         fx.mgr.save_connection(looser, None, None).await.unwrap();

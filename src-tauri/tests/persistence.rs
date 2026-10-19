@@ -358,6 +358,7 @@ fn sqlite_cfg(fx: &Fx) -> ConnectionConfig {
         ssl: SslConfig::default(),
         ssh: None,
         safe_mode: None,
+        mongo: None,
     }
 }
 

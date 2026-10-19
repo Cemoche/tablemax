@@ -89,6 +89,7 @@ pub fn params_from_url(url: &str, kind: DriverKind) -> ConnectParams {
         sqlite_path: None,
         ssl: SslConfig::default(),
         dial: None,
+        mongo: None,
     }
 }
 

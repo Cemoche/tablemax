@@ -1,4 +1,5 @@
 // Connection URLs: export a saved connection (never its password) and parse a pasted one.
+import { parseMongoUri, toMongoUri } from "./mongoUri";
 import { defaultSslMode } from "./ssl";
 import { strings } from "./strings";
 import type { ConnectionConfig, DriverKind, SshAuth, SshSettings, SslMode } from "./types";
@@ -8,6 +9,7 @@ const SCHEME: Record<DriverKind, string> = {
   mySql: "mysql",
   mariaDb: "mariadb",
   sqlite: "sqlite",
+  mongoDb: "mongodb",
 };
 
 const KIND: Record<string, DriverKind> = {
@@ -18,7 +20,7 @@ const KIND: Record<string, DriverKind> = {
   sqlite: "sqlite",
 };
 
-const DEFAULT_PORT: Record<DriverKind, number> = { postgres: 5432, mySql: 3306, mariaDb: 3306, sqlite: 0 };
+const DEFAULT_PORT: Record<DriverKind, number> = { postgres: 5432, mySql: 3306, mariaDb: 3306, sqlite: 0, mongoDb: 27017 };
 
 const LIBPQ: Record<SslMode, string> = {
   disable: "disable",
@@ -52,6 +54,7 @@ function sshParam(ssh: SshSettings): string {
 
 /** The URL of a connection; it never contains a password. */
 export function toConnectionUrl(cfg: ConnectionConfig): string {
+  if (cfg.kind === "mongoDb") return toMongoUri(cfg);
   const scheme = SCHEME[cfg.kind];
   if (cfg.kind === "sqlite") {
     return `${scheme}://${(cfg.sqlitePath ?? "").split("/").map(encodeURIComponent).join("/")}`;
@@ -110,6 +113,12 @@ export function parseConnectionUrl(input: string): {
   const invalid = () => new Error(strings.url.invalid);
   const text = input.trim();
   const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(text)?.[1].toLowerCase();
+  if (scheme === "mongodb" || scheme === "mongodb+srv") {
+    const { patch, password, ignored, refused } = parseMongoUri(text);
+    if (refused.length > 0) throw new Error(strings.url.mongoRefused(refused));
+    // The TLS mode always comes from the URI's own rules, never from the host.
+    return { config: patch, password, sslExplicit: true, warnings: ignored.map(strings.url.unknownParam) };
+  }
   const kind = scheme ? KIND[scheme] : undefined;
   if (!kind) throw invalid();
   let url: URL;

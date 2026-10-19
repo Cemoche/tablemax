@@ -111,6 +111,7 @@ fn config(kind: DriverKind, p: Option<&ConnectParams>, sqlite: Option<String>) -
         ssl: SslConfig::default(),
         ssh: None,
         safe_mode: None,
+        mongo: None,
     }
 }
 
@@ -240,7 +241,7 @@ async fn all_fixtures() -> Vec<Fx> {
 
 impl Fx {
     fn d(&self) -> Dialect {
-        self.kind.dialect()
+        self.kind.dialect().expect("a SQL driver")
     }
 
     fn obj(&self, name: &str) -> ObjectRef {

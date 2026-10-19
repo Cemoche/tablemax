@@ -85,6 +85,35 @@ impl SshSettings {
     }
 }
 
+/// How a MongoDB connection authenticates (SCRAM, or PLAIN for LDAP).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum MongoAuth {
+    /// The server's choice (SCRAM-SHA-256, else SCRAM-SHA-1).
+    #[default]
+    Default,
+    ScramSha1,
+    ScramSha256,
+    Plain,
+}
+
+/// MongoDB-only connection settings. `ConnectionConfig::host`/`port` hold the first host.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MongoSettings {
+    /// `mongodb+srv://`: `host` is the SRV name and `port` is unused.
+    pub srv: bool,
+    /// The hosts after the first one, as `host:port`.
+    pub extra_hosts: Vec<String>,
+    /// Authentication database; `None`: the connection's database, else `admin`
+    /// (`$external` for PLAIN).
+    pub auth_source: Option<String>,
+    pub auth_mechanism: MongoAuth,
+    pub replica_set: Option<String>,
+    /// The advanced URI options that are kept (see `mongoUri.ts`), in order.
+    pub options: Vec<(String, String)>,
+}
+
 /// Persisted connection settings. Contains no secret fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -111,6 +140,9 @@ pub struct ConnectionConfig {
     /// existed): `safety::effective_safe_mode` derives it from `env_tag`.
     #[serde(default)]
     pub safe_mode: Option<SafeMode>,
+    /// MongoDB settings; `None` for the other drivers and for every config saved before.
+    #[serde(default)]
+    pub mongo: Option<MongoSettings>,
 }
 
 pub struct ConnectionStore {
@@ -484,6 +516,7 @@ mod tests {
             ssl: SslConfig::default(),
             ssh: None,
             safe_mode: None,
+            mongo: None,
         }
     }
 
@@ -1158,5 +1191,40 @@ mod tests {
             .unwrap();
         // An empty host is not "local": without the SQLite exception it would get VerifyFull.
         assert_eq!(store.get("lite").unwrap().ssl, SslConfig::default());
+    }
+
+    #[test]
+    fn old_config_has_no_mongo_settings() {
+        let json = r##"{"id":"pg","name":"old","color":"#888","envTag":"dev","kind":"postgres",
+            "host":"h","port":5432,"user":"u","database":null,"sqlitePath":null,
+            "passwordMode":"keyring","group":null}"##;
+        let cfg: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.mongo, None);
+    }
+
+    #[test]
+    fn mongo_settings_wire_shape() {
+        let m = MongoSettings {
+            srv: true,
+            extra_hosts: vec!["h2:27018".into()],
+            auth_source: Some("admin".into()),
+            auth_mechanism: MongoAuth::ScramSha256,
+            replica_set: None,
+            options: vec![("appName".into(), "tm".into())],
+        };
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "srv": true, "extraHosts": ["h2:27018"], "authSource": "admin",
+                "authMechanism": "scramSha256", "replicaSet": null,
+                "options": [["appName", "tm"]]
+            })
+        );
+        assert_eq!(serde_json::from_value::<MongoSettings>(v).unwrap(), m);
+        assert_eq!(
+            serde_json::to_value(DriverKind::MongoDb).unwrap(),
+            serde_json::json!("mongoDb")
+        );
     }
 }
