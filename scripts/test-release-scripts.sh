@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests for scripts/release-check-version.sh and the glibc check of scripts/release-smoke.sh.
+# Tests for scripts/release-check-version.sh, the glibc check of scripts/release-smoke.sh
+# and scripts/release-files.sh.
 # Usage: bash scripts/test-release-scripts.sh   (needs jq, dpkg-deb, objdump; no network)
 set -uo pipefail
 
@@ -94,6 +95,28 @@ dpkg-deb -b --root-owner-group "$TMP/empty" "$TMP/empty.deb" >/dev/null
 expect "a package with no ELF file is an error" 1 "no ELF file found" \
   bash "$SMOKE" glibc 99.0 "$TMP/empty.deb"
 expect "unknown subcommand prints usage" 2 "Usage:" bash "$SMOKE" nope
+
+# --- release file list ---------------------------------------------------------------
+
+FILES="$ROOT/scripts/release-files.sh"
+mk() { mkdir -p "$1"; shift; local f; for f in "$@"; do : >"$f"; done; }
+
+mk "$TMP/rel-ok" "$TMP/rel-ok/T_1_amd64.deb" "$TMP/rel-ok/T_1_amd64.AppImage"
+expect "one .deb and one AppImage are listed" 0 "T_1_amd64.AppImage" bash "$FILES" "$TMP/rel-ok"
+: >"$TMP/rel-ok/SHA256SUMS"
+expect "SHA256SUMS is listed when present" 0 "SHA256SUMS" bash "$FILES" "$TMP/rel-ok"
+
+mk "$TMP/rel-vite" "$TMP/rel-vite/T.deb" "$TMP/rel-vite/T.AppImage" "$TMP/rel-vite/index.html"
+mkdir -p "$TMP/rel-vite/assets"
+expect "a frontend build next to the packages is refused (#60)" 1 "unexpected entries" \
+  bash "$FILES" "$TMP/rel-vite"
+mk "$TMP/rel-two" "$TMP/rel-two/a.deb" "$TMP/rel-two/b.deb" "$TMP/rel-two/T.AppImage"
+expect "two .deb files are refused" 1 "expected 1 .deb" bash "$FILES" "$TMP/rel-two"
+mk "$TMP/rel-none"
+expect "an empty directory is refused" 1 "expected 1 .AppImage" bash "$FILES" "$TMP/rel-none"
+mk "$TMP/rel-hidden" "$TMP/rel-hidden/T.deb" "$TMP/rel-hidden/T.AppImage" "$TMP/rel-hidden/.env"
+expect "a hidden file is refused" 1 ".env" bash "$FILES" "$TMP/rel-hidden"
+expect "a missing directory is refused" 1 "no such directory" bash "$FILES" "$TMP/nope"
 
 echo
 if [[ $failures -eq 0 ]]; then echo "all release script tests passed"; else
