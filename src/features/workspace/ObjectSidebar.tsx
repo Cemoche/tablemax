@@ -85,8 +85,14 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
   /** Tables and views opened in the tree, by entry key, and their columns (cached). */
   const [opened, setOpened] = useState<Record<string, DbObject>>({});
   const [columns, setColumns] = useState<Record<string, ColumnsState>>({});
-  /** Bumped when the cached columns are dropped: late answers of older loads are ignored. */
+  const columnsRef = useRef(columns);
+  columnsRef.current = columns;
+  /** Bumped by a reload or another schema: late answers of older loads are ignored. */
   const columnsGen = useRef(0);
+  /** Keys whose columns are being loaded (this generation). */
+  const inflight = useRef(new Set<string>());
+  /** Keys a reload marked: loaded again from the database, their old columns shown meanwhile. */
+  const staleKeys = useRef(new Set<string>());
   /**
    * The open menu, and the row it came from by key (its index as a fallback): the focus
    * goes back to that row on close, even if the rows moved meanwhile.
@@ -149,35 +155,71 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
     };
   }, [id, caps.routines, currentSchema, database, reload]);
 
-  // Another schema or database: nothing stays open. A reload (Refresh, Mod+R): the open
-  // ones load their columns again, from the database.
-  useEffect(() => setOpened({}), [id, currentSchema, database]);
+  // Another schema or database: nothing stays open, nothing is kept.
   useEffect(() => {
     columnsGen.current += 1;
+    inflight.current.clear();
+    staleKeys.current.clear();
+    setOpened({});
     setColumns({});
-  }, [id, currentSchema, database, reload]);
+  }, [id, currentSchema, database]);
+  // A reload (Refresh, Mod+R): every loaded entry is stale. The columns stay on screen and
+  // load again from the database (refresh=true) once the object list is back; every
+  // other load reads the backend's cache, shared with the grid tabs (refresh=false).
   useEffect(() => {
+    if (reload === 0) return;
+    columnsGen.current += 1;
+    inflight.current.clear();
+    staleKeys.current = new Set(Object.keys(columnsRef.current));
+  }, [reload]);
+  // Objects gone after a reload are closed, and forgotten.
+  useEffect(() => {
+    if (loading) return;
+    const present = new Set(objects.map((object) => entryKey({ type: "object", object })));
+    const gone = (o: Record<string, unknown>) => Object.keys(o).some((k) => !present.has(k));
+    for (const k of staleKeys.current) if (!present.has(k)) staleKeys.current.delete(k);
+    setOpened((o) => (gone(o) ? Object.fromEntries(Object.entries(o).filter(([k]) => present.has(k))) : o));
+    setColumns((c) => (gone(c) ? Object.fromEntries(Object.entries(c).filter(([k]) => present.has(k))) : c));
+  }, [objects, loading]);
+  useEffect(() => {
+    // The stale ones wait for the object list, so a dropped table is never asked for.
+    const present = loading ? null : new Set(objects.map((object) => entryKey({ type: "object", object })));
     for (const [key, object] of Object.entries(opened)) {
-      if (columns[key]) continue;
+      if (inflight.current.has(key)) continue;
+      const stale = staleKeys.current.has(key);
+      if (stale ? present === null || !present.has(key) : columns[key]) continue;
+      inflight.current.add(key);
       const gen = columnsGen.current;
-      const done = (next: ColumnsState) =>
-        setColumns((c) => (gen === columnsGen.current ? { ...c, [key]: next } : c));
-      setColumns((c) => ({ ...c, [key]: { state: "loading" } }));
+      const done = (next: ColumnsState) => {
+        if (gen !== columnsGen.current) return;
+        inflight.current.delete(key);
+        staleKeys.current.delete(key);
+        setColumns((c) => ({ ...c, [key]: next }));
+      };
+      if (!columns[key]) setColumns((c) => ({ ...c, [key]: { state: "loading" } }));
       ipc
-        .tableInfo(id, { schema: object.schema, name: object.name }, reload > 0)
+        .tableInfo(id, { schema: object.schema, name: object.name }, stale)
         .then((info) => done({ state: "loaded", columns: info.columns }))
         .catch((e) => done({ state: "error", message: toAppError(e).message }));
     }
-  }, [opened, columns, id, reload]);
+  }, [opened, columns, objects, loading, id]);
 
   const toggleObject = (object: DbObject) => {
     const key = entryKey({ type: "object", object });
+    const closing = opened[key] !== undefined;
     setOpened((o) => {
       const next = { ...o };
       if (next[key]) delete next[key];
       else next[key] = object;
       return next;
     });
+    // A failed load is tried again at the next open.
+    if (closing && columns[key]?.state === "error")
+      setColumns((c) => {
+        const next = { ...c };
+        delete next[key];
+        return next;
+      });
   };
 
   const { tables, views, shownRoutines } = useMemo(() => {

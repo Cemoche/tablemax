@@ -615,15 +615,49 @@ test("tree_keyboard: Right opens a table then enters its columns, Left goes back
   expect(useWorkspaces.getState().workspaces[0].tabs).toEqual([expect.objectContaining({ title: "orders" })]);
 });
 
-test("Refresh forgets the loaded columns and reloads the open ones from the database (#104)", async () => {
-  vi.mocked(ipc.tableInfo).mockResolvedValue(info("orders", [col("id", "integer")]));
+test("refresh_keeps_columns: a reload keeps the open columns shown, reloads them from the database, and later loads stay cached (#104)", async () => {
+  vi.mocked(ipc.tableInfo).mockImplementation(async (_w, o) => info(o.name, [col("id", "integer")]));
+  render(<ObjectSidebar workspace={workspace} />);
+  await userEvent.click(chevronOf(await screen.findByRole("treeitem", { name: "orders" })));
+  const id = await screen.findByRole("treeitem", { name: "id" });
+  id.focus();
+  // The reload's answer for orders waits: its old columns stay on screen meanwhile.
+  let answer: (v: never) => void = () => {};
+  vi.mocked(ipc.tableInfo).mockImplementationOnce(() => new Promise((r) => (answer = r)));
+  act(() => useChrome.getState().requestReload("w1"));
+  await waitFor(() => expect(ipc.objectsList).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(ipc.tableInfo).toHaveBeenLastCalledWith("w1", { schema: "public", name: "orders" }, true));
+  expect(screen.queryByRole("treeitem", { name: S.columnsLoading })).toBeNull();
+  expect(item("id")).toBe(id);
+  expect(id).toHaveFocus();
+  await act(async () => answer(info("orders", [col("id", "integer"), col("added", "text")])));
+  expect(await screen.findByRole("treeitem", { name: "added" })).toBeInTheDocument();
+  // Another table opened after the reload: from the backend's cache (refresh=false).
+  await userEvent.click(chevronOf(item("users")));
+  await waitFor(() => expect(ipc.tableInfo).toHaveBeenLastCalledWith("w1", { schema: "public", name: "users" }, false));
+});
+
+test("a table gone after a reload is closed, not loaded again (#104)", async () => {
+  vi.mocked(ipc.tableInfo).mockImplementation(async (_w, o) => info(o.name, [col("id", "integer")]));
   render(<ObjectSidebar workspace={workspace} />);
   await userEvent.click(chevronOf(await screen.findByRole("treeitem", { name: "orders" })));
   await screen.findByRole("treeitem", { name: "id" });
-  vi.mocked(ipc.tableInfo).mockResolvedValue(info("orders", [col("id", "integer"), col("added", "text")]));
+  vi.mocked(ipc.objectsList).mockResolvedValue([{ schema: "public", name: "users", kind: "table" }]);
   act(() => useChrome.getState().requestReload("w1"));
-  expect(await screen.findByRole("treeitem", { name: "added" })).toBeInTheDocument();
-  expect(ipc.tableInfo).toHaveBeenLastCalledWith("w1", { schema: "public", name: "orders" }, true);
+  await waitFor(() => expect(screen.queryByRole("treeitem", { name: "orders" })).toBeNull());
+  expect(ipc.tableInfo).toHaveBeenCalledTimes(1);
+});
+
+test("a failed column load is tried again on the next open (#104)", async () => {
+  vi.mocked(ipc.tableInfo).mockRejectedValueOnce({ kind: "query", message: "boom" });
+  render(<ObjectSidebar workspace={workspace} />);
+  await userEvent.click(chevronOf(await screen.findByRole("treeitem", { name: "orders" })));
+  expect(await screen.findByRole("treeitem", { name: S.columnsFailed("boom") })).toBeInTheDocument();
+  vi.mocked(ipc.tableInfo).mockResolvedValue(info("orders", [col("id", "integer")]));
+  await userEvent.click(chevronOf(item("orders")));
+  await userEvent.click(chevronOf(item("orders")));
+  expect(await screen.findByRole("treeitem", { name: "id" })).toBeInTheDocument();
+  expect(ipc.tableInfo).toHaveBeenCalledTimes(2);
 });
 
 test("tree_section_headers: plain rows with a chevron, no bold small caps, no counts (#104)", async () => {
