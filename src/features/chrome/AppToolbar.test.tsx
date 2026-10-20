@@ -236,6 +236,41 @@ test("double_click_toolbar_toggles_maximize", async () => {
   expect(ipc.windowStartDrag).toHaveBeenCalledTimes(1);
 });
 
+test("a press on the discard dialog's overlay (portalled) never moves nor maximizes the window", async () => {
+  const user = userEvent.setup();
+  usePendingChanges.setState({ discard: vi.fn() });
+  setup();
+  act(() => {
+    usePendingChanges.getState().addInsert("t1", obj);
+  });
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  const overlay = screen.getByRole("dialog", { name: strings.grid.discardTitle }).parentElement as HTMLElement;
+  await user.pointer({ keys: "[MouseLeft]", target: overlay });
+  await user.dblClick(overlay);
+  expect(ipc.windowStartDrag).not.toHaveBeenCalled();
+  expect(ipc.windowToggleMaximize).not.toHaveBeenCalled();
+});
+
+test("after a discard by shortcut whose opener is gone, the active tab takes the focus", async () => {
+  const user = userEvent.setup();
+  usePendingChanges.setState({ discard: vi.fn() });
+  setup();
+  const content = document.createElement("div");
+  content.tabIndex = -1;
+  content.setAttribute("data-tab-content", "");
+  const opener = document.createElement("button");
+  document.body.append(content, opener);
+  act(() => {
+    usePendingChanges.getState().addInsert("t1", obj);
+  });
+  opener.focus();
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  opener.remove();
+  await user.keyboard("{Enter}");
+  expect(content).toHaveFocus();
+  content.remove();
+});
+
 test("the window buttons minimize, maximize and close through Rust", async () => {
   const user = userEvent.setup();
   setup();

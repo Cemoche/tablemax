@@ -13,6 +13,7 @@ import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { useSettings } from "../../stores/settings";
 import { type Workspace, capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
+import { focusActiveTab } from "../workspace/focusActiveTab";
 import { ConfirmDialog } from "../workspace/ConfirmDialog";
 import { ConnectionPopover } from "./ConnectionPopover";
 import { SafeModeMenu } from "./SafeModeMenu";
@@ -76,6 +77,9 @@ export function AppToolbar({ workspace, connectError = null, onEditConnection }:
 
   const onMouseDown = (e: MouseEvent<HTMLElement>) => {
     if (systemTitleBar || e.button !== 0) return;
+    // React events bubble along the React tree, portals included: a press in a portalled
+    // dialog or popover (its overlay too) is not on the toolbar.
+    if (!e.currentTarget.contains(e.target as Node)) return;
     if ((e.target as Element).closest(INTERACTIVE)) return;
     // Like a native title bar: the second press of a double click maximizes or restores
     // (the move started by the first press swallows the dblclick event itself).
@@ -182,7 +186,9 @@ function WorkspaceTools({
     setDiscardAsk(null);
     if (!ask) return;
     if (discard) usePendingChanges.getState().discard(ask.tabId);
+    // The opener may be gone (its tab replaced): then the active tab takes the focus.
     if (ask.back instanceof HTMLElement && ask.back.isConnected) ask.back.focus();
+    else focusActiveTab();
   };
   useAction(
     "grid.preview",
@@ -384,7 +390,8 @@ function WorkspaceTools({
         </button>
       </Group>
       {discardAsk &&
-        // On the body: a press on the overlay must not move the window (the toolbar's drag).
+        // On the body, out of the toolbar's layout; a press on it never moves the window
+        // (the header's mousedown ignores targets outside its DOM).
         createPortal(
           <ConfirmDialog
             title={strings.grid.discardTitle}

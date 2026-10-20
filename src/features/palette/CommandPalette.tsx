@@ -12,18 +12,11 @@ import { useChrome, useOnRequest } from "../../stores/chrome";
 import { useConnections } from "../../stores/connections";
 import { useSettings } from "../../stores/settings";
 import { capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
-import { runEditorCommand } from "../editor/editorCommands";
+import { focusActiveTab } from "../workspace/focusActiveTab";
 import { tabKindLabel } from "../workspace/tabInfo";
 import { type ActionCtx, visibleActions } from "./actions";
 import { fuzzyScore, rank } from "./fuzzy";
 
-/** The opener is gone (its tab was replaced): focus the active tab's editor or content. */
-function focusActiveTab() {
-  const { workspaces, activeWorkspaceId } = useWorkspaces.getState();
-  const w = workspaces.find((x) => x.id === activeWorkspaceId);
-  if (w?.activeTabId && runEditorCommand(w.activeTabId, "focus")) return;
-  document.querySelector<HTMLElement>("[data-tab-content]")?.focus();
-}
 
 /** At most this many items are rendered per group (a 5 000-table schema stays fluid). */
 export const MAX_PER_GROUP = 200;
