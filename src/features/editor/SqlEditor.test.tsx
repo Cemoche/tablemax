@@ -1,7 +1,8 @@
+import { completionStatus } from "@codemirror/autocomplete";
 import { history, undo } from "@codemirror/commands";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { act } from "react";
 import { useSettings, DEFAULT_SETTINGS } from "../../stores/settings";
@@ -140,4 +141,25 @@ test("run, run all, format and comment follow the keymap: a custom run combinati
   expect(view.state.doc.toString()).not.toMatch(/^-- select 1/);
   press({ key: "&", code: "Digit7", keyCode: 55, ctrlKey: true, shiftKey: true });
   expect(view.state.doc.toString()).toMatch(/^-- select 1/);
+});
+
+test("ctrl_space_in_editor_stays_completion: Ctrl+Space in the editor opens the completion", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  const completion = vi.fn(() => ({ from: 0, options: [{ label: "select" }] }));
+  const { container } = render(
+    <SqlEditor value="sel" onChange={() => {}} dialect="postgres" onRun={() => {}} completionSource={completion} />,
+  );
+  const view = EditorView.findFromDOM(container.querySelector(".cm-content") as HTMLElement);
+  if (!view) throw new Error("no editor");
+  act(() => view.dispatch({ selection: { anchor: 3 } }));
+  expect(completionStatus(view.state)).toBeNull();
+  const event = new KeyboardEvent("keydown", { key: " ", code: "Space", keyCode: 32, ctrlKey: true, bubbles: true, cancelable: true });
+  act(() => {
+    view.contentDOM.dispatchEvent(event);
+  });
+  // CodeMirror took it (its completion keymap) and started the completion.
+  expect(event.defaultPrevented).toBe(true);
+  expect(completionStatus(view.state)).not.toBeNull();
+  await waitFor(() => expect(completion).toHaveBeenCalled());
 });
