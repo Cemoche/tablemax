@@ -113,6 +113,34 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 - **Panneau de détail** à droite (280 px, `Ctrl+Space` comme TablePlus Linux / Windows, et `Space` comme sur Mac, dans la grille) : recherche « Search for field… », liste des
   champs avec leur type, édition sur place.
 
+> Amendement 2026-10-20 (#104) : la pastille de statut prend la largeur libre (une marge de
+> chaque côté reste une zone de glisser-déplacer) et se lit « [TAG] Moteur version : SSH :
+> nom de la connexion : base : schéma.objet » : un badge par tag (`LOCAL`, `DEV`, `STAGING`,
+> `PROD`, couleurs `--tag-*`, bordure `currentColor`), `SSH` seulement à travers un tunnel,
+> le nom une seule fois s'il vaut la base ; nom accessible « TAG | texte ». À droite, un
+> emplacement vide pour le débit réseau (#112, aucun chiffre tant que le backend ne compte pas
+> les octets). Fond : une teinte de la couleur de la connexion (`--swatch-N-tint`), claire en
+> thème clair, plus sombre que la couleur en thème sombre, texte ≥ 4,5:1. Barre du haut, à
+> droite : [reload | palette de commandes (Open anything, `Ctrl+P`, glyphe ⌘)] puis [panneau
+> de détail] ; ni métriques ni console (inexistants). Boutons de fenêtre selon la plateforme :
+> Windows, boutons plats de 46 px sur toute la hauteur de la barre, fermer rouge
+> (`--window-close`) à glyphe blanc au survol ; Linux (et macOS pour l'instant), cercles de
+> 24 px façon GNOME / libadwaita, glyphes de 16 px, fermer sans rouge. Colonne des
+> connexions : tuile neutre (`--pill`, bordure `--pill-border`) avec une icône de base
+> contourée dans la couleur de la connexion (`--swatch-N-icon`), nom en petit dessous, panneau
+> `--sel` derrière la tuile active ; le bouton des réglages (curseurs) en bas de la colonne
+> (la barre du haut ne garde son engrenage que sans workspace ouvert). Barre latérale :
+> pied `[+ | ⌄] [schéma]` ; en-têtes de section en lignes simples avec chevron (ni petites
+> capitales grasses, ni compteur) ; « Routines » devient « Functions », masqué quand le moteur
+> n'en renvoie aucune ; chaque table et vue a un chevron qui l'ouvre sur ses colonnes (nom et
+> type), chargées à la première ouverture par `table_info` et gardées en cache ; un
+> rafraîchissement garde les colonnes affichées et recharge celles ouvertes depuis la base,
+> une table disparue se referme ; icônes : tables en grille bleue (`--icon-table`), vues en
+> œil encadré violet (`--icon-view`), lucide. Onglets : plus de `+` (SQL de la barre du haut,
+> `+` de la barre latérale, `Ctrl+T`), `⌄` (liste des onglets) gardé à côté du bouton de
+> séparation ; un onglet seul prend toute la largeur, libellé centré, son × au survol ou au
+> focus clavier seulement.
+
 ### 2.4 Connexions (maquettes « Liste des connexions » et « Formulaire »)
 - Fenêtre d'accueil : à gauche logo, nom, version et trois boutons (Create connection…,
   Import connections…, Open SQLite file…) ; à droite `+`, recherche (`Ctrl+F`), connexions par
@@ -205,6 +233,17 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > l'en-tête (`--grid-head` / `--head-text`, 13,9:1 / 12,8:1) sur chaque ligne, sans zébrure
 > ni teinte d'insertion / suppression ; une ligne sélectionnée y garde `--row-selected` et du
 > blanc. `--rownum` et `--rownum-selected` (#102) disparaissent.
+
+> Amendement 2026-10-20 (#104) : nouveaux tokens (clair / sombre). `--swatch-1..6-tint` :
+> #BDCFF4 #BFE3A8 #F6E8A8 #E6E6E6 #F7C7C9 #DCCBF3 (la couleur claire elle-même) / #1D4068
+> #25583C #654E2E #343841 #5A1B1E #472E64 (la couleur sombre à 55 % sur `--win`) ;
+> `--swatch-N-tint-text` #1E1E1E / #F2F2F2 (≥ 7:1) ; `--swatch-N-text` disparaît.
+> `--swatch-1..6-icon` : #1F5FA8 #2E8B57 #A3793E #4A5160 #8E1C22 #6B3FA0 / #799FCB #82B99A
+> #C8AF8B #9297A0 #BB777A #A68CC6 (≥ 3:1 sur `--pill`). `--icon-table` #0A6CDB / #5AA2FF,
+> `--icon-view` #8A3FD1 / #B58CFF (≥ 3:1 sur `--side`, `--seg-sel`, `--sel`). Dans les deux
+> thèmes : `--window-close` #C42B1C, `--window-close-text` #FFFFFF (5,7:1), utilisés
+> seulement par les boutons de fenêtre Windows. Les couleurs de connexion `--swatch-N`
+> (points de la liste et du formulaire) ne changent pas.
 
 Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E7D32, nombres
 #B57AFF / #1D00FF, chaînes #CA6E6E / #E04978, commentaires #009B31, requête courante #30363F /
