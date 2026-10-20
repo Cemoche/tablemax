@@ -1,11 +1,11 @@
 import { useRef, useState } from "react";
 import { strings } from "../../lib/strings";
 import { tip, tipIfCut } from "../../lib/tooltip";
-import type { ConnectionConfig } from "../../lib/types";
+import type { ConnectionConfig, EnvTag } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
 import type { Workspace } from "../../stores/workspaces";
 import { ConnectionPopover, engineLabel } from "./ConnectionPopover";
-import { swatchClass } from "./swatch";
+import { tintClass } from "./swatch";
 
 const s = strings.statusPill;
 
@@ -24,7 +24,18 @@ export function shortVersion(version: string | null | undefined): string {
   return (version ?? "").trim().split(/\s/)[0].split("-")[0];
 }
 
-/** `<Engine> <version> : <database> : <schema>.<object>`, without the parts that are unknown. */
+/** The tag badge at the start of the pill: the tag's own badge colors (≥ 4.5:1, tokens.test.ts). */
+const TAG_CLASS: Record<EnvTag, string> = {
+  local: "bg-tag-local-bg text-tag-local-text",
+  dev: "bg-tag-dev-bg text-tag-dev-text",
+  staging: "bg-tag-staging-bg text-tag-staging-text",
+  prod: "bg-tag-prod-bg text-tag-prod-text",
+};
+
+/**
+ * `<Engine> <version> : SSH : <connection name> : <database> : <schema>.<object>`, without
+ * the parts that are unknown (SSH only through a tunnel; the name once if it is the database).
+ */
 export function statusText(workspace: Workspace, cfg: ConnectionConfig | undefined): string {
   const engine = [engineLabel(cfg, workspace.dialect), shortVersion(workspace.serverVersion)]
     .filter(Boolean)
@@ -38,7 +49,9 @@ export function statusText(workspace: Workspace, cfg: ConnectionConfig | undefin
       : (workspace.currentSchema ?? "");
   // MySQL: the database is the schema, said once.
   const schema = tab?.kind === "table" ? tab.object.schema : workspace.currentSchema;
-  const parts = [engine, database === schema ? null : database, where];
+  const name = cfg?.name ?? workspace.name;
+  const shownDatabase = database === schema ? null : database;
+  const parts = [engine, cfg?.ssh ? s.ssh : null, name === shownDatabase ? null : name, shownDatabase, where];
   return parts.filter((x): x is string => !!x).join(s.separator);
 }
 
@@ -62,10 +75,12 @@ interface Props {
 }
 
 /**
- * The center of the toolbar: where the workspace is (`PostgreSQL 16.4 : shop : public.orders`)
- * in monospace on the connection's color, or its connection state; a `PROD` badge for a
- * production connection that never shrinks (the text is cut with an ellipsis first). A
- * click opens the connection popover.
+ * The center of the toolbar (#104): the connection's tag (`LOCAL`, `DEV`, `STAGING`, `PROD`)
+ * then where the workspace is (`PostgreSQL 16.4 : SSH : Shop : shop : public.orders`) in
+ * monospace on a tint of the connection's color, or its connection state. The tag never
+ * shrinks (the text is cut with an ellipsis first). The right end keeps an empty slot for
+ * the network throughput, which needs a byte counter from the backend (not built yet: no
+ * number is shown, never a fake one). A click opens the connection popover.
  */
 export function StatusPill({ workspace, connectError = null, onEditConnection }: Props) {
   const cfg = useConnections((st) => st.items.find((c) => c.id === workspace.connectionId));
@@ -84,13 +99,12 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
           : state === "error"
             ? s.error(workspace.name)
             : s.disconnected(workspace.name);
-  const look =
-    state === "connected" ? swatchClass(color) : STATE_CLASS[state].pill;
+  const look = state === "connected" ? tintClass(color) : STATE_CLASS[state].pill;
 
   return (
-    // The wrapper takes the free space; the pill is capped and centred so the space on its
-    // sides stays a drag area of the title bar (AppToolbar handles presses there).
-    <div data-pill-area="" className="relative flex min-w-0 flex-1 basis-48 justify-center">
+    // The pill takes the free space; the wrapper's padding on its sides stays a drag area of
+    // the title bar (AppToolbar handles presses there).
+    <div data-pill-area="" className="relative flex min-w-0 flex-1 basis-48 justify-center px-4">
       <button
         ref={trigger}
         type="button"
@@ -98,15 +112,20 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
         aria-expanded={open}
         {...(state === "error" && connectError ? tip(s.errorTitle(text, connectError)) : tipIfCut(text))}
         onClick={() => setOpen((o) => !o)}
-        className={`flex h-8.5 w-full max-w-140 min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full px-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent ${look}`}
+        className={`relative flex h-8.5 w-full min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full px-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent ${look}`}
       >
+        <span
+          data-pill-tag=""
+          className={`shrink-0 rounded-sm px-1.5 font-sans text-xs font-bold tracking-wide ${TAG_CLASS[envTag] ?? TAG_CLASS.local}`}
+        >
+          {s.tags[envTag] ?? s.tags.local}
+        </span>
         {state !== "connected" && <span aria-hidden className={`size-2 shrink-0 rounded-full ${STATE_CLASS[state].dot}`} />}
-        <span className="min-w-0 truncate">{text}</span>
-        {envTag === "prod" && (
-          <span className="shrink-0 rounded-sm border border-current bg-tag-prod-bg px-1.5 font-sans text-xs font-bold text-tag-prod-text">
-            {s.prod}
-          </span>
-        )}
+        <span data-pill-text="" className="min-w-0 truncate">
+          {text}
+        </span>
+        {/* Network throughput: empty until the backend counts bytes (follow-up issue). */}
+        <span data-throughput-slot="" aria-hidden className="absolute right-4 font-sans text-xs" />
       </button>
       {open && (
         <ConnectionPopover

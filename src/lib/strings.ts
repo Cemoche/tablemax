@@ -919,7 +919,10 @@ export const strings = {
   },
   statusPill: {
     separator: " : ",
-    prod: "PROD",
+    /** The connection's tag, at the start of the pill. */
+    tags: { local: "LOCAL", dev: "DEV", staging: "STAGING", prod: "PROD" },
+    /** Said when the connection goes through an SSH tunnel. */
+    ssh: "SSH",
     connecting: (name: string) => `Connecting to ${name}…`,
     reconnecting: (name: string) => `Reconnecting to ${name}…`,
     error: (name: string) => `${name} : connection failed`,

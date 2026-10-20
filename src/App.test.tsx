@@ -259,7 +259,7 @@ test("prod_title_kept: no environment banner, the pill badge and the window titl
   await screen.findByRole("tab", { name: "users" });
   expect(ipc.windowSetTitle).toHaveBeenLastCalledWith("TableMax — Prod PG [PROD]");
   const header = screen.getByRole("banner");
-  expect(within(header).getByText(strings.statusPill.prod)).toBeInTheDocument();
+  expect(within(header).getByText(strings.statusPill.tags.prod)).toBeInTheDocument();
   // The old banner is gone.
   expect(screen.queryByRole("status", { name: "Environment" })).toBeNull();
 });
