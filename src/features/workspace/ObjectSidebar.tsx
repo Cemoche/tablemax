@@ -485,7 +485,7 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
   };
 
   const rowClass = (selected: boolean) =>
-    `absolute inset-x-1.5 flex cursor-default items-center gap-1.5 rounded-md px-1.5 text-left whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent ${
+    `absolute inset-x-1.5 flex items-center gap-1.5 rounded-md px-1.5 text-left whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent ${
       selected ? "bg-sel" : "hover:bg-seg-sel"
     }`;
 

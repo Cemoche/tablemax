@@ -1,0 +1,40 @@
+/* Interaction styles (#109), imported by src/index.css into the base layer: Tailwind
+   utilities on a component still win over them. */
+
+/* Clickable controls show the pointer; disabled ones (disabled or aria-disabled) the
+   default arrow. The grid's canvas keeps its own cursors. */
+:where(
+    button,
+    select,
+    summary,
+    input[type="checkbox"],
+    input[type="radio"],
+    [role="button"],
+    [role="tab"],
+    [role="menuitem"],
+    [role="menuitemradio"],
+    [role="menuitemcheckbox"],
+    [role="option"],
+    [role="treeitem"],
+    [role="switch"]
+  ):not(:disabled, [aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+:where(
+    button,
+    select,
+    summary,
+    input[type="checkbox"],
+    input[type="radio"],
+    [role="button"],
+    [role="tab"],
+    [role="menuitem"],
+    [role="menuitemradio"],
+    [role="menuitemcheckbox"],
+    [role="option"],
+    [role="treeitem"],
+    [role="switch"]
+  ):is(:disabled, [aria-disabled="true"]) {
+  cursor: default;
+}
