@@ -207,6 +207,25 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
   ⌄ » ; résultats avec onglets Data / Message, mêmes règles de grille que les tables.
 - La complétion `Ctrl+Space` (dans l'éditeur) marche toujours, y compris après un changement d'onglet.
 
+> Amendement 2026-10-21 (#89) : barre (36 px, `role="toolbar"`, ← / → entre ses boutons) :
+> à gauche « No limit ⌄ » (bouton de menu, nom « Row limit: … », choix radio « No limit » /
+> « Limit N », N = réglage `autoLimitValue` ; c'est l'Auto LIMIT existant, choix par onglet
+> gardé en mémoire seulement), « Beautify » (`editor.format`, Ctrl+I, la sélection ou tout) ;
+> à droite Save, Cancel pendant l'exécution, puis « Run Current » (Ctrl+Enter) collé à son
+> « ⌄ » (menu Run Current / Run All, Ctrl+Shift+Enter ; les deux désactivés pendant
+> l'exécution). Le Ctrl+Shift+F de Beautify (§5.3 « reste aussi ») est laissé à la Task 10 :
+> c'est aujourd'hui `sidebar.search` (global), il faut d'abord la priorité de l'éditeur.
+> Résultats : onglets Data / Message (tablist, ← / →). Data = la grille de la Task 5, un
+> onglet « Result N » par jeu seulement quand il y en a plusieurs, « N rows · ms » à droite
+> des onglets ; Message = une ligne par instruction (lignes renvoyées, lignes modifiées ou
+> « done », avec la durée), « Running… », « Cancelled », l'erreur et l'indice de reconnexion
+> (pas de NOTICE : le backend n'en renvoie pas). Onglet par défaut : Data quand l'exécution a
+> renvoyé des lignes sans erreur ni annulation, sinon Message (une erreur ou une annulation
+> ne se voient que là) ; un onglet choisi à la main tient jusqu'à l'exécution suivante.
+> Focus : un onglet SQL activé alors que rien n'a le focus (raccourci clavier, l'onglet
+> d'avant a emporté le focus) met le focus dans son éditeur, pour taper ou `Ctrl+Space`
+> aussitôt ; un clic sur un onglet laisse le focus sur l'onglet.
+
 ### 2.6 Raccourcis et interactions
 - Tableau du §5.3 : raccourcis de TablePlus macOS, `⌘` → `Ctrl`, `⌥` → `Alt`, `⌃⌘` →
   `Ctrl+Alt` sauf conflit avec le bureau ; tous dans le registre de raccourcis existant
@@ -300,6 +319,25 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E7D32, nombres
 #B57AFF / #1D00FF, chaînes #CA6E6E / #E04978, commentaires #009B31, requête courante #30363F /
 #F3EEDE, sélection #003F84 / #FFEA84).
+
+> Amendement 2026-10-21 (#89) : tokens de l'éditeur SQL (clair / sombre) : `--sql-keyword`
+> #266EAA / #63A5DC, `--sql-function` #2D7931 / #7CB342, `--sql-number` #1D00FF / #BC87FF,
+> `--sql-string` #CB2357 / #D58C8C, `--sql-comment` #007C27 / #00BA3B, `--sql-current`
+> #F3EEDE / #30363F, `--sql-selection` #FFEA84 / #003F84. Écart au §5.1 pour le contraste :
+> les couleurs de texte gardent la teinte du §5.1, assombries en clair et éclaircies en
+> sombre jusqu'à ≥ 4,5:1 sur `--content` et sur la bande `--sql-current` (règle des #102 /
+> #103 / #104) ; la bande et la sélection restent celles du §5.1 (la bande reste visible :
+> 1,16:1 / 1,37:1 sur `--content`, l'éclaircir en clair ou l'assombrir en sombre l'effacerait).
+> Contrastes (sur `--content` / sur la bande) — clair : mots-clés 5,39 / 4,65, fonctions
+> 5,40 / 4,65, nombres 8,41 / 7,25, chaînes 5,36 / 4,62, commentaires 5,37 / 4,63 ; sombre :
+> mots-clés 6,31 / 4,61, fonctions 6,66 / 4,86, nombres 6,39 / 4,67, chaînes 6,32 / 4,61,
+> commentaires 6,42 / 4,69 (test `sql_editor_contrast`). Mots-clés : aussi les types,
+> booléens et `NULL` ; fonctions : les fonctions intégrées du dialecte (lang-sql) ; les
+> identifiants entre guillemets restent du texte (`--text`) ; ni gras ni italique. Requête
+> courante : fond des lignes de l'instruction que Run Current exécuterait (celle du curseur),
+> à partir de sa première ligne de code (un commentaire après le `;` précédent n'est pas
+> coloré), seulement sans sélection (la sélection s'exécute alors), et plus de bande de ligne
+> active ; rien au-delà de 200 000 caractères (le texte est redécoupé à chaque frappe).
 
 ### 5.2 Dimensions (à 100 %)
 Barre du haut 52, pilules 34, boutons 28–32 ; colonne des connexions 80 ; barre latérale 262

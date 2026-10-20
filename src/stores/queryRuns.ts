@@ -8,6 +8,8 @@ export interface StatementResult {
 }
 
 export interface QueryRun {
+  /** Unique per run started (the results panel keeps a tab chosen by hand for one run only). */
+  id: number;
   running: boolean;
   /** Number of statements in the batch. */
   total: number;
@@ -28,6 +30,9 @@ interface QueryRunsState {
   restore: (tabId: string, previous: QueryRun | undefined) => void;
 }
 
+/** The last `QueryRun.id` given. */
+let lastRunId = 0;
+
 /**
  * Per-query-tab run state, outside the component so it survives tab switches and keeps
  * receiving channel events while the tab is unmounted. The end of a batch is the
@@ -46,7 +51,7 @@ export const useQueryRuns = create<QueryRunsState>((set) => {
       set((s) => ({
         runs: {
           ...s.runs,
-          [tabId]: { running: true, total, results: [], error: null, cancelled: false },
+          [tabId]: { id: ++lastRunId, running: true, total, results: [], error: null, cancelled: false },
         },
       })),
     applyEvent: (tabId, e) =>

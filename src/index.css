@@ -99,6 +99,13 @@
   --color-window-close-text: var(--window-close-text);
   --color-status-connecting: var(--status-connecting);
   --color-status-error: var(--status-error);
+  --color-sql-keyword: var(--sql-keyword);
+  --color-sql-function: var(--sql-function);
+  --color-sql-number: var(--sql-number);
+  --color-sql-string: var(--sql-string);
+  --color-sql-comment: var(--sql-comment);
+  --color-sql-current: var(--sql-current);
+  --color-sql-selection: var(--sql-selection);
   --font-sans: var(--font-ui);
   --font-mono: var(--font-mono);
   --text-xs: var(--text-xs);

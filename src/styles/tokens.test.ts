@@ -252,3 +252,26 @@ test("connection list rows: the subtitle reads 4.5:1 at rest, hovered and select
     expect(ratio("--text", "--sel"), `${selector} selected`).toBeGreaterThanOrEqual(4.5);
   }
 });
+
+test("sql_editor_contrast: the SQL text colours read 4.5:1 on the editor and on the current-statement band, in both themes (#89)", () => {
+  const SQL_TEXT = ["--sql-keyword", "--sql-function", "--sql-number", "--sql-string", "--sql-comment"];
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    for (const t of [...SQL_TEXT, "--sql-current", "--sql-selection"]) {
+      expect(values(selector)[t], `${selector} ${t}`).toMatch(/^#[0-9A-F]{6}$/i);
+    }
+    for (const fg of SQL_TEXT) {
+      for (const bg of ["--content", "--sql-current"]) {
+        expect(contrastRatio(v[fg], v[bg]), `${selector} ${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    // The band stays visible on the editor background, and the text reads on the selection.
+    expect(contrastRatio(v["--sql-current"], v["--content"]), `${selector} band on content`).toBeGreaterThanOrEqual(1.1);
+    expect(contrastRatio(v["--text"], v["--sql-selection"]), `${selector} text on selection`).toBeGreaterThanOrEqual(4.5);
+  }
+  // The §5.1 band and selection colours are kept as they are.
+  expect(values(LIGHT)["--sql-current"]).toBe("#F3EEDE");
+  expect(values(DARK_FORCED)["--sql-current"]).toBe("#30363F");
+  expect(values(LIGHT)["--sql-selection"]).toBe("#FFEA84");
+  expect(values(DARK_FORCED)["--sql-selection"]).toBe("#003F84");
+});

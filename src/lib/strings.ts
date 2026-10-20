@@ -1,3 +1,7 @@
+/** A capped result set's note, after its row count (" (truncated to first 10,000)"). */
+const truncatedNote = (rows: number, truncated: boolean) =>
+  truncated ? ` (truncated to first ${rows.toLocaleString("en-US")})` : "";
+
 export const strings = {
   appName: "TableMax",
   tagline: "A free, fast database client",
@@ -254,17 +258,34 @@ export const strings = {
   },
   query: {
     editorLabel: "SQL editor",
-    run: "Run",
-    runAll: "Run all",
     cancel: "Cancel",
     running: "Running…",
     cancelled: "Cancelled",
+    // Task 9 (#89): the editor toolbar.
+    toolbarLabel: "SQL editor toolbar",
+    runCurrent: "Run Current",
+    runCurrentHint: "Run the statement under the cursor, or the selection",
+    runAll: "Run All",
+    runMenu: "More run options",
+    runMenuLabel: "Run",
+    beautify: "Beautify",
+    beautifyHint: "Format the SQL: the selection, or all of it",
+    noLimit: "No limit",
+    limitRows: (rows: number) => `Limit ${rows}`,
+    /** The row limit menu button's name; `current` is its visible text. */
+    limitButton: (current: string) => `Row limit: ${current}`,
+    limitMenu: "Row limit",
+    // Task 9 (#89): the results, Data / Message.
     resultsLabel: "Results",
+    dataTab: "Data",
+    messageTab: "Message",
+    resultSetsLabel: "Result sets",
     resultTab: (n: number) => `Result ${n}`,
     resultHeader: (rows: number, ms: number, truncated = false) =>
-      `${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"}${
-        truncated ? ` (truncated to first ${rows.toLocaleString("en-US")})` : ""
-      } · ${ms} ms`,
+      `${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"}${truncatedNote(rows, truncated)} · ${ms} ms`,
+    noData: "No rows: this run returned no result set (see Message)",
+    statementRows: (stmt: number, rows: number, ms: number, truncated = false) =>
+      `Statement ${stmt}: ${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"} returned${truncatedNote(rows, truncated)} (${ms} ms)`,
     rowsAffected: (stmt: number, rows: number, ms: number) =>
       `Statement ${stmt}: ${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"} affected (${ms} ms)`,
     done: (stmt: number, ms: number) => `Statement ${stmt}: done (${ms} ms)`,
@@ -272,8 +293,6 @@ export const strings = {
     failedNoIndex: (message: string) => message,
     connectionLostHint: "Connection lost — run again to reconnect",
     empty: (shortcut: string) => `Write a query and press ${shortcut} to run it`,
-    // Plan 4 Task 7: editor toolbar and formatting.
-    autoLimit: (rows: number) => `Auto LIMIT ${rows}`,
     autoLimitHint: (rows: number) => `Run adds LIMIT ${rows} to SELECT statements that have none`,
     formatFailed: "Could not format: the SQL could not be parsed",
     // Plan 4 review fixes.
