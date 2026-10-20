@@ -348,6 +348,22 @@ test("the close button of the active capsule has a hover colour that differs fro
   expect(otherClose).toHaveClass("hover:bg-tab-sel");
 });
 
+test("lone_tab: a single tab spans the bar and shows its close button on hover only (#103)", () => {
+  setup([q("a", "Query 1")]);
+  const capsule = tab("Query 1").closest("[data-tab-id]") as HTMLElement;
+  expect(capsule.style.flexGrow).toBe("1");
+  const close = closeButtonOf("Query 1");
+  expect(close).toHaveClass("opacity-0", "group-hover:opacity-100");
+  expect(close).not.toHaveClass("opacity-100");
+  // With another tab the active one shows it at once.
+  act(() =>
+    useWorkspaces.setState((s) => ({
+      workspaces: s.workspaces.map((w) => ({ ...w, tabs: [...w.tabs, q("b", "Query 2")] })),
+    })),
+  );
+  expect(closeButtonOf("Query 1")).toHaveClass("opacity-100");
+});
+
 test("inactive capsule text and the database badge use the tab text token", () => {
   setup([
     q("a", "Query 1"),
