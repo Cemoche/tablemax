@@ -782,6 +782,9 @@ export const strings = {
     "filters.down": "Next condition (filter bar)",
     "filters.column": "Jump to the condition's column (filter bar)",
     "filters.operator": "Jump to the condition's operator (filter bar)",
+    "connection.open": "Show the connection list",
+    "connection.new": "New connection",
+    "connections.search": "Search the connection list (connections screen)",
   },
   session: {
     disconnected: "Disconnected",

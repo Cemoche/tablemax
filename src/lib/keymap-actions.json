@@ -53,5 +53,8 @@
   "filters.up",
   "filters.down",
   "filters.column",
-  "filters.operator"
+  "filters.operator",
+  "connection.open",
+  "connection.new",
+  "connections.search"
 ]

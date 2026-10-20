@@ -111,6 +111,9 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "filters.down",
     "filters.column",
     "filters.operator",
+    "connection.open",
+    "connection.new",
+    "connections.search",
 ];
 /// At most this many keymap entries are kept (defensive: one per known id fits well below).
 pub const KEYMAP_MAX_ENTRIES: usize = 64;

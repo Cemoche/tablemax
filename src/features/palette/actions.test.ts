@@ -118,6 +118,7 @@ test("the palette actions with a shortcut are the keymap registry's actions of t
     "tab.close",
     "tab.next",
     "tab.previous",
+    "connection.new",
     "editor.format",
     "editor.comment",
     "sidebar.toggle",
