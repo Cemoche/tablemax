@@ -490,13 +490,14 @@ function TableDataView({
               </div>
               {e.editable && <PendingChangesPanel workspaceId={workspaceId} tabId={tabId} object={object} />}
             </div>
-            {detail.open && t.result && e.model && (
+            {/* Shown as soon as the switch is on: empty while the page loads or failed to. */}
+            {detail.open && (
               <RowDetailPanel
                 workspaceId={workspaceId}
                 object={object}
-                data={t.result}
+                data={t.result ?? null}
                 info={e.info}
-                model={e.model}
+                model={e.model ?? null}
                 row={e.selectedRow}
                 onChange={e.setValue}
                 onAction={e.runAction}

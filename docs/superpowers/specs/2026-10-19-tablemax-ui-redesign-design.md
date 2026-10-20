@@ -114,16 +114,17 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
   champs avec leur type, édition sur place.
 
 > Amendement 2026-10-20 (Task 7, #87 / #79) : le panneau est un seul interrupteur pour la
-> fenêtre (comme le bouton de la barre du haut qui le lit), plus un état par onglet : il reste
+> fenêtre (comme le bouton de la barre du haut qui le lit), et non plus un état par onglet : il reste
 > ouvert après un changement d'onglet ou de workspace et chaque onglet de table qui montre ses
 > lignes l'affiche ; un onglet SQL ne lie pas `Ctrl+Space` (la complétion de l'éditeur le
 > garde), le bouton y est désactivé. Ouvert pour la session ; la largeur (280 par défaut,
-> min 240, max 720, bord gauche glissé ou flèches sur le séparateur) est gardée d'une session
+> min 240, max 720 et jamais plus de 60 % de la zone de contenu, bord gauche glissé ou flèches sur le séparateur) est gardée d'une session
 > à l'autre comme celle de la barre latérale. Ouvrir ne prend pas le focus (la grille le garde
 > et le panneau suit la ligne) ; Échap dans le panneau, ou sa fermeture pendant qu'il a le
 > focus, rend le focus à la grille. Plusieurs lignes sélectionnées : la ligne de la cellule
 > active, sinon la première sélectionnée. Pas de panneau sur les résultats d'un onglet SQL
-> (suite à part).
+> (suite à part). Le panneau s'affiche dès que l'interrupteur est mis, vide (« No row
+> selected ») pendant le chargement de la page ou après un échec.
 
 > Amendement 2026-10-20 (#104) : la pastille de statut prend la largeur libre (une marge de
 > chaque côté reste une zone de glisser-déplacer) et se lit « [TAG] Moteur version : SSH :

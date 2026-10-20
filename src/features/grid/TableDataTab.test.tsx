@@ -1891,3 +1891,23 @@ test("page_popover_offset_limit: Go loads that offset and limit; the grid's Ctrl
     expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ offset: 250, limit: 100 })),
   );
 });
+
+test("with the panel on, it is there while the page loads and after a failed load (empty)", async () => {
+  vi.mocked(ipc.tablePage)
+    .mockImplementationOnce(() => new Promise<ResultSet>(() => {}))
+    .mockRejectedValueOnce({ kind: "connectionLost", message: "server gone" });
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  toggleDetails();
+  const region = () => screen.queryByRole("complementary", { name: strings.grid.rowDetails });
+  // Loading: no page yet, the panel shows no row.
+  const first = render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  expect(region()).toBeInTheDocument();
+  expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
+  first.unmount();
+  // The first load failed: the error shows and the panel stays, empty.
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  expect(await screen.findByText("server gone")).toBeInTheDocument();
+  expect(grid).toBeNull();
+  expect(region()).toBeInTheDocument();
+  expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
+});

@@ -85,11 +85,33 @@ beforeEach(() => {
   useChrome.setState({ rowDetailsWidth: ROW_DETAILS_DEFAULT });
 });
 
-test("no_row_selected_state: without a selected row it says so, with no field and no search", () => {
+test("no_row_selected_state: without a selected row it says so, with no field (the search stays)", () => {
   renderPanel(data(), { row: null });
   expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
   expect(strings.grid.rowDetailsEmpty).toBe("No row selected");
   expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.getByRole("searchbox", { name: strings.grid.rowDetailsSearchLabel })).toBeInTheDocument();
+});
+
+test("while the page loads (no data or model yet) the panel is there, empty", () => {
+  render(
+    <RowDetailPanel
+      workspaceId="w1"
+      object={obj}
+      data={null}
+      info={null}
+      model={null}
+      row={null}
+      onChange={() => {}}
+      onAction={() => {}}
+      linksAt={() => []}
+      onOpenLink={() => {}}
+      onClose={() => {}}
+      onEscape={() => {}}
+    />,
+  );
+  expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
+  expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
 });
 
 test("field_search_filters_fields: Search for field… keeps the fields whose name matches", async () => {
@@ -111,12 +133,15 @@ test("field_search_filters_fields: Search for field… keeps the fields whose na
 });
 
 test("the panel is a labelled region; Escape in it hands the focus back to the grid", async () => {
-  const { onEscape, onClose } = renderPanel(data());
+  const { onEscape, onClose, onChange, onAction } = renderPanel(data());
   expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
-  await userEvent.click(field("note"));
+  await userEvent.type(field("note"), "!");
   await userEvent.keyboard("{Escape}");
   expect(onEscape).toHaveBeenCalledOnce();
-  // The value typed so far stays pending: Escape only leaves the panel.
+  // What was typed stays pending: Escape only leaves the panel, it reverts nothing.
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenLastCalledWith(0, 3, { t: "text", v: "hello!" });
+  expect(onAction).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("searchbox", { name: strings.grid.rowDetailsSearchLabel }));
   await userEvent.keyboard("{Escape}");
   expect(onEscape).toHaveBeenCalledTimes(2);
@@ -288,4 +313,29 @@ test("a failed full-value load can be retried", async () => {
   await userEvent.click(screen.getByRole("button", { name: strings.grid.retry }));
   await waitFor(() => expect(field("note").value).toBe("full now"));
   expect(ipc.cellValue).toHaveBeenCalledTimes(2);
+});
+
+test("a small content area caps the panel at 60 % of it, keeping the saved width for a wider window", () => {
+  const rect = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue({ width: 500, height: 400, x: 0, y: 0, top: 0, left: 0, right: 500, bottom: 400, toJSON: () => ({}) });
+  try {
+    useChrome.setState({ rowDetailsWidth: 720 });
+    renderPanel(data());
+    const aside = screen.getByRole("complementary", { name: strings.grid.rowDetails });
+    expect(aside.className).toContain("max-w-[60%]");
+    expect(aside.style.width).toBe("300px");
+    const edge = screen.getByRole("separator", { name: strings.grid.rowDetailsResize });
+    expect(edge).toHaveAttribute("aria-valuenow", "300");
+    expect(edge).toHaveAttribute("aria-valuemax", "300");
+    expect(useChrome.getState().rowDetailsWidth).toBe(720);
+    // Widening past the cap stays at the cap; narrowing starts from what is shown.
+    fireEvent.keyDown(edge, { key: "ArrowLeft" });
+    expect(aside.style.width).toBe("300px");
+    fireEvent.keyDown(edge, { key: "ArrowRight" });
+    expect(aside.style.width).toBe("290px");
+    expect(useChrome.getState().rowDetailsWidth).toBe(290);
+  } finally {
+    rect.mockRestore();
+  }
 });

@@ -130,7 +130,7 @@ test("ctrl_space_after_tab_switch (#79): Ctrl+Space toggles the panel every time
   await user.click(screen.getByRole("tab", { name: /users/ }));
   await gridReady();
   await ctrlSpaceToggles(user);
-  // From the grid (it has the focus after a row click): Space too.
+  // Space, as the grid reports it when it has the focus (its own keydown, see DataGrid).
   act(() => grid!.onToggleDetails!());
   const afterSpace = shown();
   await user.keyboard("{Control>} {/Control}");
