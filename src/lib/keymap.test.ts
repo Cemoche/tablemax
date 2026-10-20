@@ -12,7 +12,9 @@ import {
   defaultShortcut,
   effectiveShortcut,
   effectiveShortcuts,
+  focusScopeOf,
   isKeymapActionId,
+  shadowingAction,
   isValidShortcut,
   useAction,
   useEffectiveShortcut,
@@ -88,6 +90,11 @@ test("the defaults are the combinations the code binds today", () => {
     "connection.open": "Mod+Shift+K",
     "connection.new": "Mod+N",
     "connections.search": "Mod+F",
+    "grid.discard": "Mod+Shift+Backspace",
+    "grid.preview": "Mod+Shift+P",
+    "tab.reload": "Alt+R",
+    "workspace.reconnect": "Mod+Shift+R",
+    "editor.complete": "Ctrl+Space",
   });
   const scope = (id: KeymapActionId) => KEYMAP_ACTIONS.find((a) => a.id === id)?.scope;
   expect(scope("query.new")).toBe("global");
@@ -220,6 +227,8 @@ test("the grammar accepts canonical ASCII specs", () => {
     "Alt+ArrowRight",
     "Ctrl+PageUp",
     "Mod+Shift+PageDown",
+    "Mod+NumpadAdd",
+    "Mod+NumpadSubtract",
     "F5",
     "F12",
     "Shift+F1",
@@ -266,7 +275,7 @@ test("the grammar rejects everything else", () => {
 });
 
 test("Shift alone is not a modifier, except on a function key", () => {
-  for (const bad of ["Shift+K", "Shift+Tab", "Shift+1", "Shift+Enter", "Shift+/", "Shift+ArrowUp", "Shift+PageUp", "PageDown"]) {
+  for (const bad of ["Shift+K", "Shift+Tab", "Shift+1", "Shift+Enter", "Shift+/", "Shift+ArrowUp", "Shift+PageUp", "PageDown", "NumpadAdd", "Shift+NumpadSubtract"]) {
     expect(isValidShortcut(bad), bad).toBe(false);
   }
   for (const ok of ["Shift+F5", "Mod+Shift+K", "Ctrl+Shift+Tab", "Alt+Shift+1", "Meta+Shift+Enter"]) {
@@ -288,6 +297,11 @@ test("every grammar key is matched by matchShortcut", () => {
   expect(matchShortcut(ev("Digit2", { ctrlKey: false, altKey: true }), "Alt+2")).toBe(true);
   expect(matchShortcut(ev("PageUp"), "Ctrl+PageUp")).toBe(true);
   expect(matchShortcut(ev("PageDown", { shiftKey: true }), "Ctrl+Shift+PageDown")).toBe(true);
+  expect(matchShortcut(ev("NumpadAdd"), "Ctrl+NumpadAdd")).toBe(true);
+  expect(matchShortcut(ev("NumpadSubtract"), "Ctrl+NumpadSubtract")).toBe(true);
+  // The numpad's + is not the main row's = key, and the other way round.
+  expect(matchShortcut(ev("NumpadAdd"), "Ctrl+=")).toBe(false);
+  expect(matchShortcut(ev("Equal"), "Ctrl+NumpadAdd")).toBe(false);
 });
 
 test("effectiveShortcut takes a valid override and falls back on unknown or invalid entries", () => {
@@ -345,13 +359,21 @@ test("the editor conflicts with its query tab both ways (ruling B-R1), not with 
   expect(conflictFor("query.save", "Mod+Enter", {}, false)).toBe("editor.run");
   expect(conflictFor("editor.format", "Mod+I", {}, false)).toBeNull();
   expect(conflictFor("grid.rowDetails", "Mod+/", {}, false)).toBeNull();
-  // Completion is Ctrl+Space in the editor (CodeMirror) and Ctrl+Space shows the row details
-  // in a table tab (spec §5.3): never active together.
-  expect(conflictFor("editor.format", "Ctrl+Space", {}, false)).toBeNull();
+  // Completion is Ctrl+Space in the editor (editor.complete, #90) and Ctrl+Space shows the
+  // row details in a table tab (spec §5.3): never active together.
+  expect(conflictFor("editor.complete", "Ctrl+Space", {}, false)).toBeNull();
+  expect(conflictFor("grid.rowDetails", "Ctrl+Space", {}, false)).toBeNull();
+  expect(conflictFor("editor.format", "Ctrl+Space", {}, false)).toBe("editor.complete");
   // Mod+I is + Row in a table tab (Task 6), still free for the editor's Beautify.
   expect(conflictFor("grid.rowDetails", "Mod+I", {}, false)).toBe("grid.addRow");
-  // Mod+Shift+F searches the sidebar from anywhere, so the editor cannot take it back.
-  expect(conflictFor("editor.format", "Mod+Shift+F", {}, false)).toBe("sidebar.search");
+  // #90: Mod+Shift+F formats in the editor (which shadows the sidebar search there) and
+  // searches the sidebar elsewhere: a declared pair, no conflict either way.
+  expect(conflictFor("editor.format", "Mod+Shift+F", {}, false)).toBeNull();
+  // The pair covers the editor's Beautify only: Mod+I is still + Row in a table tab.
+  expect(conflictFor("sidebar.search", "Mod+I", {}, false)).toBe("grid.addRow");
+  // Other actions still refuse it: the editor's own (Beautify has it), the rest the search's.
+  expect(conflictFor("editor.run", "Mod+Shift+F", {}, false)).toBe("editor.format");
+  expect(conflictFor("grid.commit", "Mod+Shift+F", {}, false)).toBe("sidebar.search");
 });
 
 test("Mod is resolved per platform: Mod+K is Ctrl+K on Linux, not on macOS", () => {
@@ -475,4 +497,113 @@ test("filter_row_keys: Up / Down and the column / operator jumps (#103), ⌘← 
   // In the bar they shadow the grid's page keys (macOS), which only act in the grid.
   expect(conflictFor("filters.column", "Mod+ArrowLeft", {}, true)).toBeNull();
   expect(conflictFor("filters.up", "Mod+ArrowDown", {}, false)).toBe("filters.down");
+});
+
+/** An element inside a focus region (`data-shortcut-scope`), attached to the document. */
+function inRegion(scope: string | null, tag = "button"): { el: HTMLElement; remove: () => void } {
+  const region = document.createElement("div");
+  if (scope) region.setAttribute("data-shortcut-scope", scope);
+  const el = document.createElement(tag);
+  region.appendChild(el);
+  document.body.appendChild(region);
+  return { el, remove: () => region.remove() };
+}
+const keydown = (el: HTMLElement, init: KeyboardEventInit) => {
+  const e = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+  el.dispatchEvent(e);
+  return e;
+};
+
+test("editor_precedence: Ctrl+Shift+F formats in the editor and searches the sidebar elsewhere", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  const search = vi.fn();
+  renderHook(() => useAction("sidebar.search", search));
+  const editor = inRegion("editor", "textarea");
+  const outside = inRegion(null);
+  const e = keydown(editor.el, { code: "KeyF", key: "F", ctrlKey: true, shiftKey: true });
+  expect(search).not.toHaveBeenCalled();
+  // Left alone: the editor's own keymap handles it (not prevented by the global action).
+  expect(e.defaultPrevented).toBe(false);
+  keydown(outside.el, { code: "KeyF", key: "F", ctrlKey: true, shiftKey: true });
+  expect(search).toHaveBeenCalledTimes(1);
+  // A custom Beautify gives Ctrl+Shift+F back to the sidebar search, even in the editor.
+  act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "editor.format": "Alt+B" } } }));
+  keydown(editor.el, { code: "KeyF", key: "F", ctrlKey: true, shiftKey: true });
+  expect(search).toHaveBeenCalledTimes(2);
+  editor.remove();
+  outside.remove();
+});
+
+test("context_shortcuts_do_not_steal_text_input: a field's keys stay with its own scope", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  const addRow = vi.fn();
+  const filters = vi.fn();
+  const viewData = vi.fn();
+  // As TableDataTab / TableBottomBar bind them.
+  renderHook(() => {
+    useAction("grid.addRow", addRow, { skipInEditable: true });
+    useAction("grid.filters", filters, { skipInEditable: true });
+    useAction("grid.viewData", viewData, { skipInEditable: true, capture: true, stopPropagation: true });
+  });
+  // Ctrl+I in the filter bar's value field adds a condition (the bar's key), not a row.
+  const value = inRegion("filterBar", "input");
+  keydown(value.el, { code: "KeyI", key: "i", ctrlKey: true });
+  // Ctrl+F in the sidebar's search field is the field's (find), not the table's filters.
+  const sidebarSearch = inRegion(null, "input");
+  keydown(sidebarSearch.el, { code: "KeyF", key: "f", ctrlKey: true });
+  // Alt+1 typed in the editor stays the editor's.
+  const editor = inRegion("editor", "textarea");
+  keydown(editor.el, { code: "Digit1", key: "1", altKey: true });
+  expect(addRow).not.toHaveBeenCalled();
+  expect(filters).not.toHaveBeenCalled();
+  expect(viewData).not.toHaveBeenCalled();
+  // The same keys outside a field act.
+  const grid = inRegion(null, "div");
+  keydown(grid.el, { code: "KeyI", key: "i", ctrlKey: true });
+  keydown(grid.el, { code: "Digit1", key: "1", altKey: true });
+  expect(addRow).toHaveBeenCalledTimes(1);
+  expect(viewData).toHaveBeenCalledTimes(1);
+  for (const r of [value, sidebarSearch, editor, grid]) r.remove();
+});
+
+test("filter_bar_precedence: a table tab key rebound to a filter bar key leaves it to the bar (capture phase too)", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "grid.viewData": "Mod+B" } } });
+  const viewData = vi.fn();
+  renderHook(() => useAction("grid.viewData", viewData, { skipInEditable: true, capture: true, stopPropagation: true }));
+  const bar = inRegion("filterBar");
+  const barKey = vi.fn();
+  bar.el.addEventListener("keydown", barKey);
+  const e = keydown(bar.el, { code: "KeyB", key: "b", ctrlKey: true });
+  expect(viewData).not.toHaveBeenCalled();
+  // Neither stopped nor prevented on its way: the bar sees it.
+  expect(barKey).toHaveBeenCalledTimes(1);
+  expect(e.defaultPrevented).toBe(false);
+  // Outside the bar the custom binding acts.
+  const outside = inRegion(null);
+  keydown(outside.el, { code: "KeyB", key: "b", ctrlKey: true });
+  expect(viewData).toHaveBeenCalledTimes(1);
+  bar.remove();
+  outside.remove();
+});
+
+test("shadowingAction: only a focus region's own actions shadow, and only on their keys", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  const editor = inRegion("editor", "textarea");
+  const ev = (init: KeyboardEventInit) => {
+    const e = new KeyboardEvent("keydown", init);
+    Object.defineProperty(e, "target", { value: editor.el });
+    return e;
+  };
+  expect(shadowingAction("sidebar.search", ev({ code: "KeyF", key: "F", ctrlKey: true, shiftKey: true }), {})).toBe(
+    "editor.format",
+  );
+  expect(shadowingAction("database.open", ev({ code: "KeyK", key: "k", ctrlKey: true }), {})).toBeNull();
+  // An action of the region's own scope is never shadowed.
+  expect(shadowingAction("editor.run", ev({ code: "Enter", key: "Enter", ctrlKey: true }), {})).toBeNull();
+  // An unknown region name is no focus scope.
+  expect(focusScopeOf(editor.el)).toBe("editor");
+  editor.el.parentElement?.setAttribute("data-shortcut-scope", "nonsense");
+  expect(focusScopeOf(editor.el)).toBeNull();
+  editor.remove();
 });

@@ -7,10 +7,23 @@ interface Props {
   cancelLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * The button focused on open (Enter presses it). Default "cancel"; "confirm" for a dialog
+   * that is itself the guard of a deliberate key press (Discard's shortcut, #90).
+   */
+  initialFocus?: "cancel" | "confirm";
 }
 
-/** A modal asking to confirm a destructive action; Escape cancels, Cancel has the focus. */
-export function ConfirmDialog({ title, message, confirmLabel, cancelLabel, onConfirm, onCancel }: Props) {
+/** A modal asking to confirm a destructive action; Escape cancels, Cancel has the focus by default. */
+export function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  cancelLabel,
+  onConfirm,
+  onCancel,
+  initialFocus = "cancel",
+}: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -34,13 +47,18 @@ export function ConfirmDialog({ title, message, confirmLabel, cancelLabel, onCon
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            autoFocus
+            autoFocus={initialFocus === "cancel"}
             onClick={onCancel}
             className="rounded-sm border border-border px-3 py-1"
           >
             {cancelLabel}
           </button>
-          <button type="button" onClick={onConfirm} className="rounded-sm bg-danger px-3 py-1 text-accent-contrast">
+          <button
+            type="button"
+            autoFocus={initialFocus === "confirm"}
+            onClick={onConfirm}
+            className="rounded-sm bg-danger px-3 py-1 text-accent-contrast"
+          >
             {confirmLabel}
           </button>
         </div>

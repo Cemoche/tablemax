@@ -7,8 +7,17 @@ import { fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { act } from "react";
 import { useSettings, DEFAULT_SETTINGS } from "../../stores/settings";
+import { focusScopeOf } from "../../lib/keymap";
 import { applyTheme } from "../../lib/theme";
-import { SqlEditor, buildEditorTheme, editorThemeSpec, insertAtCursor, sqlHighlightStyle } from "./SqlEditor";
+import { startCompletion } from "@codemirror/autocomplete";
+import {
+  CM_COMPLETION_KEYMAP,
+  SqlEditor,
+  buildEditorTheme,
+  editorThemeSpec,
+  insertAtCursor,
+  sqlHighlightStyle,
+} from "./SqlEditor";
 
 // CodeMirror measures text ranges (a pick scrolls the cursor into view), which jsdom does not lay out.
 if (!Range.prototype.getClientRects) {
@@ -169,6 +178,70 @@ test("ctrl_space_in_editor_stays_completion: Ctrl+Space in the editor opens the 
   expect(event.defaultPrevented).toBe(true);
   expect(completionStatus(view.state)).not.toBeNull();
   await waitFor(() => expect(completion).toHaveBeenCalled());
+});
+
+test("editor_format_alternate: Ctrl+Shift+F formats too, in the editor's shortcut region", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  const { container } = render(<SqlEditor value="select 1" onChange={() => {}} dialect="postgres" onRun={() => {}} />);
+  // The region the keymap's precedence reads (spec §5.5 #90): the text, not the panels.
+  expect(container.querySelector(".cm-content")).toHaveAttribute("data-shortcut-scope", "editor");
+  expect(container.querySelector(".cm-editor")).not.toHaveAttribute("data-shortcut-scope");
+  const view = EditorView.findFromDOM(container.querySelector(".cm-content") as HTMLElement);
+  if (!view) throw new Error("no editor");
+  const event = new KeyboardEvent("keydown", {
+    key: "F",
+    code: "KeyF",
+    keyCode: 70,
+    ctrlKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  act(() => {
+    view.contentDOM.dispatchEvent(event);
+  });
+  expect(event.defaultPrevented).toBe(true);
+  await waitFor(() => expect(view.state.doc.toString()).toBe("SELECT\n  1"));
+  // A field of the editor's panels (its search panel) is outside the region: there the app
+  // keys act (Ctrl+Shift+F searches the sidebar).
+  const panelField = document.createElement("input");
+  view.dom.appendChild(panelField);
+  expect(focusScopeOf(view.contentDOM)).toBe("editor");
+  expect(focusScopeOf(panelField)).toBeNull();
+});
+
+test("editor_complete_rebinds: a custom completion key replaces Ctrl+Space", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  onTestFinished(() => useSettings.setState({ settings: DEFAULT_SETTINGS }));
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "editor.complete": "Alt+Space" } } });
+  const completion = vi.fn(() => ({ from: 0, options: [{ label: "select" }] }));
+  const { container } = render(
+    <SqlEditor value="sel" onChange={() => {}} dialect="postgres" onRun={() => {}} completionSource={completion} />,
+  );
+  const view = EditorView.findFromDOM(container.querySelector(".cm-content") as HTMLElement);
+  if (!view) throw new Error("no editor");
+  act(() => view.dispatch({ selection: { anchor: 3 } }));
+  const press = (mods: KeyboardEventInit) => {
+    const event = new KeyboardEvent("keydown", { key: " ", code: "Space", keyCode: 32, bubbles: true, cancelable: true, ...mods });
+    act(() => {
+      view.contentDOM.dispatchEvent(event);
+    });
+    return event;
+  };
+  expect(press({ ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(completionStatus(view.state)).toBeNull();
+  expect(press({ altKey: true }).defaultPrevented).toBe(true);
+  expect(completionStatus(view.state)).not.toBeNull();
+});
+
+test("completion_keys_never_start_it: no CodeMirror key starts the completion (Ctrl-Space, macOS Alt-` / Alt-i)", () => {
+  // Starting it is editor.complete's: a custom editor binding on Alt+I (macOS) is not taken.
+  expect(CM_COMPLETION_KEYMAP.some((b) => b.run === startCompletion)).toBe(false);
+  expect(CM_COMPLETION_KEYMAP.map((b) => b.key ?? b.mac)).not.toContain("Alt-i");
+  // The list's own keys stay.
+  expect(CM_COMPLETION_KEYMAP.map((b) => b.key)).toEqual(expect.arrayContaining(["Escape", "ArrowDown", "Enter"]));
 });
 
 test("ctrl_space_opens_completion: Ctrl+Space opens the list every time, also after Escape or a pick", async () => {

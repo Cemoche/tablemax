@@ -221,6 +221,37 @@ test("the keyboard list shows a custom combination, and the default for an inval
   expect(shortcutOf(strings.keymap["query.new"])).toBe("Ctrl+T");
 });
 
+/** Every combination a row shows (its default and alternates, or the custom one). */
+const shortcutsOf = (label: string) =>
+  [...(screen.getByText(label).closest("li")?.querySelectorAll("kbd") ?? [])].map((k) => k.textContent);
+
+test("shortcut_alternates_listed: a row shows every default combination; a custom one replaces them (#90)", () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "tab.previous": "Alt+P" } } });
+  setup();
+  expect(shortcutsOf(strings.keymap["tab.next"])).toEqual(["Ctrl+Tab", "Ctrl+]", "Ctrl+PageDown"]);
+  expect(shortcutsOf(strings.keymap["editor.format"])).toEqual(["Ctrl+I", "Ctrl+Shift+F"]);
+  expect(shortcutsOf(strings.keymap["font.increase"])).toEqual(["Ctrl+=", "Ctrl+Shift+=", "Ctrl+Num +"]);
+  expect(shortcutsOf(strings.keymap["tab.previous"])).toEqual(["Alt+P"]);
+  // The labels name no key of their own: the list shows the keys (#90).
+  for (const a of KEYMAP_ACTIONS) expect(a.label, a.id).not.toMatch(/Ctrl\+|⌘/);
+});
+
+test("saved_binding_collision_flagged: a custom binding equal to another action's new default is flagged, not rewritten", () => {
+  // Saved before #90, when Ctrl+Shift+P was free: it is now Preview's default (table tabs).
+  useSettings.setState({
+    settings: { ...DEFAULT_SETTINGS, keymap: { "grid.copyCells": "Mod+Shift+P" } },
+    confirmed: DEFAULT_SETTINGS,
+  });
+  setup();
+  const row = screen.getByText(strings.keymap["grid.copyCells"]).closest("li") as HTMLElement;
+  expect(row).toHaveTextContent(strings.settings.shortcutCollision(strings.keymap["grid.preview"]));
+  expect(shortcutOf(strings.keymap["grid.copyCells"])).toBe("Ctrl+Shift+P");
+  // A row without a collision says nothing; nothing is saved by just showing the list.
+  const commit = screen.getByText(strings.keymap["grid.commit"]).closest("li") as HTMLElement;
+  expect(commit.querySelector('[role="status"]')).toBeNull();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+});
+
 test("Escape closes, even when focus is outside the dialog", async () => {
   const { onClose } = setup();
   (document.activeElement as HTMLElement).blur();

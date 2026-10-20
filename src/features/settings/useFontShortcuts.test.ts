@@ -1,4 +1,4 @@
-import { fireEvent, renderHook } from "@testing-library/react";
+import { act, fireEvent, renderHook } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import type { Settings } from "../../lib/types";
@@ -51,4 +51,26 @@ test("the font shortcuts are reassignable keymap actions", () => {
   expect(sizes()).toEqual([13, 13]);
   fireEvent.keyDown(window, { code: "Equal", altKey: true });
   expect(sizes()).toEqual([14, 14]);
+});
+
+test("font_size_alternates: Ctrl++ (Shift+=) and the numpad's + / − change the sizes too (#90)", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, dataFontSize: 13, editorFontSize: 13 } });
+  renderHook(() => useFontShortcuts());
+  fireEvent.keyDown(window, { code: "Equal", key: "+", ctrlKey: true, shiftKey: true });
+  expect(sizes()).toEqual([14, 14]);
+  fireEvent.keyDown(window, { code: "NumpadAdd", key: "+", ctrlKey: true });
+  expect(sizes()).toEqual([15, 15]);
+  fireEvent.keyDown(window, { code: "NumpadSubtract", key: "-", ctrlKey: true });
+  fireEvent.keyDown(window, { code: "NumpadSubtract", key: "-", ctrlKey: true });
+  expect(sizes()).toEqual([13, 13]);
+  // A custom combination replaces the alternates as well.
+  act(() =>
+    useSettings.setState({
+      settings: { ...useSettings.getState().settings, keymap: { "font.increase": "Alt+=" } },
+    }),
+  );
+  fireEvent.keyDown(window, { code: "NumpadAdd", key: "+", ctrlKey: true });
+  expect(sizes()).toEqual([13, 13]);
+  vi.restoreAllMocks();
 });

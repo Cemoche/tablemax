@@ -56,5 +56,10 @@
   "filters.operator",
   "connection.open",
   "connection.new",
-  "connections.search"
+  "connections.search",
+  "grid.discard",
+  "grid.preview",
+  "tab.reload",
+  "workspace.reconnect",
+  "editor.complete"
 ]

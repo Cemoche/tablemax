@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import { ConfirmDialog } from "./ConfirmDialog";
 
-const setup = () => {
+const setup = (initialFocus?: "cancel" | "confirm") => {
   const onConfirm = vi.fn();
   const onCancel = vi.fn();
   render(
@@ -14,6 +14,7 @@ const setup = () => {
       cancelLabel="Cancel"
       onConfirm={onConfirm}
       onCancel={onCancel}
+      initialFocus={initialFocus}
     />,
   );
   return { onConfirm, onCancel };
@@ -33,4 +34,16 @@ test("Escape cancels", async () => {
   await userEvent.keyboard("{Escape}");
   expect(onCancel).toHaveBeenCalledOnce();
   expect(onConfirm).not.toHaveBeenCalled();
+});
+
+test("initial_focus: Cancel by default, Confirm with initialFocus=\"confirm\" (Enter presses it)", async () => {
+  const first = setup();
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  cleanup();
+  expect(first.onConfirm).not.toHaveBeenCalled();
+  const { onConfirm, onCancel } = setup("confirm");
+  expect(screen.getByRole("button", { name: "Discard" })).toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  expect(onConfirm).toHaveBeenCalledOnce();
+  expect(onCancel).not.toHaveBeenCalled();
 });

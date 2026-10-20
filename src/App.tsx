@@ -114,15 +114,16 @@ function App() {
   // Spec §5.3 / §5.5: Ctrl+N a new connection's form, Ctrl+Shift+K the connection list,
   // from anywhere (a workspace included).
   useAction("connection.new", () => showForm(null));
-  useAction("connection.open", () =>
+  /** Ctrl+Shift+K and the palette's Show connections: the list, its search focused. */
+  const showConnections = () =>
     unlessDirty(() => {
       dropForm();
       setView("connections");
       // The list already on screen takes the focus now; otherwise once it is rendered.
       if (listSearch.current) listSearch.current.focus();
       else pendingFocus.current = "search";
-    }),
-  );
+    });
+  useAction("connection.open", showConnections);
   useEffect(() => {
     const want = pendingFocus.current;
     if (!want || !listSearch.current) return;
@@ -285,6 +286,7 @@ function App() {
       <CommandPalette
         onOpenConnection={(cfg) => void open(cfg)}
         onNewConnection={() => showForm(null)}
+        onShowConnections={showConnections}
         onShowWorkspace={() => setView("workspace")}
       />
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />

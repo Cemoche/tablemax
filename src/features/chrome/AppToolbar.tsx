@@ -1,5 +1,6 @@
 import { CircleX, Command, Database, Eye, ListChecks, PanelLeft, PanelRight, Plug, RotateCw, Settings } from "lucide-react";
 import { type MouseEvent, type ReactNode, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import * as ipc from "../../lib/ipc";
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
@@ -12,6 +13,8 @@ import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { useSettings } from "../../stores/settings";
 import { type Workspace, capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
+import { focusActiveTab } from "../workspace/focusActiveTab";
+import { ConfirmDialog } from "../workspace/ConfirmDialog";
 import { ConnectionPopover } from "./ConnectionPopover";
 import { SafeModeMenu } from "./SafeModeMenu";
 import { StatusPill } from "./StatusPill";
@@ -74,6 +77,9 @@ export function AppToolbar({ workspace, connectError = null, onEditConnection }:
 
   const onMouseDown = (e: MouseEvent<HTMLElement>) => {
     if (systemTitleBar || e.button !== 0) return;
+    // React events bubble along the React tree, portals included: a press in a portalled
+    // dialog or popover (its overlay too) is not on the toolbar.
+    if (!e.currentTarget.contains(e.target as Node)) return;
     if ((e.target as Element).closest(INTERACTIVE)) return;
     // Like a native title bar: the second press of a double click maximizes or restores
     // (the move started by the first press swallows the dblclick event itself).
@@ -156,6 +162,52 @@ function WorkspaceTools({
   const databaseHint = useHint(t.database, "database.open");
   const sqlHint = useHint(t.sql, "editor.open");
   const reloadHint = useHint(t.reload, "workspace.reload");
+  const discardHint = useHint(t.discard, "grid.discard");
+  const previewHint = useHint(t.preview, "grid.preview");
+
+  // Spec §5.3 (#90): Discard / Preview of the table tab (Ctrl+Shift+Backspace is a text key
+  // in a field: not there), Reload the table tab only, Reconnect a disconnected workspace.
+  // Discard's shortcut asks first (one Shift away from Ctrl+Backspace, and no undo); its
+  // button, a deliberate press, discards at once. Enter discards, Escape / Cancel keep.
+  const [discardAsk, setDiscardAsk] = useState<{ tabId: string; count: number; back: Element | null } | null>(
+    null,
+  );
+  useAction(
+    "grid.discard",
+    () => {
+      if (table && count > 0 && !busy && !committing) {
+        setDiscardAsk({ tabId: table.id, count, back: document.activeElement });
+      }
+    },
+    { enabled: table !== null, skipInEditable: true },
+  );
+  const answerDiscard = (discard: boolean) => {
+    const ask = discardAsk;
+    setDiscardAsk(null);
+    if (!ask) return;
+    if (discard) usePendingChanges.getState().discard(ask.tabId);
+    // The opener may be gone (its tab replaced): then the active tab takes the focus.
+    if (ask.back instanceof HTMLElement && ask.back.isConnected) ask.back.focus();
+    else focusActiveTab();
+  };
+  useAction(
+    "grid.preview",
+    () => {
+      if (table && count > 0) useChrome.getState().requestPreview(table.id);
+    },
+    { enabled: table !== null },
+  );
+  // Capture + stop, like Alt+F: the grid would take the letter as the start of a cell edit.
+  useAction(
+    "tab.reload",
+    () => {
+      if (table) useChrome.getState().requestReload(table.id);
+    },
+    { enabled: table !== null, skipInEditable: true, capture: true, stopPropagation: true },
+  );
+  useAction("workspace.reconnect", () => {
+    if (workspace.status === "disconnected") useWorkspaces.getState().requestConnect(workspace.id);
+  });
   const anythingHint = useHint(t.openAnything, "palette.all");
   const detailsHint = useHint(t.rowDetails, "grid.rowDetails");
 
@@ -218,7 +270,7 @@ function WorkspaceTools({
           <button
             type="button"
             aria-label={t.discard}
-            {...tip(t.discard)}
+            {...discardHint}
             disabled={count === 0 || busy}
             onClick={() => table && usePendingChanges.getState().discard(table.id)}
             className={iconButton}
@@ -229,7 +281,7 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.preview}
-          {...tip(t.preview)}
+          {...previewHint}
           disabled={count === 0}
           onClick={() => table && useChrome.getState().requestPreview(table.id)}
           className={iconButton}
@@ -337,6 +389,21 @@ function WorkspaceTools({
           <PanelRight aria-hidden {...ICON} />
         </button>
       </Group>
+      {discardAsk &&
+        // On the body, out of the toolbar's layout; a press on it never moves the window
+        // (the header's mousedown ignores targets outside its DOM).
+        createPortal(
+          <ConfirmDialog
+            title={strings.grid.discardTitle}
+            message={strings.grid.discardConfirm(discardAsk.count)}
+            confirmLabel={strings.grid.discardOk}
+            cancelLabel={strings.grid.discardCancel}
+            initialFocus="confirm"
+            onConfirm={() => answerDiscard(true)}
+            onCancel={() => answerDiscard(false)}
+          />,
+          document.body,
+        )}
     </>
   );
 }

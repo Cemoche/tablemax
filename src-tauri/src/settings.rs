@@ -114,9 +114,14 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "connection.open",
     "connection.new",
     "connections.search",
+    "grid.discard",
+    "grid.preview",
+    "tab.reload",
+    "workspace.reconnect",
+    "editor.complete",
 ];
 /// At most this many keymap entries are kept (defensive: one per known id fits well below).
-pub const KEYMAP_MAX_ENTRIES: usize = 64;
+pub const KEYMAP_MAX_ENTRIES: usize = 96;
 /// Longest shortcut spec accepted.
 pub const KEYMAP_SPEC_MAX: usize = 32;
 
@@ -124,7 +129,8 @@ pub const KEYMAP_SPEC_MAX: usize = 32;
 /// `Modifier+…+Key`, modifiers among `Mod`, `Ctrl`, `Meta`, `Alt`, `Shift`, each at most
 /// once, in any order; the key is one uppercase ASCII letter or digit, one of
 /// `` , . / ; - = [ ] \ ` ``, or a named key (`Enter`, `Tab`, `Escape`, `Space`,
-/// `Backspace`, `Delete`, `ArrowUp`/`Down`/`Left`/`Right`, `PageUp`/`PageDown`, `F1`–`F12`). At least one of
+/// `Backspace`, `Delete`, `ArrowUp`/`Down`/`Left`/`Right`, `PageUp`/`PageDown`,
+/// `NumpadAdd`/`NumpadSubtract`, `F1`–`F12`). At least one of
 /// `Mod`, `Ctrl`, `Meta`, `Alt` unless the key is F1–F12 (Shift alone is not enough); at most
 /// 32 characters, ASCII only.
 pub fn is_valid_shortcut(spec: &str) -> bool {
@@ -164,6 +170,8 @@ pub fn is_valid_shortcut(spec: &str) -> bool {
             | "ArrowRight"
             | "PageUp"
             | "PageDown"
+            | "NumpadAdd"
+            | "NumpadSubtract"
     );
     // Shift alone is not enough (it would take an uppercase letter or reverse Tab away).
     (function_key || char_key || named_key) && (function_key || seen.iter().any(|m| *m != "Shift"))
@@ -614,6 +622,8 @@ mod tests {
             "Alt+ArrowRight",
             "Ctrl+PageUp",
             "Mod+Shift+PageDown",
+            "Mod+NumpadAdd",
+            "Mod+NumpadSubtract",
             "F5",
             "F12",
             "Shift+F1",
@@ -665,6 +675,8 @@ mod tests {
             "Shift+ArrowUp",
             "Shift+PageUp",
             "PageDown",
+            "NumpadAdd",
+            "Shift+NumpadSubtract",
         ] {
             assert!(!is_valid_shortcut(bad), "should reject {bad:?}");
         }

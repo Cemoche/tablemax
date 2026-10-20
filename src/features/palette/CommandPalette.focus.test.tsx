@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import { strings } from "../../lib/strings";
@@ -39,7 +39,7 @@ function Harness() {
   return (
     <>
       <WorkspaceView workspace={w} />
-      <CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowWorkspace={vi.fn()} />
+      <CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowConnections={vi.fn()} onShowWorkspace={vi.fn()} />
     </>
   );
 }
@@ -67,6 +67,8 @@ async function openFromGrid(chord: string) {
 
 test("New SQL tab: the detached opener is replaced by focus in the new editor", async () => {
   const { user, opener } = await openFromGrid("{Control>}p{/Control}");
+  const dialog = await screen.findByRole("dialog", { name: strings.palette.label });
+  await user.type(within(dialog).getByRole("combobox"), ">");
   await user.click(await screen.findByText(strings.palette.action.newQuery));
   await waitFor(() => expect(opener).not.toBeInTheDocument());
   await waitFor(() => {

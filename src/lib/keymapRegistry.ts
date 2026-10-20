@@ -41,6 +41,13 @@ type Spec = {
    * types a character there (or is taken for one), so only macOS may use ⌘⌥.
    */
   mac?: { defaultShortcut?: string; alternates?: readonly string[] };
+  /**
+   * Actions of another scope this one deliberately shares combinations with: inside its
+   * focus scope (see `FOCUS_SCOPES`) this action wins, elsewhere the other one acts, so the
+   * pair is no conflict (spec §5.3: Ctrl+Shift+F formats in the editor, searches the
+   * sidebar elsewhere). Declared on the inner action only.
+   */
+  shadows?: readonly string[];
 };
 
 const SPECS = {
@@ -56,8 +63,14 @@ const SPECS = {
   "history.toggle": { scope: "global", defaultShortcut: "Mod+Shift+H" },
   "editor.run": { scope: "editor", defaultShortcut: "Mod+Enter" },
   "editor.runAll": { scope: "editor", defaultShortcut: "Mod+Shift+Enter" },
-  // Spec §5.3 (Beautify ⌘I): Mod+Shift+F is the sidebar search (Task 3).
-  "editor.format": { scope: "editor", defaultShortcut: "Mod+I" },
+  // Spec §5.3 (Beautify ⌘I; "Ctrl+Shift+F reste aussi"): Mod+Shift+F formats while the
+  // editor has the focus and searches the sidebar elsewhere (#90 precedence).
+  "editor.format": {
+    scope: "editor",
+    defaultShortcut: "Mod+I",
+    alternates: ["Mod+Shift+F"],
+    shadows: ["sidebar.search"],
+  },
   "editor.comment": { scope: "editor", defaultShortcut: "Mod+/" },
   "grid.commit": { scope: "tableTab", defaultShortcut: "Mod+S" },
   // Spec §5.3: Ctrl+Space as TablePlus Linux (literal Ctrl: Cmd+Space is Spotlight on macOS),
@@ -71,8 +84,10 @@ const SPECS = {
   // #103: the third view. [ / ] are a pair with no third key, so Alt+3 alone (Option+3 on
   // macOS, matched by physical key like Alt+1 / Alt+2).
   "grid.viewIndex": { scope: "tableTab", defaultShortcut: "Alt+3" },
-  "font.increase": { scope: "global", defaultShortcut: "Mod+=" },
-  "font.decrease": { scope: "global", defaultShortcut: "Mod+-" },
+  // #90: Ctrl++ (Shift+= on US / AZERTY) and the numpad's + / − too. AZERTY's "-" is the
+  // Digit6 key, which matches tab.goto6 by position (layout-aware punctuation is #105).
+  "font.increase": { scope: "global", defaultShortcut: "Mod+=", alternates: ["Mod+Shift+=", "Mod+NumpadAdd"] },
+  "font.decrease": { scope: "global", defaultShortcut: "Mod+-", alternates: ["Mod+NumpadSubtract"] },
   "database.open": { scope: "global", defaultShortcut: "Mod+K" },
   "editor.open": { scope: "global", defaultShortcut: "Mod+E" },
   "workspace.reload": { scope: "global", defaultShortcut: "Mod+R" },
@@ -127,6 +142,15 @@ const SPECS = {
   "connection.open": { scope: "global", defaultShortcut: "Mod+Shift+K" },
   "connection.new": { scope: "global", defaultShortcut: "Mod+N" },
   "connections.search": { scope: "connectionList", defaultShortcut: "Mod+F" },
+  // #90, the rest of spec §5.3: Discard / Preview the pending changes of the table tab (the
+  // toolbar's buttons), reload the table tab only (⌥⌘R; Alt+R off macOS, #102), reconnect a
+  // disconnected workspace, and the editor's completion (literal Ctrl: Cmd+Space is
+  // Spotlight; CodeMirror's own Ctrl-Space is replaced by it).
+  "grid.discard": { scope: "tableTab", defaultShortcut: "Mod+Shift+Backspace" },
+  "grid.preview": { scope: "tableTab", defaultShortcut: "Mod+Shift+P" },
+  "tab.reload": { scope: "tableTab", defaultShortcut: "Alt+R", mac: { defaultShortcut: "Mod+Alt+R" } },
+  "workspace.reconnect": { scope: "global", defaultShortcut: "Mod+Shift+R" },
+  "editor.complete": { scope: "editor", defaultShortcut: "Ctrl+Space" },
 } as const satisfies Record<keyof typeof strings.keymap, Spec>;
 
 export type KeymapActionId = keyof typeof SPECS;
@@ -186,6 +210,8 @@ const NAMED_KEYS = new Set([
   "ArrowRight",
   "PageUp",
   "PageDown",
+  "NumpadAdd",
+  "NumpadSubtract",
 ]);
 const FUNCTION_KEY = /^F([1-9]|1[0-2])$/;
 const CHAR_KEY = /^[A-Z0-9,./;\-=[\]\\`]$/;
@@ -195,7 +221,7 @@ const CHAR_KEY = /^[A-Z0-9,./;\-=[\]\\`]$/;
  * src-tauri/src/settings.rs): `Modifier+…+Key`, modifiers among Mod, Ctrl, Meta, Alt,
  * Shift, each at most once, in any order; Key = one uppercase ASCII letter or digit, one
  * of `, . / ; - = [ ] \ \``, or a named key (Enter, Tab, Escape, Space, Backspace, Delete,
- * ArrowUp/Down/Left/Right, PageUp/PageDown, F1–F12). At least one of Mod, Ctrl, Meta, Alt unless the key is
+ * ArrowUp/Down/Left/Right, PageUp/PageDown, NumpadAdd/NumpadSubtract, F1–F12). At least one of Mod, Ctrl, Meta, Alt unless the key is
  * F1–F12 (Shift alone would take an uppercase letter or reverse Tab away from typing and focus
  * navigation); at most 32 characters. Everything it accepts, `matchShortcut` can match.
  */
@@ -240,6 +266,29 @@ export function alternateShortcuts(id: KeymapActionId, keymap: Record<string, st
   return [...defaultAlternates(id, mac)];
 }
 
+/**
+ * The scopes that own a focus region: while the focus is inside the region (the element
+ * carries `data-shortcut-scope="<scope>"`, see `FOCUS_SCOPE_ATTR`), an action of that scope
+ * wins over any other action bound to the same keys, global ones included (spec §5.5
+ * amendment #90). The grid needs no region: DataGrid matches its keys in its own keydown
+ * and stops them there.
+ */
+export const FOCUS_SCOPES: readonly ShortcutScope[] = ["editor", "filterBar"];
+/** The attribute that marks a focus region (`data-shortcut-scope`). */
+export const FOCUS_SCOPE_ATTR = "data-shortcut-scope";
+
+/** The actions of `scope`, in registry order. */
+export function actionsOfScope(scope: ShortcutScope): KeymapActionId[] {
+  return KEYMAP_ACTIONS.filter((a) => a.scope === scope).map((a) => a.id);
+}
+
+/** Does one of `a` / `b` declare that it shadows the other inside its focus scope? */
+export function shadowPair(a: KeymapActionId, b: KeymapActionId): boolean {
+  const sa: Spec = SPECS[a];
+  const sb: Spec = SPECS[b];
+  return (sa.shadows?.includes(b) ?? false) || (sb.shadows?.includes(a) ?? false);
+}
+
 /** Two scopes can be active for the same keydown (see `ShortcutScope`). */
 function scopesOverlap(a: ShortcutScope, b: ShortcutScope): boolean {
   if (a === b || a === "global" || b === "global") return true;
@@ -276,7 +325,7 @@ export function conflictFor(
   const scope = SPECS[id].scope;
   const wanted = combination(spec, mac);
   for (const other of KEYMAP_ACTIONS) {
-    if (other.id === id || !scopesOverlap(scope, other.scope)) continue;
+    if (other.id === id || !scopesOverlap(scope, other.scope) || shadowPair(id, other.id)) continue;
     if (effectiveShortcuts(other.id, keymap, mac).some((s) => combination(s, mac) === wanted)) return other.id;
   }
   return null;

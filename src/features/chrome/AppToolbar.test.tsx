@@ -236,6 +236,41 @@ test("double_click_toolbar_toggles_maximize", async () => {
   expect(ipc.windowStartDrag).toHaveBeenCalledTimes(1);
 });
 
+test("a press on the discard dialog's overlay (portalled) never moves nor maximizes the window", async () => {
+  const user = userEvent.setup();
+  usePendingChanges.setState({ discard: vi.fn() });
+  setup();
+  act(() => {
+    usePendingChanges.getState().addInsert("t1", obj);
+  });
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  const overlay = screen.getByRole("dialog", { name: strings.grid.discardTitle }).parentElement as HTMLElement;
+  await user.pointer({ keys: "[MouseLeft]", target: overlay });
+  await user.dblClick(overlay);
+  expect(ipc.windowStartDrag).not.toHaveBeenCalled();
+  expect(ipc.windowToggleMaximize).not.toHaveBeenCalled();
+});
+
+test("after a discard by shortcut whose opener is gone, the active tab takes the focus", async () => {
+  const user = userEvent.setup();
+  usePendingChanges.setState({ discard: vi.fn() });
+  setup();
+  const content = document.createElement("div");
+  content.tabIndex = -1;
+  content.setAttribute("data-tab-content", "");
+  const opener = document.createElement("button");
+  document.body.append(content, opener);
+  act(() => {
+    usePendingChanges.getState().addInsert("t1", obj);
+  });
+  opener.focus();
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  opener.remove();
+  await user.keyboard("{Enter}");
+  expect(content).toHaveFocus();
+  content.remove();
+});
+
 test("the window buttons minimize, maximize and close through Rust", async () => {
   const user = userEvent.setup();
   setup();
@@ -359,6 +394,98 @@ test("Ctrl+R reloads the workspace", async () => {
   setup();
   await userEvent.setup().keyboard("{Control>}r{/Control}");
   expect(useChrome.getState().reloads).toEqual({ w1: 1, t1: 1 });
+});
+
+test("discard_preview_shortcuts: Ctrl+Shift+Backspace / Ctrl+Shift+P act like the buttons, never in a field (#90)", async () => {
+  const user = userEvent.setup();
+  const discard = vi.fn();
+  usePendingChanges.setState({ discard });
+  setup();
+  // Their tooltips name the keys.
+  expect(screen.getByRole("button", { name: t.discard })).toHaveAttribute("data-tooltip-key", "Ctrl+Shift+Backspace");
+  expect(screen.getByRole("button", { name: t.preview })).toHaveAttribute("data-tooltip-key", "Ctrl+Shift+P");
+  // Nothing pending: nothing happens.
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  await user.keyboard("{Control>}{Shift>}p{/Shift}{/Control}");
+  expect(discard).not.toHaveBeenCalled();
+  expect(useChrome.getState().previews.t1).toBeUndefined();
+  act(() => {
+    usePendingChanges.getState().addInsert("t1", obj);
+  });
+  await user.keyboard("{Control>}{Shift>}p{/Shift}{/Control}");
+  expect(useChrome.getState().previews.t1).toBe(1);
+  // In a text field Ctrl+Shift+Backspace stays the field's.
+  const field = document.createElement("input");
+  document.body.appendChild(field);
+  field.focus();
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  expect(discard).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  field.remove();
+  // Elsewhere it asks first (no undo); Cancel keeps the changes and gives the focus back.
+  const opener = document.createElement("button");
+  document.body.appendChild(opener);
+  opener.focus();
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  const ask = screen.getByRole("dialog", { name: strings.grid.discardTitle });
+  expect(ask).toHaveTextContent(strings.grid.discardConfirm(1));
+  expect(discard).not.toHaveBeenCalled();
+  await user.click(within(ask).getByRole("button", { name: strings.grid.discardCancel }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(discard).not.toHaveBeenCalled();
+  expect(opener).toHaveFocus();
+  // Escape cancels too; Enter discards (Discard has the focus).
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(discard).not.toHaveBeenCalled();
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  expect(screen.getByRole("button", { name: strings.grid.discardOk })).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(discard).toHaveBeenCalledWith("t1");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(opener).toHaveFocus();
+  opener.remove();
+});
+
+test("discard_preview_off_in_query_tabs: their keys are not taken where no table tab is active (#90)", async () => {
+  setup(ws({ activeTabId: "q1" }));
+  const backspace = new KeyboardEvent("keydown", {
+    key: "Backspace",
+    code: "Backspace",
+    ctrlKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  const p = new KeyboardEvent("keydown", { key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
+  document.body.dispatchEvent(backspace);
+  document.body.dispatchEvent(p);
+  expect(backspace.defaultPrevented).toBe(false);
+  expect(p.defaultPrevented).toBe(false);
+});
+
+test("reload_tab_and_reconnect: Alt+R reloads the table tab only; Ctrl+Shift+R reconnects a disconnected workspace (#90)", async () => {
+  const user = userEvent.setup();
+  setup();
+  await user.keyboard("{Alt>}r{/Alt}");
+  expect(useChrome.getState().reloads).toEqual({ t1: 1 });
+  // A connected workspace has nothing to reconnect.
+  const requestConnect = vi.fn();
+  useWorkspaces.setState({ requestConnect });
+  await user.keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
+  expect(requestConnect).not.toHaveBeenCalled();
+});
+
+test("Ctrl+Shift+R reconnects the disconnected workspace on screen (#90)", async () => {
+  const requestConnect = vi.fn();
+  setup(ws({ status: "disconnected" }));
+  useWorkspaces.setState({ requestConnect });
+  await userEvent.setup().keyboard("{Control>}{Shift>}r{/Shift}{/Control}");
+  expect(requestConnect).toHaveBeenCalledWith("w1");
+  // Alt+R: no table tab is loaded in a disconnected workspace.
+  await userEvent.setup().keyboard("{Alt>}r{/Alt}");
+  expect(useChrome.getState().reloads).toEqual({});
 });
 
 test("the safe mode menu shows the enforced mode and saves the connection's level", async () => {

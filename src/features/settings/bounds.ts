@@ -41,7 +41,7 @@ export function isValidFontFamily(text: string): boolean {
 }
 
 /** Mirrors `KEYMAP_MAX_ENTRIES` in src-tauri/src/settings.rs. */
-export const KEYMAP_MAX_ENTRIES = 64;
+export const KEYMAP_MAX_ENTRIES = 96;
 
 /**
  * Mirrors the keymap cleaning of `Settings::clamped` in src-tauri/src/settings.rs: only
