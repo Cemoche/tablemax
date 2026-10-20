@@ -493,6 +493,24 @@ test("row numbers: our marker renderer, right-aligned, header colours; a selecte
   expect(editor!.getRowThemeOverride!(1)).toMatchObject({ bgCell: "#0062cc", accentLight: "#0062cc", textDark: "#ffffff" });
 });
 
+test("selection_count: the grid reports how many rows are selected (row numbers or the active cell's rows)", () => {
+  const onSelectedRows = vi.fn();
+  render(<Selecting ed={editing()} onSelectedRows={onSelectedRows} />);
+  expect(onSelectedRows).toHaveBeenLastCalledWith(0);
+  act(() => editor!.onCellClicked!([-1, 1], click()));
+  expect(onSelectedRows).toHaveBeenLastCalledWith(1);
+  act(() => editor!.onCellClicked!([-1, 2], click({ shiftKey: true })));
+  expect(onSelectedRows).toHaveBeenLastCalledWith(2);
+  act(() =>
+    editor!.onGridSelectionChange!({
+      columns: CompactSelection.empty(),
+      rows: CompactSelection.empty(),
+      current: { cell: [2, 0], range: { x: 2, y: 0, width: 1, height: 1 }, rangeStack: [] },
+    }),
+  );
+  expect(onSelectedRows).toHaveBeenLastCalledWith(1);
+});
+
 test("centred_headers: the grid draws its column labels centred (drawHeader)", () => {
   render(<DataGrid data={data} editing={editing()} />);
   expect(editor!.drawHeader).toBe(drawCenteredHeader);

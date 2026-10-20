@@ -209,6 +209,8 @@ function TableDataView({
   const layoutKey = JSON.stringify([connectionId ?? workspaceId, database, object.schema, object.name]);
   const storedLayout = useGridViews((st) => st.layouts[layoutKey]);
   const [quickLook, setQuickLook] = useState<{ row: number; col: number } | null>(null);
+  /** Rows selected in the grid: the bottom bar's centre says "1 of 415 rows selected". */
+  const [selectedRows, setSelectedRows] = useState(0);
   const [filterStart, setFilterStart] = useState<{ column: string; seq: number } | null>(null);
   const modelCols = e.model?.columns ?? [];
   const shownCols = (() => {
@@ -472,6 +474,7 @@ function TableDataView({
                     onQuickLook={(row, col) => setQuickLook({ row, col })}
                     onRowsAction={e.rowsAction}
                     onCopyCells={copy.copyCells}
+                    onSelectedRows={setSelectedRows}
                   />
                 )}
               </div>
@@ -532,7 +535,11 @@ function TableDataView({
                     ? t.loading && !t.result
                       ? strings.grid.loading
                       : strings.grid.footerEmpty
-                    : strings.grid.footerRange(from, from + rows - 1, formatRowCount(t.rowCount, t.filters.length > 0)),
+                    : selectedRows > 0
+                      ? strings.grid.rowsSelected(selectedRows, e.model?.rows.length ?? rows)
+                      : t.offset === 0 && !t.hasNext && t.rowCount?.t === "exact"
+                        ? strings.grid.rowCount(rows)
+                        : strings.grid.footerRange(from, from + rows - 1, formatRowCount(t.rowCount, t.filters.length > 0)),
                 busy: t.loading || e.committing,
                 filters: {
                   open: filtersOpen,

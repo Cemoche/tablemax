@@ -89,6 +89,26 @@ test("the Filters button says how many filters apply and whether the bar is open
   expect(button).toHaveAttribute("aria-controls", "fb");
 });
 
+test("filters_button_accent: Filters has a search icon and is filled with the deeper accent while the bar is open", () => {
+  const { rerender } = render(<TableBottomBar view="data" onView={vi.fn()} panelIds={ids} data={data()} />);
+  const button = screen.getByRole("button", { name: strings.filters.button(0) });
+  expect(button.querySelector("svg.lucide-search")).not.toBeNull();
+  expect(button).toHaveAttribute("aria-expanded", "false");
+  // The fill applies through aria-expanded (white text on --accent-strong, 4.5:1, #103).
+  expect(button.className).toMatch(/aria-expanded:bg-accent-strong/);
+  expect(button.className).toMatch(/aria-expanded:text-accent-contrast/);
+  expect(button.className).not.toMatch(/aria-expanded:bg-seg-sel/);
+  rerender(
+    <TableBottomBar
+      view="data"
+      onView={vi.fn()}
+      panelIds={ids}
+      data={data({ filters: { open: true, count: 0, controls: "fb", onToggle: vi.fn(), ref: createRef() } })}
+    />,
+  );
+  expect(button).toHaveAttribute("aria-expanded", "true");
+});
+
 test("a read-only table has no + Row; the structure view shows only the view switch", () => {
   const { rerender } = render(
     <TableBottomBar view="data" onView={vi.fn()} panelIds={ids} data={data({ addRow: undefined })} />,

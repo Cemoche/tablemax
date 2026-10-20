@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Columns3, ListFilter, Settings2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, Settings2 } from "lucide-react";
 import { type KeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { ariaShortcut, formatShortcut } from "../../lib/platform";
@@ -85,6 +85,15 @@ interface Props {
 const control =
   "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:text-icon-dim disabled:hover:bg-btn aria-expanded:bg-seg-sel";
 const ICON = { size: 15, strokeWidth: 1.6, "aria-hidden": true } as const;
+/**
+ * Filters: filled with the deeper accent while its bar is open (white reads 4.5:1 on
+ * --accent-strong, not on --accent, #103).
+ */
+const filtersControl = control
+  .replace("aria-expanded:bg-seg-sel", "")
+  .concat(
+    " aria-expanded:border-accent-strong aria-expanded:bg-accent-strong aria-expanded:text-accent-contrast aria-expanded:hover:bg-accent-strong",
+  );
 const VIEW_TEXT: Record<TableView, { label: string; hint: (shortcut: string) => string }> = {
   data: { label: strings.grid.view.data, hint: strings.grid.view.dataShortcut },
   structure: { label: strings.grid.view.structure, hint: strings.grid.view.structureShortcut },
@@ -92,8 +101,8 @@ const VIEW_TEXT: Record<TableView, { label: string; hint: (shortcut: string) => 
 };
 
 /**
- * The bar under the grid (spec §2.3): [Data | Structure] · + Row · the row counter, centered ·
- * Filters · Columns · [‹ | offset and limit | ›].
+ * The bar under the grid (spec §2.3): [Data | Structure | Index] · + Row · centred, the
+ * selected rows' count or the row count · Filters · Columns · [‹ | offset and limit | ›].
  */
 export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props) {
   const v = strings.grid.view;
@@ -224,14 +233,14 @@ function DataControls({
       <button
         ref={filters.ref}
         type="button"
-        className={control}
+        className={filtersControl}
         aria-expanded={filters.open}
         aria-controls={filters.open ? filters.controls : undefined}
         title={g.filtersShortcut(formatShortcut(shortcut.filters))}
         aria-keyshortcuts={keys(shortcut.filters)}
         onClick={filters.onToggle}
       >
-        <ListFilter {...ICON} />
+        <Search {...ICON} />
         <span>{strings.filters.button(filters.count)}</span>
       </button>
       <div className="relative">
@@ -245,7 +254,6 @@ function DataControls({
           aria-keyshortcuts={keys(shortcut.columns)}
           onClick={() => columns.onOpenChange(!columns.open)}
         >
-          <Columns3 {...ICON} />
           <span>{g.columns}</span>
         </button>
         {columns.open && (

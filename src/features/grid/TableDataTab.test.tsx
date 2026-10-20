@@ -120,6 +120,26 @@ test("footer shows range with ≈ for estimates and pages forward", async () => 
   expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
 });
 
+test("centre_text: the selected rows' count, else the row count (the range while the table spans pages)", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(415));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 415 });
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 1000 } });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  const centre = () => screen.getByTestId("footer-range");
+  // Everything on one page: the row count alone.
+  await waitFor(() => expect(centre()).toHaveTextContent(/^415 rows$/));
+  act(() => grid!.onSelectedRows!(1));
+  expect(centre()).toHaveTextContent(/^1 of 415 rows selected$/);
+  act(() => grid!.onSelectedRows!(3));
+  expect(centre()).toHaveTextContent(/^3 of 415 rows selected$/);
+  // A pending new row is one more row of the grid.
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.addRow }));
+  act(() => grid!.onSelectedRows!(1));
+  expect(centre()).toHaveTextContent(/^1 of 416 rows selected$/);
+  act(() => grid!.onSelectedRows!(0));
+  expect(centre()).toHaveTextContent(/^415 rows$/);
+});
+
 test("the page size comes from the settings (request and range label)", async () => {
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 50 } });
   vi.mocked(ipc.tablePage).mockResolvedValue(page(50));
@@ -213,7 +233,7 @@ test("error shows message with Retry; connectionLost hints", async () => {
   expect(screen.getByText(strings.grid.reopenHint)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-  expect(screen.getByTestId("footer-range")).toHaveTextContent("1–1 of 1 rows");
+  expect(screen.getByTestId("footer-range")).toHaveTextContent("1 row");
 });
 
 test("a read-only table shows why and offers no + Row", async () => {
@@ -390,7 +410,7 @@ test("Reload is blocked while changes are pending", async () => {
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   pending().toggleDelete("t1", obj, key(0));
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–2 of 2 rows"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("2 rows"));
   // The toolbar's Reload (Mod+R) asks the tab through the chrome store.
   act(() => useChrome.getState().requestReload("t1"));
   expect(screen.getByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
@@ -541,7 +561,7 @@ test("the filter bar reloads page 0 filtered and a capped count shows 500,000+",
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("of 3"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("3 rows"));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "estimate", v: 500000 });
   // Closed at first (nothing applied); the Filters button opens it with the focus in it.
   expect(screen.queryByRole("region", { name: strings.filters.barLabel })).toBeNull();
@@ -1447,7 +1467,7 @@ test("the toolbar's Reload and row details buttons act on the tab", async () => 
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   const { unmount } = render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–2 of 2 rows"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("2 rows"));
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
   act(() => useChrome.getState().requestReload("t1"));
   await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));

@@ -327,6 +327,10 @@ export const strings = {
     footerRange: (from: number, to: number, total: string) =>
       `${from.toLocaleString("en-US")}–${to.toLocaleString("en-US")} of ${total} rows`,
     footerEmpty: "No rows",
+    /** The bottom bar's centre with nothing selected, the whole table on one page. */
+    rowCount: (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "row" : "rows"}`,
+    rowsSelected: (selected: number, total: number) =>
+      `${selected.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} ${total === 1 ? "row" : "rows"} selected`,
     prev: "Previous page",
     next: "Next page",
     /** The bar under the grid (spec §2.3). */
