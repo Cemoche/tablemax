@@ -1638,7 +1638,7 @@ test("duplicating several rows inserts them in row order, even when one must loa
   ]);
 });
 
-test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from inside; Ctrl+Alt+F Columns; Ctrl+I + Row", async () => {
+test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from inside; Alt+F Columns; Ctrl+I + Row", async () => {
   const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   onTestFinished(() => spy.mockRestore());
   const user = userEvent.setup();
@@ -1664,8 +1664,10 @@ test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from
   expect(bar()).toBeNull();
   expect(el).toHaveFocus();
 
-  // Columns.
+  // Columns: Alt+F off macOS (Ctrl+Alt+F is AltGr+F there, #102).
   await user.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.keyboard("{Alt>}f{/Alt}");
   expect(screen.getByRole("dialog", { name: strings.grid.columnsPopover.label })).toBeInTheDocument();
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -1681,14 +1683,45 @@ test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from
   expect(pending().count("t1")).toBe(1);
   expect(screen.getAllByRole("checkbox", { name: /^Use condition/ })).toHaveLength(2);
 
-  // Ctrl+Alt+] / [ switch the view (Alt+1 / Alt+2 still do).
+  // Alt+2 / Alt+1 switch the view; off macOS Ctrl+Alt+] / [ do not (AltGr, #102).
   el.focus();
   await user.keyboard("{Control>}{Alt>}[BracketRight]{/Alt}{/Control}");
+  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Alt>}2{/Alt}");
   expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
   // The structure view keeps only the view switch in the bar.
   expect(screen.queryByRole("button", { name: strings.grid.columns })).toBeNull();
-  await user.keyboard("{Control>}{Alt>}[BracketLeft]{/Alt}{/Control}");
+  await user.keyboard("{Alt>}1{/Alt}");
   expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("aria-selected", "true");
+});
+
+test("Ctrl+B in the open filter bar toggles the focused row, in the whole table tab (#102)", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  const user = userEvent.setup();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  const el = screen.getByTestId("grid");
+  el.tabIndex = 0;
+  el.focus();
+  await user.keyboard("{Control>}f{/Control}");
+  const check = () => screen.getByRole("checkbox", { name: strings.filters.enabledLabel(1) });
+  const fields = [
+    screen.getByRole("combobox", { name: strings.filters.columnLabel(1) }),
+    screen.getByRole("combobox", { name: strings.filters.opLabel(1) }),
+    screen.getByRole("textbox", { name: strings.filters.valueLabel(1) }),
+    check(),
+  ];
+  expect(fields[0]).toHaveFocus();
+  for (const f of fields) {
+    f.focus();
+    await user.keyboard("{Control>}b{/Control}");
+    expect(check()).not.toBeChecked();
+    await user.keyboard("{Control>}b{/Control}");
+    expect(check()).toBeChecked();
+  }
 });
 
 test("page_popover_offset_limit: Go loads that offset and limit; the grid's Ctrl+→ / Ctrl+← page from there", async () => {

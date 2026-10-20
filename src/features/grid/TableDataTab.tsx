@@ -249,7 +249,14 @@ function TableDataView({
     { enabled: active, skipInEditable: true },
   );
   const [columnsOpen, setColumnsOpen] = useState(false);
-  useAction("grid.columns", () => setColumnsOpen((o) => !o), { enabled: active, skipInEditable: true });
+  // Capture + stop, like the view keys: the grid would take Alt+F's letter as the start of a
+  // cell edit.
+  useAction("grid.columns", () => setColumnsOpen((o) => !o), {
+    enabled: active,
+    skipInEditable: true,
+    capture: true,
+    stopPropagation: true,
+  });
   const quickFilterItems = (row: number, col: number): MenuItem[] => {
     const name = e.model?.columns[col];
     const cell = e.model?.cell(row, col);

@@ -55,7 +55,7 @@ test("Escape closes it and asks for the focus back", async () => {
   expect(onClose).toHaveBeenCalledWith(true);
 });
 
-test("Ctrl+Alt+F closes it from a focused checkbox (the key that opened it), and never reaches the tab", async () => {
+test("Alt+F (Columns) closes it from a focused checkbox (the key that opened it), and never reaches the tab", async () => {
   const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   onTestFinished(() => spy.mockRestore());
   useSettings.setState({ settings: DEFAULT_SETTINGS });
@@ -64,7 +64,7 @@ test("Ctrl+Alt+F closes it from a focused checkbox (the key that opened it), and
   const outer = vi.fn();
   window.addEventListener("keydown", outer);
   onTestFinished(() => window.removeEventListener("keydown", outer));
-  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  await userEvent.keyboard("{Alt>}f{/Alt}");
   expect(onClose).toHaveBeenCalledWith(true);
   expect(outer.mock.calls.some(([e]) => (e as KeyboardEvent).code === "KeyF")).toBe(false);
 });

@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { DEFAULT_KEYMAP, KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, effectiveShortcut, effectiveShortcuts, isValidShortcut, sameCombination } from "../../lib/keymap";
+import { KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, defaultShortcut, effectiveShortcut, effectiveShortcuts, isValidShortcut, sameCombination } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import { useRestoreFocus } from "../../lib/useRestoreFocus";
 import type { Settings, ThemeSetting } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
 import { type NumericSettingKey, SETTINGS_BOUNDS, isValidFontFamily, parseBounded } from "./bounds";
 import { formatShortcut, isMac } from "../../lib/platform";
+import { shortcutKeyOf } from "../../lib/shortcuts";
 
 const input = "rounded-sm border border-border bg-bg px-2 py-1";
 const FOCUSABLE = 'button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])';
@@ -125,36 +126,16 @@ function FontFamilyField() {
   );
 }
 
-const KEY_CODES: Record<string, string> = {
-  Slash: "/",
-  Period: ".",
-  Comma: ",",
-  Semicolon: ";",
-  Minus: "-",
-  Equal: "=",
-  BracketLeft: "[",
-  BracketRight: "]",
-  Backslash: "\\",
-  Backquote: "`",
-};
-const NAMED_CODES = new Set([
-  "Enter", "Tab", "Escape", "Space", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-  "PageUp", "PageDown",
-]);
 const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)$/;
 
 /**
- * The canonical spec of a keydown ("Mod+Shift+K"), built from `e.code` so it does not depend
- * on the layout; Mod is Ctrl on Linux/Windows and Meta on macOS (Ctrl stays Ctrl there).
- * A key with no name in the grammar yields a spec without a key (the caller reports it as invalid).
+ * The canonical spec of a keydown ("Mod+Shift+K"), its key named as the shortcuts match it
+ * (`shortcutKeyOf`: a letter as the layout types it, digits and other keys by position);
+ * Mod is Ctrl on Linux/Windows and Meta on macOS (Ctrl stays Ctrl there). A key with no
+ * name in the grammar yields a spec without a key (the caller reports it as invalid).
  */
 function specFromEvent(e: KeyboardEvent, mac: boolean): string {
-  const code = e.code;
-  let key = "";
-  if (/^Key[A-Z]$/.test(code)) key = code.slice(3);
-  else if (/^Digit[0-9]$/.test(code)) key = code.slice(5);
-  else if (/^F([1-9]|1[0-2])$/.test(code) || NAMED_CODES.has(code)) key = code;
-  else if (Object.prototype.hasOwnProperty.call(KEY_CODES, code)) key = KEY_CODES[code];
+  const key = shortcutKeyOf(e);
   const mods: string[] = [];
   if (mac ? e.metaKey : e.ctrlKey) mods.push("Mod");
   if (mac ? e.ctrlKey : false) mods.push("Ctrl");
@@ -171,7 +152,7 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
   const [error, setError] = useState<string | null>(null);
   const keymapRef = useRef(keymap);
   keymapRef.current = keymap;
-  const overridden = Object.prototype.hasOwnProperty.call(keymap, id) && !sameCombination(effectiveShortcut(id, keymap), DEFAULT_KEYMAP[id]);
+  const overridden = Object.prototype.hasOwnProperty.call(keymap, id) && !sameCombination(effectiveShortcut(id, keymap), defaultShortcut(id));
 
   useEffect(() => {
     if (!recording) return;
@@ -207,7 +188,7 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
       setError(null);
       if (sameCombination(spec, effectiveShortcut(id, current))) return;
       const next = { ...current };
-      if (sameCombination(spec, DEFAULT_KEYMAP[id])) delete next[id];
+      if (sameCombination(spec, defaultShortcut(id))) delete next[id];
       else next[id] = spec;
       void update({ keymap: next });
     };

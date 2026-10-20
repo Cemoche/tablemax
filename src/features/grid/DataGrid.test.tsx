@@ -1,12 +1,12 @@
 import type {
   CellClickedEventArgs,
-  DataEditorProps,
+  DataEditorCoreProps as DataEditorProps,
   GridColumn,
   GridKeyEventArgs,
   GridSelection,
   HeaderClickedEventArgs,
 } from "@glideapps/glide-data-grid";
-import { CompactSelection } from "@glideapps/glide-data-grid";
+import { CompactSelection, InnerGridCellKind, type MarkerCell, markerCellRenderer } from "@glideapps/glide-data-grid";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type ReactNode, useState } from "react";
@@ -24,7 +24,7 @@ import { buildGridModel } from "./editModel";
 let editor: DataEditorProps | null = null;
 vi.mock("@glideapps/glide-data-grid", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@glideapps/glide-data-grid")>()),
-  DataEditor: (p: DataEditorProps) => {
+  DataEditorCore: (p: DataEditorProps) => {
     editor = p;
     return null;
   },
@@ -75,6 +75,7 @@ const TOKENS: Record<string, string> = {
   "--row-selected-text": "#ffffff",
   "--cell-focus": "#ff4245",
   "--rownum": "#8a8a8a",
+  "--rownum-selected": "#0062cc",
   "--placeholder": "#737373",
   "--modified": "#ffe18e",
   "--cell-text": "#262626",
@@ -110,7 +111,7 @@ const header = (over: Partial<HeaderClickedEventArgs> = {}) =>
 const press = (
   key: string,
   code: string,
-  mods: Partial<Record<"ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "repeat", boolean>> = {},
+  { altGraph = false, ...mods }: Partial<Record<"ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "repeat" | "altGraph", boolean>> = {},
 ) => {
   const ev = { key, code, repeat: false, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...mods };
   const args = {
@@ -121,7 +122,12 @@ const press = (
     cancel: vi.fn(),
     stopPropagation: vi.fn(),
     preventDefault: vi.fn(),
-    rawEvent: { ...ev, preventDefault: vi.fn(), stopPropagation: vi.fn() },
+    rawEvent: {
+      ...ev,
+      getModifierState: (k: string) => k === "AltGraph" && altGraph,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    },
   } as unknown as GridKeyEventArgs;
   act(() => editor!.onKeyDown!(args));
   return args;
@@ -425,6 +431,61 @@ test("grid keys act on the selected rows: Delete / Ctrl+Backspace delete, Ctrl+D
   // A plain Backspace or letter is not a grid action.
   expect(press("Backspace", "Backspace").cancel).not.toHaveBeenCalled();
   expect(onRowsAction).toHaveBeenCalledTimes(3);
+});
+
+test("only a character meant as text starts a cell edit: never Alt+letter or Ctrl+Alt+letter taken for AltGr (#102)", () => {
+  render(<Selecting ed={editing()} />);
+  // Plain and Shift letters type (Glide opens the editor with them).
+  expect(press("f", "KeyF").cancel).not.toHaveBeenCalled();
+  expect(press("F", "KeyF", { shiftKey: true }).cancel).not.toHaveBeenCalled();
+  // Alt+F (Columns) and Alt+& (AZERTY Alt+1) are shortcuts, not text.
+  expect(press("f", "KeyF", { altKey: true }).cancel).toHaveBeenCalled();
+  expect(press("&", "Digit1", { altKey: true }).cancel).toHaveBeenCalled();
+  // Ctrl+Alt+F reported as an AltGr chord (WebKitGTK) is no text either.
+  expect(press("f", "KeyF", { altGraph: true }).cancel).toHaveBeenCalled();
+  expect(press("f", "KeyF", { altGraph: true, altKey: true }).cancel).toHaveBeenCalled();
+  // AltGr symbols are text: AltGr+E "€", AltGr+0 "@" (AZERTY), with or without Alt down.
+  expect(press("€", "KeyE", { altGraph: true }).cancel).not.toHaveBeenCalled();
+  expect(press("@", "Digit0", { altGraph: true, altKey: true }).cancel).not.toHaveBeenCalled();
+  // Ctrl / Cmd combinations are left to Glide (it never types them: Ctrl+A selects all).
+  expect(press("a", "KeyA", { ctrlKey: true }).cancel).not.toHaveBeenCalled();
+});
+
+test("row numbers: our marker renderer, right-aligned; a selected row's number on --rownum-selected (#102)", () => {
+  render(<Selecting ed={editing()} />);
+  expect(editor!.rowMarkers).toMatchObject({ kind: "number", width: 46, theme: { textLight: "#8a8a8a" } });
+  const renderer = editor!.renderers!.find((r) => r.kind === InnerGridCellKind.Marker)!;
+  expect(renderer).not.toBe(markerCellRenderer);
+  const drawRow = (row: number) => {
+    const fills: string[] = [];
+    const ctx = {
+      fillStyle: "",
+      font: "",
+      textAlign: "start",
+      save: vi.fn(),
+      restore: vi.fn(),
+      measureText: () => ({ actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 0 }),
+      fillRect: () => fills.push(`rect ${ctx.fillStyle}`),
+      fillText: () => fills.push(`text ${ctx.fillStyle} ${ctx.textAlign}`),
+    };
+    const cell = { kind: InnerGridCellKind.Marker, row: row + 1, markerKind: "number" } as unknown as MarkerCell;
+    renderer.draw(
+      {
+        ctx,
+        rect: { x: 0, y: 0, width: 46, height: 26 },
+        theme: { textLight: "#8a8a8a", markerFontStyle: "11px" },
+        row,
+        col: 0,
+        cell,
+      } as unknown as Parameters<typeof renderer.draw>[0],
+      cell,
+    );
+    return fills;
+  };
+  expect(drawRow(1)).toEqual(["text #8a8a8a right"]);
+  act(() => editor!.onCellClicked!([-1, 1], click()));
+  expect(drawRow(1)).toEqual(["rect #0062cc", "text #ffffff right"]);
+  expect(drawRow(0)).toEqual(["text #8a8a8a right"]);
 });
 
 test("the ContextMenu key and Shift+F10 open the cell menu of the active cell", () => {

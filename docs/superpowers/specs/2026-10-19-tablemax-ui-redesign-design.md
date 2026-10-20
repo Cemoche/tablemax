@@ -178,6 +178,10 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 | tags local / development / staging / production | #3A3A3A·#D6D6D6 / #173E73·#9CC4FF / #5A4512·#F5D27A / #6A1C1F·#FFB3B5 | #E6E6E6·#4A4A4A / #DCE8FB·#1F4F9A / #FBF0CF·#7A5A0B / #FBDADB·#8E1C22 | badges (fond·texte) |
 | couleurs de connexion | #2E8B57 #4A5160 #1F5FA8 #A3793E #8E1C22 #6B3FA0 | #BFE3A8 #E6E6E6 #BDCFF4 #F6E8A8 #F7C7C9 #DCCBF3 | pastille, point, tuile |
 
+> Amendement 2026-10-20 (#102) : `--rownum` = #6E6E6E (clair) / #959595 (sombre) pour 4,5:1 sur
+> `--row-a` et `--row-b` ; nouveau `--rownum-selected` #0062CC / #2B63D9, fond du numéro d'une
+> ligne sélectionnée (blanc à 4,5:1, contre 4,0:1 sur `--accent`).
+
 Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E7D32, nombres
 #B57AFF / #1D00FF, chaînes #CA6E6E / #E04978, commentaires #009B31, requête courante #30363F /
 #F3EEDE, sélection #003F84 / #FFEA84).
@@ -223,6 +227,9 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 | Recharger / recharger l'onglet / reconnecter | ⌘R / ⌥⌘R / ⌘⇧R | Ctrl+R / Ctrl+Alt+R / Ctrl+Shift+R |
 | Nouveau workspace | ⌘N | Ctrl+N |
 | Complétion | ⌃Space | Ctrl+Space (éditeur ; la portée éditeur gagne sur la grille) |
+
+> Amendement 2026-10-20 (#102) : hors macOS Ctrl+Alt est AltGr ; Colonnes = Alt+F et Data /
+> Structure = Alt+1 / Alt+2 seulement ; macOS garde ⌘⌥F et ⌘⌥[ / ⌘⌥]. Pas de Ctrl+Alt par défaut.
 
 Règle : un raccourci n'existe que dans son contexte (grille, éditeur, barre de filtres) quand
 TablePlus le réutilise (⌘I, ⌘F, ⌘←) ; tous restent réassignables (registre existant) ; un

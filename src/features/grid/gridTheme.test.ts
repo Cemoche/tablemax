@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { contrastRatio } from "../../lib/contrast";
-import { buildEditThemes, buildGridTheme, buildRowThemes, headerFont, useGridTheme } from "./gridTheme";
+import { buildEditThemes, buildGridTheme, buildRowNumberColors, buildRowThemes, headerFont, useGridTheme } from "./gridTheme";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -28,6 +28,7 @@ const vars: Record<string, string> = {
   "--row-selected-text": "#999",
   "--cell-focus": "#f42",
   "--rownum": "#8a8",
+  "--rownum-selected": "#06c",
   "--sel": "#464",
   "--font-mono": '"JetBrains Mono", ui-monospace, monospace',
   "--font-ui": "system-ui, sans-serif",
@@ -72,6 +73,14 @@ test("zebra_rows: odd rows use --row-b, selected rows --accent with white text",
   });
   // Row numbers use --rownum.
   expect(r.rowNumber).toMatchObject({ textLight: "#8a8" });
+});
+
+test("row numbers: the interface font, a deeper accent fill and white text on selected rows (#102)", () => {
+  expect(buildRowNumberColors(read)).toEqual({ family: "system-ui, sans-serif", selectedFill: "#06c", selectedText: "#999" });
+  // Smaller than the data.
+  expect(buildGridTheme(read, 13).markerFontStyle).toBe("11px");
+  const { result } = renderHook(() => useGridTheme(read, 13));
+  expect(result.current.rowNumbers.selectedFill).toBe("#06c");
 });
 
 test("placeholders_uppercase_dim: NULL / EMPTY / DEFAULT use --placeholder, 1.5 px under the data size", () => {

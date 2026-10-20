@@ -52,6 +52,7 @@ const THEME_TOKENS = [
   "--cell-text",
   "--placeholder",
   "--rownum",
+  "--rownum-selected",
   "--bottom",
   "--btn",
   "--accent",
@@ -94,6 +95,21 @@ test("light_theme_contrast", () => {
     expect(ratio("--text-2", "--side"), `${name} text-2`).toBeGreaterThanOrEqual(4.5);
     expect(ratio("--placeholder", "--row-a"), `${name} placeholder / row-a`).toBeGreaterThanOrEqual(3);
     expect(ratio("--placeholder", "--row-b"), `${name} placeholder / row-b`).toBeGreaterThanOrEqual(3);
+  }
+});
+
+test("row numbers read 4.5:1 on both row colours and on a selected row, dimmer than the data (#102)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = values(selector);
+    const ratio = (fg: string, bg: string) => contrastRatio(v[fg], v[bg]);
+    for (const row of ["--row-a", "--row-b"]) {
+      expect(ratio("--rownum", row), `${selector} rownum on ${row}`).toBeGreaterThanOrEqual(4.5);
+      // Dimmer than the data: clearly less contrast than --cell-text.
+      expect(ratio("--rownum", row), `${selector} rownum dimmer on ${row}`).toBeLessThan(ratio("--cell-text", row) / 2);
+    }
+    // A selected row's number: white on the deeper accent (the accent itself gives 4.0:1).
+    const white = values(LIGHT)["--row-selected-text"];
+    expect(contrastRatio(white, v["--rownum-selected"]), `${selector} selected number`).toBeGreaterThanOrEqual(4.5);
   }
 });
 

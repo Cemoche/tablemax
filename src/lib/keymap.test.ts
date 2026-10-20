@@ -9,6 +9,7 @@ import {
   conflictAnywhere,
   alternateShortcuts,
   conflictFor,
+  defaultShortcut,
   effectiveShortcut,
   effectiveShortcuts,
   isKeymapActionId,
@@ -71,7 +72,7 @@ test("the defaults are the combinations the code binds today", () => {
     "grid.deleteRows": "Mod+Backspace",
     "grid.addRow": "Mod+I",
     "grid.filters": "Mod+F",
-    "grid.columns": "Mod+Alt+F",
+    "grid.columns": "Alt+F",
     "grid.previousPage": "Mod+ArrowLeft",
     "grid.nextPage": "Mod+ArrowRight",
     "filters.toggle": "Mod+B",
@@ -119,7 +120,7 @@ test("the defaults are the combinations the code binds today", () => {
 test("every default is valid and no two defaults conflict, on either platform", () => {
   for (const mac of [false, true]) {
     for (const a of KEYMAP_ACTIONS) {
-      for (const spec of effectiveShortcuts(a.id, {})) {
+      for (const spec of effectiveShortcuts(a.id, {}, mac)) {
         expect(isValidShortcut(spec), `${a.id} ${spec}`).toBe(true);
         expect(conflictFor(a.id, spec, {}, mac), `${a.id} ${spec}`).toBeNull();
       }
@@ -386,13 +387,33 @@ test("useAction binds the effective combination: a custom one replaces the defau
   expect(handler).toHaveBeenCalledTimes(2);
 });
 
-test("view_switch_alternates: Data / Structure also answer to Mod+Alt+[ / ], Alt+1 / Alt+2 kept", () => {
-  expect(effectiveShortcuts("grid.viewData", {})).toEqual(["Alt+1", "Mod+Alt+["]);
-  expect(effectiveShortcuts("grid.viewStructure", {})).toEqual(["Alt+2", "Mod+Alt+]"]);
-  expect(effectiveShortcuts("grid.viewData", { "grid.viewData": "Alt+D" })).toEqual(["Alt+D"]);
+test("view_switch_alternates: Data / Structure also answer to ⌘⌥[ / ] on macOS only, Alt+1 / Alt+2 everywhere", () => {
+  expect(effectiveShortcuts("grid.viewData", {}, true)).toEqual(["Alt+1", "Mod+Alt+["]);
+  expect(effectiveShortcuts("grid.viewStructure", {}, true)).toEqual(["Alt+2", "Mod+Alt+]"]);
+  // Off macOS Ctrl+Alt is AltGr (#102): no alternate.
+  expect(effectiveShortcuts("grid.viewData", {}, false)).toEqual(["Alt+1"]);
+  expect(effectiveShortcuts("grid.viewStructure", {}, false)).toEqual(["Alt+2"]);
+  expect(effectiveShortcuts("grid.viewData", { "grid.viewData": "Alt+D" }, true)).toEqual(["Alt+D"]);
   // Not the tab keys (Mod+[ / ]) nor the workspace keys (Mod+Shift+[ / ]).
-  expect(conflictFor("grid.viewData", "Mod+Alt+[", {}, false)).toBeNull();
-  expect(conflictFor("tab.previous", "Mod+Alt+[", {}, false)).toBe("grid.viewData");
+  expect(conflictFor("grid.viewData", "Mod+Alt+[", {}, true)).toBeNull();
+  expect(conflictFor("tab.previous", "Mod+Alt+[", {}, true)).toBe("grid.viewData");
+  expect(conflictFor("tab.previous", "Mod+Alt+[", {}, false)).toBeNull();
+});
+
+test("no Ctrl+Alt default off macOS, where Ctrl+Alt is AltGr; ⌘⌥ stays on macOS (#102)", () => {
+  const ctrlAlt = (spec: string, mac: boolean) => {
+    const mods = spec.split("+").slice(0, -1).map((m) => (m === "Mod" ? (mac ? "Meta" : "Ctrl") : m));
+    return mods.includes("Ctrl") && mods.includes("Alt");
+  };
+  for (const a of KEYMAP_ACTIONS) {
+    for (const spec of effectiveShortcuts(a.id, {}, false)) expect(ctrlAlt(spec, false), `${a.id} ${spec}`).toBe(false);
+  }
+  expect(defaultShortcut("grid.columns", false)).toBe("Alt+F");
+  expect(defaultShortcut("grid.columns", true)).toBe("Mod+Alt+F");
+  expect(effectiveShortcut("grid.columns", {}, true)).toBe("Mod+Alt+F");
+  expect(effectiveShortcut("grid.columns", { "grid.columns": "Alt+C" }, true)).toBe("Alt+C");
+  // The Settings check holds across platforms: Alt+F recorded on macOS is Columns' elsewhere.
+  expect(conflictAnywhere("grid.filters", "Alt+F", {})).toBe("grid.columns");
 });
 
 test("filter_bar_scope: the bar's keys shadow the table tab's inside the bar, never the editor's", () => {

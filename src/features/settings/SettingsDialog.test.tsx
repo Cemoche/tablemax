@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
@@ -255,6 +255,25 @@ test("recording a combination saves it and the label updates", async () => {
   expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K" } });
   expect(shortcutOf(paletteLabel)).toBe("Ctrl+Shift+K");
   expect(screen.queryByText(strings.settings.recording)).toBeNull();
+});
+
+test("recording follows the layout's letter, and the physical key on a non-Latin layout", async () => {
+  setup();
+  const key = (init: KeyboardEventInit) =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+  // AZERTY: the key at QWERTY's W types "z".
+  await userEvent.click(changeButton(paletteLabel));
+  await act(async () => key({ code: "KeyW", key: "Z", ctrlKey: true, shiftKey: true }));
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+Z" } });
+  expect(shortcutOf(paletteLabel)).toBe("Ctrl+Shift+Z");
+  // Russian: the key at QWERTY's J types "о" and records as J.
+  await userEvent.click(changeButton(paletteLabel));
+  await act(async () => key({ code: "KeyJ", key: "о", ctrlKey: true, shiftKey: true }));
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+J" } });
+  // Digits by position (AZERTY types "è" there without Shift).
+  await userEvent.click(changeButton(paletteLabel));
+  await act(async () => key({ code: "Digit7", key: "è", ctrlKey: true, shiftKey: true }));
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+7" } });
 });
 
 test("a combination used by another action is refused with its label and saves nothing", async () => {

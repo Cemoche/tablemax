@@ -16,6 +16,11 @@ const FALLBACK_MONO = "ui-monospace, monospace";
 const FALLBACK_SIZE = "13px";
 /** The data font size when the settings say nothing (spec §2.2). */
 export const DEFAULT_DATA_FONT_SIZE = 13;
+/** The row numbers' font size in px: 2 px under the data, at least 9. */
+export function markerFontSize(dataFontSize: number): number {
+  return Math.max(9, dataFontSize - 2);
+}
+
 /** NULL / EMPTY / DEFAULT are this much smaller than the data (11.5 px at 13 px, spec §2.3). */
 const PLACEHOLDER_SHRINK = 1.5;
 
@@ -76,7 +81,7 @@ export function buildGridTheme(
     fontFamily: monoFamily ?? v("--font-mono", FALLBACK_MONO),
     baseFontStyle: `${dataFontSize}px`,
     headerFontStyle: `500 ${uiSize}`,
-    markerFontStyle: `${Math.max(9, dataFontSize - 2)}px`,
+    markerFontStyle: `${markerFontSize(dataFontSize)}px`,
     editorFontSize: `${dataFontSize}px`,
   };
 }
@@ -88,6 +93,25 @@ export interface RowThemes {
   selected: Partial<Theme>;
   /** The row numbers column (`--rownum`). */
   rowNumber: Partial<Theme>;
+}
+
+/** The row numbers' own colours and font (see `rowNumberRenderer`). */
+export interface RowNumberColors {
+  /** The interface font: the numbers stand apart from the data's mono font. */
+  family: string;
+  /** A selected row's number cell (`--rownum-selected`, white reads 4.5:1 on it). */
+  selectedFill: string;
+  /** A selected row's number (`--row-selected-text`). */
+  selectedText: string;
+}
+
+/** Colours of the row numbers on selected rows, and their font (missing tokens: the row's). */
+export function buildRowNumberColors(readVar: ReadVar = readCssVar): RowNumberColors {
+  return {
+    family: readVar("--font-ui") || FALLBACK_FONT,
+    selectedFill: readVar("--rownum-selected"),
+    selectedText: readVar("--row-selected-text"),
+  };
 }
 
 /** Row overrides: zebra, selected rows and the row numbers (missing tokens override nothing). */
@@ -236,6 +260,7 @@ export function useGridTheme(readVar: ReadVar = readCssVar, fontSize?: number) {
       theme,
       muted,
       rows: buildRowThemes(readVar),
+      rowNumbers: buildRowNumberColors(readVar),
       header: headerFont(readVar),
       edit: buildEditThemes(readVar),
       fontSize: size,

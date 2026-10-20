@@ -13,15 +13,17 @@ import {
   type ProvideEditorComponent,
   type TextCell,
   type Theme,
-  DataEditor,
+  DataEditorCore,
   type DataEditorRef,
+  ImageWindowLoaderImpl,
+  sprites,
 } from "@glideapps/glide-data-grid";
 import "@glideapps/glide-data-grid/dist/index.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toTsv } from "../../lib/copyFormats";
 import { type KeymapActionId, effectiveShortcuts } from "../../lib/keymap";
 import { isModKey } from "../../lib/platform";
-import { matchCombination } from "../../lib/shortcuts";
+import { matchCombination, typesCharacter } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import type { CellValue, ResultSet, SortDir } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
@@ -48,13 +50,13 @@ import {
   selectionBlock,
   withSelectedRow,
 } from "./gridSelection";
-import { useGridTheme } from "./gridTheme";
+import { markerFontSize, useGridTheme } from "./gridTheme";
+import { type RowNumberStyle, gridRenderers, rowNumberWidth } from "./rowNumbers";
 import { QuickLook } from "./QuickLook";
 
-/** Spec §5.2 at 100 %: rows 26 (they grow with a larger data font), header 30, numbers 46. */
+/** Spec §5.2 at 100 %: rows 26 (they grow with a larger data font), header 30, numbers 46 (wider for long numbers: rowNumberWidth). */
 const MIN_ROW_HEIGHT = 26;
 const HEADER_HEIGHT = 30;
-const ROW_NUMBER_WIDTH = 46;
 
 /** Editing hooks of a table grid; row/col are display rows and columns of `model` (its own column order). */
 export interface GridEditing {
@@ -121,7 +123,8 @@ export interface DataGridProps {
 
 const EMPTY_SELECTION: GridSelection = { columns: CompactSelection.empty(), rows: CompactSelection.empty() };
 
-// Key codes for Glide's hotkey syntax (`alt+_13`): our specs name keys by KeyboardEvent.code.
+// Key codes for Glide's hotkey syntax (`alt+_13`), which compares `keyCode`: a letter's
+// keyCode is the letter the layout types (like our matching), the other keys' their position.
 const KEY_CODES: Record<string, number> = {
   Enter: 13,
   Tab: 9,
@@ -236,7 +239,7 @@ export function DataGrid({
   onPageKey,
 }: DataGridProps) {
   const g = useGridTheme();
-  const { theme, muted: mutedOverride, edit: editThemes, rows: rowThemes } = g;
+  const { theme, muted: mutedOverride, edit: editThemes, rows: rowThemes, rowNumbers } = g;
   const keymap = useSettings((s) => s.settings.keymap);
   const keymapRef = useRef(keymap);
   keymapRef.current = keymap;
@@ -327,6 +330,13 @@ export function DataGrid({
   );
 
   const highlighted = useMemo(() => highlightedRows(selection), [selection]);
+  // Row numbers drawn by our marker renderer (right-aligned, interface font, #102); it reads
+  // the selection and colours of the last render.
+  const rowNumberStyle = useRef<RowNumberStyle>({ selected: () => false, family: "", selectedFill: "", selectedText: "" });
+  rowNumberStyle.current = { selected: (row) => highlighted.has(row), ...rowNumbers };
+  const renderers = useMemo(() => gridRenderers(() => rowNumberStyle.current), []);
+  // What Glide's DataEditor adds to its core, which takes no other renderers.
+  const imageWindowLoader = useMemo(() => new ImageWindowLoaderImpl(), []);
   const placeholderOnAccent = useMemo<Partial<Theme>>(
     () => ({ baseFontStyle: mutedOverride.baseFontStyle }),
     [mutedOverride],
@@ -517,6 +527,11 @@ export function DataGrid({
       e.stopPropagation();
       return !repeat;
     };
+    // Glide starts a cell edit with any printable key typed without Ctrl / Cmd, Alt+F's "f"
+    // or Ctrl+Alt+F taken for AltGr included (#102): only a character meant as text does.
+    // The key still reaches the window's shortcuts.
+    const raw = e.rawEvent as unknown as KeyboardEvent | undefined;
+    if (raw && !e.ctrlKey && !e.metaKey && e.key.length === 1 && !typesCharacter(raw)) e.cancel();
     if (plain && code === "Enter") {
       const cur = selectionRef.current.current?.cell;
       const row = cur?.[1] ?? selectedRows()[0];
@@ -630,8 +645,11 @@ export function DataGrid({
 
   return (
     <>
-      <DataEditor
+      <DataEditorCore
         ref={gridRef}
+        renderers={renderers}
+        headerIcons={sprites}
+        imageWindowLoader={imageWindowLoader}
         width="100%"
         height="100%"
         columns={columns}
@@ -641,7 +659,11 @@ export function DataGrid({
         theme={theme}
         rowHeight={rowHeight}
         headerHeight={HEADER_HEIGHT}
-        rowMarkers={{ kind: "number", width: ROW_NUMBER_WIDTH, theme: rowThemes.rowNumber }}
+        rowMarkers={{
+          kind: "number",
+          width: rowNumberWidth(rowCount, markerFontSize(g.fontSize)),
+          theme: rowThemes.rowNumber,
+        }}
         getRowThemeOverride={getRowThemeOverride}
         smoothScrollX
         smoothScrollY

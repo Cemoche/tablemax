@@ -33,15 +33,74 @@ const NAMED_CODES: Record<string, string> = {
 function codeFor(key: string): string {
   const k = key.toLowerCase();
   if (NAMED_CODES[k]) return NAMED_CODES[k];
-  if (/^[a-z]$/.test(k)) return `Key${k.toUpperCase()}`;
   if (/^[0-9]$/.test(k)) return `Digit${k}`;
   return key; // e.g. "F5", "Backspace": already a KeyboardEvent.code
 }
 
+const LATIN_LETTER = /^[a-z]$/i;
+/** One printable ASCII character (a letter, digit, space or punctuation). */
+const ASCII_PRINTABLE = /^[\x20-\x7e]$/;
+
+/**
+ * The letter a keydown stands for in a shortcut, uppercase, or null when it is no letter.
+ * Letters follow the layout: `e.key` when it is a Latin letter (AZERTY's Z key is "Z",
+ * whatever its position), else the physical key (`e.code`) when `e.key` is not ASCII
+ * (Cyrillic, Greek, an Option character on macOS, a dead key), so letter shortcuts still
+ * work on non-Latin layouts. A letter position that types ASCII punctuation (AZERTY's M
+ * position types ",") is no letter.
+ */
+function eventLetter(e: Pick<KeyboardEvent, "key" | "code">): string | null {
+  const key = e.key ?? "";
+  if (LATIN_LETTER.test(key)) return key.toUpperCase();
+  const m = /^Key([A-Z])$/.exec(e.code ?? "");
+  return m && !ASCII_PRINTABLE.test(key) ? m[1] : null;
+}
+
+/** Does the key of `e` (modifiers aside) match the key part of a spec? */
+function keyMatches(e: KeyboardEvent, key: string): boolean {
+  if (LATIN_LETTER.test(key)) return eventLetter(e) === key.toUpperCase();
+  // Digits, punctuation and named keys by position (AZERTY digits need Shift), but never a
+  // key that types a letter: that key is its letter's.
+  return e.code === codeFor(key) && !LATIN_LETTER.test(e.key ?? "");
+}
+
+const CODE_KEYS: Record<string, string> = {
+  Period: ".",
+  Comma: ",",
+  Slash: "/",
+  Semicolon: ";",
+  Minus: "-",
+  Equal: "=",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Backquote: "`",
+};
+const NAMED_KEYS = new Set([
+  "Enter", "Tab", "Escape", "Space", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "PageUp", "PageDown",
+]);
+
+/**
+ * The key part of the canonical spec for a keydown (`"W"`, `"1"`, `"/"`, `"Enter"`, `"F5"`),
+ * by the same rules as the matching: whatever it returns, `matchCombination` matches. Empty
+ * when the grammar has no name for the key (the Settings recorder reports it as invalid).
+ */
+export function shortcutKeyOf(e: Pick<KeyboardEvent, "key" | "code">): string {
+  const letter = eventLetter(e);
+  if (letter) return letter;
+  const code = e.code ?? "";
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^F([1-9]|1[0-2])$/.test(code) || NAMED_KEYS.has(code)) return code;
+  return Object.prototype.hasOwnProperty.call(CODE_KEYS, code) ? CODE_KEYS[code] : "";
+}
+
 /**
  * Does `e` match `spec` (`"Mod+K"`, `"Ctrl+Tab"`, `"Mod+Shift+F"`)? `Mod` is Meta on
- * macOS and Ctrl elsewhere; `Ctrl` is always Ctrl. The key is compared with `e.code`
- * (layout independent) and the modifiers must match exactly. Auto-repeat never matches.
+ * macOS and Ctrl elsewhere; `Ctrl` is always Ctrl. A letter follows the layout (`e.key`,
+ * with `e.code` for non-Latin layouts: see `eventLetter`); digits, punctuation and named
+ * keys are compared with `e.code` (layout independent). The modifiers must match exactly.
+ * Auto-repeat never matches.
  */
 export function matchShortcut(e: KeyboardEvent, spec: string): boolean {
   return !e.repeat && matchCombination(e, spec);
@@ -80,12 +139,37 @@ export function matchCombination(e: KeyboardEvent, spec: string): boolean {
     }
   }
   return (
-    e.code === codeFor(key) &&
+    keyMatches(e, key) &&
     e.ctrlKey === ctrl &&
     e.metaKey === meta &&
     e.shiftKey === shift &&
     e.altKey === alt
   );
+}
+
+const ASCII_ALNUM = /^[a-z0-9]$/i;
+
+/**
+ * Does this keydown type a character the user means to type (into a grid cell, say)?
+ * One printable character, and no shortcut modifier: never with Cmd / Super (Meta); with
+ * Ctrl or Alt only as AltGr (third level: AltGr+E types "€" on AZERTY), which reports
+ * AltGraph (Chromium on Windows with Ctrl and Alt down too). An AltGr chord that gives a
+ * plain letter or digit is Ctrl+Alt+letter taken for AltGr (Linux, #102), not text.
+ * On macOS Option types characters (Option+E is a dead key, Option+2 "™"); Ctrl never does.
+ */
+export function typesCharacter(e: KeyboardEvent, mac: boolean = isMac()): boolean {
+  const ch = e.key ?? "";
+  // One code point, not a control character ("Enter", "Dead", "\t" are no characters).
+  if ([...ch].length !== 1 || /[\u0000-\u001f\u007f]/.test(ch)) return false;
+  if (e.metaKey) return false;
+  const altGraph = !mac && typeof e.getModifierState === "function" && e.getModifierState("AltGraph");
+  // AltGr levels type symbols, never a plain letter or digit: that is Ctrl+Alt+letter
+  // reported as AltGr (with or without Ctrl / Alt down).
+  if (altGraph) return !ASCII_ALNUM.test(ch);
+  if (!e.ctrlKey && !e.altKey) return true;
+  if (mac) return !e.ctrlKey && !ASCII_ALNUM.test(ch);
+  // Ctrl+Alt without AltGraph: a character no plain key gives (not ASCII) is AltGr's.
+  return e.ctrlKey && e.altKey && !ASCII_PRINTABLE.test(ch);
 }
 
 export interface ShortcutOptions {

@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { type FocusEvent, type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { type KeymapActionId, effectiveShortcut, effectiveShortcuts } from "../../lib/keymap";
 import { ariaShortcut, formatShortcut } from "../../lib/platform";
 import { readRawCondition } from "../../lib/quickFilter";
@@ -241,8 +241,21 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
     effectiveShortcuts(action, keymap).some((spec) => matchCombination(e.nativeEvent, spec));
   const empty = filters.length === 0 && rows.every((r) => blank.has(r.id));
 
+  /** The row that last had the focus (WebKitGTK focuses a clicked button: Apply All, AND / OR). */
+  const lastRow = useRef<string | null>(null);
+  const rowOf = (target: EventTarget) =>
+    target instanceof Element ? target.closest<HTMLElement>("[data-row-id]")?.dataset.rowId : undefined;
+  const onFocus = (e: FocusEvent<HTMLDivElement>) => {
+    const id = rowOf(e.target);
+    if (id) lastRow.current = id;
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const rowId = (e.target as HTMLElement).closest<HTMLElement>("[data-row-id]")?.dataset.rowId;
+    const ownRow = rowOf(e.target);
+    // Toggle and add act on the focused row; from the bar's other controls, on the row focused
+    // last (else the only row): Ctrl+B after a click on Apply All toggles a row (#102).
+    const remembered = rows.some((r) => r.id === lastRow.current) ? lastRow.current! : undefined;
+    const rowId = ownRow ?? remembered ?? (rows.length === 1 ? rows[0].id : undefined);
     const act = (fn: () => void) => {
       e.preventDefault();
       e.stopPropagation();
@@ -251,7 +264,8 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
     };
     if (isKey("filters.toggle", e)) return act(() => rowId && toggle(rowId));
     if (isKey("filters.add", e)) return act(() => addAfter(rowId ?? rows[rows.length - 1].id));
-    if (isKey("filters.remove", e)) return act(() => rowId && remove(rowId));
+    // Removing needs the focus in its row: it may re-run the query (an applied row).
+    if (isKey("filters.remove", e)) return act(() => ownRow && remove(ownRow));
     if (isKey("filters.applyAll", e)) return act(() => applyAll("and"));
     if (isKey("filters.applyAllOr", e)) return act(() => applyAll("or"));
     // The table tab's Filters key closes the bar from inside it.
@@ -261,12 +275,12 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
     if (
       e.key === "Enter" &&
       plain &&
-      rowId &&
+      ownRow &&
       e.target instanceof HTMLInputElement &&
       e.target.type === "text"
     ) {
       e.preventDefault();
-      applyRow(rowId);
+      applyRow(ownRow);
     }
   };
 
@@ -281,6 +295,7 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
       aria-label={f.barLabel}
       className="flex items-start gap-2 border-b border-sep bg-side px-3 py-1 text-sm text-text"
       onKeyDown={onKeyDown}
+      onFocus={onFocus}
     >
       <div className="flex min-w-0 flex-1 flex-col">
         {rows.map((d, i) => {

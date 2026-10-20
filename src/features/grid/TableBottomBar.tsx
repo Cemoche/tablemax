@@ -16,8 +16,8 @@ const VIEWS: TableView[] = ["data", "structure"];
 const VIEW_KEYS: ShortcutOptions = { capture: true, stopPropagation: true, skipInEditable: true };
 
 /**
- * Which view of a table tab is shown. `grid.viewData` (Alt+1, Ctrl+Alt+[) shows the rows,
- * `grid.viewStructure` (Alt+2, Ctrl+Alt+]) the structure (Option on macOS, matched by
+ * Which view of a table tab is shown. `grid.viewData` (Alt+1; also ⌘⌥[ on macOS) shows the
+ * rows, `grid.viewStructure` (Alt+2; also ⌘⌥]) the structure (Option on macOS, matched by
  * physical key since Option+digit types a character there); not while typing in a field or
  * with a modal open. Only the active tab is mounted, so the shortcut acts on it. The view
  * lives in the chrome store, per tab: it survives the unmount of a tab or workspace switch,
