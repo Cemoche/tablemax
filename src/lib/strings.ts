@@ -570,7 +570,6 @@ export const strings = {
     /** The dim line of shortcuts, built from the live keymap. */
     hint: (label: string, shortcut: string) => `${label}: ${shortcut}`,
     hintSeparator: "  ",
-    escKey: "Esc",
     hints: {
       show: "Show",
       hide: "Hide",
@@ -704,6 +703,7 @@ export const strings = {
       ArrowRight: "→",
       ArrowUp: "↑",
       ArrowDown: "↓",
+      Escape: "Esc",
     } as Record<string, string>,
     keySeparator: "+",
     changeShortcut: "Change",

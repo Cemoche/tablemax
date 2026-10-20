@@ -1435,8 +1435,8 @@ impl SessionManager {
 
     /// The WHERE clause the grid's page uses for `filters` joined by `combine`, with its
     /// placeholders and without the values ([`where_preview`]): the filter bar's read-only
-    /// SQL preview. Reads the cached table info and the browse session's dialect; runs
-    /// nothing on the database.
+    /// SQL preview. Reads at most the table metadata (on a cache miss) and the browse
+    /// session's dialect; never values, never a query on the rows.
     pub async fn filters_preview_sql(
         &self,
         workspace_id: &str,

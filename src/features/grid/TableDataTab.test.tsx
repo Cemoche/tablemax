@@ -595,6 +595,14 @@ test("sql_preview: the filter bar's SQL asks the backend for the page's WHERE of
   await userEvent.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("region", { name: strings.filters.barLabel })).toBeInTheDocument();
+  // Ctrl+F from inside the preview hides the bar; reopened, the preview is not back.
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.sql }));
+  await screen.findByRole("dialog");
+  await userEvent.keyboard("{Control>}f{/Control}");
+  expect(screen.queryByRole("region", { name: strings.filters.barLabel })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.button(1) }));
+  expect(screen.getByRole("region", { name: strings.filters.barLabel })).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 test("apply_all_and_or: Apply All with OR reaches the page and the count", async () => {

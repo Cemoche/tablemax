@@ -174,6 +174,10 @@ test("commit_group_replaces_the_edit_strip: pending count, Cancel while committi
   expect(commit).toBeDisabled();
   expect(commit).toHaveAttribute("title", strings.grid.otherTabCommitting);
   expect(screen.getByRole("button", { name: t.discard })).toBeEnabled();
+  // A tab of another workspace committing never blocks this one.
+  act(() => usePendingChanges.setState({ committingIn: { w2: "tX" } }));
+  expect(commit).toBeEnabled();
+  expect(commit).not.toHaveAttribute("title", strings.grid.otherTabCommitting);
   act(() => usePendingChanges.setState({ committingIn: {} }));
   expect(commit).toBeEnabled();
   expect(commit).not.toHaveAttribute("title", strings.grid.otherTabCommitting);

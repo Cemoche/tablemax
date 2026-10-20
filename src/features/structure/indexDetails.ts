@@ -9,23 +9,43 @@ export interface IndexDetails {
 /**
  * The access method and the condition read from an index's `CREATE INDEX` text (PostgreSQL
  * and SQLite give one; MySQL and SQLite's automatic indexes do not). Only words outside
- * quotes, identifiers and parentheses count, so a column or expression named "where" is
- * never taken for the clause.
+ * quotes, identifiers (also SQLite's `[…]`), parentheses and comments count, so a column,
+ * expression or comment saying "where" is never taken for the clause.
  */
 export function indexDetails(definition: string | null): IndexDetails {
   if (!definition) return { type: "", condition: "" };
-  // The definition with every quoted or parenthesized part blanked (same length, so the
-  // positions found in it are the definition's).
+  // The definition with every quoted, bracketed, parenthesized or commented part blanked
+  // (same length, so the positions found in it are the definition's).
   let masked = "";
   let depth = 0;
+  /** The character that ends the current quote ('…', "…", `…`, SQLite's […]). */
   let quote: string | null = null;
+  let comment: "line" | "block" | null = null;
   for (let i = 0; i < definition.length; i++) {
     const ch = definition[i];
-    if (quote) {
+    const next = definition[i + 1];
+    if (comment === "line") {
+      if (ch === "\n") comment = null;
+      masked += " ";
+    } else if (comment === "block") {
+      if (ch === "*" && next === "/") {
+        comment = null;
+        masked += " ";
+        i++;
+      }
+      masked += " ";
+    } else if (quote) {
       if (ch === quote) quote = null;
       masked += " ";
-    } else if (ch === "'" || ch === '"' || ch === "`") {
-      quote = ch;
+    } else if (ch === "-" && next === "-") {
+      comment = "line";
+      masked += " ";
+    } else if (ch === "/" && next === "*") {
+      comment = "block";
+      masked += "  ";
+      i++;
+    } else if (ch === "'" || ch === '"' || ch === "`" || ch === "[") {
+      quote = ch === "[" ? "]" : ch;
       masked += " ";
     } else if (ch === "(") {
       depth++;

@@ -38,3 +38,13 @@ test("no definition (MySQL, SQLite automatic indexes): nothing to show", () => {
   expect(indexDetails(null)).toEqual({ type: "", condition: "" });
   expect(indexDetails("")).toEqual({ type: "", condition: "" });
 });
+
+test("SQLite [bracketed] identifiers and SQL comments are not the index's WHERE (review #103)", () => {
+  expect(indexDetails("CREATE INDEX [where] ON t(a)")).toEqual({ type: "", condition: "" });
+  expect(indexDetails("CREATE INDEX [x using y] ON [t where](a)")).toEqual({ type: "", condition: "" });
+  expect(indexDetails("CREATE INDEX i ON t(a) -- where a > 1\n")).toEqual({ type: "", condition: "" });
+  expect(indexDetails("CREATE INDEX i ON t(a) /* where a > 1 */")).toEqual({ type: "", condition: "" });
+  // A real condition after a comment still counts.
+  expect(indexDetails("CREATE INDEX i ON t(a) /* partial */ WHERE a > 1")).toEqual({ type: "", condition: "a > 1" });
+  expect(indexDetails("CREATE INDEX i ON t(a) -- note\nWHERE b IS NULL")).toEqual({ type: "", condition: "b IS NULL" });
+});

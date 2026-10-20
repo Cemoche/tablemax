@@ -36,6 +36,8 @@ interface Props {
   onApply: (filters: Filter[], combine: FilterCombine) => boolean;
   /** Escape, Hide in the ⚙ menu, or the Filters key (Ctrl+F) inside the bar. */
   onClose: () => void;
+  /** False while the bar is hidden (it stays mounted): its SQL preview and menus close. */
+  open?: boolean;
   /** The WHERE clause these filters give, with placeholders (the SQL button); absent: no SQL button. */
   previewSql?: (filters: Filter[], combine: FilterCombine) => Promise<string>;
   /** Each new value above 0 puts the focus on the first row (the bar was opened from the keyboard or its button). */
@@ -107,6 +109,7 @@ export function FilterBar({
   combine,
   onApply,
   onClose,
+  open = true,
   previewSql,
   focusSeq,
   start = null,
@@ -206,15 +209,11 @@ export function FilterBar({
   const applyRow = (rowId: string) => {
     const row = rows.find((r) => r.id === rowId);
     if (!row) return;
-    setMode("and");
-    applyRows([row], "and");
+    if (applyRows([row], "and")) setMode("and");
   };
+  /** The join changes only when the apply went through: a refused one leaves what is applied. */
   const applyAll = (how: FilterCombine) => {
-    setMode(how);
-    applyRows(
-      rows.filter((r) => !blank.has(r.id) && !off.has(r.id)),
-      how,
-    );
+    if (applyRows(rows.filter((r) => !blank.has(r.id) && !off.has(r.id)), how)) setMode(how);
   };
   const toggle = (rowId: string) => setState((s) => ({ ...s, off: s.off.has(rowId) ? without(s.off, rowId) : new Set(s.off).add(rowId) }));
   const addAfter = (rowId: string) => {
@@ -346,7 +345,7 @@ export function FilterBar({
   const h = f.hints;
   const hints = [
     f.hint(h.show, formatShortcut(shortcut("grid.filters"))),
-    f.hint(h.hide, f.escKey),
+    f.hint(h.hide, formatShortcut("Escape")),
     f.hint(h.insert, formatShortcut(shortcut("filters.add"))),
     f.hint(h.remove, formatShortcut(shortcut("filters.remove"))),
     f.hint(h.toggle, formatShortcut(shortcut("filters.toggle"))),
@@ -378,6 +377,11 @@ export function FilterBar({
     setSql(null);
     if (refocus) sqlButton.current?.focus();
   };
+  // Hidden (Ctrl+F, Escape, Filters): the preview goes, so it does not come back on reopen.
+  if (!open && sql !== null) {
+    sqlRun.current++;
+    setSql(null);
+  }
 
   const rowNumber = (rowId: string) => rows.findIndex((r) => r.id === rowId) + 1;
   const optionItems = (): MenuEntry[] => {
@@ -586,6 +590,7 @@ export function FilterBar({
         <MenuButton
           label={f.options}
           title={f.options}
+          closed={!open}
           menuLabel={f.optionsMenu}
           className={`${button} w-7 px-0`}
           items={optionItems}
@@ -645,6 +650,7 @@ export function FilterBar({
           <MenuButton
             label={f.combineButton(joinText)}
             title={f.combineButton(joinText)}
+            closed={!open}
             menuLabel={f.combineMenu}
             align="end"
             className={`${button} -ml-px rounded-l-none px-1.5`}

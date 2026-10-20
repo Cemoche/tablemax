@@ -25,6 +25,8 @@ interface Props {
   items: MenuEntry[] | (() => MenuEntry[]);
   /** Which edge of the button the menu lines up with. */
   align?: "start" | "end";
+  /** True closes an open menu (its container was hidden). */
+  closed?: boolean;
 }
 
 const itemClass =
@@ -36,8 +38,9 @@ const itemClass =
  * closes and gives the focus back to the button; Tab or a press outside closes it. A choice
  * gives the focus back to the button before it acts, so an action that moves the focus wins.
  */
-export function MenuButton({ label, title, menuLabel, className, children, items, align = "start" }: Props) {
+export function MenuButton({ label, title, menuLabel, className, children, items, align = "start", closed = false }: Props) {
   const [open, setOpen] = useState(false);
+  if (closed && open) setOpen(false);
   const button = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const menuId = useId();

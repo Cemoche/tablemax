@@ -395,6 +395,7 @@ function TableDataView({
                 combine={t.combine}
                 onApply={(filters: Filter[], combine: FilterCombine) => t.setFilters(filters, combine)}
                 onClose={closeFilters}
+                open={filtersOpen}
                 previewSql={(filters: Filter[], combine: FilterCombine) =>
                   ipc.filtersPreviewSql(workspaceId, object, filters, combine)
                 }

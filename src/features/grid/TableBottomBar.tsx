@@ -89,11 +89,8 @@ const ICON = { size: 15, strokeWidth: 1.6, "aria-hidden": true } as const;
  * Filters: filled with the deeper accent while its bar is open (white reads 4.5:1 on
  * --accent-strong, not on --accent, #103).
  */
-const filtersControl = control
-  .replace("aria-expanded:bg-seg-sel", "")
-  .concat(
-    " aria-expanded:border-accent-strong aria-expanded:bg-accent-strong aria-expanded:text-accent-contrast aria-expanded:hover:bg-accent-strong",
-  );
+const filtersControl =
+  "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent aria-expanded:border-accent-strong aria-expanded:bg-accent-strong aria-expanded:text-accent-contrast aria-expanded:hover:bg-accent-strong";
 const VIEW_TEXT: Record<TableView, { label: string; hint: (shortcut: string) => string }> = {
   data: { label: strings.grid.view.data, hint: strings.grid.view.dataShortcut },
   structure: { label: strings.grid.view.structure, hint: strings.grid.view.structureShortcut },
@@ -165,7 +162,9 @@ export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props)
               aria-keyshortcuts={keys(shortcut[k])}
               onClick={() => onView(k)}
               onKeyDown={onTabKey}
-              className="rounded-[5px] px-2.5 text-text outline-none aria-selected:bg-accent-strong aria-selected:text-accent-contrast focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
+              // The ring sits inside the segment: accent on the button, white inside the selected fill
+              // (accent on --accent-strong would barely show; white reads 5.4:1 or more there).
+              className="rounded-[5px] px-2.5 text-text outline-none aria-selected:bg-accent-strong aria-selected:text-accent-contrast focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent aria-selected:focus-visible:outline-accent-contrast"
             >
               {VIEW_TEXT[k].label}
             </button>

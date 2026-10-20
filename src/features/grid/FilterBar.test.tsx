@@ -23,6 +23,7 @@ beforeEach(() => {
 });
 
 interface SetupProps {
+  open?: boolean;
   filters?: Filter[];
   combine?: FilterCombine;
   dialect?: Dialect;
@@ -30,10 +31,11 @@ interface SetupProps {
   start?: { column: string; seq: number } | null;
 }
 
-function ui({ filters = [], combine = "and", dialect = "postgres", focusSeq = 0, start = null }: SetupProps = {}) {
+function ui({ open = true, filters = [], combine = "and", dialect = "postgres", focusSeq = 0, start = null }: SetupProps = {}) {
   return (
     <FilterBar
       id="fb"
+      open={open}
       dialect={dialect}
       columns={cols}
       filters={filters}
@@ -384,8 +386,9 @@ test("a Raw SQL row says how it is read: filter syntax (bound) or SQL as written
   await applyAllWith("OR");
   expect(screen.getByRole("alert")).toHaveTextContent(f.rawOrNeedsSql);
   expect(onApply).not.toHaveBeenCalled();
-  expect(reading()).toHaveTextContent(f.rawRead.error);
-  expect(raw).toHaveAccessibleDescription(`${f.rawOrNeedsSql} ${f.rawRead.applyNote}`);
+  // Refused: the join stays AND (what is applied), so the row still reads as filter syntax.
+  expect(joinButton("AND")).toBeInTheDocument();
+  expect(reading()).toHaveTextContent(f.rawRead.bound);
   // Applied alone (AND) the row is fine.
   await userEvent.click(screen.getByRole("button", { name: f.applyRow(1) }));
   expect(onApply).toHaveBeenLastCalledWith(
@@ -445,7 +448,7 @@ test("hint_line_follows_the_keymap: built from the effective shortcuts, a rebind
   const hints = within(footer()).getByTestId("filter-hints");
   for (const text of [
     f.hint(f.hints.show, "Ctrl+F"),
-    f.hint(f.hints.hide, f.escKey),
+    f.hint(f.hints.hide, "Esc"),
     f.hint(f.hints.insert, "Ctrl+I"),
     f.hint(f.hints.remove, "Ctrl+Shift+I"),
     f.hint(f.hints.toggle, "Ctrl+B"),
@@ -622,4 +625,52 @@ test("the ⌄ menu: AND / OR as radio items with their keys, the current join ch
   expect(screen.getByRole("menu")).toBeInTheDocument();
   await user.click(value(1));
   expect(screen.queryByRole("menu")).toBeNull();
+});
+
+test("a refused Apply All keeps the join it had: the ⌄, the preview and Clear still use AND (review #103)", async () => {
+  await twoRows();
+  onApply.mockReturnValue(false);
+  await applyAllWith("OR");
+  expect(onApply).toHaveBeenLastCalledWith(expect.anything(), "or");
+  expect(joinButton("AND")).toBeInTheDocument();
+  value(1).focus();
+  await userEvent.keyboard("{Control>}{Shift>}{Enter}{/Shift}{/Control}");
+  expect(joinButton("AND")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: f.sql }));
+  expect(previewSql).toHaveBeenLastCalledWith(expect.anything(), "and");
+  await userEvent.keyboard("{Escape}");
+  onApply.mockReturnValue(true);
+  await userEvent.click(screen.getByRole("button", { name: f.clear }));
+  expect(onApply).toHaveBeenLastCalledWith([], "and");
+});
+
+test("hiding the bar closes its SQL preview and menus: they do not come back when it reopens (review #103)", async () => {
+  previewSql.mockResolvedValue('WHERE "id" = $1');
+  const { rerender } = setup({ filters: [eq("id", "1")] });
+  await userEvent.click(screen.getByRole("button", { name: f.sql }));
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  // Ctrl+F from inside the preview hides the bar (the parent sets open = false).
+  await userEvent.keyboard("{Control>}f{/Control}");
+  expect(onClose).toHaveBeenCalledTimes(1);
+  rerender(ui({ open: false, filters: [eq("id", "1")] }));
+  expect(screen.queryByRole("dialog", { hidden: true })).toBeNull();
+  rerender(ui({ open: true, filters: [eq("id", "1")] }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: f.sql })).toHaveAttribute("aria-expanded", "false");
+  // An open menu too.
+  await userEvent.click(screen.getByRole("button", { name: f.options }));
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  rerender(ui({ open: false, filters: [eq("id", "1")] }));
+  rerender(ui({ open: true, filters: [eq("id", "1")] }));
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("button", { name: f.options })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("the ⚙ menu's Hide names Escape as the hint line does", async () => {
+  setup();
+  await userEvent.click(screen.getByRole("button", { name: f.options }));
+  const hide = screen.getByRole("menuitem", { name: f.hide });
+  expect(hide).toHaveTextContent("Esc");
+  expect(hide).not.toHaveTextContent("Escape");
+  expect(hide).toHaveAttribute("aria-keyshortcuts", "Escape");
 });

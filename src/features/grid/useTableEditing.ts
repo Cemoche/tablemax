@@ -77,11 +77,6 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
   const awaitingReload = usePendingChanges((s) => s.awaitingReload[tabId] ?? false);
   /** A commit the protected connection wants confirmed (the tab shows the dialog). */
   const confirm = usePendingChanges((s) => s.confirming[tabId] ?? null);
-  /** Another table tab of the workspace is committing: this one may not start. */
-  const otherCommitting = usePendingChanges((s) => {
-    const t = s.committingIn[workspaceId];
-    return t !== undefined && t !== tabId;
-  });
   const appliedSeq = usePendingChanges((s) => s.applied[tabId] ?? 0);
   /** Edits are refused: a commit runs, waits for its confirmation, or its reload has not landed. */
   const locked = committing || awaitingReload || confirm !== null;
@@ -422,8 +417,6 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     locked,
     /** The commit waiting for confirmation, else null. */
     confirm,
-    /** Another table tab of the workspace is committing (Commit is disabled here). */
-    otherCommitting,
     /** The last commit lost its connection: Commit is refused until a reload. */
     outcomeUnknown,
     hint,
@@ -459,10 +452,7 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     setValue,
     /** A context-menu action on a cell or row. */
     runAction,
-    commit: () => void store().commit(tabId, workspaceId, object),
-    /** Cancels the running commit (rolled back). */
-    cancelCommit: () => void store().cancelCommit(tabId, workspaceId).catch(() => {}),
+    // Commit, Cancel and Discard are the toolbar's (#103), straight on the store.
     addRow: () => store().addInsert(tabId, object),
-    discard: () => store().discard(tabId),
   };
 }

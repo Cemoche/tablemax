@@ -17,6 +17,9 @@ export const drawCenteredHeader: DrawHeaderCallback = (args, drawContent) => {
   ctx.font = font;
   if (ctx.measureText(column.title).width > rect.width - 2 * theme.cellHorizontalPadding) {
     ctx.restore();
+    // Glide's drawing (left, cut) in the header font too, not the data font it left set;
+    // Glide wraps each header in its own save / restore.
+    ctx.font = font;
     return drawContent();
   }
   ctx.fillStyle = isSelected ? theme.textHeaderSelected : theme.textHeader;
