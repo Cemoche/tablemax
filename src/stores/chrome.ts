@@ -52,8 +52,8 @@ interface ChromeState {
    * unmounts it. Set by the tab's switch and by the sidebar's "Open structure"; dropped
    * when the tab closes (workspaces).
    */
-  tableViews: Record<string, "data" | "structure">;
-  setTableView: (tabId: string, view: "data" | "structure") => void;
+  tableViews: Record<string, "data" | "structure" | "index">;
+  setTableView: (tabId: string, view: "data" | "structure" | "index") => void;
   dropTableView: (tabId: string) => void;
 }
 

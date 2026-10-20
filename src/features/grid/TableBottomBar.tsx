@@ -8,18 +8,18 @@ import { useChrome } from "../../stores/chrome";
 import { ColumnsPopover } from "./ColumnsPopover";
 import { PagePopover } from "./PagePopover";
 
-export type TableView = "data" | "structure";
+export type TableView = "data" | "structure" | "index";
 
-const VIEWS: TableView[] = ["data", "structure"];
+const VIEWS: TableView[] = ["data", "structure", "index"];
 
 // Capture + stop: the grid would take the digit as the start of a cell edit.
 const VIEW_KEYS: ShortcutOptions = { capture: true, stopPropagation: true, skipInEditable: true };
 
 /**
  * Which view of a table tab is shown. `grid.viewData` (Alt+1; also ⌘⌥[ on macOS) shows the
- * rows, `grid.viewStructure` (Alt+2; also ⌘⌥]) the structure (Option on macOS, matched by
- * physical key since Option+digit types a character there); not while typing in a field or
- * with a modal open. Only the active tab is mounted, so the shortcut acts on it. The view
+ * rows, `grid.viewStructure` (Alt+2; also ⌘⌥]) the structure, `grid.viewIndex` (Alt+3) the
+ * indexes (Option on macOS, matched by physical key since Option+digit types a character
+ * there); not while typing in a field or with a modal open. Only the active tab is mounted, so the shortcut acts on it. The view
  * lives in the chrome store, per tab: it survives the unmount of a tab or workspace switch,
  * and the sidebar's "Open structure" sets it.
  */
@@ -28,6 +28,7 @@ export function useTableView(tabId: string) {
   const setView = (v: TableView) => useChrome.getState().setTableView(tabId, v);
   useAction("grid.viewData", () => setView("data"), VIEW_KEYS);
   useAction("grid.viewStructure", () => setView("structure"), VIEW_KEYS);
+  useAction("grid.viewIndex", () => setView("index"), VIEW_KEYS);
   return { view, setView };
 }
 
@@ -84,6 +85,11 @@ interface Props {
 const control =
   "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:text-icon-dim disabled:hover:bg-btn aria-expanded:bg-seg-sel";
 const ICON = { size: 15, strokeWidth: 1.6, "aria-hidden": true } as const;
+const VIEW_TEXT: Record<TableView, { label: string; hint: (shortcut: string) => string }> = {
+  data: { label: strings.grid.view.data, hint: strings.grid.view.dataShortcut },
+  structure: { label: strings.grid.view.structure, hint: strings.grid.view.structureShortcut },
+  index: { label: strings.grid.view.index, hint: strings.grid.view.indexShortcut },
+};
 
 /**
  * The bar under the grid (spec §2.3): [Data | Structure] · + Row · the row counter, centered ·
@@ -95,6 +101,7 @@ export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props)
   const shortcut = {
     data: useEffectiveShortcut("grid.viewData"),
     structure: useEffectiveShortcut("grid.viewStructure"),
+    index: useEffectiveShortcut("grid.viewIndex"),
     addRow: useEffectiveShortcut("grid.addRow"),
     filters: useEffectiveShortcut("grid.filters"),
     columns: useEffectiveShortcut("grid.columns"),
@@ -145,13 +152,13 @@ export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props)
               aria-selected={view === k}
               aria-controls={panelIds[k]}
               tabIndex={view === k ? 0 : -1}
-              title={(k === "data" ? v.dataShortcut : v.structureShortcut)(formatShortcut(shortcut[k]))}
+              title={VIEW_TEXT[k].hint(formatShortcut(shortcut[k]))}
               aria-keyshortcuts={keys(shortcut[k])}
               onClick={() => onView(k)}
               onKeyDown={onTabKey}
               className="rounded-[5px] px-2.5 text-text outline-none aria-selected:bg-accent aria-selected:text-accent-contrast focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
             >
-              {k === "data" ? v.data : v.structure}
+              {VIEW_TEXT[k].label}
             </button>
           ))}
         </div>

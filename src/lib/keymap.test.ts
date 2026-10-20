@@ -46,6 +46,7 @@ test("the defaults are the combinations the code binds today", () => {
     "grid.rowDetails": "Ctrl+Space",
     "grid.viewData": "Alt+1",
     "grid.viewStructure": "Alt+2",
+    "grid.viewIndex": "Alt+3",
     "font.increase": "Mod+=",
     "font.decrease": "Mod+-",
     "database.open": "Mod+K",
@@ -393,6 +394,9 @@ test("view_switch_alternates: Data / Structure also answer to ⌘⌥[ / ] on mac
   // Off macOS Ctrl+Alt is AltGr (#102): no alternate.
   expect(effectiveShortcuts("grid.viewData", {}, false)).toEqual(["Alt+1"]);
   expect(effectiveShortcuts("grid.viewStructure", {}, false)).toEqual(["Alt+2"]);
+  // #103: Index is Alt+3 on every platform (no third bracket key for ⌘⌥).
+  expect(effectiveShortcuts("grid.viewIndex", {}, false)).toEqual(["Alt+3"]);
+  expect(effectiveShortcuts("grid.viewIndex", {}, true)).toEqual(["Alt+3"]);
   expect(effectiveShortcuts("grid.viewData", { "grid.viewData": "Alt+D" }, true)).toEqual(["Alt+D"]);
   // Not the tab keys (Mod+[ / ]) nor the workspace keys (Mod+Shift+[ / ]).
   expect(conflictFor("grid.viewData", "Mod+Alt+[", {}, true)).toBeNull();

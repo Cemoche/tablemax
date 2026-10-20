@@ -905,6 +905,36 @@ test("Alt+2 shows the structure and Alt+1 the data, not while typing or with a m
   expect(selected(v.structure)).toBe("true");
 });
 
+test("index_view_key: Alt+3 shows the indexes as their own view, from the table info already cached", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.tableInfo).mockResolvedValue(
+    tableInfo({ indexes: [{ name: "lines_pkey", columns: ["order_id", "line"], unique: true, primary: true, definition: null }] }),
+  );
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  const v = strings.grid.view;
+  const selected = (name: string) => screen.getByRole("tab", { name }).getAttribute("aria-selected");
+  await screen.findByTestId("grid");
+  // Not mounted before it is first shown.
+  expect(screen.queryByRole("tabpanel", { name: v.index })).toBeNull();
+
+  await user.keyboard("{Alt>}3{/Alt}");
+  expect(selected(v.index)).toBe("true");
+  const panel = screen.getByRole("tabpanel", { name: v.index });
+  expect(panel).toBeVisible();
+  expect(screen.getByRole("tab", { name: v.index })).toHaveAttribute("aria-controls", panel.id);
+  expect(await within(panel).findByRole("table", { name: strings.structure.indexView.label })).toBeInTheDocument();
+  expect(screen.getByTestId("grid")).not.toBeVisible();
+  // Only the table info call (no other backend call), never refreshed.
+  expect(vi.mocked(ipc.tableInfo).mock.calls.every(([, , refresh]) => refresh === false)).toBe(true);
+
+  await user.keyboard("{Alt>}1{/Alt}");
+  expect(selected(v.data)).toBe("true");
+  expect(panel).not.toBeVisible();
+  expect(screen.getByTestId("grid")).toBeVisible();
+});
+
 test("Alt+1 / Alt+2 never reach the focused grid (it would start a cell edit)", async () => {
   const user = userEvent.setup();
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));

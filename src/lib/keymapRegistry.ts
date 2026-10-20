@@ -65,6 +65,9 @@ const SPECS = {
   // (Ctrl+Mod would be Ctrl+[ elsewhere): off macOS Ctrl+Alt is AltGr (#102).
   "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1", mac: { alternates: ["Mod+Alt+["] } },
   "grid.viewStructure": { scope: "tableTab", defaultShortcut: "Alt+2", mac: { alternates: ["Mod+Alt+]"] } },
+  // #103: the third view. [ / ] are a pair with no third key, so Alt+3 alone (Option+3 on
+  // macOS, matched by physical key like Alt+1 / Alt+2).
+  "grid.viewIndex": { scope: "tableTab", defaultShortcut: "Alt+3" },
   "font.increase": { scope: "global", defaultShortcut: "Mod+=" },
   "font.decrease": { scope: "global", defaultShortcut: "Mod+-" },
   "database.open": { scope: "global", defaultShortcut: "Mod+K" },

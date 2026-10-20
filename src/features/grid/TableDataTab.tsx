@@ -10,6 +10,7 @@ import { usePendingChanges } from "../../stores/pendingChanges";
 import { useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
+import { IndexView } from "../structure/IndexView";
 import { StructureTab } from "../structure/StructureTab";
 import { type LiveEnvSource, useLiveEnv } from "../workspace/useLiveEnv";
 import { Breadcrumb } from "./Breadcrumb";
@@ -85,25 +86,45 @@ export function TableDataTab(props: Props) {
   const { view, setView } = useTableView(props.tabId);
   // Shortcuts of the data view (Ctrl+Space, Alt+←) only act while it is shown.
   const detail = useRowDetail(props.tabId, view === "data");
-  // The structure loads when first asked for; then both views stay mounted (hidden) so
-  // switching keeps the page, the pending changes and the structure's section.
-  const [structureSeen, setStructureSeen] = useState(false);
-  if (view === "structure" && !structureSeen) setStructureSeen(true);
+  // The structure and the indexes load when first asked for; then every view seen stays
+  // mounted (hidden) so switching keeps the page, the pending changes and the structure's section.
+  const [seen, setSeen] = useState({ structure: false, index: false });
+  if (view !== "data" && !seen[view]) setSeen((s) => ({ ...s, [view]: true }));
   /** The commit confirmation closed: Commit gets the focus back once the tab is unlocked. */
   const refocusCommit = useRef(false);
   const toggleRef = useRef<HTMLDivElement>(null);
   const id = useId();
-  const panelIds: Record<TableView, string> = { data: `${id}-data`, structure: `${id}-structure` };
-  const structure = structureSeen && (
-    <div
-      id={panelIds.structure}
-      role="tabpanel"
-      aria-label={strings.grid.view.structure}
-      hidden={view !== "structure"}
-      className="min-h-0 flex-1"
-    >
-      <StructureTab workspaceId={props.workspaceId} object={props.object} dialect={props.dialect} />
-    </div>
+  const allIds: Record<TableView, string> = { data: `${id}-data`, structure: `${id}-structure`, index: `${id}-index` };
+  const panelIds: Partial<Record<TableView, string>> = {
+    data: allIds.data,
+    ...(seen.structure ? { structure: allIds.structure } : {}),
+    ...(seen.index ? { index: allIds.index } : {}),
+  };
+  const otherViews = (
+    <>
+      {seen.structure && (
+        <div
+          id={allIds.structure}
+          role="tabpanel"
+          aria-label={strings.grid.view.structure}
+          hidden={view !== "structure"}
+          className="min-h-0 flex-1"
+        >
+          <StructureTab workspaceId={props.workspaceId} object={props.object} dialect={props.dialect} />
+        </div>
+      )}
+      {seen.index && (
+        <div
+          id={allIds.index}
+          role="tabpanel"
+          aria-label={strings.grid.view.index}
+          hidden={view !== "index"}
+          className="min-h-0 flex-1"
+        >
+          <IndexView workspaceId={props.workspaceId} object={props.object} />
+        </div>
+      )}
+    </>
   );
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -114,8 +135,8 @@ export function TableDataTab(props: Props) {
         detail={detail}
         view={view}
         onView={setView}
-        panelIds={structureSeen ? panelIds : { data: panelIds.data }}
-        structure={structure}
+        panelIds={panelIds}
+        otherViews={otherViews}
         refocusCommit={refocusCommit}
         toggleRef={toggleRef}
       />
@@ -139,7 +160,7 @@ function TableDataView({
   view,
   onView,
   panelIds,
-  structure,
+  otherViews,
   refocusCommit,
   toggleRef,
 }: Props & {
@@ -147,8 +168,8 @@ function TableDataView({
   view: TableView;
   onView: (v: TableView) => void;
   panelIds: Partial<Record<TableView, string>>;
-  /** The structure view (mounted once seen), shown above the bottom bar in place of the rows. */
-  structure: ReactNode;
+  /** The structure and index views (each mounted once seen), shown above the bottom bar in place of the rows. */
+  otherViews: ReactNode;
   refocusCommit: RefObject<boolean>;
   toggleRef: RefObject<HTMLDivElement | null>;
 }) {
@@ -302,7 +323,7 @@ function TableDataView({
     if (!refocusCommit.current || e.confirm || e.locked) return;
     refocusCommit.current = false;
     if (!active) {
-      // The structure view is shown: Commit and + Row are hidden, the selected view tab is not.
+      // Another view is shown: Commit and + Row are hidden, the selected view tab is not.
       toggleRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
       return;
     }
@@ -508,7 +529,7 @@ function TableDataView({
           )}
         </div>
       </div>
-      {structure}
+      {otherViews}
       <TableBottomBar
         view={view}
         onView={onView}

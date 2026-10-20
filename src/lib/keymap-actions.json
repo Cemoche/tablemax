@@ -15,6 +15,7 @@
   "grid.rowDetails",
   "grid.viewData",
   "grid.viewStructure",
+  "grid.viewIndex",
   "font.increase",
   "font.decrease",
   "database.open",

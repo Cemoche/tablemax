@@ -72,6 +72,7 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "grid.rowDetails",
     "grid.viewData",
     "grid.viewStructure",
+    "grid.viewIndex",
     "font.increase",
     "font.decrease",
     "database.open",
