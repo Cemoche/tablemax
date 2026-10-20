@@ -112,6 +112,13 @@ const SPECS = {
   "filters.remove": { scope: "filterBar", defaultShortcut: "Mod+Shift+I" },
   "filters.applyAll": { scope: "filterBar", defaultShortcut: "Mod+Enter" },
   "filters.applyAllOr": { scope: "filterBar", defaultShortcut: "Mod+Shift+Enter" },
+  // #103: Up / Down between the rows, and jumps to the row's column and operator pickers.
+  // macOS uses ⌘← / ⌘→ for the jumps; elsewhere Ctrl+← / Ctrl+→ stay word moves in the
+  // value field, so Alt+C / Alt+O (layout letters).
+  "filters.up": { scope: "filterBar", defaultShortcut: "Mod+ArrowUp" },
+  "filters.down": { scope: "filterBar", defaultShortcut: "Mod+ArrowDown" },
+  "filters.column": { scope: "filterBar", defaultShortcut: "Alt+C", mac: { defaultShortcut: "Mod+ArrowLeft" } },
+  "filters.operator": { scope: "filterBar", defaultShortcut: "Alt+O", mac: { defaultShortcut: "Mod+ArrowRight" } },
 } as const satisfies Record<keyof typeof strings.keymap, Spec>;
 
 export type KeymapActionId = keyof typeof SPECS;

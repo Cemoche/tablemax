@@ -95,6 +95,19 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
   opérateur, valeur, Apply, +, − ; à droite « Apply All » avec AND / OR. Elle remplace le
   constructeur de filtres et la barre de filtre rapide actuels (la syntaxe rapide devient le mode
   « Raw SQL »).
+
+> Amendement 2026-10-20 (#103) : barre du bas [Data | Structure | Index] (`Alt+3`, vue des
+> index à part, retirée des sections de Structure) · `+ Row` · au centre « 1 of 415 rows
+> selected », sinon « 415 rows » quand toute la table tient sur la page, sinon la plage ·
+> `Filters` (loupe, rempli de `--accent-strong` quand la barre est ouverte) · `Columns` ·
+> [‹ | ⚙ | ›]. Barre de filtres : chaque ligne `[✓] [colonne] [opérateur] [valeur…] [Apply]
+> [−] [+]` ; une ligne de pied `[⚙] [Export] [SQL]`, les raccourcis (tirés du keymap
+> effectif), `[Clear] [Apply All ⌄]`, AND / OR dans le menu ⌄ ; `SQL` montre le WHERE de la
+> page avec ses paramètres (commande `filters_preview_sql`, jamais les valeurs) ; `Export`
+> désactivé (pas d'export) ; Ctrl+↑ / Ctrl+↓ entre les lignes, Alt+C / Alt+O (⌘← / ⌘→ sur
+> macOS) vers la colonne / l'opérateur ; Échap masque la barre (les lignes tapées restent).
+> Le bandeau Commit / Discard au-dessus de la grille disparaît : la barre d'outils montre le
+> nombre de modifications, Cancel pendant le commit. Libellés d'en-tête centrés.
 - **Panneau de détail** à droite (280 px, `Ctrl+Space` comme TablePlus Linux / Windows, et `Space` comme sur Mac, dans la grille) : recherche « Search for field… », liste des
   champs avec leur type, édition sur place.
 

@@ -579,6 +579,24 @@ test("the filter bar reloads page 0 filtered and a capped count shows 500,000+",
   expect(screen.getByRole("button", { name: strings.filters.button(1) })).toBeInTheDocument();
 });
 
+test("sql_preview: the filter bar's SQL asks the backend for the page's WHERE of the checked rows", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  vi.mocked(ipc.filtersPreviewSql).mockResolvedValue('WHERE "line" = CAST($1::text AS integer)');
+  const one = [{ column: "line", op: "eq" as const, values: ["1"] }];
+  useGridViews.getState().setView("t1", { filters: one });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await screen.findByRole("region", { name: strings.filters.barLabel });
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.sql }));
+  const dialog = await screen.findByRole("dialog", { name: strings.filters.sqlPreviewLabel });
+  expect(ipc.filtersPreviewSql).toHaveBeenCalledWith("w1", obj, one, "and");
+  expect(await within(dialog).findByText('WHERE "line" = CAST($1::text AS integer)')).toBeInTheDocument();
+  // Escape closes the preview only, not the bar.
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("region", { name: strings.filters.barLabel })).toBeInTheDocument();
+});
+
 test("apply_all_and_or: Apply All with OR reaches the page and the count", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
@@ -591,8 +609,9 @@ test("apply_all_and_or: Apply All with OR reaches the page and the count", async
   // Applied filters open the bar (without taking the focus).
   const bar = await screen.findByRole("region", { name: strings.filters.barLabel });
   expect(bar).not.toContainElement(document.activeElement as HTMLElement);
-  await userEvent.click(screen.getByRole("button", { name: strings.filters.combineOr }));
-  await userEvent.click(screen.getByRole("button", { name: strings.filters.applyAll }));
+  // OR from Apply All's ⌄ menu (#103).
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.combineButton(strings.filters.combineAnd) }));
+  await userEvent.click(screen.getByRole("menuitemradio", { name: strings.filters.applyAllWith(strings.filters.combineOr) }));
   await waitFor(() =>
     expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ filters: two, combine: "or" })),
   );
@@ -1711,10 +1730,15 @@ test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from
   await user.keyboard("{Control>}f{/Control}");
   expect(bar()).toBeNull();
   expect(el).toHaveFocus();
-  // Escape in the empty bar closes it too.
+  // Escape hides it too, even with a value typed; reopened, the typed row is still there (#103).
   await user.keyboard("{Control>}f{/Control}");
+  await user.type(screen.getByRole("textbox", { name: strings.filters.valueLabel(1) }), "abc");
   await user.keyboard("{Escape}");
   expect(bar()).toBeNull();
+  expect(el).toHaveFocus();
+  await user.keyboard("{Control>}f{/Control}");
+  expect(screen.getByRole("textbox", { name: strings.filters.valueLabel(1) })).toHaveValue("abc");
+  await user.keyboard("{Escape}");
   expect(el).toHaveFocus();
 
   // Columns: Alt+F off macOS (Ctrl+Alt+F is AltGr+F there, #102).

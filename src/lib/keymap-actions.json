@@ -49,5 +49,9 @@
   "filters.add",
   "filters.remove",
   "filters.applyAll",
-  "filters.applyAllOr"
+  "filters.applyAllOr",
+  "filters.up",
+  "filters.down",
+  "filters.column",
+  "filters.operator"
 ]

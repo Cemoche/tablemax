@@ -236,6 +236,8 @@ function TableDataView({
   const filtersButtonRef = useRef<HTMLButtonElement>(null);
   const filterBarRef = useRef<HTMLDivElement>(null);
   const [filtersOpen, setFiltersOpen] = useState(() => t.filters.length > 0);
+  const [barMounted, setBarMounted] = useState(filtersOpen);
+  if (filtersOpen && !barMounted) setBarMounted(true);
   /** Each new value puts the focus in the bar (opened from the keyboard or its button). */
   const [filterFocus, setFilterFocus] = useState(0);
   /** What had the focus when the bar was opened from the keyboard: it gets it back on close. */
@@ -382,8 +384,9 @@ function TableDataView({
       >
         <div className="flex h-full min-h-0 flex-col">
           <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} combine={t.combine} />
-          {filtersOpen && (
-            <div ref={filterBarRef}>
+          {/* Kept once opened, hidden while closed: rows typed but not applied come back (#103). */}
+          {(filtersOpen || barMounted) && (
+            <div ref={filterBarRef} hidden={!filtersOpen}>
               <FilterBar
                 id={filterBarId}
                 dialect={dialect}
@@ -392,6 +395,9 @@ function TableDataView({
                 combine={t.combine}
                 onApply={(filters: Filter[], combine: FilterCombine) => t.setFilters(filters, combine)}
                 onClose={closeFilters}
+                previewSql={(filters: Filter[], combine: FilterCombine) =>
+                  ipc.filtersPreviewSql(workspaceId, object, filters, combine)
+                }
                 focusSeq={filterFocus}
                 start={filterStart}
               />
