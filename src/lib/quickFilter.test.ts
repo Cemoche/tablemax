@@ -296,6 +296,15 @@ describe("readRawCondition", () => {
     expect(rawConditionFilters("total > cost*2", more)).toEqual(sql("total > cost*2"));
     expect(rawConditionFilters("note = a||b", more)).toEqual(sql("note = a||b"));
     expect(rawConditionFilters("total > 10/2", more)).toEqual(sql("total > 10/2"));
+    // A column inside a word with - or :, a cast, a hex literal.
+    expect(rawConditionFilters("total > cost-1", more)).toEqual(sql("total > cost-1"));
+    expect(rawConditionFilters("total > 1-COST", more)).toEqual(sql("total > 1-COST"));
+    expect(rawConditionFilters("note = cost::text", more)).toEqual(sql("note = cost::text"));
+    expect(rawConditionFilters("note = 'x'::text", more)).toEqual(sql("note = 'x'::text"));
+    expect(rawConditionFilters("note = abc::text", more)).toEqual(sql("note = abc::text"));
+    expect(rawConditionFilters("total > cost:1", more)).toEqual(sql("total > cost:1"));
+    expect(rawConditionFilters("total > 0x1F", more)).toEqual(sql("total > 0x1F"));
+    expect(rawConditionFilters("total > 0X1f", more)).toEqual(sql("total > 0X1f"));
     // A plain word, a number, a date or a pattern stays a bound value.
     expect(rawConditionFilters("status = paid", more)).toEqual([{ column: "status", op: "eq", values: ["paid"] }]);
     expect(rawConditionFilters("total > -5", more)).toEqual([{ column: "total", op: "gt", values: ["-5"] }]);
@@ -303,6 +312,8 @@ describe("readRawCondition", () => {
     expect(rawConditionFilters("note = 2024-01-31", more)).toEqual([
       { column: "note", op: "eq", values: ["2024-01-31"] },
     ]);
+    expect(rawConditionFilters("note = 12:30", more)).toEqual([{ column: "note", op: "eq", values: ["12:30"] }]);
+    expect(rawConditionFilters("note = paid-up", more)).toEqual([{ column: "note", op: "eq", values: ["paid-up"] }]);
     // Under OR the conditions of one row must stay together: the SQL keeps them so.
     expect(rawConditionFilters("status = 'paid' AND total > 5", columns, "or")).toEqual(
       sql("status = 'paid' AND total > 5"),
@@ -328,6 +339,9 @@ describe("readRawCondition: how a row is read", () => {
       "any = 'x' AND id = 1",
       // A bare word is text for the filter syntax, a name for SQL.
       "status = paid AND id = 1",
+      // "…" / `…` column names: not every engine reads them as names (MySQL: "…" is text).
+      '"id" > 5 AND status = \'x\'',
+      "`id` > 5 AND status = 'x'",
     ]) {
       expect(readRawCondition(text, columns, "or"), text).toEqual({
         kind: "error",

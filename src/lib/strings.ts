@@ -567,7 +567,8 @@ export const strings = {
     listEmptyItem: "empty value: write '' for an empty string",
     listStrayQuote: "quote a value that contains a quote ('O''Brien')",
     rawEmpty: "enter an SQL condition",
-    rawOrNeedsSql: "Under OR, write this row as SQL (or one condition per row)",
+    rawOrNeedsSql:
+      "Under OR, write this row as plain SQL with the database's own quoting (or one condition per row)",
     /** How a Raw SQL row is read, shown next to it. */
     rawRead: {
       bound: "filter",
@@ -575,6 +576,8 @@ export const strings = {
       sql: "SQL",
       sqlHint: "Sent to the database as written",
       error: "needs SQL",
+      /** Added to each reading's long text. */
+      applyNote: "This is how Apply All reads it; the row's own Apply always joins with AND.",
     },
   },
   structure: {

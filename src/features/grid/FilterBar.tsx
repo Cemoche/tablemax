@@ -404,16 +404,16 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
                 {reading && (
                   <span
                     data-testid="raw-reading"
-                    title={
+                    title={`${
                       reading.kind === "bound" ? f.rawRead.boundHint : reading.kind === "sql" ? f.rawRead.sqlHint : reading.message
-                    }
+                    } ${f.rawRead.applyNote}`}
                     className={`shrink-0 text-xs ${reading.kind === "error" ? "text-danger" : "text-text"}`}
                   >
                     <span aria-hidden="true">
                       {reading.kind === "bound" ? f.rawRead.bound : reading.kind === "sql" ? f.rawRead.sql : f.rawRead.error}
                     </span>
                     <span id={readingId} hidden>
-                      {reading.kind === "bound" ? f.rawRead.boundHint : reading.kind === "sql" ? f.rawRead.sqlHint : reading.message}
+                      {`${reading.kind === "bound" ? f.rawRead.boundHint : reading.kind === "sql" ? f.rawRead.sqlHint : reading.message} ${f.rawRead.applyNote}`}
                     </span>
                   </span>
                 )}

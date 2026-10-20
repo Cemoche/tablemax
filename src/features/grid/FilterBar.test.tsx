@@ -306,19 +306,19 @@ test("a Raw SQL row says how it is read: filter syntax (bound) or SQL as written
   await userEvent.type(raw, "status = active");
   // `active` is no column: a value, bound.
   expect(reading()).toHaveTextContent(f.rawRead.bound);
-  expect(raw).toHaveAccessibleDescription(f.rawRead.boundHint);
+  expect(raw).toHaveAccessibleDescription(`${f.rawRead.boundHint} ${f.rawRead.applyNote}`);
   // `id` is a column: two columns compared, in SQL.
   await userEvent.clear(raw);
   await userEvent.type(raw, "total = id");
   expect(reading()).toHaveTextContent(f.rawRead.sql);
-  expect(raw).toHaveAccessibleDescription(f.rawRead.sqlHint);
+  expect(raw).toHaveAccessibleDescription(`${f.rawRead.sqlHint} ${f.rawRead.applyNote}`);
   // Under OR, several conditions only the filter syntax knows: an error before sending.
   await userEvent.clear(raw);
   await userEvent.type(raw, "notes contains 'x' AND id = 1");
   expect(reading()).toHaveTextContent(f.rawRead.bound);
   await userEvent.click(screen.getByRole("button", { name: f.combineOr }));
   expect(reading()).toHaveTextContent(f.rawRead.error);
-  expect(raw).toHaveAccessibleDescription(f.rawOrNeedsSql);
+  expect(raw).toHaveAccessibleDescription(`${f.rawOrNeedsSql} ${f.rawRead.applyNote}`);
   await userEvent.click(screen.getByRole("button", { name: f.applyAll }));
   expect(screen.getByRole("alert")).toHaveTextContent(f.rawOrNeedsSql);
   expect(onApply).not.toHaveBeenCalled();

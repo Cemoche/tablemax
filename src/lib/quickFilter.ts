@@ -98,15 +98,19 @@ const SQL_VALUE_WORDS = new Set([
 ]);
 /**
  * A bare word the Raw SQL mode may bind as text: letters, digits, `_ % : -` only (`paid`,
- * `2024-01-31`, `a%`). Anything with another character (`t.cost`, `cost+1`, `a||b`) is an
- * expression: the row is sent as SQL.
+ * `2024-01-31`, `12:30`, `a%`). Anything with another character (`t.cost`, `cost+1`,
+ * `a||b`) is an expression: the row is sent as SQL. So is a word that is SQL with those
+ * characters too (see `sqlWord`).
  */
 const PLAIN_WORD = /^[\p{L}\p{N}_%:-]+$/u;
+const DIGITS = /^\d+$/;
 
 class Parser {
   private p = 0;
   /** A value was a bare word other than a number: text here, a name for SQL. */
   bareWord = false;
+  /** A column was written "…" or `…`: a name or text depending on the engine (MySQL). */
+  quotedColumn = false;
   constructor(
     private t: Token[],
     private columns: string[],
@@ -150,6 +154,7 @@ class Parser {
     if (t.k !== "word" && t.k !== "dq" && t.k !== "bt") {
       return fail(`expected a column, found ${this.describe(t)}`);
     }
+    if (t.k !== "word") this.quotedColumn = true;
     const exact = this.columns.find((c) => c === t.s);
     if (exact !== undefined) return exact;
     const ci = this.columns.filter((c) => c.toLowerCase() === t.s.toLowerCase());
@@ -158,22 +163,25 @@ class Parser {
     return fail(`unknown column "${t.s}"`);
   }
 
+  /**
+   * Would SQL read this bare word (not a number) as something other than text? An
+   * expression character, a leading `-` (minus), a `::` cast, a `0x…` literal, a keyword
+   * value (TRUE, CURRENT_DATE…), or a column name, alone or as a piece around `-` / `:`
+   * (`cost-1`, `cost:1`; all-digit pieces are not names: `2024-01-31`, `12:30`).
+   */
+  private sqlWord(word: string): boolean {
+    const w = word.toLowerCase();
+    if (!PLAIN_WORD.test(word) || w.startsWith("-") || w.includes("::") || /^0x/.test(w)) return true;
+    if (SQL_VALUE_WORDS.has(w)) return true;
+    const names = new Set(this.columns.map((c) => c.toLowerCase()));
+    return names.has(w) || w.split(/[-:]/).some((piece) => !DIGITS.test(piece) && names.has(piece));
+  }
+
   private value(): string {
     const t = this.next();
     if (this.sqlValues) {
       if (t.k === "dq") return fail("a double-quoted name");
-      if (t.k === "word" && !NUMBER.test(t.s)) {
-        const w = t.s.toLowerCase();
-        if (
-          !PLAIN_WORD.test(t.s) ||
-          // `-cost`: minus an expression, not text.
-          t.s.startsWith("-") ||
-          SQL_VALUE_WORDS.has(w) ||
-          this.columns.some((c) => c.toLowerCase() === w)
-        ) {
-          return fail(`"${t.s}" is SQL`);
-        }
-      }
+      if (t.k === "word" && !NUMBER.test(t.s) && this.sqlWord(t.s)) return fail(`"${t.s}" is SQL`);
     }
     if (t.k === "sq" || t.k === "dq") return t.s;
     if (t.k === "word") {
@@ -306,7 +314,7 @@ export type RawReading =
  * (joined by AND) only when the bar's filters are ANDed too, since under OR the row's
  * conditions must stay together. Under OR such a row is sent as SQL when SQL reads it the
  * same, else it is an error (CONTAINS, `any`, a bare word value: only the quick syntax knows
- * them). Anything else is the user's own SQL, sent as typed ("sql": a `raw` filter, between
+ * them; a "…" or `…` column, which MySQL may read as text). Anything else is the user's own SQL, sent as typed ("sql": a `raw` filter, between
  * parentheses on the backend). `text` must not be blank.
  */
 export function readRawCondition(text: string, columns: string[], combine: FilterCombine = "and"): RawReading {
@@ -323,7 +331,9 @@ export function readRawCondition(text: string, columns: string[], combine: Filte
   if (filters.length === 0) return sql;
   if (filters.length === 1 || combine === "and") return { kind: "bound", filters };
   const quickOnly =
-    parser.bareWord || filters.some((f) => f.column === null || f.op === "contains" || f.op === "notContains");
+    parser.bareWord ||
+    parser.quotedColumn ||
+    filters.some((f) => f.column === null || f.op === "contains" || f.op === "notContains");
   return quickOnly ? { kind: "error", message: strings.filters.rawOrNeedsSql } : sql;
 }
 
