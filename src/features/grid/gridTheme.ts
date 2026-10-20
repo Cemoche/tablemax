@@ -90,6 +90,25 @@ export interface RowThemes {
   rowNumber: Partial<Theme>;
 }
 
+/** The row numbers' own colours and font (see `rowNumberRenderer`). */
+export interface RowNumberColors {
+  /** The interface font: the numbers stand apart from the data's mono font. */
+  family: string;
+  /** A selected row's number cell (`--rownum-selected`, white reads 4.5:1 on it). */
+  selectedFill: string;
+  /** A selected row's number (`--row-selected-text`). */
+  selectedText: string;
+}
+
+/** Colours of the row numbers on selected rows, and their font (missing tokens: the row's). */
+export function buildRowNumberColors(readVar: ReadVar = readCssVar): RowNumberColors {
+  return {
+    family: readVar("--font-ui") || FALLBACK_FONT,
+    selectedFill: readVar("--rownum-selected"),
+    selectedText: readVar("--row-selected-text"),
+  };
+}
+
 /** Row overrides: zebra, selected rows and the row numbers (missing tokens override nothing). */
 export function buildRowThemes(readVar: ReadVar = readCssVar): RowThemes {
   const only = (pairs: [keyof Theme, string][]): Partial<Theme> => {
@@ -236,6 +255,7 @@ export function useGridTheme(readVar: ReadVar = readCssVar, fontSize?: number) {
       theme,
       muted,
       rows: buildRowThemes(readVar),
+      rowNumbers: buildRowNumberColors(readVar),
       header: headerFont(readVar),
       edit: buildEditThemes(readVar),
       fontSize: size,

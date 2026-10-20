@@ -27,6 +27,7 @@
   --color-cell-text: var(--cell-text);
   --color-placeholder: var(--placeholder);
   --color-rownum: var(--rownum);
+  --color-rownum-selected: var(--rownum-selected);
   --color-bottom: var(--bottom);
   --color-btn: var(--btn);
   --color-filter-applied: var(--filter-applied);

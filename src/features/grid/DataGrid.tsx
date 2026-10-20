@@ -13,8 +13,10 @@ import {
   type ProvideEditorComponent,
   type TextCell,
   type Theme,
-  DataEditor,
+  DataEditorCore,
   type DataEditorRef,
+  ImageWindowLoaderImpl,
+  sprites,
 } from "@glideapps/glide-data-grid";
 import "@glideapps/glide-data-grid/dist/index.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -49,6 +51,7 @@ import {
   withSelectedRow,
 } from "./gridSelection";
 import { useGridTheme } from "./gridTheme";
+import { type RowNumberStyle, gridRenderers } from "./rowNumbers";
 import { QuickLook } from "./QuickLook";
 
 /** Spec §5.2 at 100 %: rows 26 (they grow with a larger data font), header 30, numbers 46. */
@@ -237,7 +240,7 @@ export function DataGrid({
   onPageKey,
 }: DataGridProps) {
   const g = useGridTheme();
-  const { theme, muted: mutedOverride, edit: editThemes, rows: rowThemes } = g;
+  const { theme, muted: mutedOverride, edit: editThemes, rows: rowThemes, rowNumbers } = g;
   const keymap = useSettings((s) => s.settings.keymap);
   const keymapRef = useRef(keymap);
   keymapRef.current = keymap;
@@ -328,6 +331,13 @@ export function DataGrid({
   );
 
   const highlighted = useMemo(() => highlightedRows(selection), [selection]);
+  // Row numbers drawn by our marker renderer (right-aligned, interface font, #102); it reads
+  // the selection and colours of the last render.
+  const rowNumberStyle = useRef<RowNumberStyle>({ selected: () => false, family: "", selectedFill: "", selectedText: "" });
+  rowNumberStyle.current = { selected: (row) => highlighted.has(row), ...rowNumbers };
+  const renderers = useMemo(() => gridRenderers(() => rowNumberStyle.current), []);
+  // What Glide's DataEditor adds to its core, which takes no other renderers.
+  const imageWindowLoader = useMemo(() => new ImageWindowLoaderImpl(), []);
   const placeholderOnAccent = useMemo<Partial<Theme>>(
     () => ({ baseFontStyle: mutedOverride.baseFontStyle }),
     [mutedOverride],
@@ -636,8 +646,11 @@ export function DataGrid({
 
   return (
     <>
-      <DataEditor
+      <DataEditorCore
         ref={gridRef}
+        renderers={renderers}
+        headerIcons={sprites}
+        imageWindowLoader={imageWindowLoader}
         width="100%"
         height="100%"
         columns={columns}
