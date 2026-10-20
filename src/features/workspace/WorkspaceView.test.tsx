@@ -163,16 +163,16 @@ const NO_SQL: Capabilities = {
 
 test("without the SQL editor capability there is no new SQL tab: no button, no Mod+T", () => {
   renderLive({ capabilities: NO_SQL, tabs: [], activeTabId: null, mru: [] });
-  expect(screen.queryByRole("button", { name: strings.workspace.newQueryTab })).toBeNull();
+  expect(screen.queryByRole("button", { name: strings.sidebar.newQuery })).toBeNull();
   press({ code: "KeyT" });
   expect(tabs()).toHaveLength(0);
 });
 
-test("with the SQL capabilities the new SQL tab button and Mod+T stay", async () => {
+test("with the SQL capabilities the sidebar's new SQL tab button and Mod+T stay", async () => {
   renderLive({ capabilities: { ...NO_SQL, sqlEditor: true, documents: false }, tabs: [], activeTabId: null, mru: [] });
   press({ code: "KeyT" });
   expect(tabs()).toHaveLength(1);
-  await userEvent.click(screen.getByRole("button", { name: strings.workspace.newQueryTab }));
+  await userEvent.click(screen.getByRole("button", { name: strings.sidebar.newQuery }));
   expect(tabs()).toHaveLength(2);
 });
 

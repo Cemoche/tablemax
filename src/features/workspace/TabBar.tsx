@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Columns2, Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Columns2, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
@@ -22,8 +22,10 @@ const iconButton = `flex size-7 shrink-0 items-center justify-center rounded-md 
 
 /**
  * The tab bar (spec §2.3, 38 px): back / forward through the workspace's history, the tabs as
- * capsules sharing the width (at least 120 px each, then the bar scrolls sideways), a new SQL
- * tab, the split button (epic #17, not yet) and the list of all tabs.
+ * capsules sharing the width (at least 120 px each, then the bar scrolls sideways; a lone tab
+ * spans it, its label centred), the split button (epic #17, not yet) and the list of all
+ * tabs. No + here (#104): new SQL tabs come from the toolbar's SQL button, the sidebar's +
+ * and Mod+T.
  *
  * Keyboard (tablist pattern): one Tab stop on the active tab; ←/→, Home/End move the focus;
  * Enter or Space activates; Delete closes; F2 renames; Shift+F10 or the menu key opens the
@@ -38,7 +40,6 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
   const committing = usePendingChanges((s) => s.committing);
   const backShortcut = formatShortcut(useEffectiveShortcut("nav.back"));
   const forwardShortcut = formatShortcut(useEffectiveShortcut("nav.forward"));
-  const newTabShortcut = formatShortcut(useEffectiveShortcut("query.new"));
   const can = useCanNavigate(workspace);
   const { id, tabs, activeTabId } = workspace;
   const { sqlEditor } = capabilitiesOf(workspace);
@@ -221,9 +222,9 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     }}
                     className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon aria-disabled:opacity-40 ${
                       active
-                        ? // A lone tab spans the bar, its × on hover only (as the reference, #103).
-                          `${tabs.length > 1 ? "opacity-100" : "opacity-0 group-hover:opacity-100"} hover:bg-tab`
-                        : "opacity-0 hover:bg-tab-sel group-hover:opacity-100"
+                        ? // A lone tab spans the bar, its × on hover or focus only (#103, #104).
+                          `${tabs.length > 1 ? "opacity-100" : "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"} hover:bg-tab`
+                        : "opacity-0 hover:bg-tab-sel group-focus-within:opacity-100 group-hover:opacity-100"
                     }`}
                   >
                     <X aria-hidden="true" size={12} />
@@ -268,17 +269,6 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
           );
         })}
       </div>
-      {sqlEditor && (
-        <button
-          type="button"
-          aria-label={S.newQueryTab}
-          {...tip(S.newQueryTab, newTabShortcut)}
-          onClick={() => openQueryTab(id)}
-          className={iconButton}
-        >
-          <Plus aria-hidden="true" size={16} />
-        </button>
-      )}
       <button type="button" aria-label={S.split} aria-disabled="true" {...tip(S.splitSoon)} className={iconButton}>
         <Columns2 aria-hidden="true" size={16} />
       </button>

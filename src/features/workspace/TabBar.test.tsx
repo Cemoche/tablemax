@@ -361,6 +361,10 @@ test("lone_tab: a single tab spans the bar and shows its close button on hover o
   const close = closeButtonOf("Query 1");
   expect(close).toHaveClass("opacity-0", "group-hover:opacity-100");
   expect(close).not.toHaveClass("opacity-100");
+  // Also while the tab has the keyboard focus (#104).
+  expect(close).toHaveClass("group-focus-within:opacity-100");
+  // Its label is centred across the bar.
+  expect(tab("Query 1")).toHaveClass("justify-center");
   // With another tab the active one shows it at once.
   act(() =>
     useWorkspaces.setState((s) => ({
@@ -383,4 +387,11 @@ test("inactive capsule text and the database badge use the tab text token", () =
   expect(capsule).not.toHaveClass("text-text-2");
   const [badge] = byTooltip(strings.workspace.tabDatabase("app"));
   expect(badge.className).not.toMatch(/text-text-2/);
+});
+
+test("single_tab_layout: the bar's right end has the split button and the tab list, no + (#104)", () => {
+  setup([q("a", "Query 1")]);
+  // New SQL tabs come from the toolbar's SQL button, the sidebar's + and Mod+T.
+  expect(screen.queryByRole("button", { name: /new/i })).toBeNull();
+  expect(screen.getByRole("button", { name: strings.workspace.split })).toBeInTheDocument();
 });
