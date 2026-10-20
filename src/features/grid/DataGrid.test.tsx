@@ -625,3 +625,14 @@ test("Ctrl+← / Ctrl+→ in the grid ask for the previous / next page instead o
   expect(press("ArrowLeft", "ArrowLeft", { ctrlKey: true, shiftKey: true }).cancel).not.toHaveBeenCalled();
   expect(onPageKey).toHaveBeenCalledTimes(2);
 });
+
+test("focusRequest: each new value puts the focus in the grid, never the value it mounts with", () => {
+  const view = render(<DataGrid data={data} editing={editing()} focusRequest={3} />);
+  // React 19 passes the ref to the (stubbed) canvas grid as a prop.
+  const focus = vi.fn();
+  (editor as unknown as { ref: { current: unknown } }).ref.current = { focus };
+  view.rerender(<DataGrid data={data} editing={editing()} focusRequest={3} />);
+  expect(focus).not.toHaveBeenCalled();
+  view.rerender(<DataGrid data={data} editing={editing()} focusRequest={4} />);
+  expect(focus).toHaveBeenCalledOnce();
+});

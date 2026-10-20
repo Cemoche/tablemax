@@ -502,7 +502,11 @@ export const strings = {
     panelClosed: "▸",
     rowDetails: "Row details",
     rowDetailsClose: "Close the row details",
-    rowDetailsEmpty: "Select a row to see its details.",
+    rowDetailsEmpty: "No row selected",
+    rowDetailsSearch: "Search for field…",
+    rowDetailsSearchLabel: "Search for field",
+    rowDetailsNoMatch: "No field matches",
+    rowDetailsResize: "Resize the row details",
     view: {
       label: "Table view",
       data: "Data",

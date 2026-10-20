@@ -81,7 +81,7 @@ beforeEach(() => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   useConnections.setState({ items: [cfg()] });
   useSettings.setState({ settings: DEFAULT_SETTINGS, systemTitleBar: false });
-  useChrome.setState({ rowDetails: {}, reloads: {}, previews: {}, paletteRequest: null, maximized: false });
+  useChrome.setState({ rowDetailsOpen: false, reloads: {}, previews: {}, paletteRequest: null, maximized: false });
   vi.mocked(onWindowResized).mockImplementation(async () => () => {});
   usePendingChanges.getState().drop("t1");
   usePendingChanges.setState({ committing: {}, committingIn: {}, confirming: {}, awaitingReload: {} });
@@ -348,7 +348,7 @@ test("toolbar buttons run their actions", async () => {
   const details = screen.getByRole("button", { name: t.rowDetails });
   expect(details).toHaveAttribute("aria-pressed", "false");
   await user.click(details);
-  expect(useChrome.getState().rowDetails.t1).toBe(true);
+  expect(useChrome.getState().rowDetailsOpen).toBe(true);
   expect(details).toHaveAttribute("aria-pressed", "true");
 
   await user.click(screen.getByRole("button", { name: t.sidebar }));
@@ -470,4 +470,12 @@ test("with open workspaces the settings are in the connections column, not in th
   useWorkspaces.setState({ workspaces: [ws()], activeWorkspaceId: "w1" });
   render(<AppToolbar workspace={null} onEditConnection={vi.fn()} />);
   expect(within(screen.getByRole("banner")).queryByRole("button", { name: strings.settings.open })).toBeNull();
+});
+
+test("the row details button is one switch for the window, off and disabled outside a table tab", () => {
+  useChrome.setState({ rowDetailsOpen: true });
+  setup(ws({ activeTabId: "q1" }));
+  const details = screen.getByRole("button", { name: t.rowDetails });
+  expect(details).toBeDisabled();
+  expect(details).toHaveAttribute("aria-pressed", "false");
 });

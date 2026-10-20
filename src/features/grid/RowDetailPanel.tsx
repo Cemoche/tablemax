@@ -1,9 +1,19 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { Search, X } from "lucide-react";
+import {
+  type KeyboardEvent,
+  type PointerEvent,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import { tip } from "../../lib/tooltip";
 import type { CellValue, EditValue, ObjectRef, ResultSet, TableInfo } from "../../lib/types";
+import { ROW_DETAILS_MAX, ROW_DETAILS_MIN, useChrome } from "../../stores/chrome";
 import { type EditCell, type GridModel, type MenuAction, menuActions } from "./editModel";
 import { cellText, readOnlyReason } from "./editing";
 import type { FkLink } from "./fkLinks";
@@ -25,7 +35,15 @@ interface Props {
   linksAt: (row: number, col: number) => FkLink[];
   onOpenLink: (link: FkLink) => void;
   onClose: () => void;
+  /**
+   * Hands the focus back to the grid: Escape in the panel, or the panel going away while
+   * it holds the focus (closed by its button or by Ctrl+Space typed in a field).
+   */
+  onEscape: () => void;
 }
+
+/** Arrow keys on the resize edge move it by this much. */
+const KEY_STEP = 10;
 
 /** The menu actions a field offers (the row actions stay in the grid's menu). */
 const FIELD_ACTIONS: readonly MenuAction[] = ["setNull", "setEmpty", "setDefault", "revertCell"];
@@ -102,41 +120,84 @@ function shown(value: CellValue | "default", full: Full | undefined): { text: st
 
 /**
  * The right panel of a table tab: the selected row as a vertical form (column, type,
- * value). Long text and cut JSON are loaded in full; editable fields follow the grid's
- * rules and go through the same store actions.
+ * value), narrowed by "Search for field…". Long text and cut JSON are loaded in full;
+ * editable fields follow the grid's rules and go through the same store actions, so an
+ * edit here is the same pending change as one in the grid. With several rows selected it
+ * shows the active cell's row (else the first selected one), as the grid's selection
+ * reports it. Opening it never takes the focus: the grid keeps it and the panel follows
+ * the row under the keys.
  */
 export function RowDetailPanel(p: Props) {
   const full = useFullValues(p.workspaceId, p.object, p.data, p.model, p.row);
   // Fields are keyed by record and page: a reload starts them afresh (no draft carried over).
   const [page, setPage] = useState({ data: p.data, n: 0 });
   if (page.data !== p.data) setPage({ data: p.data, n: page.n + 1 });
+  const [query, setQuery] = useState("");
+  const width = useChrome((s) => s.rowDetailsWidth);
+  const asideRef = useRef<HTMLElement>(null);
+  const onEscapeRef = useRef(p.onEscape);
+  onEscapeRef.current = p.onEscape;
+  // Going away with the focus inside (its × button, Ctrl+Space in a field): the focus would
+  // fall to the page, so it goes back to the grid. Layout cleanup: the panel is still there.
+  useLayoutEffect(() => {
+    const aside = asideRef.current;
+    return () => {
+      if (aside?.contains(document.activeElement)) onEscapeRef.current();
+    };
+  }, []);
   const r = p.row === null ? undefined : p.model.rows[p.row];
   const tableEditable = p.info !== null && readOnlyReason(p.info) === null;
   const keyIssue = r?.kind === "row" ? r.keyIssue : null;
+  const q = query.trim().toLowerCase();
+  const cols = p.model.columns
+    .map((name, col) => ({ name, col }))
+    .filter((c) => q === "" || c.name.toLowerCase().includes(q));
 
   return (
     <aside
+      ref={asideRef}
       aria-label={strings.grid.rowDetails}
-      className="flex w-80 shrink-0 flex-col border-l border-border bg-bg text-sm"
+      style={{ width }}
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || e.defaultPrevented) return;
+        e.preventDefault();
+        e.stopPropagation();
+        p.onEscape();
+      }}
+      className="relative flex shrink-0 flex-col border-l border-sep bg-side text-sm text-text"
     >
-      <div className="flex items-center border-b border-border bg-surface px-3 py-1">
-        <h2 className="font-semibold">{strings.grid.rowDetails}</h2>
+      <ResizeEdge width={width} />
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-sep px-2">
+        <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-pill-border bg-search px-2 focus-within:outline-2 focus-within:outline-solid focus-within:-outline-offset-1 focus-within:outline-accent">
+          <Search aria-hidden size={14} strokeWidth={1.6} className="shrink-0 text-icon-dim" />
+          <input
+            type="search"
+            aria-label={strings.grid.rowDetailsSearchLabel}
+            placeholder={strings.grid.rowDetailsSearch}
+            value={query}
+            spellCheck={false}
+            onChange={(e) => setQuery(e.target.value)}
+            className="min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-text-2"
+          />
+        </div>
         <button
           type="button"
           aria-label={strings.grid.rowDetailsClose}
+          {...tip(strings.grid.rowDetailsClose)}
           onClick={p.onClose}
-          className="ml-auto rounded-sm px-1.5 hover:bg-surface-2"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-icon outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
         >
-          ×
+          <X aria-hidden size={15} strokeWidth={1.6} />
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
         {p.row === null || !r ? (
-          <p className="text-muted">{strings.grid.rowDetailsEmpty}</p>
+          <p className="pt-6 text-center text-text-2">{strings.grid.rowDetailsEmpty}</p>
         ) : (
           <>
             {keyIssue && <p className="mb-2 text-muted">{keyIssue}</p>}
-            {p.model.columns.map((name, col) => {
+            {cols.length === 0 && <p className="pt-6 text-center text-text-2">{strings.grid.rowDetailsNoMatch}</p>}
+            {cols.map(({ name, col }) => {
               const rowKeyId = r.kind === "row" ? r.keyId : null;
               const id =
                 r.kind === "insert"
@@ -165,6 +226,59 @@ export function RowDetailPanel(p: Props) {
         )}
       </div>
     </aside>
+  );
+}
+
+/** The panel's left edge: drag it, or use the arrow keys once focused (left widens). */
+function ResizeEdge({ width }: { width: number }) {
+  const setWidth = useChrome((s) => s.setRowDetailsWidth);
+  const saveWidth = useChrome((s) => s.saveRowDetailsWidth);
+  const drag = useRef<{ x: number; width: number } | null>(null);
+
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    drag.current = { x: e.clientX, width };
+    const move = (ev: globalThis.PointerEvent) => {
+      if (drag.current) setWidth(drag.current.width - (ev.clientX - drag.current.x));
+    };
+    const up = () => {
+      drag.current = null;
+      saveWidth();
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      document.body.style.removeProperty("cursor");
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    document.body.style.cursor = "col-resize";
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "ArrowLeft") setWidth(width + KEY_STEP);
+    else if (e.key === "ArrowRight") setWidth(width - KEY_STEP);
+    else return;
+    e.preventDefault();
+  };
+
+  return (
+    <div
+      role="separator"
+      aria-label={strings.grid.rowDetailsResize}
+      aria-orientation="vertical"
+      aria-valuenow={width}
+      aria-valuemin={ROW_DETAILS_MIN}
+      aria-valuemax={ROW_DETAILS_MAX}
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      onKeyUp={(e) => {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") saveWidth();
+      }}
+      className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize outline-none hover:bg-accent/30 focus-visible:bg-accent/50"
+    />
   );
 }
 

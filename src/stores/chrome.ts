@@ -8,6 +8,26 @@ export interface PaletteRequest {
   seq: number;
 }
 
+/** Spec §5.2: the row details panel is 280 px wide by default, never under 240. */
+export const ROW_DETAILS_DEFAULT = 280;
+export const ROW_DETAILS_MIN = 240;
+export const ROW_DETAILS_MAX = 720;
+/** The width is a per-machine convenience, like the sidebar's. */
+export const ROW_DETAILS_WIDTH_KEY = "tablemax.rowDetailsWidth";
+
+export const clampRowDetailsWidth = (px: number) =>
+  Math.round(Math.min(ROW_DETAILS_MAX, Math.max(ROW_DETAILS_MIN, px)));
+
+/** The width saved by the last session, or the default. */
+export function loadRowDetailsWidth(): number {
+  try {
+    const n = Number.parseInt(localStorage.getItem(ROW_DETAILS_WIDTH_KEY) ?? "", 10);
+    return Number.isFinite(n) ? clampRowDetailsWidth(n) : ROW_DETAILS_DEFAULT;
+  } catch {
+    return ROW_DETAILS_DEFAULT;
+  }
+}
+
 /**
  * Requests from the window's toolbar (features/chrome) to the parts that own the state:
  * the table tab (row details, page reload), its pending changes panel (Preview), the
@@ -15,10 +35,20 @@ export interface PaletteRequest {
  * acts on a change, never on the value it mounted with.
  */
 interface ChromeState {
-  /** Row details panel shown, per table tab id (false again when the tab unmounts). */
-  rowDetails: Record<string, boolean>;
-  toggleRowDetails: (tabId: string) => void;
-  setRowDetails: (tabId: string, open: boolean) => void;
+  /**
+   * The row details panel is shown (one switch for the window, like the toolbar button that
+   * reads it): every table tab showing its rows shows it, so it stays open across tab and
+   * workspace switches (#79). For the session only.
+   */
+  rowDetailsOpen: boolean;
+  toggleRowDetails: () => void;
+  setRowDetails: (open: boolean) => void;
+  /** The panel's width (px), saved for the next start by `saveRowDetailsWidth`. */
+  rowDetailsWidth: number;
+  /** Clamps and applies (a drag calls it on every move). */
+  setRowDetailsWidth: (px: number) => void;
+  /** Saves the width (once, at the end of a drag or a key press). */
+  saveRowDetailsWidth: () => void;
   /** Reload requests: a workspace id (its sidebar) or a table tab id (its page). */
   reloads: Record<string, number>;
   requestReload: (id: string) => void;
@@ -66,10 +96,18 @@ const omit = <T,>(m: Record<string, T>, id: string): Record<string, T> => {
 };
 
 export const useChrome = create<ChromeState>((set, get) => ({
-  rowDetails: {},
-  toggleRowDetails: (tabId) => set((s) => ({ rowDetails: { ...s.rowDetails, [tabId]: !s.rowDetails[tabId] } })),
-  setRowDetails: (tabId, open) =>
-    set((s) => (!!s.rowDetails[tabId] === open ? s : { rowDetails: { ...s.rowDetails, [tabId]: open } })),
+  rowDetailsOpen: false,
+  toggleRowDetails: () => set((s) => ({ rowDetailsOpen: !s.rowDetailsOpen })),
+  setRowDetails: (open) => set({ rowDetailsOpen: open }),
+  rowDetailsWidth: loadRowDetailsWidth(),
+  setRowDetailsWidth: (px) => set({ rowDetailsWidth: clampRowDetailsWidth(px) }),
+  saveRowDetailsWidth: () => {
+    try {
+      localStorage.setItem(ROW_DETAILS_WIDTH_KEY, String(get().rowDetailsWidth));
+    } catch {
+      // Storage unavailable: the width only lasts for this session.
+    }
+  },
   reloads: {},
   requestReload: (id) => set((s) => ({ reloads: bump(s.reloads, id) })),
   previews: {},
