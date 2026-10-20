@@ -1695,6 +1695,35 @@ test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from
   expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("aria-selected", "true");
 });
 
+test("Ctrl+B in the open filter bar toggles the focused row, in the whole table tab (#102)", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  const user = userEvent.setup();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  const el = screen.getByTestId("grid");
+  el.tabIndex = 0;
+  el.focus();
+  await user.keyboard("{Control>}f{/Control}");
+  const check = () => screen.getByRole("checkbox", { name: strings.filters.enabledLabel(1) });
+  const fields = [
+    screen.getByRole("combobox", { name: strings.filters.columnLabel(1) }),
+    screen.getByRole("combobox", { name: strings.filters.opLabel(1) }),
+    screen.getByRole("textbox", { name: strings.filters.valueLabel(1) }),
+    check(),
+  ];
+  expect(fields[0]).toHaveFocus();
+  for (const f of fields) {
+    f.focus();
+    await user.keyboard("{Control>}b{/Control}");
+    expect(check()).not.toBeChecked();
+    await user.keyboard("{Control>}b{/Control}");
+    expect(check()).toBeChecked();
+  }
+});
+
 test("page_popover_offset_limit: Go loads that offset and limit; the grid's Ctrl+→ / Ctrl+← page from there", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(page(100));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });

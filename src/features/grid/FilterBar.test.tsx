@@ -119,6 +119,35 @@ test("ctrl_b_toggles_filter: Ctrl+B turns the focused row on and off", async () 
   expect(check(2)).not.toBeChecked();
 });
 
+test("ctrl_b_from_every_field: Ctrl+B toggles the row of the focused value, column, operator or checkbox (#102)", async () => {
+  await twoRows();
+  for (const target of [value(2), column(2), op(2), check(2)]) {
+    target.focus();
+    expect(check(2), target.getAttribute("aria-label") ?? "").toBeChecked();
+    await userEvent.keyboard("{Control>}b{/Control}");
+    expect(check(2), target.getAttribute("aria-label") ?? "").not.toBeChecked();
+    expect(target).toHaveFocus();
+    await userEvent.keyboard("{Control>}b{/Control}");
+    expect(check(2)).toBeChecked();
+  }
+  expect(check(1)).toBeChecked();
+});
+
+test("ctrl_b_after_apply_all: with the focus on Apply All or AND / OR, Ctrl+B toggles the row last focused (#102)", async () => {
+  await twoRows();
+  // Clicking a button focuses it (WebKitGTK and jsdom): the focus leaves the rows.
+  await userEvent.click(screen.getByRole("button", { name: f.applyAll }));
+  expect(screen.getByRole("button", { name: f.applyAll })).toHaveFocus();
+  await userEvent.keyboard("{Control>}b{/Control}");
+  expect(check(2)).not.toBeChecked();
+  expect(check(1)).toBeChecked();
+  value(1).focus();
+  await userEvent.click(screen.getByRole("button", { name: f.combineOr }));
+  await userEvent.keyboard("{Control>}b{/Control}");
+  expect(check(1)).not.toBeChecked();
+  expect(check(2)).not.toBeChecked();
+});
+
 test("raw_sql_mode_uses_quick_syntax: Raw SQL takes the quick syntax as bound filters, other text as SQL", async () => {
   setup();
   await userEvent.selectOptions(column(1), f.rawSql);
