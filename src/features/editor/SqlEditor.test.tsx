@@ -1,5 +1,3 @@
-/// <reference types="node" />
-import { readFileSync } from "node:fs";
 import { completionStatus } from "@codemirror/autocomplete";
 import { history, undo } from "@codemirror/commands";
 import { EditorState } from "@codemirror/state";
@@ -11,6 +9,12 @@ import { act } from "react";
 import { useSettings, DEFAULT_SETTINGS } from "../../stores/settings";
 import { applyTheme } from "../../lib/theme";
 import { SqlEditor, buildEditorTheme, editorThemeSpec, insertAtCursor, sqlHighlightStyle } from "./SqlEditor";
+
+// CodeMirror measures text ranges (a pick scrolls the cursor into view), which jsdom does not lay out.
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+}
 
 test("editor theme takes background and text from the tokens", () => {
   expect(editorThemeSpec["&"]).toMatchObject({
@@ -194,10 +198,22 @@ test("ctrl_space_opens_completion: Ctrl+Space opens the list every time, also af
     });
     expect(completionStatus(view.state)).toBeNull();
   }
-  expect(completion.mock.calls.length).toBeGreaterThanOrEqual(3);
+  // A pick (Enter) inserts the option and closes the list; Ctrl+Space opens it again.
+  ctrlSpace();
+  await waitFor(() => expect(completionStatus(view.state)).toBe("active"));
+  // CodeMirror ignores an Enter in the first moments of a list (its interaction delay).
+  await new Promise((r) => setTimeout(r, 120));
+  act(() => {
+    fireEvent.keyDown(view.contentDOM, { key: "Enter", code: "Enter", keyCode: 13 });
+  });
+  expect(view.state.doc.toString()).toBe("select");
+  expect(completionStatus(view.state)).toBeNull();
+  expect(ctrlSpace().defaultPrevented).toBe(true);
+  await waitFor(() => expect(completionStatus(view.state)).toBe("active"));
+  expect(completion.mock.calls.length).toBeGreaterThanOrEqual(5);
 });
 
-test("editor_colors_follow_theme: the SQL colours are the --sql-* tokens of spec §5.1, in both themes", async () => {
+test("editor_colors_follow_theme: the SQL colours are the --sql-* tokens (dark / light), never literal colours", async () => {
   // The highlight style names tokens only, by role (§5.1: keywords, functions, numbers,
   // strings, comments); quoted identifiers stay plain text.
   const colorOf = (tag: unknown) =>
@@ -214,34 +230,7 @@ test("editor_colors_follow_theme: the SQL colours are the --sql-* tokens of spec
   expect(JSON.stringify(editorThemeSpec)).toContain("var(--sql-selection)");
   expect(editorThemeSpec[".cm-currentStatement"].backgroundColor).toBe("var(--sql-current)");
 
-  // The values of the spec, light (:root) and dark (both dark blocks, see tokens.test.ts).
-  const css = readFileSync("src/styles/tokens.css", "utf8");
-  const valuesOf = (selector: string) => {
-    const start = css.indexOf(`${selector} {`);
-    const body = css.slice(start, css.indexOf("}", start));
-    return Object.fromEntries([...body.matchAll(/(--sql-[a-z-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim().toUpperCase()]));
-  };
-  const light = {
-    "--sql-keyword": "#529BD8",
-    "--sql-function": "#2E7D32",
-    "--sql-number": "#1D00FF",
-    "--sql-string": "#E04978",
-    "--sql-comment": "#009B31",
-    "--sql-current": "#F3EEDE",
-    "--sql-selection": "#FFEA84",
-  };
-  const dark = {
-    "--sql-keyword": "#529BD8",
-    "--sql-function": "#7CB342",
-    "--sql-number": "#B57AFF",
-    "--sql-string": "#CA6E6E",
-    "--sql-comment": "#009B31",
-    "--sql-current": "#30363F",
-    "--sql-selection": "#003F84",
-  };
-  expect(valuesOf(":root")).toEqual(light);
-  expect(valuesOf(':root:not([data-theme="light"])')).toEqual(dark);
-  expect(valuesOf(':root[data-theme="dark"]')).toEqual(dark);
+  // The values and their contrast in both themes: tokens.test.ts (sql_editor_contrast).
 
   // In the editor: a keyword is drawn with the class whose rule is the keyword token.
   const { container } = render(<SqlEditor value="select 1 -- note" onChange={() => {}} dialect="postgres" onRun={() => {}} />);
@@ -270,4 +259,17 @@ test("the statement under the cursor is highlighted, not while a selection is ma
   expect(current()).toEqual(["select 3"]);
   act(() => view.dispatch({ selection: { anchor: 0, head: 4 } }));
   expect(current()).toEqual([]);
+});
+
+test("the band starts at the statement's first code line: a comment after the previous `;` is not banded", () => {
+  const { container } = render(
+    <SqlEditor value={"select 1; -- note\n/* more */\nselect 2"} onChange={() => {}} dialect="postgres" onRun={() => {}} />,
+  );
+  const view = EditorView.findFromDOM(container.querySelector(".cm-content") as HTMLElement);
+  if (!view) throw new Error("no editor");
+  const current = () => [...container.querySelectorAll(".cm-line.cm-currentStatement")].map((l) => l.textContent);
+  act(() => view.dispatch({ selection: { anchor: view.state.doc.length } }));
+  expect(current()).toEqual(["select 2"]);
+  act(() => view.dispatch({ selection: { anchor: 3 } }));
+  expect(current()).toEqual(["select 1; -- note"]);
 });

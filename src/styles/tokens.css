@@ -98,12 +98,13 @@
   --status-connecting: #945A00;
   --status-error: #C62828;
   /* SQL editor colours (spec §5.1, #89): keywords, functions (builtins), numbers, strings,
-     comments; the statement under the cursor ("current query") and the selection. */
-  --sql-keyword: #529BD8;
-  --sql-function: #2E7D32;
+     comments; the statement under the cursor ("current query") and the selection. The text
+     colours are §5.1's hues retuned to 4.5:1 on --content and on --sql-current. */
+  --sql-keyword: #266EAA;
+  --sql-function: #2D7931;
   --sql-number: #1D00FF;
-  --sql-string: #E04978;
-  --sql-comment: #009B31;
+  --sql-string: #CB2357;
+  --sql-comment: #007C27;
   --sql-current: #F3EEDE;
   --sql-selection: #FFEA84;
   /* Not in §5.1: status colors, kept until the components using them are redone. */
@@ -220,11 +221,11 @@
     --icon-view: #B58CFF;
     --status-connecting: #F0B429;
     --status-error: #FF8A8A;
-    --sql-keyword: #529BD8;
+    --sql-keyword: #63A5DC;
     --sql-function: #7CB342;
-    --sql-number: #B57AFF;
-    --sql-string: #CA6E6E;
-    --sql-comment: #009B31;
+    --sql-number: #BC87FF;
+    --sql-string: #D58C8C;
+    --sql-comment: #00BA3B;
     --sql-current: #30363F;
     --sql-selection: #003F84;
     --danger: #ff6b6b;
@@ -307,11 +308,11 @@
   --icon-view: #B58CFF;
   --status-connecting: #F0B429;
   --status-error: #FF8A8A;
-  --sql-keyword: #529BD8;
+  --sql-keyword: #63A5DC;
   --sql-function: #7CB342;
-  --sql-number: #B57AFF;
-  --sql-string: #CA6E6E;
-  --sql-comment: #009B31;
+  --sql-number: #BC87FF;
+  --sql-string: #D58C8C;
+  --sql-comment: #00BA3B;
   --sql-current: #30363F;
   --sql-selection: #003F84;
   --danger: #ff6b6b;

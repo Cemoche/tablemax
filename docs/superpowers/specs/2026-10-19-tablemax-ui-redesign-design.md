@@ -321,17 +321,23 @@ Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E
 #F3EEDE, sélection #003F84 / #FFEA84).
 
 > Amendement 2026-10-21 (#89) : tokens de l'éditeur SQL (clair / sombre) : `--sql-keyword`
-> #529BD8 / #529BD8, `--sql-function` #2E7D32 / #7CB342, `--sql-number` #1D00FF / #B57AFF,
-> `--sql-string` #E04978 / #CA6E6E, `--sql-comment` #009B31 / #009B31, `--sql-current`
-> #F3EEDE / #30363F, `--sql-selection` #FFEA84 / #003F84. Mots-clés : aussi les types,
+> #266EAA / #63A5DC, `--sql-function` #2D7931 / #7CB342, `--sql-number` #1D00FF / #BC87FF,
+> `--sql-string` #CB2357 / #D58C8C, `--sql-comment` #007C27 / #00BA3B, `--sql-current`
+> #F3EEDE / #30363F, `--sql-selection` #FFEA84 / #003F84. Écart au §5.1 pour le contraste :
+> les couleurs de texte gardent la teinte du §5.1, assombries en clair et éclaircies en
+> sombre jusqu'à ≥ 4,5:1 sur `--content` et sur la bande `--sql-current` (règle des #102 /
+> #103 / #104) ; la bande et la sélection restent celles du §5.1 (la bande reste visible :
+> 1,16:1 / 1,37:1 sur `--content`, l'éclaircir en clair ou l'assombrir en sombre l'effacerait).
+> Contrastes (sur `--content` / sur la bande) — clair : mots-clés 5,39 / 4,65, fonctions
+> 5,40 / 4,65, nombres 8,41 / 7,25, chaînes 5,36 / 4,62, commentaires 5,37 / 4,63 ; sombre :
+> mots-clés 6,31 / 4,61, fonctions 6,66 / 4,86, nombres 6,39 / 4,67, chaînes 6,32 / 4,61,
+> commentaires 6,42 / 4,69 (test `sql_editor_contrast`). Mots-clés : aussi les types,
 > booléens et `NULL` ; fonctions : les fonctions intégrées du dialecte (lang-sql) ; les
 > identifiants entre guillemets restent du texte (`--text`) ; ni gras ni italique. Requête
 > courante : fond des lignes de l'instruction que Run Current exécuterait (celle du curseur),
-> seulement sans sélection (la sélection s'exécute alors), et plus de bande de ligne active ;
-> rien au-delà de 200 000 caractères (le texte est redécoupé à chaque frappe). Contraste en
-> clair, à revoir : mots-clés 2,98:1 sur `--content` (2,57:1 sur `--sql-current`),
-> commentaires 3,66:1, chaînes 3,89:1 ; en sombre tout est ≥ 4,5:1 sur `--content`, ≥ 3,3:1
-> sur `--sql-current`. Les valeurs du §5.1 sont gardées telles quelles.
+> à partir de sa première ligne de code (un commentaire après le `;` précédent n'est pas
+> coloré), seulement sans sélection (la sélection s'exécute alors), et plus de bande de ligne
+> active ; rien au-delà de 200 000 caractères (le texte est redécoupé à chaque frappe).
 
 ### 5.2 Dimensions (à 100 %)
 Barre du haut 52, pilules 34, boutons 28–32 ; colonne des connexions 80 ; barre latérale 262
