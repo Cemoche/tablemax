@@ -184,7 +184,7 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > pastilles du formulaire utilisent `--swatch-N-icon` (≥ 3:1 sur `--content` dans les deux
 > thèmes) et non plus `--swatch-N`, presque invisible en clair. Badge du tag = celui de la
 > pastille de statut (`--tag-*`). Ligne sélectionnée `--sel` (sous-titre en `--text`,
-> `--text-2` y tombe sous 4,5:1), survol `--side`. Formulaire : ordre moteur ; nom + groupe ;
+> `--text-2` y tombe sous 4,5:1), survol `--row-b` (`--side` se confond avec `--content` en sombre). Formulaire : ordre moteur ; nom + groupe ;
 > couleur (6 boutons radio) + tag ; safe mode ; hôte + port ; utilisateur ; mot de passe +
 > stockage ; base ; mode SSL + CA… / Cert… / Key… (un fichier choisi a sa ligne avec son
 > chemin et Clear) ; encadré « Over SSH » ; Import from URL… (remplit le formulaire ouvert,

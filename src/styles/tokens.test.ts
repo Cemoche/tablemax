@@ -241,3 +241,14 @@ test("connection colour dots (list, form swatches) stand out from the content (3
     }
   }
 });
+
+test("connection list rows: the subtitle reads 4.5:1 at rest, hovered and selected, in both themes (#88)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    const ratio = (fg: string, bg: string) => contrastRatio(v[fg], v[bg]);
+    expect(ratio("--text-2", "--content"), `${selector} at rest`).toBeGreaterThanOrEqual(4.5);
+    expect(ratio("--text-2", "--row-b"), `${selector} hovered`).toBeGreaterThanOrEqual(4.5);
+    // Selected rows show the subtitle in --text (--text-2 is 3.9:1 on the light --sel).
+    expect(ratio("--text", "--sel"), `${selector} selected`).toBeGreaterThanOrEqual(4.5);
+  }
+});
