@@ -104,6 +104,17 @@ export const tableCount = (
   combine: FilterCombine = "and",
 ) => invoke<RowCount>("table_count", { workspaceId, object, filters, combine });
 
+/**
+ * The WHERE clause the grid's page uses for these filters (`WHERE …`, or "" without
+ * filters), with its placeholders and never the values: the filter bar's SQL preview.
+ */
+export const filtersPreviewSql = (
+  workspaceId: string,
+  object: ObjectRef,
+  filters: Filter[],
+  combine: FilterCombine = "and",
+) => invoke<string>("filters_preview_sql", { workspaceId, object, filters, combine });
+
 /** Cached per workspace; `refresh` re-reads it from the database. */
 export const tableInfo = (workspaceId: string, object: ObjectRef, refresh: boolean) =>
   invoke<TableInfo>("table_info", { workspaceId, object, refresh });
