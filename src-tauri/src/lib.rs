@@ -139,6 +139,7 @@ pub fn run() {
             commands::window_set_zoom,
             commands::app_version,
             commands::history_list,
+            commands::history_delete,
             commands::history_clear,
             commands::session_save,
             commands::session_load,

@@ -20,6 +20,16 @@ export type ShortcutScope = "global" | "queryTab" | "tableTab" | "editor";
  * against (each side has a test asserting its list equals that file). Palette actions with
  * a shortcut use the same id.
  */
+type Spec = {
+  scope: ShortcutScope;
+  defaultShortcut: string;
+  /**
+   * More default combinations of the action, bound with the default (spec §5.5: for
+   * layouts where `[` / `]` need AltGr). A custom shortcut replaces all of them.
+   */
+  alternates?: readonly string[];
+};
+
 const SPECS = {
   "query.new": { scope: "global", defaultShortcut: "Mod+T" },
   "tab.close": { scope: "global", defaultShortcut: "Mod+W" },
@@ -28,10 +38,11 @@ const SPECS = {
   "palette.all": { scope: "global", defaultShortcut: "Mod+P" },
   "settings.open": { scope: "global", defaultShortcut: "Mod+," },
   "query.save": { scope: "queryTab", defaultShortcut: "Mod+S" },
-  "history.toggle": { scope: "queryTab", defaultShortcut: "Mod+Shift+H" },
+  "history.toggle": { scope: "global", defaultShortcut: "Mod+Shift+H" },
   "editor.run": { scope: "editor", defaultShortcut: "Mod+Enter" },
   "editor.runAll": { scope: "editor", defaultShortcut: "Mod+Shift+Enter" },
-  "editor.format": { scope: "editor", defaultShortcut: "Mod+Shift+F" },
+  // Spec §5.3 (Beautify ⌘I): Mod+Shift+F is the sidebar search (Task 3).
+  "editor.format": { scope: "editor", defaultShortcut: "Mod+I" },
   "editor.comment": { scope: "editor", defaultShortcut: "Mod+/" },
   "grid.commit": { scope: "tableTab", defaultShortcut: "Mod+S" },
   "grid.rowDetails": { scope: "tableTab", defaultShortcut: "Mod+I" },
@@ -43,7 +54,11 @@ const SPECS = {
   "database.open": { scope: "global", defaultShortcut: "Mod+K" },
   "editor.open": { scope: "global", defaultShortcut: "Mod+E" },
   "workspace.reload": { scope: "global", defaultShortcut: "Mod+R" },
-} as const satisfies Record<keyof typeof strings.keymap, { scope: ShortcutScope; defaultShortcut: string }>;
+  "workspace.previous": { scope: "global", defaultShortcut: "Mod+Shift+[", alternates: ["Mod+Shift+PageUp"] },
+  "workspace.next": { scope: "global", defaultShortcut: "Mod+Shift+]", alternates: ["Mod+Shift+PageDown"] },
+  "sidebar.toggle": { scope: "global", defaultShortcut: "Mod+0" },
+  "sidebar.search": { scope: "global", defaultShortcut: "Mod+Shift+F" },
+} as const satisfies Record<keyof typeof strings.keymap, Spec>;
 
 export type KeymapActionId = keyof typeof SPECS;
 
@@ -87,6 +102,8 @@ const NAMED_KEYS = new Set([
   "ArrowDown",
   "ArrowLeft",
   "ArrowRight",
+  "PageUp",
+  "PageDown",
 ]);
 const FUNCTION_KEY = /^F([1-9]|1[0-2])$/;
 const CHAR_KEY = /^[A-Z0-9,./;\-=[\]\\`]$/;
@@ -96,7 +113,7 @@ const CHAR_KEY = /^[A-Z0-9,./;\-=[\]\\`]$/;
  * src-tauri/src/settings.rs): `Modifier+…+Key`, modifiers among Mod, Ctrl, Meta, Alt,
  * Shift, each at most once, in any order; Key = one uppercase ASCII letter or digit, one
  * of `, . / ; - = [ ] \ \``, or a named key (Enter, Tab, Escape, Space, Backspace, Delete,
- * ArrowUp/Down/Left/Right, F1–F12). At least one of Mod, Ctrl, Meta, Alt unless the key is
+ * ArrowUp/Down/Left/Right, PageUp/PageDown, F1–F12). At least one of Mod, Ctrl, Meta, Alt unless the key is
  * F1–F12 (Shift alone would take an uppercase letter or reverse Tab away from typing and focus
  * navigation); at most 32 characters. Everything it accepts, `matchShortcut` can match.
  */
@@ -118,6 +135,17 @@ export function isValidShortcut(spec: string): boolean {
 export function effectiveShortcut(id: KeymapActionId, keymap: Record<string, string>): string {
   const custom = own(keymap, id) ? keymap[id] : undefined;
   return typeof custom === "string" && isValidShortcut(custom) ? custom : SPECS[id].defaultShortcut;
+}
+
+/**
+ * Every combination `id` answers to: its keymap entry when that is a valid spec, else its
+ * default followed by its alternates.
+ */
+export function effectiveShortcuts(id: KeymapActionId, keymap: Record<string, string>): string[] {
+  const custom = own(keymap, id) ? keymap[id] : undefined;
+  if (typeof custom === "string" && isValidShortcut(custom)) return [custom];
+  const spec: Spec = SPECS[id];
+  return [spec.defaultShortcut, ...(spec.alternates ?? [])];
 }
 
 /** Two scopes can be active for the same keydown (see `ShortcutScope`). */
@@ -155,7 +183,7 @@ export function conflictFor(
   const wanted = combination(spec, mac);
   for (const other of KEYMAP_ACTIONS) {
     if (other.id === id || !scopesOverlap(scope, other.scope)) continue;
-    if (combination(effectiveShortcut(other.id, keymap), mac) === wanted) return other.id;
+    if (effectiveShortcuts(other.id, keymap).some((s) => combination(s, mac) === wanted)) return other.id;
   }
   return null;
 }

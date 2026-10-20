@@ -30,11 +30,37 @@ interface ChromeState {
   /** The frameless window is maximized (Restore label, no resize grips). */
   maximized: boolean;
   setMaximized: (maximized: boolean) => void;
+  /** Requests to open the settings dialog (the sidebar's gear; App owns the dialog). */
+  settingsRequest: number;
+  requestSettings: () => void;
+  /** Bumped when a run of a connection ended: its sidebar History reloads. */
+  historyBumps: Record<string, number>;
+  bumpHistory: (connectionId: string) => void;
+  /**
+   * One-shot requests to a SQL tab, consumed by the tab (also when it mounts after the
+   * request, e.g. a tab just opened): run all of it, insert text at the cursor.
+   */
+  runRequests: Record<string, number>;
+  requestRun: (tabId: string) => void;
+  takeRun: (tabId: string) => boolean;
+  editorInserts: Record<string, string>;
+  requestInsert: (tabId: string, sql: string) => void;
+  takeInsert: (tabId: string) => string | null;
+  /** One-shot: the view a table tab shows when it mounts or now ("Open structure"). */
+  tableViews: Record<string, "data" | "structure">;
+  requestTableView: (tabId: string, view: "data" | "structure") => void;
+  takeTableView: (tabId: string) => "data" | "structure" | null;
 }
 
 const bump = (m: Record<string, number>, id: string) => ({ ...m, [id]: (m[id] ?? 0) + 1 });
 
-export const useChrome = create<ChromeState>((set) => ({
+const omit = <T,>(m: Record<string, T>, id: string): Record<string, T> => {
+  const c = { ...m };
+  delete c[id];
+  return c;
+};
+
+export const useChrome = create<ChromeState>((set, get) => ({
   rowDetails: {},
   toggleRowDetails: (tabId) => set((s) => ({ rowDetails: { ...s.rowDetails, [tabId]: !s.rowDetails[tabId] } })),
   setRowDetails: (tabId, open) =>
@@ -47,6 +73,33 @@ export const useChrome = create<ChromeState>((set) => ({
   requestPalette: (kind) => set((s) => ({ paletteRequest: { kind, seq: (s.paletteRequest?.seq ?? 0) + 1 } })),
   maximized: false,
   setMaximized: (maximized) => set({ maximized }),
+  settingsRequest: 0,
+  requestSettings: () => set((s) => ({ settingsRequest: s.settingsRequest + 1 })),
+  historyBumps: {},
+  bumpHistory: (connectionId) => set((s) => ({ historyBumps: bump(s.historyBumps, connectionId) })),
+  runRequests: {},
+  requestRun: (tabId) => set((s) => ({ runRequests: bump(s.runRequests, tabId) })),
+  takeRun: (tabId) => {
+    if (!get().runRequests[tabId]) return false;
+    set((s) => ({ runRequests: omit(s.runRequests, tabId) }));
+    return true;
+  },
+  editorInserts: {},
+  requestInsert: (tabId, sql) => set((s) => ({ editorInserts: { ...s.editorInserts, [tabId]: sql } })),
+  takeInsert: (tabId) => {
+    const sql = get().editorInserts[tabId];
+    if (sql === undefined) return null;
+    set((s) => ({ editorInserts: omit(s.editorInserts, tabId) }));
+    return sql;
+  },
+  tableViews: {},
+  requestTableView: (tabId, view) => set((s) => ({ tableViews: { ...s.tableViews, [tabId]: view } })),
+  takeTableView: (tabId) => {
+    const view = get().tableViews[tabId];
+    if (view === undefined) return null;
+    set((s) => ({ tableViews: omit(s.tableViews, tabId) }));
+    return view;
+  },
 }));
 
 /**

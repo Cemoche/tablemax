@@ -177,6 +177,19 @@ pub fn list(
     })
 }
 
+/// Deletes one entry of `connection_id` (an id of another connection, or one already gone,
+/// changes nothing).
+pub fn delete(store: &ConnectionStore, connection_id: &str, id: i64) -> AppResult<()> {
+    store.with_conn(|conn| {
+        conn.execute(
+            "DELETE FROM query_history WHERE connection_id = ?1 AND id = ?2",
+            params![connection_id, id],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    })
+}
+
 pub fn clear(store: &ConnectionStore, connection_id: &str) -> AppResult<()> {
     store.with_conn(|conn| {
         conn.execute(

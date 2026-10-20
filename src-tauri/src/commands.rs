@@ -610,6 +610,15 @@ pub async fn history_list(
 }
 
 #[tauri::command]
+pub async fn history_delete(
+    state: State<'_, SessionManager>,
+    connection_id: String,
+    id: i64,
+) -> AppResult<()> {
+    state.history_delete(&connection_id, id).await
+}
+
+#[tauri::command]
 pub async fn history_clear(
     state: State<'_, SessionManager>,
     connection_id: String,

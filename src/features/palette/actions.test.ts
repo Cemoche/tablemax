@@ -120,6 +120,7 @@ test("the palette actions with a shortcut are the keymap registry's actions of t
     "tab.previous",
     "editor.format",
     "editor.comment",
+    "sidebar.toggle",
     "history.toggle",
   ]);
   expect(ACTIONS.some((a) => "shortcut" in a)).toBe(false);
@@ -134,19 +135,19 @@ test("shortcuts are rendered per platform", () => {
   spy.mockRestore();
 });
 
-test("Open history is offered for a query tab only and toggles its history panel", async () => {
-  const { useQueryPanels } = await import("../../stores/queryPanels");
+test("Open history shows the sidebar on its History tab, in any connected workspace", async () => {
+  const { useSidebar } = await import("../../stores/sidebar");
   const t = strings.palette.action;
-  useQueryPanels.setState({ history: {} });
-  const action = visibleActions(ctx(ws())).find((a) => a.title === t.openHistory);
-  expect(action?.id).toBe("history.toggle");
-  action?.run(ctx(ws()));
-  expect(useQueryPanels.getState().history.q1).toBe(true);
-  action?.run(ctx(ws()));
-  expect(useQueryPanels.getState().history.q1).toBe(false);
+  useSidebar.setState({ segments: {} });
+  useWorkspaces.setState({ sidebarVisible: false });
   const tableTab = ws({
     tabs: [{ id: "t1", kind: "table", object: { schema: "public", name: "x" }, title: "x", preview: false }],
     activeTabId: "t1",
   });
-  expect(titles(ctx(tableTab))).not.toContain(t.openHistory);
+  const action = visibleActions(ctx(tableTab)).find((a) => a.title === t.openHistory);
+  expect(action?.id).toBe("history.toggle");
+  action?.run(ctx(tableTab));
+  expect(useWorkspaces.getState().sidebarVisible).toBe(true);
+  expect(useSidebar.getState().segments.w1).toBe("history");
+  expect(titles(ctx(ws({ status: "disconnected" })))).not.toContain(t.openHistory);
 });

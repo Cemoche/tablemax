@@ -1,4 +1,14 @@
-import { type KeyboardEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  type KeyboardEvent,
+  type MouseEvent,
+  type UIEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { qualifiedName } from "../../lib/sqlIdent";
@@ -6,39 +16,60 @@ import { strings } from "../../lib/strings";
 import type { DbObject, DbRoutine } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome, useOnRequest } from "../../stores/chrome";
+import { useSettings } from "../../stores/settings";
+import { useSidebar } from "../../stores/sidebar";
 import { type Workspace, capabilitiesOf, sqlDialect, useWorkspaces } from "../../stores/workspaces";
+import { ContextMenu, type MenuAnchor, type MenuItem, keyboardMenuAnchor } from "../sidebar/ContextMenu";
+import { ObjectIcon } from "../sidebar/ObjectIcon";
+import { SidebarSearch, nameMatches } from "../sidebar/SidebarSearch";
+import { copyText } from "../sidebar/sqlActions";
 
-type Entry =
-  | { type: "object"; object: DbObject }
-  | { type: "routine"; routine: DbRoutine };
+const S = strings.sidebar;
 
-interface MenuState {
-  entry: Entry;
-  x: number;
-  y: number;
-}
+type Entry = { type: "object"; object: DbObject } | { type: "routine"; routine: DbRoutine };
+
+type Row =
+  | { type: "section"; key: string; label: string; count: number; expanded: boolean }
+  | Entry;
+
+/** Rows kept rendered above and below the visible ones. */
+const OVERSCAN = 12;
+/** Before the tree is measured (and in tests, where nothing is laid out). */
+const FALLBACK_VIEWPORT = 800;
+
+/** Spec §5.2: 24 px rows at the default 13 px; taller only for big data fonts. */
+export const treeRowHeight = (fontSize: number) => Math.max(24, Math.ceil(fontSize * 1.6));
 
 const entryName = (e: Entry) => (e.type === "object" ? e.object.name : e.routine.name);
+const entryKey = (e: Entry) =>
+  e.type === "object" ? `o:${e.object.kind}:${e.object.name}` : `r:${e.routine.kind}:${e.routine.name}`;
+const rowKey = (r: Row) => (r.type === "section" ? `s:${r.key}` : entryKey(r));
 
+/**
+ * The sidebar's Items tab: the schema's tables, views and routines in a virtualized tree
+ * (only the rows in view are in the DOM, so thousands of objects stay fast), with the
+ * search box and its options. A click opens a preview tab, a double click a permanent one.
+ */
 export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
-  const setSchema = useWorkspaces((s) => s.setSchema);
   const openTableTab = useWorkspaces((s) => s.openTableTab);
-  const openQueryTab = useWorkspaces((s) => s.openQueryTab);
-  const switchDatabase = useWorkspaces((s) => s.switchDatabase);
   const [objects, setObjects] = useState<DbObject[]>([]);
   const [routines, setRoutines] = useState<DbRoutine[]>([]);
-  const [databases, setDatabases] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [switchError, setSwitchError] = useState<string | null>(null);
-  const [switching, setSwitching] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [reload, setReload] = useState(0);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [menu, setMenu] = useState<MenuState | null>(null);
-  const { id, currentSchema, status, database } = workspace;
-  const { databaseSwitch, routines: hasRoutines, sqlEditor } = capabilitiesOf(workspace);
-  // The toolbar's Reload (Mod+R) reloads the lists like Refresh; it rebuilds the catalog itself.
+  const [menu, setMenu] = useState<{ entry: Entry; anchor: MenuAnchor } | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const { id, currentSchema, database } = workspace;
+  const caps = capabilitiesOf(workspace);
+  const { match, showTables, showViews } = useSidebar();
+  const fontSize = useSettings((s) => s.settings.dataFontSize);
+  const rowHeight = treeRowHeight(fontSize);
+
+  // The toolbar's Reload (Mod+R) and the footer's Refresh reload the lists; they rebuild
+  // the catalog themselves.
   useOnRequest(
     useChrome((s) => s.reloads[id] ?? 0),
     () => setReload((n) => n + 1),
@@ -68,7 +99,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
   }, [id, currentSchema, database, reload]);
 
   useEffect(() => {
-    if (!hasRoutines) return;
+    if (!caps.routines) return;
     let stale = false;
     ipc
       .routinesList(id, currentSchema)
@@ -81,52 +112,43 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
     return () => {
       stale = true;
     };
-  }, [id, hasRoutines, currentSchema, database, reload]);
-
-  useEffect(() => {
-    if (!databaseSwitch || status !== "connected") return;
-    let stale = false;
-    ipc
-      .databasesList(id)
-      .then((list) => {
-        if (!stale) setDatabases(list);
-      })
-      .catch(() => {
-        if (!stale) setDatabases([]);
-      });
-    return () => {
-      stale = true;
-    };
-  }, [id, databaseSwitch, status, reload]);
-
-  // Escape closes the menu; so does any outside click.
-  useEffect(() => {
-    if (!menu) return;
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") setMenu(null);
-    };
-    const onDown = (e: globalThis.MouseEvent) => {
-      if (!(e.target as Element | null)?.closest?.('[role="menu"]')) setMenu(null);
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onDown);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onDown);
-    };
-  }, [menu]);
+  }, [id, caps.routines, currentSchema, database, reload]);
 
   const { tables, views, shownRoutines } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const keep = <T extends { name: string }>(l: T[]) =>
-      q ? l.filter((o) => o.name.toLowerCase().includes(q)) : l;
+    const keep = <T extends { name: string }>(l: T[]) => l.filter((o) => nameMatches(o.name, q, match));
     const objs = keep(objects);
     return {
-      tables: objs.filter((o) => o.kind === "table"),
-      views: objs.filter((o) => o.kind === "view"),
-      shownRoutines: keep(routines),
+      tables: showTables ? objs.filter((o) => o.kind === "table") : [],
+      views: showViews ? objs.filter((o) => o.kind === "view") : [],
+      shownRoutines: caps.routines ? keep(routines) : [],
     };
-  }, [objects, routines, query]);
+  }, [objects, routines, query, match, showTables, showViews, caps.routines]);
+
+  const rows = useMemo(() => {
+    const out: Row[] = [];
+    const section = (key: string, label: string, entries: Entry[], show: boolean) => {
+      if (!show) return;
+      const expanded = !collapsed[key];
+      out.push({ type: "section", key, label, count: entries.length, expanded });
+      if (expanded) out.push(...entries);
+    };
+    section("tables", S.tables, tables.map((object) => ({ type: "object", object })), showTables);
+    section("views", S.views, views.map((object) => ({ type: "object", object })), showViews);
+    section(
+      "routines",
+      S.routines,
+      shownRoutines.map((routine) => ({ type: "routine", routine })),
+      caps.routines,
+    );
+    return out;
+  }, [tables, views, shownRoutines, collapsed, showTables, showViews, caps.routines]);
+
+  // The active table tab's object is the selected row until another row is clicked.
+  const activeTab = workspace.tabs.find((t) => t.id === workspace.activeTabId);
+  const activeKey =
+    activeTab?.kind === "table" ? `o:${objects.find((o) => o.name === activeTab.object.name)?.kind}:${activeTab.object.name}` : null;
+  const selectedKey = selected ?? activeKey;
 
   const refresh = () => {
     setReload((n) => n + 1);
@@ -134,272 +156,262 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
     void useCatalog.getState().refreshCatalog(id, currentSchema);
   };
 
-  const changeDatabase = async (name: string) => {
-    setSwitchError(null);
-    setSwitching(true);
-    try {
-      await switchDatabase(id, name);
-    } catch (e) {
-      setSwitchError(`${strings.sidebar.switchFailed}: ${toAppError(e).message}`);
-    } finally {
-      setSwitching(false);
-    }
-  };
+  const fail = (e: unknown) => setNotice(S.copyFailed(toAppError(e).message));
 
-  const openMenuAt = (entry: Entry, x: number, y: number) => setMenu({ entry, x, y });
-  const onContext = (entry: Entry) => (e: MouseEvent) => {
-    e.preventDefault();
-    openMenuAt(entry, e.clientX, e.clientY);
+  const menuItems = (entry: Entry): MenuItem[] => {
+    const copyName = { label: S.menu.copyName, run: () => void copyText(entryName(entry)).catch(() => {}) };
+    const refreshItem = { label: S.menu.refresh, run: refresh };
+    if (entry.type === "routine") return [copyName, refreshItem];
+    const o = entry.object;
+    const ref = { schema: o.schema, name: o.name };
+    const scripts: MenuItem[] = [
+      ...(caps.ddl
+        ? [
+            {
+              label: S.menu.create,
+              ariaLabel: S.menu.copyCreate,
+              indent: true,
+              run: () => {
+                setNotice(null);
+                ipc.tableDdl(id, ref).then(copyText).catch(fail);
+              },
+            },
+          ]
+        : []),
+      ...(caps.sqlEditor
+        ? [
+            {
+              label: S.menu.selectTop,
+              ariaLabel: S.menu.copySelectTop,
+              indent: true,
+              run: () =>
+                void copyText(
+                  `SELECT * FROM ${qualifiedName(sqlDialect(workspace), o.schema, o.name)} LIMIT 100;`,
+                ).catch(fail),
+            },
+          ]
+        : []),
+    ];
+    return [
+      { label: S.menu.openNewTab, run: () => openTableTab(id, ref) },
+      {
+        label: S.menu.openStructure,
+        run: () => {
+          openTableTab(id, ref);
+          const ws = useWorkspaces.getState().workspaces.find((w) => w.id === id);
+          if (ws?.activeTabId) useChrome.getState().requestTableView(ws.activeTabId, "structure");
+        },
+      },
+      copyName,
+      ...(scripts.length > 0 ? [{ heading: S.menu.copyScriptAs }, ...scripts] : []),
+      refreshItem,
+    ];
   };
-  const onItemKey = (entry: Entry) => (e: KeyboardEvent<HTMLButtonElement>) => {
-    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
-      e.preventDefault();
-      const r = e.currentTarget.getBoundingClientRect();
-      openMenuAt(entry, r.left, r.bottom);
-    }
-  };
-
-  const toggle = (key: string) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
-
-  const objectItem = (o: DbObject) => {
-    const entry: Entry = { type: "object", object: o };
-    const isTable = o.kind === "table";
-    return (
-      <li key={`${o.kind}:${o.name}`}>
-        <button
-          type="button"
-          onClick={() => openTableTab(id, { schema: o.schema, name: o.name }, { preview: true })}
-          onDoubleClick={() => openTableTab(id, { schema: o.schema, name: o.name })}
-          onContextMenu={onContext(entry)}
-          onKeyDown={onItemKey(entry)}
-          className="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-surface-2"
-        >
-          <span
-            aria-label={isTable ? strings.sidebar.table : strings.sidebar.view}
-            role="img"
-            className={isTable ? "text-accent" : "text-muted"}
-          >
-            {isTable ? strings.sidebar.tableIcon : strings.sidebar.viewIcon}
-          </span>
-          <span className="truncate">{o.name}</span>
-        </button>
-      </li>
-    );
-  };
-
-  const routineItem = (r: DbRoutine) => {
-    const entry: Entry = { type: "routine", routine: r };
-    return (
-      <li key={`${r.kind}:${r.name}`}>
-        <button
-          type="button"
-          onClick={(e) => {
-            const b = e.currentTarget.getBoundingClientRect();
-            openMenuAt(entry, b.left, b.bottom);
-          }}
-          onContextMenu={onContext(entry)}
-          onKeyDown={onItemKey(entry)}
-          className="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-surface-2"
-        >
-          <span
-            aria-label={r.kind === "function" ? strings.sidebar.function : strings.sidebar.procedure}
-            role="img"
-            className="text-muted"
-          >
-            {r.kind === "function" ? strings.sidebar.functionIcon : strings.sidebar.procedureIcon}
-          </span>
-          <span className="truncate">{r.name}</span>
-        </button>
-      </li>
-    );
-  };
-
-  const section = (key: string, label: string, count: number, items: React.ReactNode) => (
-    <section key={key}>
-      <button
-        type="button"
-        aria-expanded={!collapsed[key]}
-        onClick={() => toggle(key)}
-        className="flex w-full items-center gap-1 px-2 py-1 text-left text-muted hover:bg-surface-2"
-      >
-        <span aria-hidden="true">{collapsed[key] ? "▸" : "▾"}</span>
-        <span>{label}</span>
-        <span aria-hidden="true" className="ml-auto">
-          {count}
-        </span>
-      </button>
-      {!collapsed[key] && <ul>{items}</ul>}
-    </section>
-  );
 
   const nothing = objects.length === 0 && routines.length === 0;
   const nothingShown = tables.length + views.length + shownRoutines.length === 0;
 
   return (
-    <aside
-      aria-label={strings.sidebar.label}
-      className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-surface"
-    >
-      <div className="flex flex-col gap-2 border-b border-border p-2">
-        {databaseSwitch && (
-          <select
-            aria-label={strings.sidebar.database}
-            value={database ?? ""}
-            disabled={switching}
-            onChange={(e) => void changeDatabase(e.target.value)}
-            className="rounded-sm border border-border bg-bg px-2 py-1"
-          >
-            {databases.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-        )}
-        {switchError && <p className="text-danger">{switchError}</p>}
-        <div className="flex gap-2">
-          <select
-            aria-label={strings.sidebar.schema}
-            value={currentSchema ?? ""}
-            disabled={switching}
-            onChange={(e) => setSchema(id, e.target.value)}
-            className="min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 py-1"
-          >
-            {workspace.schemas.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={switching}
-            className="rounded-sm border border-border bg-bg px-2 py-1 hover:bg-surface-2"
-          >
-            {strings.sidebar.refresh}
-          </button>
-        </div>
-        <input
-          type="search"
-          aria-label={strings.sidebar.filter}
-          placeholder={strings.sidebar.filter}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="rounded-sm border border-border bg-bg px-2 py-1"
-        />
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {error && <p className="p-2 text-danger">{error}</p>}
-        {loading && <p className="p-2 text-muted">{strings.sidebar.loading}</p>}
-        {!loading && !error && nothingShown && (
-          <p className="p-2 text-muted">
-            {nothing ? strings.sidebar.empty : strings.sidebar.noMatch}
-          </p>
-        )}
-        {section("tables", strings.sidebar.tables, tables.length, tables.map(objectItem))}
-        {section("views", strings.sidebar.views, views.length, views.map(objectItem))}
-        {hasRoutines &&
-          section("routines", strings.sidebar.routines, shownRoutines.length, shownRoutines.map(routineItem))}
-      </div>
+    <section aria-label={S.itemsLabel} className="flex min-h-0 flex-1 flex-col">
+      <SidebarSearch
+        label={S.searchLabel}
+        placeholder={S.search}
+        value={query}
+        onChange={setQuery}
+        withOptions
+      />
+      {error && <p className="px-3 py-1 text-danger">{error}</p>}
+      {notice && (
+        <p role="alert" className="px-3 py-1 text-danger">
+          {notice}
+        </p>
+      )}
+      {loading && <p className="px-3 py-1 text-text-2">{S.loading}</p>}
+      {!loading && !error && nothingShown && (
+        <p className="px-3 py-1 text-text-2">{nothing ? S.empty : S.noMatch}</p>
+      )}
+      <Tree
+        rows={rows}
+        rowHeight={rowHeight}
+        fontSize={fontSize}
+        selectedKey={selectedKey}
+        onToggle={(key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }))}
+        onSelect={(entry, permanent) => {
+          setSelected(entryKey(entry));
+          if (entry.type === "object") {
+            const o = entry.object;
+            openTableTab(id, { schema: o.schema, name: o.name }, { preview: !permanent });
+          }
+        }}
+        onMenu={(entry, anchor) => setMenu({ entry, anchor })}
+      />
       {menu && (
-        <ObjectMenu
-          menu={menu}
+        <ContextMenu
+          label={S.menuLabel}
+          anchor={menu.anchor}
+          items={menuItems(menu.entry)}
           onClose={() => setMenu(null)}
-          sqlEditor={sqlEditor}
-          actions={{
-            open: () => {
-              if (menu.entry.type === "object") {
-                const o = menu.entry.object;
-                openTableTab(id, { schema: o.schema, name: o.name }, { preview: true });
-              }
-            },
-            openNewTab: () => {
-              if (menu.entry.type === "object") {
-                const o = menu.entry.object;
-                openTableTab(id, { schema: o.schema, name: o.name });
-              }
-            },
-            newQuery: () => {
-              if (menu.entry.type === "object") {
-                const o = menu.entry.object;
-                openQueryTab(
-                  id,
-                  `SELECT * FROM ${qualifiedName(sqlDialect(workspace), o.schema, o.name)} LIMIT 100;`,
-                );
-              }
-            },
-            copyName: () => {
-              void navigator.clipboard?.writeText(entryName(menu.entry))?.catch(() => {});
-            },
-          }}
         />
       )}
-    </aside>
+    </section>
   );
 }
 
-function ObjectMenu({
-  menu,
-  onClose,
-  sqlEditor,
-  actions,
-}: {
-  menu: MenuState;
-  onClose: () => void;
-  /** Offer "New query" (a SQL tab on the object). */
-  sqlEditor: boolean;
-  actions: { open: () => void; openNewTab: () => void; newQuery: () => void; copyName: () => void };
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const isObject = menu.entry.type === "object";
-  const items: [string, () => void][] = [
-    ...(isObject
-      ? ([
-          [strings.sidebar.menu.open, actions.open],
-          [strings.sidebar.menu.openNewTab, actions.openNewTab],
-          ...(sqlEditor ? [[strings.sidebar.menu.newQuery, actions.newQuery]] : []),
-        ] as [string, () => void][])
-      : []),
-    [strings.sidebar.menu.copyName, actions.copyName],
-  ];
+interface TreeProps {
+  rows: Row[];
+  rowHeight: number;
+  fontSize: number;
+  selectedKey: string | null;
+  onToggle: (key: string) => void;
+  /** Click (preview) or double click (permanent) on an object; a routine opens its menu. */
+  onSelect: (entry: Entry, permanent: boolean) => void;
+  onMenu: (entry: Entry, anchor: MenuAnchor) => void;
+}
 
-  useEffect(() => {
-    ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+/** Fixed-height rows, only those in view (plus some) rendered. */
+function Tree({ rows, rowHeight, fontSize, selectedKey, onToggle, onSelect, onMenu }: TreeProps) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(FALLBACK_VIEWPORT);
+  /** A row to focus once it is rendered (arrow keys past the rendered ones). */
+  const pendingFocus = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const measure = () => setViewport(el.clientHeight || FALLBACK_VIEWPORT);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const els = [...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
-    const i = els.indexOf(document.activeElement as HTMLElement);
-    if (e.key === "ArrowDown") els[(i + 1) % els.length]?.focus();
-    else if (e.key === "ArrowUp") els[(i - 1 + els.length) % els.length]?.focus();
-    else return;
-    e.preventDefault();
+  const first = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
+  const last = Math.min(rows.length, Math.ceil((scrollTop + viewport) / rowHeight) + OVERSCAN);
+
+  useEffect(() => {
+    const n = pendingFocus.current;
+    if (n === null) return;
+    const el = scroller.current?.querySelector<HTMLElement>(`[data-row-index="${n}"]`);
+    if (el) {
+      pendingFocus.current = null;
+      el.focus();
+    }
+  });
+
+  const focusRow = (n: number) => {
+    const el = scroller.current;
+    if (!el || n < 0 || n >= rows.length) return;
+    const top = n * rowHeight;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (top + rowHeight > el.scrollTop + viewport) el.scrollTop = top + rowHeight - viewport;
+    const target = el.querySelector<HTMLElement>(`[data-row-index="${n}"]`);
+    if (target) target.focus();
+    else {
+      pendingFocus.current = n;
+      setScrollTop(el.scrollTop);
+    }
   };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const at = Number((e.target as HTMLElement).dataset.rowIndex);
+    if (!Number.isFinite(at)) return;
+    e.preventDefault();
+    focusRow(at + (e.key === "ArrowDown" ? 1 : -1));
+  };
+
+  const rowClass = (selected: boolean) =>
+    `absolute inset-x-1.5 flex items-center gap-1.5 rounded-md px-1.5 text-left whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent ${
+      selected ? "bg-sel" : "hover:bg-seg-sel"
+    }`;
+
+  const shown = rows.slice(first, last).map((row, i) => {
+    const index = first + i;
+    const style = { top: index * rowHeight, height: rowHeight };
+    if (row.type === "section") {
+      const Chevron = row.expanded ? ChevronDown : ChevronRight;
+      return (
+        <button
+          key={rowKey(row)}
+          type="button"
+          data-row-index={index}
+          aria-expanded={row.expanded}
+          onClick={() => onToggle(row.key)}
+          style={style}
+          className={`${rowClass(false)} font-sans text-xs font-semibold text-text-2`}
+        >
+          <Chevron aria-hidden size={13} strokeWidth={1.8} className="shrink-0" />
+          <span>{row.label}</span>
+          <span aria-hidden="true" className="ml-auto font-normal">
+            {row.count}
+          </span>
+        </button>
+      );
+    }
+    const name = entryName(row);
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      onMenu(row, { x: e.clientX, y: e.clientY });
+    };
+    const onKey = (e: KeyboardEvent<HTMLButtonElement>) => {
+      const anchor = keyboardMenuAnchor(e);
+      if (anchor) onMenu(row, anchor);
+    };
+    const selected = selectedKey === entryKey(row);
+    if (row.type === "routine") {
+      return (
+        <button
+          key={rowKey(row)}
+          type="button"
+          title={name}
+          data-row-index={index}
+          onClick={(e) => {
+            const b = e.currentTarget.getBoundingClientRect();
+            onMenu(row, { x: b.left, y: b.bottom });
+          }}
+          onContextMenu={onContextMenu}
+          onKeyDown={onKey}
+          style={style}
+          className={`${rowClass(selected)} pl-6 text-text`}
+        >
+          <ObjectIcon kind={row.routine.kind} />
+          <span className="min-w-0 truncate">{name}</span>
+        </button>
+      );
+    }
+    return (
+      <button
+        key={rowKey(row)}
+        type="button"
+        title={name}
+        data-row-index={index}
+        data-object-row={name}
+        onClick={() => onSelect(row, false)}
+        onDoubleClick={() => onSelect(row, true)}
+        onContextMenu={onContextMenu}
+        onKeyDown={onKey}
+        style={style}
+        className={`${rowClass(selected)} pl-6 text-text`}
+      >
+        <ObjectIcon kind={row.object.kind} />
+        <span className="min-w-0 truncate">{name}</span>
+      </button>
+    );
+  });
 
   return (
     <div
-      ref={ref}
-      role="menu"
-      aria-label={strings.sidebar.menuLabel}
+      ref={scroller}
+      data-tree=""
+      onScroll={(e: UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop)}
       onKeyDown={onKeyDown}
-      style={{ left: menu.x, top: menu.y }}
-      className="fixed z-50 flex min-w-40 flex-col rounded-sm border border-border bg-surface py-1 shadow-lg"
+      style={{ fontSize }}
+      className="relative min-h-0 flex-1 overflow-y-auto pb-1 font-mono"
     >
-      {items.map(([label, run]) => (
-        <button
-          key={label}
-          type="button"
-          role="menuitem"
-          onClick={() => {
-            run();
-            onClose();
-          }}
-          className="px-3 py-1 text-left hover:bg-surface-2"
-        >
-          {label}
-        </button>
-      ))}
+      <div style={{ height: rows.length * rowHeight }} className="relative">
+        {shown}
+      </div>
     </div>
   );
 }

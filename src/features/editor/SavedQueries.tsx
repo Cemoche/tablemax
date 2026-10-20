@@ -1,24 +1,33 @@
-import { useEffect, useState } from "react";
+import { FileCode } from "lucide-react";
+import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import { toAppError } from "../../lib/errors";
+import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import { useSavedQueries } from "../../stores/savedQueries";
 import { type Workspace } from "../../stores/workspaces";
+import { ContextMenu, type MenuAnchor, keyboardMenuAnchor } from "../sidebar/ContextMenu";
+import { SidebarSearch } from "../sidebar/SidebarSearch";
+import { copyText, insertSql, runActiveTab } from "../sidebar/sqlActions";
 import { ConfirmDialog, NameDialog } from "./Dialogs";
 
 const S = strings.savedQueries;
+const M = strings.sqlMenu;
 
 /**
- * The connection's saved queries, in a collapsible section on the left of the SQL tab:
- * open (in a new linked tab, or the tab already linked), rename, delete (confirmed).
+ * The sidebar's Queries tab: the connection's saved queries. A click opens one (in a new
+ * linked SQL tab, or the tab already linked); the context menu runs, copies, inserts it
+ * in the SQL tab on screen, renames or deletes it (confirmed).
  */
 export function SavedQueries({ workspace }: { workspace: Workspace }) {
   const connectionId = workspace.connectionId;
   const list = useSavedQueries((s) => s.lists[connectionId]);
+  const [search, setSearch] = useState("");
   const [loadError, setLoadError] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ name: string; anchor: MenuAnchor } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -34,11 +43,17 @@ export function SavedQueries({ workspace }: { workspace: Workspace }) {
     };
   }, [connectionId]);
 
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (list ?? []).filter((x) => !q || x.name.toLowerCase().includes(q));
+  }, [list, search]);
+
   const fail = (e: unknown) => setNotice(S.actionFailed(toAppError(e).message));
+  const read = (name: string) => ipc.savedQueryRead(connectionId, name);
 
   const open = (name: string) => {
     setNotice(null);
-    useSavedQueries.getState().open(workspace.id, name).catch(fail);
+    return useSavedQueries.getState().open(workspace.id, name).catch(fail);
   };
 
   const rename = async (to: string) => {
@@ -64,56 +79,71 @@ export function SavedQueries({ workspace }: { workspace: Workspace }) {
     }
   };
 
+  const menuItems = (name: string) => [
+    {
+      label: M.run,
+      run: () => {
+        setNotice(null);
+        useSavedQueries
+          .getState()
+          .open(workspace.id, name)
+          .then(() => runActiveTab(workspace.id), fail);
+      },
+    },
+    { label: M.copy, run: () => void read(name).then(copyText).catch(fail) },
+    { label: M.insert, run: () => void read(name).then((sql) => insertSql(workspace.id, sql), fail) },
+    {
+      label: M.rename,
+      run: () => {
+        setRenameError(null);
+        setRenaming(name);
+      },
+    },
+    { label: M.delete, run: () => setDeleting(name) },
+  ];
+
   return (
-    <section aria-label={S.label} className="flex w-48 shrink-0 flex-col border-r border-border bg-surface">
-      <h3 className="border-b border-border px-2 py-1 text-xs font-semibold text-muted uppercase">{S.label}</h3>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {loadError && <p className="p-2 text-sm text-danger">{S.loadFailed}</p>}
+    <section aria-label={S.label} className="flex min-h-0 flex-1 flex-col">
+      <SidebarSearch label={S.search} placeholder={S.searchPlaceholder} value={search} onChange={setSearch} />
+      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1">
+        {loadError && <p className="px-1.5 py-1 text-danger">{S.loadFailed}</p>}
         {notice && (
-          <p role="alert" className="p-2 text-sm text-danger">
+          <p role="alert" className="px-1.5 py-1 text-danger">
             {notice}
           </p>
         )}
-        {list?.length === 0 && !loadError && <p className="p-2 text-sm text-muted">{S.empty}</p>}
-        {list && list.length > 0 && (
+        {list?.length === 0 && !loadError && <p className="px-1.5 py-1 text-text-2">{S.empty}</p>}
+        {list && list.length > 0 && shown.length === 0 && <p className="px-1.5 py-1 text-text-2">{S.noMatch}</p>}
+        {shown.length > 0 && (
           <ul>
-            {list.map((q) => (
-              <li key={q.name} className="group flex items-center hover:bg-surface-2">
+            {shown.map((q) => (
+              <li key={q.name}>
                 <button
                   type="button"
                   aria-label={S.open(q.name)}
                   title={q.name}
-                  onClick={() => open(q.name)}
-                  className="min-w-0 flex-1 truncate px-2 py-0.5 text-left text-sm"
-                >
-                  {q.name}
-                </button>
-                <button
-                  type="button"
-                  aria-label={S.rename(q.name)}
-                  title={S.rename(q.name)}
-                  onClick={() => {
-                    setRenameError(null);
-                    setRenaming(q.name);
+                  onClick={() => void open(q.name)}
+                  onContextMenu={(e: MouseEvent) => {
+                    e.preventDefault();
+                    setMenu({ name: q.name, anchor: { x: e.clientX, y: e.clientY } });
                   }}
-                  className="px-1 text-sm text-muted opacity-0 group-hover:opacity-100 focus:opacity-100"
+                  onKeyDown={(e) => {
+                    const anchor = keyboardMenuAnchor(e);
+                    if (anchor) setMenu({ name: q.name, anchor });
+                  }}
+                  className="flex h-6 w-full items-center gap-1.5 rounded-md px-1.5 text-left whitespace-nowrap text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
                 >
-                  {S.renameIcon}
-                </button>
-                <button
-                  type="button"
-                  aria-label={S.delete(q.name)}
-                  title={S.delete(q.name)}
-                  onClick={() => setDeleting(q.name)}
-                  className="px-1 text-sm text-muted opacity-0 group-hover:opacity-100 hover:text-danger focus:opacity-100"
-                >
-                  {S.deleteIcon}
+                  <FileCode aria-hidden size={14} strokeWidth={1.5} className="shrink-0 text-text-2" />
+                  <span className="min-w-0 truncate">{q.name}</span>
                 </button>
               </li>
             ))}
           </ul>
         )}
       </div>
+      {menu && (
+        <ContextMenu label={S.menuLabel} anchor={menu.anchor} items={menuItems(menu.name)} onClose={() => setMenu(null)} />
+      )}
       {renaming !== null && (
         <NameDialog
           title={S.renameTitle}

@@ -26,6 +26,8 @@ const NAMED_CODES: Record<string, string> = {
   arrowdown: "ArrowDown",
   arrowleft: "ArrowLeft",
   arrowright: "ArrowRight",
+  pageup: "PageUp",
+  pagedown: "PageDown",
 };
 
 function codeFor(key: string): string {
@@ -107,7 +109,8 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * Registers a window `keydown` shortcut for the lifetime of the component. A matching
+ * Registers a window `keydown` shortcut for the lifetime of the component (`spec` may list
+ * several combinations of the same action). A matching
  * event is `preventDefault`ed (and stopped with `stopPropagation`) before `handler` runs.
  * Not while a modal is open (unless `allowInModal`) nor, with `skipInEditable`, in a field.
  * A held combination acts once: its auto-repeats are prevented (and stopped) like the
@@ -115,7 +118,7 @@ export function isEditableTarget(target: EventTarget | null): boolean {
  * does not run again.
  */
 export function useShortcut(
-  spec: string,
+  spec: string | readonly string[],
   handler: (e: KeyboardEvent) => void,
   opts: ShortcutOptions = {},
 ): void {
@@ -128,10 +131,12 @@ export function useShortcut(
     skipInEditable = false,
     enabled = true,
   } = opts;
+  const key = typeof spec === "string" ? spec : spec.join("\n");
   useEffect(() => {
     if (!enabled) return;
+    const specs = key.split("\n");
     const onKey = (e: KeyboardEvent) => {
-      if (!matchCombination(e, spec)) return;
+      if (!specs.some((s) => matchCombination(e, s))) return;
       if (skipInEditable && isEditableTarget(e.target)) return;
       if (!allowInModal && isModalOpen()) return;
       e.preventDefault();
@@ -141,5 +146,5 @@ export function useShortcut(
     };
     window.addEventListener("keydown", onKey, capture);
     return () => window.removeEventListener("keydown", onKey, capture);
-  }, [spec, allowInModal, capture, stopPropagation, skipInEditable, enabled]);
+  }, [key, allowInModal, capture, stopPropagation, skipInEditable, enabled]);
 }

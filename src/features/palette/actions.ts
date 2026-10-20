@@ -1,8 +1,8 @@
 import { strings } from "../../lib/strings";
 import { type Tab, type Workspace, capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
 import { useCatalog } from "../../stores/catalog";
-import { useQueryPanels } from "../../stores/queryPanels";
 import { hasEditorCommand, runEditorCommand } from "../editor/editorCommands";
+import { showSidebarSegment } from "../../stores/sidebar";
 import { tabsByMru } from "../workspace/tabInfo";
 
 /** What an action can see and do: the active workspace and tab, plus palette callbacks. */
@@ -118,14 +118,13 @@ export const ACTIONS: Action[] = [
       if (c.workspace) void useCatalog.getState().refreshCatalog(c.workspace.id, c.workspace.currentSchema);
     },
   },
-  // Plan 4 Task 8 (ruling R7): toggles the history panel of the active SQL tab.
+  // UI redesign Task 3: the history is the sidebar's History tab.
   {
     id: "history.toggle",
     title: t.openHistory,
-    when: (c) => queryTab(c) !== null,
+    when: connected,
     run: (c) => {
-      const q = queryTab(c);
-      if (q) useQueryPanels.getState().toggleHistory(q.id);
+      if (c.workspace) showSidebarSegment(c.workspace.id, "history");
     },
   },
 ];

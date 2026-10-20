@@ -139,6 +139,7 @@ const KEY_CODES: Record<string, string> = {
 };
 const NAMED_CODES = new Set([
   "Enter", "Tab", "Escape", "Space", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "PageUp", "PageDown",
 ]);
 const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)$/;
 
