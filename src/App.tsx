@@ -17,7 +17,9 @@ import { useWindowTitle } from "./features/workspace/useWindowTitle";
 import { OpenConnectionsColumn } from "./features/chrome/OpenConnectionsColumn";
 import { useChrome, useOnRequest } from "./stores/chrome";
 import { CloseConfirm } from "./features/workspace/CloseConfirm";
+import { ConfirmDialog } from "./features/workspace/ConfirmDialog";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
+import { strings } from "./lib/strings";
 import type { ConnectionConfig } from "./lib/types";
 import { useConnections } from "./stores/connections";
 import { restoreSession, startSessionAutosave } from "./stores/session";
@@ -28,27 +30,61 @@ type View = "connections" | "workspace";
 function App() {
   const items = useConnections((s) => s.items);
   const load = useConnections((s) => s.load);
+  const [view, setView] = useState<View>("connections");
   /** The row selected in the connection list. */
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /**
    * The form shown on the connections screen in place of the list: a saved connection,
-   * or null for a new one; no form shows the list.
+   * or null for a new one; no form shows the list. `seq` remounts the form for each new
+   * opening (fresh state, focus on its first field), not after a save.
    */
-  const [form, setForm] = useState<{ connection: ConnectionConfig | null } | null>(null);
+  const [form, setForm] = useState<{ connection: ConnectionConfig | null; seq: number } | null>(null);
+  const formSeq = useRef(0);
+  /** The open form holds unsaved edits (ConnectionForm's onDirtyChange). */
+  const formDirty = useRef(false);
+  /** An action that would drop the form's unsaved edits, waiting for Discard. */
+  const [discardAsk, setDiscardAsk] = useState<{ run: () => void; name: string; focus: Element | null } | null>(
+    null,
+  );
   const [importDialog, setImportDialog] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const listSearch = useRef<HTMLInputElement>(null);
-  /** Ctrl+Shift+K asked for the list: its search takes the focus once it is on screen. */
-  const focusListSearch = useRef(false);
-  const editForm = (cfg: ConnectionConfig | null) => {
-    if (cfg) setSelectedId(cfg.id);
-    setForm({ connection: cfg });
+  /** Where the focus goes once the list is back on screen: its search, or the selected row. */
+  const pendingFocus = useRef<"search" | "row" | null>(null);
+  /** Runs `action`, which drops the open form, at once, or after Discard if it has unsaved edits. */
+  const unlessDirty = (action: () => void) => {
+    if (form && formDirty.current) {
+      setDiscardAsk({ run: action, name: form.connection?.name ?? "", focus: document.activeElement });
+    } else action();
   };
+  const dropForm = () => {
+    formDirty.current = false;
+    setForm(null);
+  };
+  /** A fresh form on the connections screen (null: a new connection); the same connection's form stays. */
+  const showForm = (cfg: ConnectionConfig | null) => {
+    if (cfg && form?.connection?.id === cfg.id) {
+      setView("connections");
+      return;
+    }
+    unlessDirty(() => {
+      if (cfg) setSelectedId(cfg.id);
+      formDirty.current = false;
+      formSeq.current += 1;
+      setForm({ connection: cfg, seq: formSeq.current });
+      setView("connections");
+    });
+  };
+  /** The form's back button: the list, the focus on the selected row (else the search). */
+  const closeForm = () =>
+    unlessDirty(() => {
+      dropForm();
+      pendingFocus.current = "row";
+    });
   const workspaces = useWorkspaces((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaces((s) => s.activeWorkspaceId);
   const openWorkspace = useWorkspaces((s) => s.openWorkspace);
   const setActiveWorkspace = useWorkspaces((s) => s.setActiveWorkspace);
-  const [view, setView] = useState<View>("connections");
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? null;
   const showWorkspace = view === "workspace" && activeWorkspace !== null;
   useWindowTitle(showWorkspace ? activeWorkspace : null);
@@ -77,19 +113,22 @@ function App() {
   useFontShortcuts();
   // Spec §5.3 / §5.5: Ctrl+N a new connection's form, Ctrl+Shift+K the connection list,
   // from anywhere (a workspace included).
-  useAction("connection.new", () => {
-    editForm(null);
-    setView("connections");
-  });
-  useAction("connection.open", () => {
-    setForm(null);
-    setView("connections");
-    focusListSearch.current = true;
-  });
+  useAction("connection.new", () => showForm(null));
+  useAction("connection.open", () =>
+    unlessDirty(() => {
+      dropForm();
+      setView("connections");
+      // The list already on screen takes the focus now; otherwise once it is rendered.
+      if (listSearch.current) listSearch.current.focus();
+      else pendingFocus.current = "search";
+    }),
+  );
   useEffect(() => {
-    if (!focusListSearch.current || !listSearch.current) return;
-    focusListSearch.current = false;
-    listSearch.current.focus();
+    const want = pendingFocus.current;
+    if (!want || !listSearch.current) return;
+    pendingFocus.current = null;
+    const row = want === "row" ? document.querySelector<HTMLElement>('[role="option"][aria-selected="true"]') : null;
+    (row ?? listSearch.current).focus();
   });
 
   // Connections first (a restored workspace takes its name and color from its
@@ -123,7 +162,9 @@ function App() {
     try {
       const initial = { password, sshSecret, acceptFingerprint: null };
       if (await openFlow.start(initial, cfg, flowTarget(cfg))) {
-        setForm(null);
+        // A form with unsaved edits (another connection opened from the palette) stays
+        // for when the user comes back to the connections screen.
+        if (!formDirty.current) setForm(null);
         setView("workspace");
       }
     } catch (e) {
@@ -156,10 +197,7 @@ function App() {
       <AppToolbar
         workspace={showWorkspace ? activeWorkspace : null}
         connectError={shownConnectError}
-        onEditConnection={(cfg) => {
-          editForm(cfg);
-          setView("connections");
-        }}
+        onEditConnection={(cfg) => showForm(cfg)}
       />
       <div className="flex min-h-0 flex-1">
         {workspaces.length > 0 && (
@@ -180,23 +218,9 @@ function App() {
               connectError={shownConnectError}
             />
           </main>
-        ) : form ? (
-          <main className="min-w-0 flex-1 overflow-y-auto bg-content">
-            {loadError && <p className="mx-auto w-[620px] max-w-full px-5 pt-3 text-danger">{loadError}</p>}
-            <ConnectionForm
-              connection={form.connection}
-              onSaved={(cfg) => editForm(cfg)}
-              onDeleted={() => {
-                setSelectedId(null);
-                setForm(null);
-              }}
-              onConnect={open}
-              onClose={() => setForm(null)}
-            />
-          </main>
-        ) : (
+        ) : form ? null : (
           <>
-            <WelcomePane onCreate={() => editForm(null)} onImport={() => setImportDialog(true)} />
+            <WelcomePane onCreate={() => showForm(null)} onImport={() => setImportDialog(true)} />
             <main className="flex min-w-0 flex-1 flex-col">
               {loadError && <p className="bg-content px-4 py-2 text-danger">{loadError}</p>}
               <ConnectionList
@@ -205,22 +229,59 @@ function App() {
                 searchRef={listSearch}
                 onSelect={(cfg) => setSelectedId(cfg.id)}
                 onOpen={(cfg) => open(cfg)}
-                onEdit={(cfg) => editForm(cfg)}
-                onNew={() => editForm(null)}
+                onEdit={(cfg) => showForm(cfg)}
+                onNew={() => showForm(null)}
               />
             </main>
           </>
+        )}
+        {/* The form stays mounted (hidden) behind a workspace: its unsaved edits wait there. */}
+        {form && (
+          <main hidden={showWorkspace} className="min-w-0 flex-1 overflow-y-auto bg-content">
+            {loadError && <p className="mx-auto w-[620px] max-w-full px-5 pt-3 text-danger">{loadError}</p>}
+            <ConnectionForm
+              key={form.seq}
+              connection={form.connection}
+              onDirtyChange={(dirty) => {
+                formDirty.current = dirty;
+              }}
+              onSaved={(cfg) => {
+                setSelectedId(cfg.id);
+                setForm((f) => f && { ...f, connection: cfg });
+              }}
+              onDeleted={() => {
+                setSelectedId(null);
+                dropForm();
+                pendingFocus.current = "search";
+              }}
+              onConnect={open}
+              onClose={closeForm}
+            />
+          </main>
         )}
       </div>
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {importDialog && <ImportDialog onClose={() => setImportDialog(false)} />}
       <CloseConfirm />
+      {discardAsk && (
+        <ConfirmDialog
+          title={strings.connections.discardTitle}
+          message={strings.connections.discardMessage(discardAsk.name)}
+          confirmLabel={strings.connections.discardOk}
+          cancelLabel={strings.connections.discardCancel}
+          onConfirm={() => {
+            setDiscardAsk(null);
+            discardAsk.run();
+          }}
+          onCancel={() => {
+            setDiscardAsk(null);
+            if (discardAsk.focus instanceof HTMLElement) discardAsk.focus.focus();
+          }}
+        />
+      )}
       <CommandPalette
         onOpenConnection={(cfg) => void open(cfg)}
-        onNewConnection={() => {
-          editForm(null);
-          setView("connections");
-        }}
+        onNewConnection={() => showForm(null)}
         onShowWorkspace={() => setView("workspace")}
       />
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />

@@ -191,6 +191,16 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > la connexion garde nom, couleur, tag, groupe et safe mode) / Test / Save / Connect ; Copy
 > URL et Delete passent en icônes dans l'en-tête. Pas d'« Other options » (aucune option
 > avancée à y mettre). Le libellé « Environment » devient « Tag ».
+> Relecture (#88) : des modifications non enregistrées du formulaire (brouillon différent
+> de la connexion chargée ou enregistrée, ou mot de passe / secret SSH tapé) ne se perdent
+> jamais en silence : ←, Ctrl+Shift+K, Ctrl+N, New connection de la palette et Edit de la
+> pastille sur une autre connexion demandent « Discard changes to this connection? »
+> (Discard / Cancel, même boîte que « Discard pending changes? ») ; derrière un workspace
+> le formulaire reste monté, caché, avec ses modifications. Delete demande « Delete <nom> ? »
+> (la connexion et ses secrets du trousseau, sans retour). Focus : à l'ouverture sur Name
+> (connexion existante) ou Driver (nouvelle) ; à la fermeture sur la ligne sélectionnée,
+> sinon la recherche. Ctrl+Shift+K ne supprime plus de ligne dans l'éditeur SQL
+> (`Shift-Mod-k` retiré du keymap de CodeMirror, §5.5).
 
 ### 2.5 Éditeur SQL
 - Barre de 36 px sous l'onglet : « No limit ⌄ » (LIMIT automatique), « Beautify », « Run Current
@@ -284,7 +294,8 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > `--icon-view` #8A3FD1 / #B58CFF (≥ 3:1 sur `--side`, `--seg-sel`, `--sel`). Dans les deux
 > thèmes : `--window-close` #C42B1C, `--window-close-text` #FFFFFF (5,7:1), utilisés
 > seulement par les boutons de fenêtre Windows. Les couleurs de connexion `--swatch-N`
-> (points de la liste et du formulaire) ne changent pas.
+> (points de la liste et du formulaire) ne changent pas (remplacé par l'amendement #88 :
+> points et pastilles en `--swatch-N-icon`).
 
 Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E7D32, nombres
 #B57AFF / #1D00FF, chaînes #CA6E6E / #E04978, commentaires #009B31, requête courante #30363F /

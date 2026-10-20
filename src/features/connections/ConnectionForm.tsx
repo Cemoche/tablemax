@@ -1,5 +1,5 @@
 import { ArrowLeft, Link, Trash2 } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { toConnectionUrl } from "../../lib/connectionUrl";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
@@ -15,6 +15,7 @@ import {
 } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
 import { dotClass } from "../chrome/swatch";
+import { ConfirmDialog } from "../workspace/ConfirmDialog";
 import { ConnectPrompt } from "./ConnectPrompt";
 import {
   blankConnection,
@@ -22,6 +23,7 @@ import {
   forBackend,
   normalize,
   errorText,
+  sameDraft,
   sslModePicked,
   withSslMode,
   withUrlImport,
@@ -46,16 +48,17 @@ import { flowTarget, useConnectFlow } from "./useConnectFlow";
 interface Props {
   /** null = new connection. */
   connection: ConnectionConfig | null;
-  /** Pre-filled DB password for an unsaved connection (from a pasted URL). */
-  initialPassword?: string | null;
-  /** The pre-filled unsaved connection's SSL mode came from its URL, not from a default. */
-  sslExplicit?: boolean;
   /** Called with the saved config and the typed DB / SSH secrets (null when untouched). */
   onConnect: (cfg: ConnectionConfig, password: string | null, sshSecret: string | null) => void;
   onSaved?: (cfg: ConnectionConfig) => void;
   onDeleted?: (id: string) => void;
   /** The header's back button: the connection list. */
   onClose?: () => void;
+  /**
+   * Whether the form holds unsaved edits: the draft differs from what was loaded (or last
+   * saved), or a password or SSH secret is typed. The app asks before dropping them.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type Notice = { tone: "ok" | "error"; text: string } | null;
@@ -70,25 +73,23 @@ const TAGS = ["local", "dev", "staging", "prod"] as const;
  * user ; password + storage ; database ; SSL mode + CA… / Cert… / Key… ; the Over SSH box ;
  * then Import from URL… / Test / Save / Connect. PostgreSQL and MySQL without SSH fit a
  * 900 px window without scrolling (ConnectionForm.test.tsx). Typed secrets go to the
- * backend (keyring) on Save / Connect / Test only.
+ * backend (keyring) on Save / Connect / Test only. On mount the focus goes to Name for a
+ * saved connection, to Driver for a new one.
  */
-export function ConnectionForm({
-  connection,
-  initialPassword = null,
-  sslExplicit = false,
-  onConnect,
-  onSaved,
-  onDeleted,
-  onClose,
-}: Props) {
+export function ConnectionForm({ connection, onConnect, onSaved, onDeleted, onClose, onDirtyChange }: Props) {
   const [cfg, setCfg] = useState<ConnectionConfig>(normalize(connection ?? blankConnection()));
-  const [password, setPassword] = useState(initialPassword ?? "");
+  /** What the draft is compared with to tell unsaved edits: as loaded, or as last saved. */
+  const [baseline, setBaseline] = useState<ConnectionConfig>(cfg);
+  const [password, setPassword] = useState("");
   const [sshSecret, setSshSecret] = useState("");
   /**
    * The SSL mode follows host and SSH (defaultSslMode) until the user picks one. A
-   * loaded connection keeps a non-default mode, and a URL draft a mode its URL stated.
+   * loaded connection keeps a non-default mode, and a URL import a mode its URL stated.
    */
-  const [sslPicked, setSslPicked] = useState(sslModePicked(connection, sslExplicit));
+  const [sslPicked, setSslPicked] = useState(sslModePicked(connection, false));
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const firstField = useRef<HTMLElement>(null);
+  const deleteButton = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState<"test" | "save" | "connect" | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [urlDialog, setUrlDialog] = useState(false);
@@ -98,14 +99,21 @@ export function ConnectionForm({
   const colorName = `${useId()}-color`;
 
   useEffect(() => {
-    setCfg(normalize(connection ?? blankConnection()));
-    setPassword(initialPassword ?? "");
+    const loaded = normalize(connection ?? blankConnection());
+    setCfg(loaded);
+    setBaseline(loaded);
+    setPassword("");
     setSshSecret("");
-    setSslPicked(sslModePicked(connection, sslExplicit));
+    setSslPicked(sslModePicked(connection, false));
     setNotice(null);
-    // initialPassword travels with `connection`; it must not reset typed input alone.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
+
+  useEffect(() => firstField.current?.focus(), []);
+
+  const dirty = !sameDraft(cfg, baseline) || password !== "" || sshSecret !== "";
+  const dirtyChange = useRef(onDirtyChange);
+  dirtyChange.current = onDirtyChange;
+  useEffect(() => dirtyChange.current?.(dirty), [dirty]);
 
   const patch = (p: Partial<ConnectionConfig>) => setCfg((c) => withSslMode({ ...c, ...p }, sslPicked));
   const setSsl = (ssl: SslConfig) => {
@@ -157,6 +165,7 @@ export function ConnectionForm({
   const doSave = async () => {
     const saved = await save(outgoing(), typed, typedSsh);
     setCfg(normalize(saved));
+    setBaseline(normalize(saved));
     setPassword("");
     setSshSecret("");
     onSaved?.(saved);
@@ -183,6 +192,7 @@ export function ConnectionForm({
 
   const onDelete = () =>
     run("save", async () => {
+      setConfirmDelete(false);
       await remove(cfg.id);
       onDeleted?.(cfg.id);
     });
@@ -228,12 +238,13 @@ export function ConnectionForm({
           )}
           {isExisting && (
             <button
+              ref={deleteButton}
               type="button"
               className={`${iconButtonClass} text-danger`}
               aria-label={strings.form.delete}
               {...tip(strings.form.delete)}
               disabled={busy !== null}
-              onClick={onDelete}
+              onClick={() => setConfirmDelete(true)}
             >
               <Trash2 aria-hidden className="size-4" />
             </button>
@@ -257,6 +268,7 @@ export function ConnectionForm({
           </label>
           <select
             id="cf-driver"
+            ref={isExisting ? undefined : (el) => void (firstField.current = el)}
             className={fieldClass}
             value={cfg.kind}
             onChange={(e) => setKind(e.target.value as DriverKind)}
@@ -274,7 +286,13 @@ export function ConnectionForm({
             {strings.form.name}
           </label>
           <div className="flex min-w-0 items-center gap-2">
-            <input id="cf-name" className={fieldClass} value={cfg.name} onChange={(e) => patch({ name: e.target.value })} />
+            <input
+              id="cf-name"
+              ref={isExisting ? (el) => void (firstField.current = el) : undefined}
+              className={fieldClass}
+              value={cfg.name}
+              onChange={(e) => patch({ name: e.target.value })}
+            />
             <label htmlFor="cf-group" className={inlineLabelClass}>
               {strings.form.group}
             </label>
@@ -456,6 +474,19 @@ export function ConnectionForm({
         </div>
       </form>
       {urlDialog && <UrlImportDialog onCancel={() => setUrlDialog(false)} onResult={onUrlResult} />}
+      {confirmDelete && (
+        <ConfirmDialog
+          title={strings.connections.deleteTitle(cfg.name)}
+          message={strings.connections.deleteMessage}
+          confirmLabel={strings.connections.deleteOk}
+          cancelLabel={strings.connections.deleteCancel}
+          onConfirm={() => void onDelete()}
+          onCancel={() => {
+            setConfirmDelete(false);
+            deleteButton.current?.focus();
+          }}
+        />
+      )}
       <ConnectPrompt flow={testFlow} connectionName={testFlow.context?.name || strings.form.newTitle} />
     </>
   );

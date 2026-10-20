@@ -240,7 +240,7 @@ test("SQLite hides the SSL and SSH sections", () => {
   expect(screen.getByLabelText(strings.ssh.enable)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Driver"), { target: { value: "sqlite" } });
   expect(screen.queryByLabelText("SSL mode")).toBeNull();
-  expect(screen.queryByLabelText("SSH tunnel")).toBeNull();
+  expect(screen.queryByLabelText(strings.ssh.enable)).toBeNull();
 });
 
 test("cleartext warning for a remote host in prefer mode, gone with SSH", () => {
@@ -461,33 +461,104 @@ test("a new connection has no Copy URL button", () => {
   expect(screen.queryByRole("button", { name: "Copy URL" })).toBeNull();
 });
 
-test("an unsaved pre-filled connection shows its password and group suggestions", () => {
+/** Import from URL… with `url` typed in its dialog. */
+async function importUrl(url: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: strings.form.importUrl }));
+  const dialog = screen.getByRole("dialog", { name: strings.url.dialogTitle });
+  await user.type(within(dialog).getByLabelText(strings.url.label), url);
+  await user.click(within(dialog).getByRole("button", { name: strings.url.open }));
+}
+
+test("a URL import pre-fills the password and keeps the group suggestions, without saving", async () => {
   useConnections.setState({ items: [{ ...saved, group: "Work" }] });
-  render(
-    <ConnectionForm
-      connection={{ ...saved, id: "", name: "from url" }}
-      initialPassword="s3cret"
-      onConnect={vi.fn()}
-    />,
-  );
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+  await importUrl("postgresql://me:s3cret@localhost:5432/app");
   expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("s3cret");
   expect(document.querySelector("#cf-groups option")?.getAttribute("value")).toBe("Work");
   expect(ipc.connectionSave).not.toHaveBeenCalled();
 });
 
-test("a URL draft without sslmode keeps following the host default", () => {
-  const draft = { ...saved, id: "", name: "d", host: "localhost" };
-  render(<ConnectionForm connection={draft} sslExplicit={false} onConnect={vi.fn()} />);
+test("a URL without sslmode follows the host default", async () => {
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+  await importUrl("postgresql://me@localhost:5432/app");
   expect(sslMode()).toBe("prefer");
   fireEvent.change(screen.getByLabelText("Host"), { target: { value: "db.example.com" } });
   expect(sslMode()).toBe("verifyFull");
 });
 
-test("a URL draft with an explicit sslmode keeps it when the host changes", () => {
-  const draft = { ...saved, id: "", name: "d", host: "localhost" };
-  render(<ConnectionForm connection={draft} sslExplicit onConnect={vi.fn()} />);
+test("an explicit sslmode survives a host change", async () => {
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+  await importUrl("postgresql://me@localhost:5432/app?sslmode=prefer");
+  expect(sslMode()).toBe("prefer");
   fireEvent.change(screen.getByLabelText("Host"), { target: { value: "db.example.com" } });
   expect(sslMode()).toBe("prefer");
+});
+
+test("onDirtyChange: an edit, a typed password or a URL import make the form dirty; Save cleans it", async () => {
+  const user = userEvent.setup();
+  const onDirty = vi.fn();
+  vi.mocked(ipc.connectionSave).mockImplementation(async (c) => c);
+  const { unmount } = render(<ConnectionForm connection={saved} onConnect={vi.fn()} onDirtyChange={onDirty} />);
+  expect(onDirty).toHaveBeenLastCalledWith(false);
+  await user.type(screen.getByLabelText("Name"), "!");
+  expect(onDirty).toHaveBeenLastCalledWith(true);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(onDirty).toHaveBeenLastCalledWith(false));
+  await user.type(screen.getByLabelText("Password"), "pw");
+  expect(onDirty).toHaveBeenLastCalledWith(true);
+  await user.clear(screen.getByLabelText("Password"));
+  expect(onDirty).toHaveBeenLastCalledWith(false);
+  // Picking the Default safe mode again, or a field put back, is no edit.
+  await user.selectOptions(screen.getByLabelText(strings.safety.sectionLabel), "off");
+  expect(onDirty).toHaveBeenLastCalledWith(true);
+  await user.selectOptions(screen.getByLabelText(strings.safety.sectionLabel), "");
+  expect(onDirty).toHaveBeenLastCalledWith(false);
+  unmount();
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} onDirtyChange={onDirty} />);
+  expect(onDirty).toHaveBeenLastCalledWith(false);
+  await importUrl("postgresql://me@localhost:5432/app");
+  expect(onDirty).toHaveBeenLastCalledWith(true);
+});
+
+test("Delete asks first: Cancel keeps the connection, Delete removes it", async () => {
+  const user = userEvent.setup();
+  const onDeleted = vi.fn();
+  vi.mocked(ipc.connectionDelete).mockResolvedValue(undefined);
+  render(<ConnectionForm connection={saved} onConnect={vi.fn()} onDeleted={onDeleted} />);
+  const del = screen.getByRole("button", { name: strings.form.delete });
+  await user.click(del);
+  const dialog = screen.getByRole("dialog", { name: strings.connections.deleteTitle("Local PG") });
+  expect(within(dialog).getByText(strings.connections.deleteMessage)).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: strings.connections.deleteCancel }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(ipc.connectionDelete).not.toHaveBeenCalled();
+  expect(del).toHaveFocus();
+  await user.click(del);
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: strings.connections.deleteOk }));
+  await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("abc"));
+  expect(ipc.connectionDelete).toHaveBeenCalledWith("abc");
+});
+
+test("on open the focus goes to Name for a saved connection, to Driver for a new one", () => {
+  const { unmount } = render(<ConnectionForm connection={saved} onConnect={vi.fn()} />);
+  expect(screen.getByLabelText("Name")).toHaveFocus();
+  unmount();
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+  expect(screen.getByLabelText("Driver")).toHaveFocus();
+});
+
+test("the Over SSH box's short labels focus their fields", async () => {
+  const user = userEvent.setup();
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+  fireEvent.click(screen.getByLabelText(strings.ssh.enable));
+  const box = screen.getByRole("group", { name: strings.ssh.box });
+  await user.click(within(box).getByText(strings.ssh.authShort, { selector: "label" }));
+  expect(within(box).getByLabelText("SSH authentication")).toHaveFocus();
+  await user.click(within(box).getByText(strings.form.port, { selector: "label" }));
+  expect(within(box).getByLabelText("SSH port")).toHaveFocus();
+  await user.click(within(box).getByText(strings.form.password, { selector: "label" }));
+  expect(within(box).getByLabelText("SSH password")).toHaveFocus();
 });
 
 describe("safe mode selector", () => {
@@ -497,11 +568,11 @@ describe("safe mode selector", () => {
   test("the Default option names the effective mode of the selected tag", async () => {
     render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
     expect(modeSelect().value).toBe("");
-    expect(defaultLabel()).toBe("Default (by environment): Off");
+    expect(defaultLabel()).toBe("Default (by tag): Off");
     await userEvent.selectOptions(screen.getByLabelText(strings.form.env), "prod");
-    expect(defaultLabel()).toBe("Default (by environment): Confirm writes");
+    expect(defaultLabel()).toBe("Default (by tag): Confirm writes");
     await userEvent.selectOptions(screen.getByLabelText(strings.form.env), "staging");
-    expect(defaultLabel()).toBe("Default (by environment): Off");
+    expect(defaultLabel()).toBe("Default (by tag): Off");
     expect([...modeSelect().options].map((o) => o.textContent).slice(1)).toEqual([
       "Off",
       "Confirm writes",

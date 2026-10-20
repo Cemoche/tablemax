@@ -216,11 +216,11 @@ export function ConnectionList({ items, selectedId, onSelect, onOpen, onEdit, on
             </div>
           )
         ) : (
-          sections.map((key) => {
+          sections.map((key, index) => {
             const rows = byGroup.get(key) ?? [];
             const label = key === UNGROUPED ? strings.connections.ungrouped : key;
             const open = isOpen(key);
-            const boxId = `${baseId}-g-${key}`;
+            const boxId = `${baseId}-g-${index}`;
             return (
               <div key={`group:${key}`} className="mb-1">
                 <button

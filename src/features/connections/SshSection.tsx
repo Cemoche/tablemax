@@ -99,10 +99,11 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
                   <option key={a} value={a} />
                 ))}
               </datalist>
-              <span aria-hidden className={inlineLabelClass}>
+              <label htmlFor="cf-ssh-port" className={inlineLabelClass}>
                 {strings.form.port}
-              </span>
+              </label>
               <input
+                id="cf-ssh-port"
                 type="number"
                 aria-label={strings.ssh.port}
                 className={`${fieldClass} w-24 shrink-0`}
@@ -125,10 +126,11 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
             />
           </div>
           <div className={boxRowClass}>
-            <span aria-hidden className={labelClass}>
+            <label htmlFor="cf-ssh-auth" className={labelClass}>
               {strings.ssh.authShort}
-            </span>
+            </label>
             <select
+              id="cf-ssh-auth"
               aria-label={strings.ssh.auth}
               className={fieldClass}
               value={ssh.auth}
@@ -158,12 +160,16 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
           )}
           {ssh.auth !== "agent" && (
             <div className={boxRowClass}>
-              <span aria-hidden className={labelClass}>
+              <label
+                htmlFor={ssh.secretMode === "keyring" ? "cf-ssh-secret" : "cf-ssh-secret-mode"}
+                className={labelClass}
+              >
                 {isKey ? strings.ssh.passphrase : strings.form.password}
-              </span>
+              </label>
               <div className="flex min-w-0 items-center gap-2">
                 {ssh.secretMode === "keyring" && (
                   <input
+                    id="cf-ssh-secret"
                     type="password"
                     aria-label={isKey ? strings.ssh.passphrase : strings.ssh.password}
                     className={fieldClass}
@@ -174,6 +180,7 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
                   />
                 )}
                 <select
+                  id="cf-ssh-secret-mode"
                   aria-label={strings.ssh.secretMode}
                   className={`${fieldClass} ${ssh.secretMode === "keyring" ? "w-44 shrink-0" : ""}`}
                   value={ssh.secretMode}

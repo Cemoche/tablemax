@@ -198,3 +198,11 @@ test("an empty list says so", () => {
   renderList([]);
   expect(screen.getByText(strings.connections.empty)).toBeInTheDocument();
 });
+
+test("a group name with spaces still names and controls its listbox", () => {
+  renderList([make("a", "My Work"), make("b", null)]);
+  const button = groupButton("My Work");
+  const box = document.getElementById(button.getAttribute("aria-controls") ?? "");
+  expect(box).toHaveAttribute("role", "listbox");
+  expect(box).toHaveAccessibleName("My Work");
+});

@@ -149,3 +149,20 @@ export function withUrlImport(c: ConnectionConfig, imported: Partial<ConnectionC
   const name = next.kind === "sqlite" ? (next.sqlitePath?.split("/").pop() ?? "") : (next.database ?? next.host);
   return { ...next, name };
 }
+
+/** A canonical text of a draft: keys sorted, an absent field the same as null. */
+function canonical(v: unknown): string {
+  if (v === undefined || v === null) return "null";
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const keys = Object.keys(o)
+      .filter((k) => o[k] !== undefined && o[k] !== null)
+      .sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v);
+}
+
+/** Do two drafts hold the same settings (key order and null / absent fields aside)? */
+export const sameDraft = (a: ConnectionConfig, b: ConnectionConfig): boolean => canonical(a) === canonical(b);

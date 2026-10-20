@@ -248,7 +248,7 @@ test("Safe mode", () => {
     "safeMode":"confirmAll"
   }`);
   expect(c.safeMode).toBe("confirmAll");
-  // Default (by environment), and configs saved before safe mode existed.
+  // Default (by tag), and configs saved before safe mode existed.
   const legacy: ConnectionConfig = { ...c, safeMode: null };
   expect(legacy.safeMode).toBeNull();
   const kind: ErrorKind = "confirmationRequired";

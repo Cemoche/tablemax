@@ -5,6 +5,7 @@ import {
   connectionSubtitle,
   forBackend,
   normalize,
+  sameDraft,
   sslModePicked,
   withSslMode,
   withUrlImport,
@@ -110,4 +111,15 @@ test("withUrlImport: the URL's fields over the draft; a nameless draft is named 
     host: "other",
     database: "x",
   });
+});
+
+test("sameDraft ignores key order and null / absent fields, not a changed value", () => {
+  const a = blankConnection();
+  expect("safeMode" in a).toBe(false);
+  expect(sameDraft(a, { ...a, safeMode: null })).toBe(true);
+  expect(sameDraft(a, { ...a, safeMode: undefined })).toBe(true);
+  expect(sameDraft(a, { ...a, ssl: { keyFile: null, certFile: null, caFile: null, mode: a.ssl.mode } })).toBe(true);
+  expect(sameDraft(a, { ...a, name: "x" })).toBe(false);
+  expect(sameDraft(a, { ...a, ssl: { ...a.ssl, caFile: "/ca.pem" } })).toBe(false);
+  expect(sameDraft(a, { ...a, safeMode: "off" })).toBe(false);
 });

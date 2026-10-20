@@ -3,7 +3,6 @@ export const strings = {
   tagline: "A free, fast database client",
   connections: {
     title: "Connections",
-    search: "Filter connections",
     searchLabel: "Search connections",
     empty: "No connections yet",
     noMatch: "No matching connection",
@@ -24,6 +23,16 @@ export const strings = {
     importConnections: "Import connections…",
     importHint: "Import connections from a TablePlus export",
     back: "Back to the connections",
+    discardTitle: "Discard changes to this connection?",
+    discardMessage: (name: string) =>
+      name ? `Your changes to ${name} are not saved.` : "This new connection is not saved.",
+    discardOk: "Discard",
+    discardCancel: "Cancel",
+    deleteTitle: (name: string) => `Delete ${name}?`,
+    deleteMessage:
+      "The connection and its passwords stored in the system keyring are removed. This cannot be undone.",
+    deleteOk: "Delete",
+    deleteCancel: "Cancel",
   },
   url: {
     invalid: "Not a valid connection URL",
@@ -103,7 +112,7 @@ export const strings = {
     modeOff: "Off",
     modeConfirmWrites: "Confirm writes",
     modeConfirmAll: "Confirm all queries",
-    defaultOption: (effective: string) => `Default (by environment): ${effective}`,
+    defaultOption: (effective: string) => `Default (by tag): ${effective}`,
     bannerMode: (mode: string) => `Safe mode: ${mode}`,
     bannerModeOff: "off",
     bannerModeConfirmWrites: "confirm writes",
@@ -152,7 +161,6 @@ export const strings = {
     },
   },
   ssl: {
-    legend: "SSL / TLS",
     mode: "SSL mode",
     modes: {
       disable: "Disable",

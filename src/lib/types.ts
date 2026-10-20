@@ -132,7 +132,7 @@ export interface ConnectionConfig {
   ssl: SslConfig;
   /** Database reached through this SSH server (host/port as seen from it). */
   ssh: SshSettings | null;
-  /** null or absent: Default (by environment). */
+  /** null or absent: Default (by tag). */
   safeMode?: SafeMode | null;
   /** MongoDB settings; null or absent for the other drivers. */
   mongo?: MongoSettings | null;
