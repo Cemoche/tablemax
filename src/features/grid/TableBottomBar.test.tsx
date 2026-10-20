@@ -63,7 +63,7 @@ test("bottom_bar_layout: view switch, + Row, centered counter, Filters, Columns 
     "title",
     g.filtersShortcut("Ctrl+F"),
   );
-  expect(screen.getByRole("button", { name: g.columns })).toHaveAttribute("title", g.columnsShortcut("Ctrl+Alt+F"));
+  expect(screen.getByRole("button", { name: g.columns })).toHaveAttribute("title", g.columnsShortcut("Alt+F"));
   expect(screen.getByRole("button", { name: g.prev })).toHaveAttribute("title", g.pageShortcut(g.prev, "Ctrl+←"));
   expect(screen.getByRole("button", { name: g.prev })).toBeDisabled();
   expect(screen.getByRole("button", { name: g.next })).toBeEnabled();
@@ -136,7 +136,7 @@ test("buttons act: + Row, Filters, pages; the page popover goes to an offset; Co
   expect(d.paging.onGo).toHaveBeenCalledWith(0, 50);
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(settings).toHaveFocus();
-  // Columns: the parent owns its open state (Ctrl+Alt+F opens it too).
+  // Columns: the parent owns its open state (Alt+F opens it too).
   await userEvent.click(screen.getByRole("button", { name: g.columns }));
   expect(d.columns.onOpenChange).toHaveBeenCalledWith(true);
   rerender(

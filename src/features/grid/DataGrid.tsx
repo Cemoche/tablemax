@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toTsv } from "../../lib/copyFormats";
 import { type KeymapActionId, effectiveShortcuts } from "../../lib/keymap";
 import { isModKey } from "../../lib/platform";
-import { matchCombination } from "../../lib/shortcuts";
+import { matchCombination, typesCharacter } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import type { CellValue, ResultSet, SortDir } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
@@ -518,6 +518,11 @@ export function DataGrid({
       e.stopPropagation();
       return !repeat;
     };
+    // Glide starts a cell edit with any printable key typed without Ctrl / Cmd, Alt+F's "f"
+    // or Ctrl+Alt+F taken for AltGr included (#102): only a character meant as text does.
+    // The key still reaches the window's shortcuts.
+    const raw = e.rawEvent as unknown as KeyboardEvent | undefined;
+    if (raw && !e.ctrlKey && !e.metaKey && e.key.length === 1 && !typesCharacter(raw)) e.cancel();
     if (plain && code === "Enter") {
       const cur = selectionRef.current.current?.cell;
       const row = cur?.[1] ?? selectedRows()[0];

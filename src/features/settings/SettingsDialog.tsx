@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { DEFAULT_KEYMAP, KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, effectiveShortcut, effectiveShortcuts, isValidShortcut, sameCombination } from "../../lib/keymap";
+import { KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, defaultShortcut, effectiveShortcut, effectiveShortcuts, isValidShortcut, sameCombination } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import { useRestoreFocus } from "../../lib/useRestoreFocus";
 import type { Settings, ThemeSetting } from "../../lib/types";
@@ -152,7 +152,7 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
   const [error, setError] = useState<string | null>(null);
   const keymapRef = useRef(keymap);
   keymapRef.current = keymap;
-  const overridden = Object.prototype.hasOwnProperty.call(keymap, id) && !sameCombination(effectiveShortcut(id, keymap), DEFAULT_KEYMAP[id]);
+  const overridden = Object.prototype.hasOwnProperty.call(keymap, id) && !sameCombination(effectiveShortcut(id, keymap), defaultShortcut(id));
 
   useEffect(() => {
     if (!recording) return;
@@ -188,7 +188,7 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
       setError(null);
       if (sameCombination(spec, effectiveShortcut(id, current))) return;
       const next = { ...current };
-      if (sameCombination(spec, DEFAULT_KEYMAP[id])) delete next[id];
+      if (sameCombination(spec, defaultShortcut(id))) delete next[id];
       else next[id] = spec;
       void update({ keymap: next });
     };

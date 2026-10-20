@@ -32,6 +32,12 @@ type Spec = {
    * layouts where `[` / `]` need AltGr). A custom shortcut replaces all of them.
    */
   alternates?: readonly string[];
+  /**
+   * macOS's own default and alternates, when they differ. Off macOS Ctrl+Alt is AltGr on
+   * many layouts (Windows always, Linux layouts with a third level): a Ctrl+Alt combination
+   * types a character there (or is taken for one), so only macOS may use ⌘⌥.
+   */
+  mac?: { defaultShortcut?: string; alternates?: readonly string[] };
 };
 
 const SPECS = {
@@ -55,9 +61,10 @@ const SPECS = {
   // and Space in the grid (a fixed key of DataGrid: the grammar needs a modifier). Ctrl+I
   // is the spec's add row key (Task 6).
   "grid.rowDetails": { scope: "tableTab", defaultShortcut: "Ctrl+Space" },
-  // Spec §5.3: Ctrl+Alt+[ / ] (TablePlus ⌃⌘[ / ]), Alt+1 / Alt+2 kept.
-  "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1", alternates: ["Mod+Alt+["] },
-  "grid.viewStructure": { scope: "tableTab", defaultShortcut: "Alt+2", alternates: ["Mod+Alt+]"] },
+  // Spec §5.3: Alt+1 / Alt+2, and Ctrl+Alt+[ / ] (TablePlus ⌃⌘[ / ]) on macOS only, as ⌘⌥[ / ]
+  // (Ctrl+Mod would be Ctrl+[ elsewhere): off macOS Ctrl+Alt is AltGr (#102).
+  "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1", mac: { alternates: ["Mod+Alt+["] } },
+  "grid.viewStructure": { scope: "tableTab", defaultShortcut: "Alt+2", mac: { alternates: ["Mod+Alt+]"] } },
   "font.increase": { scope: "global", defaultShortcut: "Mod+=" },
   "font.decrease": { scope: "global", defaultShortcut: "Mod+-" },
   "database.open": { scope: "global", defaultShortcut: "Mod+K" },
@@ -92,7 +99,8 @@ const SPECS = {
   // matches them, so Mod+← / Mod+→ keep their word moves in fields).
   "grid.addRow": { scope: "tableTab", defaultShortcut: "Mod+I" },
   "grid.filters": { scope: "tableTab", defaultShortcut: "Mod+F" },
-  "grid.columns": { scope: "tableTab", defaultShortcut: "Mod+Alt+F" },
+  // TablePlus ⌘⌥F on macOS; Alt+F elsewhere, where Ctrl+Alt+F is AltGr+F (#102).
+  "grid.columns": { scope: "tableTab", defaultShortcut: "Alt+F", mac: { defaultShortcut: "Mod+Alt+F" } },
   "grid.previousPage": { scope: "tableTab", defaultShortcut: "Mod+ArrowLeft" },
   "grid.nextPage": { scope: "tableTab", defaultShortcut: "Mod+ArrowRight" },
   // The filter bar (FilterBar matches them while the focus is in it).
@@ -110,7 +118,7 @@ export interface KeymapAction {
   /** From `strings.keymap`. */
   label: string;
   scope: ShortcutScope;
-  /** Canonical spec (see `isValidShortcut`). */
+  /** Canonical spec (see `isValidShortcut`) off macOS; `defaultShortcut()` gives each platform's. */
   defaultShortcut: string;
 }
 
@@ -121,9 +129,22 @@ export const KEYMAP_ACTIONS: readonly KeymapAction[] = (Object.keys(SPECS) as Ke
   defaultShortcut: SPECS[id].defaultShortcut,
 }));
 
+/** The defaults off macOS (Linux, Windows); `defaultShortcut()` gives each platform's. */
 export const DEFAULT_KEYMAP: Record<KeymapActionId, string> = Object.fromEntries(
   KEYMAP_ACTIONS.map((a) => [a.id, a.defaultShortcut]),
 ) as Record<KeymapActionId, string>;
+
+/** The default combination of `id` on this platform (or on macOS / elsewhere with `mac`). */
+export function defaultShortcut(id: KeymapActionId, mac: boolean = isMac()): string {
+  const spec: Spec = SPECS[id];
+  return (mac ? spec.mac?.defaultShortcut : undefined) ?? spec.defaultShortcut;
+}
+
+/** The default alternates of `id` on this platform (or on macOS / elsewhere with `mac`). */
+function defaultAlternates(id: KeymapActionId, mac: boolean): readonly string[] {
+  const spec: Spec = SPECS[id];
+  return (mac ? spec.mac?.alternates : undefined) ?? spec.alternates ?? [];
+}
 
 const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 
@@ -175,20 +196,19 @@ export function isValidShortcut(spec: string): boolean {
 }
 
 /** The combination `id` uses: its keymap entry when that is a valid spec, else its default. */
-export function effectiveShortcut(id: KeymapActionId, keymap: Record<string, string>): string {
+export function effectiveShortcut(id: KeymapActionId, keymap: Record<string, string>, mac: boolean = isMac()): string {
   const custom = own(keymap, id) ? keymap[id] : undefined;
-  return typeof custom === "string" && isValidShortcut(custom) ? custom : SPECS[id].defaultShortcut;
+  return typeof custom === "string" && isValidShortcut(custom) ? custom : defaultShortcut(id, mac);
 }
 
 /**
  * Every combination `id` answers to: its keymap entry when that is a valid spec, else its
  * default followed by its alternates.
  */
-export function effectiveShortcuts(id: KeymapActionId, keymap: Record<string, string>): string[] {
+export function effectiveShortcuts(id: KeymapActionId, keymap: Record<string, string>, mac: boolean = isMac()): string[] {
   const custom = own(keymap, id) ? keymap[id] : undefined;
   if (typeof custom === "string" && isValidShortcut(custom)) return [custom];
-  const spec: Spec = SPECS[id];
-  return [spec.defaultShortcut, ...(spec.alternates ?? [])];
+  return [defaultShortcut(id, mac), ...defaultAlternates(id, mac)];
 }
 
 /**
@@ -196,11 +216,10 @@ export function effectiveShortcuts(id: KeymapActionId, keymap: Record<string, st
  * custom shortcut replaces them (for an action whose alternates act differently from its
  * main combination: `tab.next` / `tab.previous`).
  */
-export function alternateShortcuts(id: KeymapActionId, keymap: Record<string, string>): string[] {
+export function alternateShortcuts(id: KeymapActionId, keymap: Record<string, string>, mac: boolean = isMac()): string[] {
   const custom = own(keymap, id) ? keymap[id] : undefined;
   if (typeof custom === "string" && isValidShortcut(custom)) return [];
-  const spec: Spec = SPECS[id];
-  return [...(spec.alternates ?? [])];
+  return [...defaultAlternates(id, mac)];
 }
 
 /** Two scopes can be active for the same keydown (see `ShortcutScope`). */
@@ -239,7 +258,7 @@ export function conflictFor(
   const wanted = combination(spec, mac);
   for (const other of KEYMAP_ACTIONS) {
     if (other.id === id || !scopesOverlap(scope, other.scope)) continue;
-    if (effectiveShortcuts(other.id, keymap).some((s) => combination(s, mac) === wanted)) return other.id;
+    if (effectiveShortcuts(other.id, keymap, mac).some((s) => combination(s, mac) === wanted)) return other.id;
   }
   return null;
 }

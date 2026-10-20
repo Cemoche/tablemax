@@ -1638,7 +1638,7 @@ test("duplicating several rows inserts them in row order, even when one must loa
   ]);
 });
 
-test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from inside; Ctrl+Alt+F Columns; Ctrl+I + Row", async () => {
+test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from inside; Alt+F Columns; Ctrl+I + Row", async () => {
   const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   onTestFinished(() => spy.mockRestore());
   const user = userEvent.setup();
@@ -1664,8 +1664,10 @@ test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from
   expect(bar()).toBeNull();
   expect(el).toHaveFocus();
 
-  // Columns.
+  // Columns: Alt+F off macOS (Ctrl+Alt+F is AltGr+F there, #102).
   await user.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.keyboard("{Alt>}f{/Alt}");
   expect(screen.getByRole("dialog", { name: strings.grid.columnsPopover.label })).toBeInTheDocument();
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -1681,13 +1683,15 @@ test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from
   expect(pending().count("t1")).toBe(1);
   expect(screen.getAllByRole("checkbox", { name: /^Use condition/ })).toHaveLength(2);
 
-  // Ctrl+Alt+] / [ switch the view (Alt+1 / Alt+2 still do).
+  // Alt+2 / Alt+1 switch the view; off macOS Ctrl+Alt+] / [ do not (AltGr, #102).
   el.focus();
   await user.keyboard("{Control>}{Alt>}[BracketRight]{/Alt}{/Control}");
+  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Alt>}2{/Alt}");
   expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
   // The structure view keeps only the view switch in the bar.
   expect(screen.queryByRole("button", { name: strings.grid.columns })).toBeNull();
-  await user.keyboard("{Control>}{Alt>}[BracketLeft]{/Alt}{/Control}");
+  await user.keyboard("{Alt>}1{/Alt}");
   expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("aria-selected", "true");
 });
 

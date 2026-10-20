@@ -148,6 +148,31 @@ export function matchCombination(e: KeyboardEvent, spec: string): boolean {
   );
 }
 
+const ASCII_ALNUM = /^[a-z0-9]$/i;
+
+/**
+ * Does this keydown type a character the user means to type (into a grid cell, say)?
+ * One printable character, and no shortcut modifier: never with Cmd / Super (Meta); with
+ * Ctrl or Alt only as AltGr (third level: AltGr+E types "€" on AZERTY), which reports
+ * AltGraph (Chromium on Windows with Ctrl and Alt down too). An AltGr chord that gives a
+ * plain letter or digit is Ctrl+Alt+letter taken for AltGr (Linux, #102), not text.
+ * On macOS Option types characters (Option+E is a dead key, Option+2 "™"); Ctrl never does.
+ */
+export function typesCharacter(e: KeyboardEvent, mac: boolean = isMac()): boolean {
+  const ch = e.key ?? "";
+  // One code point, not a control character ("Enter", "Dead", "\t" are no characters).
+  if ([...ch].length !== 1 || /[\u0000-\u001f\u007f]/.test(ch)) return false;
+  if (e.metaKey) return false;
+  const altGraph = !mac && typeof e.getModifierState === "function" && e.getModifierState("AltGraph");
+  // AltGr levels type symbols, never a plain letter or digit: that is Ctrl+Alt+letter
+  // reported as AltGr (with or without Ctrl / Alt down).
+  if (altGraph) return !ASCII_ALNUM.test(ch);
+  if (!e.ctrlKey && !e.altKey) return true;
+  if (mac) return !e.ctrlKey && !ASCII_ALNUM.test(ch);
+  // Ctrl+Alt without AltGraph: a character no plain key gives (not ASCII) is AltGr's.
+  return e.ctrlKey && e.altKey && !ASCII_PRINTABLE.test(ch);
+}
+
 export interface ShortcutOptions {
   /** Fire even while a modal dialog is open (for a handler that manages modals itself). */
   allowInModal?: boolean;

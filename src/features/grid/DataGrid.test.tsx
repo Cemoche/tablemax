@@ -110,7 +110,7 @@ const header = (over: Partial<HeaderClickedEventArgs> = {}) =>
 const press = (
   key: string,
   code: string,
-  mods: Partial<Record<"ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "repeat", boolean>> = {},
+  { altGraph = false, ...mods }: Partial<Record<"ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "repeat" | "altGraph", boolean>> = {},
 ) => {
   const ev = { key, code, repeat: false, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...mods };
   const args = {
@@ -121,7 +121,12 @@ const press = (
     cancel: vi.fn(),
     stopPropagation: vi.fn(),
     preventDefault: vi.fn(),
-    rawEvent: { ...ev, preventDefault: vi.fn(), stopPropagation: vi.fn() },
+    rawEvent: {
+      ...ev,
+      getModifierState: (k: string) => k === "AltGraph" && altGraph,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    },
   } as unknown as GridKeyEventArgs;
   act(() => editor!.onKeyDown!(args));
   return args;
@@ -425,6 +430,24 @@ test("grid keys act on the selected rows: Delete / Ctrl+Backspace delete, Ctrl+D
   // A plain Backspace or letter is not a grid action.
   expect(press("Backspace", "Backspace").cancel).not.toHaveBeenCalled();
   expect(onRowsAction).toHaveBeenCalledTimes(3);
+});
+
+test("only a character meant as text starts a cell edit: never Alt+letter or Ctrl+Alt+letter taken for AltGr (#102)", () => {
+  render(<Selecting ed={editing()} />);
+  // Plain and Shift letters type (Glide opens the editor with them).
+  expect(press("f", "KeyF").cancel).not.toHaveBeenCalled();
+  expect(press("F", "KeyF", { shiftKey: true }).cancel).not.toHaveBeenCalled();
+  // Alt+F (Columns) and Alt+& (AZERTY Alt+1) are shortcuts, not text.
+  expect(press("f", "KeyF", { altKey: true }).cancel).toHaveBeenCalled();
+  expect(press("&", "Digit1", { altKey: true }).cancel).toHaveBeenCalled();
+  // Ctrl+Alt+F reported as an AltGr chord (WebKitGTK) is no text either.
+  expect(press("f", "KeyF", { altGraph: true }).cancel).toHaveBeenCalled();
+  expect(press("f", "KeyF", { altGraph: true, altKey: true }).cancel).toHaveBeenCalled();
+  // AltGr symbols are text: AltGr+E "€", AltGr+0 "@" (AZERTY), with or without Alt down.
+  expect(press("€", "KeyE", { altGraph: true }).cancel).not.toHaveBeenCalled();
+  expect(press("@", "Digit0", { altGraph: true, altKey: true }).cancel).not.toHaveBeenCalled();
+  // Ctrl / Cmd combinations are left to Glide (it never types them: Ctrl+A selects all).
+  expect(press("a", "KeyA", { ctrlKey: true }).cancel).not.toHaveBeenCalled();
 });
 
 test("the ContextMenu key and Shift+F10 open the cell menu of the active cell", () => {

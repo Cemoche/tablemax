@@ -1,6 +1,6 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { isModalOpen, matchCombination, matchShortcut, shortcutKeyOf, useShortcut } from "./shortcuts";
+import { isModalOpen, matchCombination, matchShortcut, shortcutKeyOf, typesCharacter, useShortcut } from "./shortcuts";
 
 // Tests simulate the platform by spying on `navigator.platform` (lib/platform's isMac reads
 // it, unless `navigator.userAgentData.platform` is present, which jsdom lacks).
@@ -258,4 +258,39 @@ test("without stopPropagation a repeat is still prevented (no default action), n
   window.dispatchEvent(e);
   expect(e.defaultPrevented).toBe(true);
   expect(handler).not.toHaveBeenCalled();
+});
+
+test("typesCharacter: text, not shortcuts; AltGr symbols are text (#102)", () => {
+  const ev = (init: KeyboardEventInit & { altGraph?: boolean }) => {
+    const { altGraph = false, ...rest } = init;
+    const e = key(rest);
+    Object.defineProperty(e, "getModifierState", { value: (k: string) => k === "AltGraph" && altGraph });
+    return e;
+  };
+  const linux = false;
+  expect(typesCharacter(ev({ key: "f", code: "KeyF" }), linux)).toBe(true);
+  expect(typesCharacter(ev({ key: "F", code: "KeyF", shiftKey: true }), linux)).toBe(true);
+  expect(typesCharacter(ev({ key: " ", code: "Space" }), linux)).toBe(true);
+  expect(typesCharacter(ev({ key: "Enter", code: "Enter" }), linux)).toBe(false);
+  expect(typesCharacter(ev({ key: "Dead", code: "BracketLeft" }), linux)).toBe(false);
+  // Ctrl, Super (Meta) and Alt alone are shortcuts.
+  expect(typesCharacter(ev({ key: "f", code: "KeyF", ctrlKey: true }), linux)).toBe(false);
+  expect(typesCharacter(ev({ key: "f", code: "KeyF", metaKey: true }), linux)).toBe(false);
+  expect(typesCharacter(ev({ key: "f", code: "KeyF", altKey: true }), linux)).toBe(false);
+  expect(typesCharacter(ev({ key: "&", code: "Digit1", altKey: true }), linux)).toBe(false);
+  // Ctrl+Alt+F: plain, or reported as AltGr, it is no text.
+  expect(typesCharacter(ev({ key: "f", code: "KeyF", ctrlKey: true, altKey: true }), linux)).toBe(false);
+  expect(typesCharacter(ev({ key: "f", code: "KeyF", altGraph: true }), linux)).toBe(false);
+  expect(typesCharacter(ev({ key: "f", code: "KeyF", ctrlKey: true, altKey: true, altGraph: true }), linux)).toBe(false);
+  // Ctrl+Alt+[ on a US layout is no text; AltGr symbols are (Linux: AltGraph alone;
+  // Windows: Ctrl + Alt + AltGraph; without AltGraph only a non-ASCII character).
+  expect(typesCharacter(ev({ key: "[", code: "BracketLeft", ctrlKey: true, altKey: true }), linux)).toBe(false);
+  expect(typesCharacter(ev({ key: "€", code: "KeyE", altGraph: true }), linux)).toBe(true);
+  expect(typesCharacter(ev({ key: "@", code: "Digit0", ctrlKey: true, altKey: true, altGraph: true }), linux)).toBe(true);
+  expect(typesCharacter(ev({ key: "€", code: "KeyE", ctrlKey: true, altKey: true }), linux)).toBe(true);
+  // macOS: Option types characters, Ctrl and Cmd never do.
+  expect(typesCharacter(ev({ key: "ƒ", code: "KeyF", altKey: true }), true)).toBe(true);
+  expect(typesCharacter(ev({ key: "{", code: "Digit5", altKey: true }), true)).toBe(true);
+  expect(typesCharacter(ev({ key: "f", code: "KeyF", ctrlKey: true }), true)).toBe(false);
+  expect(typesCharacter(ev({ key: "ƒ", code: "KeyF", metaKey: true, altKey: true }), true)).toBe(false);
 });
