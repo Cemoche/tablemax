@@ -34,6 +34,7 @@ const ctx = (w: Workspace | null, over: Partial<ActionCtx> = {}): ActionCtx => (
   workspace: w,
   tab: w?.tabs.find((t) => t.id === w.activeTabId) ?? null,
   newConnection: vi.fn(),
+  showConnections: vi.fn(),
   pickSchema: vi.fn(),
   pickDatabase: vi.fn(),
   ...over,
@@ -48,8 +49,8 @@ beforeEach(() => {
 
 test("an action whose when() is false is hidden", () => {
   const t = strings.palette.action;
-  // Without a workspace only "New connection" remains.
-  expect(titles(ctx(null))).toEqual([t.newConnection]);
+  // Without a workspace only "New connection" and "Show connections" remain.
+  expect(titles(ctx(null))).toEqual([t.newConnection, t.showConnections]);
   // "Change database" is PostgreSQL only.
   expect(titles(ctx(ws()))).toContain(t.changeDatabase);
   expect(titles(ctx(ws({ dialect: "sqlite" })))).not.toContain(t.changeDatabase);
@@ -119,6 +120,7 @@ test("the palette actions with a shortcut are the keymap registry's actions of t
     "tab.next",
     "tab.previous",
     "connection.new",
+    "connection.open",
     "editor.format",
     "editor.comment",
     "sidebar.toggle",
@@ -151,4 +153,13 @@ test("Open history shows the sidebar on its History tab, in any connected worksp
   expect(useWorkspaces.getState().sidebarVisible).toBe(true);
   expect(useSidebar.getState().segments.w1).toBe("history");
   expect(titles(ctx(ws({ status: "disconnected" })))).not.toContain(t.openHistory);
+});
+
+test("Show connections is connection.open's entry, available anywhere (#119)", () => {
+  const c = ctx(null);
+  const action = visibleActions(c).find((a) => a.title === strings.palette.action.showConnections);
+  expect(action?.id).toBe("connection.open");
+  action?.run(c);
+  expect(c.showConnections).toHaveBeenCalled();
+  expect(titles(ctx(ws()))).toContain(strings.palette.action.showConnections);
 });

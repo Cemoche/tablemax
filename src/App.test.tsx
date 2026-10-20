@@ -271,6 +271,18 @@ test("Ctrl+Shift+K shows the connection list from a workspace, its search focuse
   expect(screen.getByRole("region", { name: strings.connections.welcomeLabel })).toBeInTheDocument();
 });
 
+test("the palette's Show connections shows the connection list from a workspace (#119)", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByRole("tab", { name: "users" });
+  await user.keyboard("{Control>}p{/Control}");
+  const dialog = await screen.findByRole("dialog", { name: strings.palette.label });
+  await user.type(within(dialog).getByRole("combobox"), ">show connections");
+  await user.click(within(dialog).getByText(strings.palette.action.showConnections));
+  expect(await screen.findByRole("option", { name: "Prod PG" })).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("searchbox", { name: strings.connections.searchLabel })).toHaveFocus());
+});
+
 test("Ctrl+N opens a new connection's form; its back button returns to the list", async () => {
   const user = userEvent.setup();
   vi.mocked(ipc.sessionLoad).mockResolvedValue(null);
@@ -379,6 +391,7 @@ describe("unsaved edits in the connection form are never dropped silently", () =
     await user.click(within(discardDialog() as HTMLElement).getByRole("button", { name: strings.connections.discardCancel }));
     expect(nameField()).toHaveValue("Dev PG 2");
     await user.keyboard("{Control>}p{/Control}");
+    await user.type(within(await screen.findByRole("dialog", { name: strings.palette.label })).getByRole("combobox"), ">");
     await user.click(await screen.findByText(strings.palette.action.newConnection));
     await user.click(within(await screen.findByRole("dialog", { name: strings.connections.discardTitle })).getByRole("button", { name: strings.connections.discardOk }));
     expect(screen.getByRole("heading", { name: strings.form.newTitle })).toBeInTheDocument();

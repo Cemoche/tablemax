@@ -4,6 +4,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { Catalog, ConnectionConfig } from "../../lib/types";
+import { cleanKeymap } from "../settings/bounds";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome } from "../../stores/chrome";
 import { useConnections } from "../../stores/connections";
@@ -50,6 +51,13 @@ const open = async (chord: string) => {
   return user;
 };
 
+/** Opens Open Anything on its actions (the `>` prefix). */
+const openActions = async () => {
+  const user = await open(MOD_P);
+  await user.type(await screen.findByRole("combobox"), ">");
+  return user;
+};
+
 const MOD_P = "{Control>}p{/Control}";
 const MOD_K = "{Control>}k{/Control}";
 
@@ -63,31 +71,80 @@ beforeEach(() => {
   vi.mocked(ipc.catalogGet).mockResolvedValue(catalog(["users", "orders", "order_items"]));
 });
 
-test("Mod+P (Open Anything) shows objects, tabs, connections and actions in a modal dialog", async () => {
+test("ctrl_p_opens_open_anything_objects: objects, tabs and connections in a modal dialog, no actions", async () => {
   await open(MOD_P);
   const dialog = await screen.findByRole("dialog", { name: strings.palette.label });
   expect(dialog).toHaveAttribute("aria-modal", "true");
   expect(screen.getByRole("combobox")).toHaveFocus();
+  expect(screen.getByRole("combobox")).toHaveAttribute("placeholder", strings.palette.placeholder);
   await screen.findByText("users");
-  for (const heading of [
-    strings.palette.objects,
-    strings.palette.tabs,
-    strings.palette.connections,
-    strings.palette.actions,
-  ]) {
+  for (const heading of [strings.palette.objects, strings.palette.tabs, strings.palette.connections]) {
     expect(within(dialog).getByText(heading)).toBeInTheDocument();
   }
   expect(within(dialog).getByText("Query 1")).toBeInTheDocument();
   expect(within(dialog).getByText("Prod PG")).toBeInTheDocument();
+  // The actions wait for the ">" prefix.
+  expect(within(dialog).queryByText(strings.palette.actions)).not.toBeInTheDocument();
+  expect(within(dialog).queryByText(strings.palette.action.newQuery)).not.toBeInTheDocument();
+  // Rows of 40 px (spec §2.3).
+  for (const option of screen.getAllByRole("option")) expect(option).toHaveClass("h-10");
+});
+
+test("gt_prefix_lists_actions: > lists the actions only, the rest of the query narrows them", async () => {
+  const user = await openActions();
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText(strings.palette.actions)).toBeInTheDocument();
   expect(within(dialog).getByText(strings.palette.action.newQuery)).toBeInTheDocument();
   expect(within(dialog).getByText("Ctrl+T")).toBeInTheDocument();
+  for (const heading of [strings.palette.objects, strings.palette.tabs, strings.palette.connections]) {
+    expect(within(dialog).queryByText(heading)).not.toBeInTheDocument();
+  }
+  expect(within(dialog).queryByText("users")).not.toBeInTheDocument();
+  // "> close" (a space after > is fine) keeps the matching actions.
+  await user.type(screen.getByRole("combobox"), " close");
+  expect(within(dialog).getByText(strings.palette.action.closeTab)).toBeInTheDocument();
+  expect(within(dialog).queryByText(strings.palette.action.newQuery)).not.toBeInTheDocument();
+  // Without the prefix, the same words search the objects.
+  await user.clear(screen.getByRole("combobox"));
+  await user.type(screen.getByRole("combobox"), "close");
+  expect(within(dialog).queryByText(strings.palette.action.closeTab)).not.toBeInTheDocument();
+});
+
+test("show_connections_entry: > Show connections has Ctrl+Shift+K and shows the connection list (#119)", async () => {
+  const onShowConnections = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <CommandPalette
+      onOpenConnection={vi.fn()}
+      onNewConnection={vi.fn()}
+      onShowConnections={onShowConnections}
+      onShowWorkspace={vi.fn()}
+    />,
+  );
+  await user.keyboard(MOD_P);
+  await user.type(await screen.findByRole("combobox"), ">show conn");
+  const item = screen.getByText(strings.palette.action.showConnections).closest("[cmdk-item]") as HTMLElement;
+  expect(within(item).getByText("Ctrl+Shift+K")).toBeInTheDocument();
+  await user.click(item);
+  expect(onShowConnections).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+test("old_palette_objects_remap_ignored: a saved palette.objects binding is dropped, Ctrl+K stays the database picker", async () => {
+  const saved = cleanKeymap({ "palette.objects": "Mod+K", "palette.all": "Mod+P" });
+  expect(saved).toEqual({ "palette.all": "Mod+P" });
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: saved } });
+  vi.mocked(ipc.databasesList).mockResolvedValue(["app", "other"]);
+  await open(MOD_K);
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("combobox")).toHaveAttribute("placeholder", strings.palette.databasePlaceholder);
 });
 
 test("actions show their effective shortcut: a custom one replaces the default", async () => {
   useSettings.setState({
     settings: { ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+Shift+N", "tab.close": "not a spec" } },
   });
-  await open(MOD_P);
+  await openActions();
   const dialog = await screen.findByRole("dialog");
   const item = (title: string) => within(dialog).getByText(title).closest("[cmdk-item]") as HTMLElement;
   expect(within(item(strings.palette.action.newQuery)).getByText("Ctrl+Shift+N")).toBeInTheDocument();
@@ -219,16 +276,15 @@ test("a catalog failure is shown in the palette", async () => {
 });
 
 test("an action runs and closes the palette; unavailable actions are hidden", async () => {
-  const user = await open(MOD_P);
-  await screen.findByText("users");
+  const user = await openActions();
   expect(screen.queryByText(strings.palette.action.format)).not.toBeInTheDocument();
   await user.click(screen.getByText(strings.palette.action.newQuery));
   expect(useWorkspaces.getState().workspaces[0].tabs).toHaveLength(2);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-test("Change schema opens a sub-list; Escape goes back, a pick applies setSchema", async () => {
-  const user = await open(MOD_P);
+test("Change schema opens a sub-list; Escape goes back to the actions, a pick applies setSchema", async () => {
+  const user = await openActions();
   await user.click(await screen.findByText(strings.palette.action.changeSchema));
   await screen.findByText("audit");
   expect(screen.queryByText(strings.palette.actions)).not.toBeInTheDocument();
@@ -241,7 +297,7 @@ test("Change schema opens a sub-list; Escape goes back, a pick applies setSchema
 
 test("Change database lists databasesList and Backspace on empty input goes back", async () => {
   vi.mocked(ipc.databasesList).mockResolvedValue(["app", "other"]);
-  const user = await open(MOD_P);
+  const user = await openActions();
   await user.click(await screen.findByText(strings.palette.action.changeDatabase));
   await screen.findByText("other");
   await user.keyboard("{Backspace}");
@@ -295,7 +351,7 @@ test("an action that focuses its own target keeps that focus", async () => {
   document.body.append(btn, editor);
   btn.focus();
   const off = registerEditorCommands("q1", { toggleComment: () => editor.focus() });
-  const user = await open(MOD_P);
+  const user = await openActions();
   await user.click(await screen.findByText(strings.palette.action.toggleComment));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   await new Promise((r) => setTimeout(r, 10));

@@ -850,8 +850,8 @@ export const strings = {
   },
   palette: {
     label: "Command palette",
-    inputLabel: "Search objects, tabs, connections and actions",
-    placeholder: "Search objects, tabs, connections and actions…",
+    inputLabel: "Search objects, tabs and connections; type > for actions",
+    placeholder: "Search objects, tabs and connections, or type > for actions…",
     schemaPlaceholder: "Pick a schema…",
     databasePlaceholder: "Pick a database…",
     objects: "Objects",
@@ -871,6 +871,7 @@ export const strings = {
       nextTab: "Next tab",
       previousTab: "Previous tab",
       newConnection: "New connection",
+      showConnections: "Show connections",
       changeSchema: "Change schema…",
       changeDatabase: "Change database…",
       format: "Format query",

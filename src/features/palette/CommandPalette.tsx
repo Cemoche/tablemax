@@ -28,6 +28,9 @@ function focusActiveTab() {
 /** At most this many items are rendered per group (a 5 000-table schema stays fluid). */
 export const MAX_PER_GROUP = 200;
 
+/** A query starting with it lists the actions (Open Anything, spec §5.5); not shown to the user as text. */
+export const ACTION_PREFIX = ">";
+
 type Mode = "all";
 type Sub = "schema" | "database" | null;
 
@@ -36,22 +39,27 @@ interface Props {
   onOpenConnection: (cfg: ConnectionConfig) => void;
   /** Shows the new-connection form. */
   onNewConnection: () => void;
+  /** Shows the connection list (as Ctrl+Shift+K). */
+  onShowConnections?: () => void;
   /** Called after the palette activates something of the workspace, so App shows it. */
   onShowWorkspace: () => void;
 }
 
+// Rows of 40 px (spec §2.3, Open Anything).
 const itemClass =
-  "flex cursor-pointer items-center justify-between gap-3 rounded-sm px-2 py-1 data-[selected=true]:bg-accent data-[selected=true]:text-accent-contrast";
+  "flex h-10 cursor-pointer items-center justify-between gap-3 rounded-sm px-2 data-[selected=true]:bg-accent data-[selected=true]:text-accent-contrast";
 const headingClass =
   "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-sm [&_[cmdk-group-heading]]:text-muted";
 
-export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorkspace }: Props) {
+export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnections, onShowWorkspace }: Props) {
   const [mode, setMode] = useState<Mode | null>(null);
   const [query, setQuery] = useState("");
   const [sub, setSub] = useState<Sub>(null);
   const [subError, setSubError] = useState<string | null>(null);
   const [databases, setDatabases] = useState<string[] | null>(null);
   const returnFocus = useRef<Element | null>(null);
+  /** The query a sub-list gives back on Escape: the actions when it was opened from them. */
+  const subReturn = useRef("");
 
   const workspaces = useWorkspaces((s) => s.workspaces);
   const activeId = useWorkspaces((s) => s.activeWorkspaceId);
@@ -125,7 +133,8 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
     if (open && connected && wsId && schema !== null) void useCatalog.getState().ensureCatalog(wsId, schema);
   }, [open, connected, wsId, schema]);
 
-  const enterSub = (s: Exclude<Sub, null>) => {
+  const enterSub = (s: Exclude<Sub, null>, back = "") => {
+    subReturn.current = back;
     setSub(s);
     setQuery("");
     setSubError(null);
@@ -155,7 +164,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
   };
   const back = () => {
     setSub(null);
-    setQuery("");
+    setQuery(subReturn.current);
     setSubError(null);
   };
 
@@ -163,14 +172,18 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
     workspace,
     tab: workspace?.tabs.find((t) => t.id === workspace.activeTabId) ?? null,
     newConnection: onNewConnection,
+    showConnections: () => onShowConnections?.(),
     pickSchema: () => enterSub("schema"),
     pickDatabase: () => enterSub("database"),
   };
+  // Open Anything: objects (tables, tabs, connections) by default, the actions after ">".
+  const actionMode = !sub && query.startsWith(ACTION_PREFIX);
+  const actionQuery = query.slice(ACTION_PREFIX.length).trim();
 
   const tables = connected ? (entry?.catalog.tables ?? null) : null;
   const objects = useMemo(
-    () => rank(tables ?? [], query, (t) => t.name, MAX_PER_GROUP),
-    [tables, query],
+    () => rank(actionMode ? [] : (tables ?? []), query, (t) => t.name, MAX_PER_GROUP),
+    [tables, query, actionMode],
   );
   const tabs = useMemo(
     () => rank(workspace?.tabs ?? [], query, (t) => t.title, MAX_PER_GROUP),
@@ -180,7 +193,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
     () => rank(connections, query, (c) => c.name, MAX_PER_GROUP),
     [connections, query],
   );
-  const actions = visibleActions(ctx).filter((a) => fuzzyScore(query, a.title) > 0);
+  const actions = actionMode ? visibleActions(ctx).filter((a) => fuzzyScore(actionQuery, a.title) > 0) : [];
   const schemaItems = useMemo(
     () => rank(workspace?.schemas ?? [], query, (n) => n, MAX_PER_GROUP),
     [workspace?.schemas, query],
@@ -272,10 +285,11 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
       </Command.Group>
     );
   } else {
-    const showTabs = tabs.items.length > 0;
-    const showConns = conns.items.length > 0;
+    const showTabs = !actionMode && tabs.items.length > 0;
+    const showConns = !actionMode && conns.items.length > 0;
     const showActions = actions.length > 0;
-    const showObjects = objects.items.length > 0 || catalogError !== null || (catalogLoading && !tables);
+    const showObjects =
+      !actionMode && (objects.items.length > 0 || catalogError !== null || (catalogLoading && !tables));
     empty = !showObjects && !showTabs && !showConns && !showActions;
     body = (
       <>
@@ -325,10 +339,10 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
                   const c: ActionCtx = {
                     ...ctx,
                     pickSchema: () => {
-                      enterSub("schema");
+                      enterSub("schema", ACTION_PREFIX);
                     },
                     pickDatabase: () => {
-                      enterSub("database");
+                      enterSub("database", ACTION_PREFIX);
                     },
                   };
                   if (a.id === "schema.change" || a.id === "database.change") {
