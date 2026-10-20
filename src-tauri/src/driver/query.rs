@@ -550,23 +550,31 @@ impl Builder {
 
 /// How the preview shows `v` compared with a PostgreSQL column of type `base_type`, `lit`
 /// being its text literal: as one would write it by hand rather than the page's
-/// `CAST($n::text AS type)`. Text types: the literal; integers and numeric: the bare number
-/// when `v` is one; booleans: TRUE / FALSE; anything else, floats included (a bare 0.1 is a
-/// numeric): `'lit'::type`. The page itself still binds text and casts it.
+/// `CAST($n::text AS type)`. Text types: the literal; integer types: the bare number when `v`
+/// is an integer within the type's range (else the cast that runs fails, and the preview
+/// shows the typed literal); numeric: the bare number when `v` is one; booleans: TRUE /
+/// FALSE; anything else, floats included (a bare 0.1 is a numeric): `'lit'::type`. The page
+/// itself still binds text and casts it.
 fn pg_display_typed(v: &str, base_type: &str, lit: String) -> String {
     let t = base_type.trim().to_ascii_lowercase();
     match t.as_str() {
         "text" | "varchar" | "character varying" | "bpchar" | "char" | "character" | "name"
         | "citext" => lit,
-        "smallint" | "integer" | "bigint" | "int2" | "int4" | "int8" | "numeric" | "decimal"
-            if is_plain_number(v) =>
-        {
-            v.to_string()
-        }
+        // Bare only where the cast that runs accepts it: an integer within the type's range.
+        "smallint" | "int2" if is_plain_integer(v) && v.parse::<i16>().is_ok() => v.to_string(),
+        "integer" | "int4" if is_plain_integer(v) && v.parse::<i32>().is_ok() => v.to_string(),
+        "bigint" | "int8" if is_plain_integer(v) && v.parse::<i64>().is_ok() => v.to_string(),
+        "numeric" | "decimal" if is_plain_number(v) => v.to_string(),
         "boolean" | "bool" if v.eq_ignore_ascii_case("true") => "TRUE".into(),
         "boolean" | "bool" if v.eq_ignore_ascii_case("false") => "FALSE".into(),
         _ => format!("{lit}::{base_type}"),
     }
+}
+
+/// `^-?\d+$` (`parse` alone would also take a leading `+`).
+fn is_plain_integer(v: &str) -> bool {
+    let v = v.strip_prefix('-').unwrap_or(v);
+    !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// `^-?\d+(\.\d+)?$`
@@ -1451,7 +1459,39 @@ mod tests {
             "decimal",
         ] {
             assert_eq!(pg_shown(ty, "-42"), "WHERE \"c\" = -42", "{ty}");
+        }
+        for ty in ["numeric(12,2)", "decimal"] {
             assert_eq!(pg_shown(ty, "3.25"), "WHERE \"c\" = 3.25", "{ty}");
+        }
+        // Integer types: bare only for an integer within the column's range; what runs
+        // (`CAST('v'::text AS type)`) refuses anything else, so the preview shows the cast.
+        for (ty, v) in [
+            ("integer", "3.25"),
+            ("int4", "3.25"),
+            ("smallint", "40000"),
+            ("int2", "-32769"),
+            ("integer", "99999999999"),
+            ("int4", "2147483648"),
+            ("bigint", "9223372036854775808"),
+            ("int8", "-9223372036854775809"),
+            ("integer", "+5"),
+        ] {
+            assert_eq!(
+                pg_shown(ty, v),
+                format!("WHERE \"c\" = '{v}'::{ty}"),
+                "{ty} {v}"
+            );
+        }
+        for (ty, v) in [
+            ("integer", "007"),
+            ("integer", "-0"),
+            ("smallint", "32767"),
+            ("int2", "-32768"),
+            ("integer", "2147483647"),
+            ("bigint", "9223372036854775807"),
+            ("int8", "-9223372036854775808"),
+        ] {
+            assert_eq!(pg_shown(ty, v), format!("WHERE \"c\" = {v}"), "{ty} {v}");
         }
         let base = |ty: &str| ty.split('(').next().unwrap().to_string();
         for (ty, v) in [
