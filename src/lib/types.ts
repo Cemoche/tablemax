@@ -244,13 +244,17 @@ export interface Filter {
   values: string[];
 }
 
+/** driver/query.rs FilterCombine: how the filters of a page are joined. */
+export type FilterCombine = "and" | "or";
+
 export interface PageRequest {
   object: ObjectRef;
   limit: number;
   offset: number;
   sort: [string, SortDir] | null;
-  /** Joined by AND. */
   filters: Filter[];
+  /** How `filters` are joined (the backend reads an absent value as "and"). */
+  combine: FilterCombine;
 }
 
 /** driver/meta.rs ColumnInfo. */

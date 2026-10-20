@@ -55,8 +55,9 @@ test("sort cycles asc, desc, none and resets page", async () => {
     offset: 0,
     sort: ["name", "asc"],
     filters: [],
+    combine: "and",
   });
-  expect(ipc.tableCount).toHaveBeenCalledWith("w1", obj, []);
+  expect(ipc.tableCount).toHaveBeenCalledWith("w1", obj, [], "and");
 });
 
 test("paging bounds and page count", async () => {
@@ -164,8 +165,9 @@ test("changed filters restart at page 0 and go to tablePage and tableCount", asy
     offset: 0,
     sort: null,
     filters,
+    combine: "and",
   });
-  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters);
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters, "and");
   expect(useGridViews.getState().getView("t1").filters).toEqual(filters);
 });
 
@@ -237,4 +239,106 @@ test("a page loaded after a commit settles it; a reload is allowed when the outc
   act(() => result.current.reload());
   expect(st().blocked.t1).toBe(true);
   expect(ipc.tablePage).toHaveBeenCalledTimes(2);
+});
+
+test("apply_all_and_or: filters joined by OR go to tablePage and tableCount, kept in the view", async () => {
+  const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  await waitFor(() => expect(result.current.rowCount).not.toBeNull());
+  const filters = [
+    { column: "id", op: "eq" as const, values: ["1"] },
+    { column: "id", op: "eq" as const, values: ["2"] },
+  ];
+  act(() => {
+    result.current.setFilters(filters, "or");
+  });
+  expect(result.current.combine).toBe("or");
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ filters, combine: "or" })),
+  );
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters, "or");
+  expect(useGridViews.getState().getView("t1").combine).toBe("or");
+  // The same filters joined by AND again are another request (and another count).
+  vi.mocked(ipc.tableCount).mockClear();
+  act(() => {
+    result.current.setFilters(filters);
+  });
+  expect(result.current.combine).toBe("and");
+  await waitFor(() => expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters, "and"));
+});
+
+test("page_popover_offset_limit: goTo sets the offset and the limit; paging steps from there", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(rs(100));
+  const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  await waitFor(() => expect(result.current.rowCount).not.toBeNull());
+  expect(result.current.hasPrev).toBe(false);
+  let ok = false;
+  act(() => {
+    ok = result.current.goTo(250, 100);
+  });
+  expect(ok).toBe(true);
+  expect(result.current.offset).toBe(250);
+  expect(result.current.pageSize).toBe(100);
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ offset: 250, limit: 100 })),
+  );
+  expect(result.current.hasPrev).toBe(true);
+  act(() => result.current.nextPage());
+  expect(result.current.offset).toBe(350);
+  act(() => result.current.prevPage());
+  act(() => result.current.prevPage());
+  expect(result.current.offset).toBe(150);
+  // Back from an offset below one page: the first row.
+  act(() => result.current.prevPage());
+  expect(result.current.offset).toBe(50);
+  act(() => result.current.prevPage());
+  expect(result.current.offset).toBe(0);
+  expect(result.current.hasPrev).toBe(false);
+  // 650 rows from offset 600 by 100: the last page.
+  act(() => {
+    result.current.goTo(600, 100);
+  });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.hasNext).toBe(false);
+  // A filter starts over at the first row, keeping the chosen limit.
+  act(() => {
+    result.current.setFilters([{ column: "id", op: "gt", values: ["1"] }]);
+  });
+  expect(result.current.offset).toBe(0);
+  expect(result.current.pageSize).toBe(100);
+});
+
+test("a limit chosen in the page popover outlives a new page size setting", async () => {
+  const { result, rerender } = renderHook(({ size }) => usePagedTable("w1", obj, "t1", size), {
+    initialProps: { size: 300 },
+  });
+  await waitFor(() => expect(result.current.rowCount).not.toBeNull());
+  act(() => {
+    result.current.goTo(0, 25);
+  });
+  rerender({ size: 500 });
+  await act(async () => {});
+  expect(result.current.pageSize).toBe(25);
+  expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ limit: 25 }));
+});
+
+test("goTo is refused while changes are pending, and invalid numbers change nothing", async () => {
+  const { result } = renderHook(() => usePagedTable("w1", obj, "t1", 300));
+  await waitFor(() => expect(result.current.rowCount).not.toBeNull());
+  let ok = true;
+  act(() => {
+    ok = result.current.goTo(-1, 10);
+  });
+  expect(ok).toBe(false);
+  act(() => {
+    ok = result.current.goTo(0, 0);
+  });
+  expect(ok).toBe(false);
+  act(() => usePendingChanges.getState().addInsert("t1", obj));
+  act(() => {
+    ok = result.current.goTo(10, 10);
+  });
+  expect(ok).toBe(false);
+  expect(usePendingChanges.getState().blocked.t1).toBe(true);
+  expect(result.current.offset).toBe(0);
+  expect(ipc.tablePage).toHaveBeenCalledTimes(1);
 });

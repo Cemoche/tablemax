@@ -147,7 +147,7 @@ function TableDataView({
   const links = useFkLinks({ workspaceId, tabId, object, dialect, info: e.info, data: t.result, model: e.model });
   const copy = useSelectionCopy(e.model, dialect, object);
   const rows = t.result?.rows.length ?? 0;
-  const from = t.page * t.pageSize + 1;
+  const from = t.offset + 1;
   const columns = (e.info?.columns ?? t.result?.columns ?? []).map((c) => c.name);
   const editing: GridEditing | undefined = e.editing && {
     ...e.editing,

@@ -15,6 +15,7 @@ import type {
   ImportResult,
   EditValue,
   Filter,
+  FilterCombine,
   FilterOp,
   PageRequest,
   ResultSet,
@@ -176,8 +177,12 @@ test("Filter and PageRequest", () => {
     offset: 0,
     sort: ["a", "desc"],
     filters: [f],
+    combine: "or",
   };
-  expect(Object.keys(req)).toEqual(["object", "limit", "offset", "sort", "filters"]);
+  expect(Object.keys(req)).toEqual(["object", "limit", "offset", "sort", "filters", "combine"]);
+  // query.rs FilterCombine: camelCase unit variants, And by default (absent on the wire).
+  const combines: FilterCombine[] = ["and", "or"];
+  expect(combines).toEqual(["and", "or"]);
 });
 
 // driver/dml.rs serde_shapes: EditValue, RowKey pairs, RowChange, ApplyOutcome.

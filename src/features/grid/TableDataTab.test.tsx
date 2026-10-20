@@ -524,7 +524,7 @@ test("the quick filter reloads page 0 filtered and a capped count shows 500,000+
   await waitFor(() =>
     expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ offset: 0, filters })),
   );
-  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters);
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters, "and");
   await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–3 of 500,000+"));
   expect(screen.getByRole("button", { name: strings.filters.button(1) })).toBeInTheDocument();
 });
@@ -608,9 +608,10 @@ test("Ctrl+click on a foreign key opens the referenced row in the same tab", asy
       offset: 0,
       sort: null,
       filters,
+      combine: "and",
     }),
   );
-  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", ordersRef, filters);
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", ordersRef, filters, "and");
   expect(ipc.tableInfo).toHaveBeenLastCalledWith("w1", ordersRef, false);
   expect(theTab()).toMatchObject({ id: "t1", object: ordersRef, title: "orders" });
   expect(screen.getByRole("navigation", { name: strings.grid.trail.label })).toHaveTextContent(

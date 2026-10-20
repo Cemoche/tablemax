@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use common::{mysql_urls, params_from_url, ssl, tls_file, unique_schema};
 use tablemax_lib::driver::mysql::connect_mysql;
-use tablemax_lib::driver::query::build_page;
+use tablemax_lib::driver::query::{
+    Filter, FilterCombine, FilterOp, build_filtered_count, build_page, read_count,
+};
 use tablemax_lib::driver::tls::{SslConfig, SslMode};
 use tablemax_lib::driver::{
     ConnectParams, DbObject, DriverKind, ObjectKind, ObjectRef, PageRequest, ResultSet, RowCount,
@@ -287,6 +289,7 @@ async fn mysql_reserved_word_table() {
                 offset: 0,
                 sort: Some(("id".into(), SortDir::Desc)),
                 filters: vec![],
+                combine: FilterCombine::And,
             },
         )
         .await;
@@ -1058,5 +1061,72 @@ async fn mysql_sql_results_are_capped() {
         let one = s.execute("select 7").await.unwrap().result.unwrap();
         assert_eq!(only(&one)[0], CellValue::Int(7));
         assert!(!one.truncated);
+    }
+}
+
+/// Two filters joined by OR (the filter bar's Apply All OR): a row matching either counts,
+/// the raw SQL condition keeps its parentheses, and the capped count agrees with the page.
+#[tokio::test]
+async fn mysql_filters_combined_with_or() {
+    for (url, kind) in targets() {
+        let (s, g) = open(&url, kind).await;
+        let n = &g.name;
+        s.execute(&format!(
+            "create table `{n}`.t (id int primary key, name varchar(10))"
+        ))
+        .await
+        .unwrap();
+        s.execute(&format!(
+            "insert into `{n}`.t values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')"
+        ))
+        .await
+        .unwrap();
+        let obj = ObjectRef {
+            schema: Some(n.clone()),
+            name: "t".into(),
+        };
+        let filters = vec![
+            Filter {
+                column: Some("name".into()),
+                op: FilterOp::Eq,
+                values: vec!["b".into()],
+            },
+            Filter {
+                column: None,
+                op: FilterOp::Raw,
+                values: vec!["id > 3 -- the user's own SQL".into()],
+            },
+        ];
+        let req = PageRequest {
+            object: obj.clone(),
+            limit: 10,
+            offset: 0,
+            sort: Some(("id".into(), SortDir::Asc)),
+            filters: filters.clone(),
+            combine: FilterCombine::Or,
+        };
+        let ids: Vec<_> = page(&*s, req.clone())
+            .await
+            .rows
+            .iter()
+            .map(|r| r[0].clone())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![CellValue::Int(2), CellValue::Int(4), CellValue::Int(5)]
+        );
+        // AND narrows to nothing: no row is both "b" and above 3.
+        let and = PageRequest {
+            combine: FilterCombine::And,
+            ..req
+        };
+        assert!(page(&*s, and).await.rows.is_empty());
+        let info = s.table_info(&obj).await.unwrap();
+        let stmt =
+            build_filtered_count(s.dialect(), &info, &filters, FilterCombine::Or, 11).unwrap();
+        assert_eq!(
+            read_count(&s.query(&stmt).await.unwrap(), 11).unwrap(),
+            RowCount::Exact(3)
+        );
     }
 }

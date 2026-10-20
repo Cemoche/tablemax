@@ -17,7 +17,7 @@ use tablemax_lib::driver::dml::{
 };
 use tablemax_lib::driver::mysql::connect_mysql;
 use tablemax_lib::driver::postgres::connect_postgres;
-use tablemax_lib::driver::query::{Filter, FilterOp, SqlParam, Statement};
+use tablemax_lib::driver::query::{Filter, FilterCombine, FilterOp, SqlParam, Statement};
 use tablemax_lib::driver::sql::quote_ident;
 use tablemax_lib::driver::sqlite::connect_sqlite;
 use tablemax_lib::driver::tls::SslConfig;
@@ -282,6 +282,7 @@ impl Fx {
                     offset: 0,
                     sort: None,
                     filters: vec![],
+                    combine: FilterCombine::And,
                 },
             )
             .await
@@ -1099,6 +1100,7 @@ async fn pg_char_and_bit_casts_keep_the_whole_value() {
                         op: FilterOp::Eq,
                         values: vec!["abc".into()],
                     }],
+                    combine: FilterCombine::And,
                 },
             )
             .await
@@ -1163,6 +1165,7 @@ async fn pg_domains_with_typmod_never_truncate() {
                     op: FilterOp::Eq,
                     values: vec![value.into()],
                 }],
+                combine: FilterCombine::And,
             };
             let (mgr, ws) = (fx.mgr.clone(), fx.ws.clone());
             async move { mgr.table_page(&ws, &req).await.unwrap().rows.len() }
@@ -1248,7 +1251,13 @@ async fn lost_browse_connection_is_rebuilt() {
         kill_browse(&fx).await;
         let n = fx
             .mgr
-            .table_count(&fx.ws, &fx.obj("lost"), &[], EXACT_COUNT_THRESHOLD)
+            .table_count(
+                &fx.ws,
+                &fx.obj("lost"),
+                &[],
+                FilterCombine::And,
+                EXACT_COUNT_THRESHOLD,
+            )
             .await;
         assert_eq!(n.unwrap(), RowCount::Exact(1), "{k:?}");
 
@@ -1411,7 +1420,7 @@ async fn count_follows_the_exact_count_threshold() {
         let count = |threshold: u64, filters: Vec<Filter>| {
             let (mgr, ws, obj) = (fx.mgr.clone(), fx.ws.clone(), obj.clone());
             async move {
-                mgr.table_count(&ws, &obj, &filters, threshold)
+                mgr.table_count(&ws, &obj, &filters, FilterCombine::And, threshold)
                     .await
                     .unwrap_or_else(|e| panic!("{k:?}: {e:?}"))
             }

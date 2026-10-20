@@ -11,7 +11,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::driver::catalog::{Catalog, DbRoutine};
 use crate::driver::dml::{ApplyOutcome, RowChange, RowKey};
 use crate::driver::meta::TableInfo;
-use crate::driver::query::Filter;
+use crate::driver::query::{Filter, FilterCombine};
 use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::history::HistoryEntry;
@@ -222,8 +222,8 @@ pub async fn table_page(
     state.table_page(&workspace_id, &request).await
 }
 
-/// `filters` may be omitted (no filter). The exact count threshold comes from the user's
-/// settings (`exact_count_threshold`), read at each call.
+/// `filters` may be omitted (no filter), `combine` too (AND). The exact count threshold
+/// comes from the user's settings (`exact_count_threshold`), read at each call.
 #[tauri::command]
 pub async fn table_count(
     app: AppHandle,
@@ -231,6 +231,7 @@ pub async fn table_count(
     workspace_id: String,
     object: ObjectRef,
     filters: Option<Vec<Filter>>,
+    combine: Option<FilterCombine>,
 ) -> AppResult<RowCount> {
     let path = settings_path(&app)?;
     let settings = tokio::task::spawn_blocking(move || settings::load(&path))
@@ -241,6 +242,7 @@ pub async fn table_count(
             &workspace_id,
             &object,
             &filters.unwrap_or_default(),
+            combine.unwrap_or_default(),
             settings.exact_count_threshold,
         )
         .await

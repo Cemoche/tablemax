@@ -12,6 +12,7 @@ import type {
   ExecEvent,
   FilePurpose,
   Filter,
+  FilterCombine,
   ImportPreview,
   ImportResult,
   ObjectRef,
@@ -96,8 +97,12 @@ export const tablePage = (workspaceId: string, request: PageRequest) =>
  * Above the exact count threshold (a setting) the count is an estimate; with filters it
  * is capped (estimate = the threshold beyond).
  */
-export const tableCount = (workspaceId: string, object: ObjectRef, filters: Filter[] = []) =>
-  invoke<RowCount>("table_count", { workspaceId, object, filters });
+export const tableCount = (
+  workspaceId: string,
+  object: ObjectRef,
+  filters: Filter[] = [],
+  combine: FilterCombine = "and",
+) => invoke<RowCount>("table_count", { workspaceId, object, filters, combine });
 
 /** Cached per workspace; `refresh` re-reads it from the database. */
 export const tableInfo = (workspaceId: string, object: ObjectRef, refresh: boolean) =>
