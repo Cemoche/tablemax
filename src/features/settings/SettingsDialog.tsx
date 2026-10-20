@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, defaultShortcut, effectiveShortcut, effectiveShortcuts, isValidShortcut, sameCombination } from "../../lib/keymap";
+import { KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, conflictFor, defaultShortcut, effectiveShortcut, effectiveShortcuts, isValidShortcut, sameCombination } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import { useRestoreFocus } from "../../lib/useRestoreFocus";
 import type { Settings, ThemeSetting } from "../../lib/types";
@@ -153,6 +153,10 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
   const keymapRef = useRef(keymap);
   keymapRef.current = keymap;
   const overridden = Object.prototype.hasOwnProperty.call(keymap, id) && !sameCombination(effectiveShortcut(id, keymap), defaultShortcut(id));
+  // A saved binding another action now uses as well (a default added later, #90): flagged,
+  // never rewritten behind the user's back.
+  const collision = overridden ? conflictFor(id, effectiveShortcut(id, keymap), keymap) : null;
+  const combos = effectiveShortcuts(id, keymap);
 
   useEffect(() => {
     if (!recording) return;
@@ -218,7 +222,14 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
       <div className="flex items-center justify-between gap-4">
         <span>{label}</span>
         <span className="flex items-center gap-2">
-          <kbd className="font-mono text-muted">{formatShortcut(effectiveShortcut(id, keymap))}</kbd>
+          <span className="flex flex-wrap justify-end gap-x-1 text-muted">
+            {combos.map((spec, i) => (
+              <span key={spec}>
+                <kbd className="font-mono">{formatShortcut(spec)}</kbd>
+                {i < combos.length - 1 && strings.settings.shortcutListSeparator}
+              </span>
+            ))}
+          </span>
           <button
             type="button"
             aria-label={strings.settings.changeShortcutFor(label)}
@@ -249,6 +260,11 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
       {error && (
         <p role="alert" className="text-danger">
           {error}
+        </p>
+      )}
+      {collision && !error && (
+        <p role="status" className="text-sm text-danger">
+          {strings.settings.shortcutCollision(strings.keymap[collision])}
         </p>
       )}
     </li>
