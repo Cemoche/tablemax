@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
@@ -154,8 +154,16 @@ test("while a commit runs the tab's close button waits (Committing…)", async (
   usePendingChanges.setState({ committing: { t1: true } });
   render(<View />);
   const close = closeButtonOf("users");
-  expect(close).toBeDisabled();
-  expect(close).toHaveAttribute("title", strings.grid.closeWhileCommitting);
+  // aria-disabled (review #109): its tooltip says why; a press does nothing.
+  expect(close).not.toBeDisabled();
+  expect(close).toHaveAttribute("aria-disabled", "true");
+  expect(close).toHaveAttribute("data-tooltip", strings.grid.closeWhileCommitting);
+  await userEvent.click(close);
+  act(() => close.focus());
+  await userEvent.keyboard("{Enter}");
+  await userEvent.keyboard(" ");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(current().tabs).toHaveLength(2);
   await userEvent.keyboard("{Control>}w{/Control}");
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(current().tabs).toHaveLength(2);

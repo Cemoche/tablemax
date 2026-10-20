@@ -1,6 +1,8 @@
 import { Database, LayoutList, X } from "lucide-react";
+import { useId } from "react";
 import { useAction } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
+import { tip, tipIfCut } from "../../lib/tooltip";
 import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
@@ -27,6 +29,7 @@ interface TileProps {
 
 /** One open workspace: its database icon in the connection's live color, its name on two lines. */
 function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
+  const reasonId = useId();
   const color = useConnections((s) => s.items.find((c) => c.id === w.connectionId)?.color) ?? w.color;
   const closeWorkspace = useWorkspaces((s) => s.closeWorkspace);
   return (
@@ -36,7 +39,7 @@ function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
         data-workspace-tile=""
         aria-label={w.name}
         aria-current={current ? "true" : undefined}
-        title={w.name}
+        {...tipIfCut(w.name)}
         onClick={onSelect}
         className={`flex w-full flex-col items-center gap-1 rounded-lg px-1 pt-2 pb-1.5 ${focusRing} ${
           current ? "bg-sel" : "hover:bg-seg-sel"
@@ -56,17 +59,25 @@ function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
       <button
         type="button"
         aria-label={C.close(w.name)}
-        title={busy ? strings.grid.closeWhileCommitting : C.close(w.name)}
-        disabled={busy}
+        {...tip(busy ? strings.grid.closeWhileCommitting : C.close(w.name))}
+        // A running commit is a reason to read: focusable, does nothing (review #109).
+        aria-disabled={busy || undefined}
+        aria-describedby={busy ? reasonId : undefined}
         onClick={() => {
+          if (busy) return;
           // The workspace is already gone from the UI; a failed backend close (e.g. a lost
           // connection) has nothing left to report to.
           closeWorkspace(w.id).catch(() => {});
         }}
-        className={`absolute top-0.5 right-0.5 flex size-4.5 items-center justify-center rounded-full bg-pill text-icon opacity-0 group-hover:opacity-100 focus-visible:opacity-100 disabled:text-icon-dim ${focusRing}`}
+        className={`absolute top-0.5 right-0.5 flex size-4.5 items-center justify-center rounded-full bg-pill text-icon opacity-0 group-hover:opacity-100 focus-visible:opacity-100 aria-disabled:text-icon-dim ${focusRing}`}
       >
         <X aria-hidden size={11} strokeWidth={2} />
       </button>
+      {busy && (
+        <span id={reasonId} hidden>
+          {strings.grid.closeWhileCommitting}
+        </span>
+      )}
     </li>
   );
 }
@@ -99,7 +110,7 @@ export function OpenConnectionsColumn({ connectionsActive, onShowConnections, on
       <button
         type="button"
         aria-pressed={connectionsActive}
-        title={C.connections}
+        {...tip(C.connections)}
         onClick={onShowConnections}
         className={`flex flex-col items-center gap-1 rounded-lg px-1 py-1.5 text-text-2 aria-pressed:bg-sel aria-pressed:text-text hover:bg-seg-sel ${focusRing}`}
       >

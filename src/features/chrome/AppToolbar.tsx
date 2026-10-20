@@ -4,6 +4,7 @@ import * as ipc from "../../lib/ipc";
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
+import { type TipProps, tip } from "../../lib/tooltip";
 import type { ConnectionConfig } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome } from "../../stores/chrome";
@@ -32,8 +33,8 @@ function Group({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** Tooltip with the action's effective shortcut. */
-function useHint(label: string, id: KeymapActionId): string {
-  return t.hint(label, formatShortcut(useEffectiveShortcut(id)));
+function useHint(label: string, id: KeymapActionId): TipProps {
+  return tip(label, formatShortcut(useEffectiveShortcut(id)));
 }
 
 /** Reloads what the workspace shows: its sidebar, its catalog and the active table tab's page. */
@@ -65,6 +66,7 @@ export function AppToolbar({ workspace, connectError = null, onEditConnection }:
   const systemTitleBar = useSettings((s) => s.systemTitleBar);
   useTrackMaximized();
   useAction("workspace.reload", () => reloadWorkspace(workspace));
+  const settingsHint = useHint(strings.settings.open, "settings.open");
 
   const onMouseDown = (e: MouseEvent<HTMLElement>) => {
     if (systemTitleBar || e.button !== 0) return;
@@ -87,7 +89,7 @@ export function AppToolbar({ workspace, connectError = null, onEditConnection }:
           <button
             type="button"
             aria-label={strings.settings.open}
-            title={strings.settings.open}
+            {...settingsHint}
             onClick={() => useChrome.getState().requestSettings()}
             className={`${iconButton} shrink-0`}
           >
@@ -136,6 +138,7 @@ function WorkspaceTools({
     return table !== null && owner !== undefined && owner !== table.id;
   });
   const countId = useId();
+  const reasonId = useId();
   const editorOpen = usePendingChanges((s) => (table ? s.editorOpen[table.id] === true : false));
   const rowDetails = useChrome((s) => s.rowDetails[tableId] === true);
 
@@ -158,7 +161,7 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.sidebar}
-          title={sidebarHint}
+          {...sidebarHint}
           aria-pressed={connected && sidebarVisible}
           disabled={!connected}
           onClick={toggleSidebar}
@@ -171,7 +174,7 @@ function WorkspaceTools({
             ref={connectionButton}
             type="button"
             aria-label={t.connection}
-            title={t.connection}
+            {...tip(t.connection)}
             aria-haspopup="dialog"
             aria-expanded={connectionOpen}
             onClick={() => setConnectionOpen((o) => !o)}
@@ -199,7 +202,7 @@ function WorkspaceTools({
           <button
             type="button"
             aria-label={strings.grid.cancelCommitLabel}
-            title={strings.grid.cancelCommitLabel}
+            {...tip(strings.grid.cancelCommitLabel)}
             onClick={() => table && void usePendingChanges.getState().cancelCommit(table.id, workspace.id).catch(() => {})}
             className={iconButton}
           >
@@ -209,7 +212,7 @@ function WorkspaceTools({
           <button
             type="button"
             aria-label={t.discard}
-            title={t.discard}
+            {...tip(t.discard)}
             disabled={count === 0 || busy}
             onClick={() => table && usePendingChanges.getState().discard(table.id)}
             className={iconButton}
@@ -220,7 +223,7 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.preview}
-          title={t.preview}
+          {...tip(t.preview)}
           disabled={count === 0}
           onClick={() => table && useChrome.getState().requestPreview(table.id)}
           className={iconButton}
@@ -230,11 +233,18 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.commit}
-          aria-describedby={count > 0 ? countId : undefined}
-          title={otherCommitting ? strings.grid.otherTabCommitting : commitHint}
-          disabled={count === 0 || busy || outcomeUnknown || editorOpen || otherCommitting}
-          onClick={() => table && void usePendingChanges.getState().commit(table.id, workspace.id, table.object)}
-          className={`${iconButton} relative`}
+          aria-describedby={
+            [count > 0 ? countId : "", otherCommitting ? reasonId : ""].filter(Boolean).join(" ") || undefined
+          }
+          {...(otherCommitting ? tip(strings.grid.otherTabCommitting) : commitHint)}
+          // Waiting on another tab is a reason to read: focusable, does nothing (review #109).
+          aria-disabled={otherCommitting || undefined}
+          disabled={!otherCommitting && (count === 0 || busy || outcomeUnknown || editorOpen)}
+          onClick={() => {
+            if (otherCommitting || !table) return;
+            void usePendingChanges.getState().commit(table.id, workspace.id, table.object);
+          }}
+          className={`${iconButton} relative aria-disabled:text-icon-dim aria-disabled:hover:bg-transparent`}
         >
           <ListChecks aria-hidden {...ICON} />
           {count > 0 && (
@@ -252,6 +262,11 @@ function WorkspaceTools({
             {strings.grid.pendingCount(count)}
           </span>
         )}
+        {otherCommitting && (
+          <span id={reasonId} hidden>
+            {strings.grid.otherTabCommitting}
+          </span>
+        )}
       </Group>
 
       <Group label={t.groups.database}>
@@ -259,7 +274,7 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.database}
-          title={databaseHint}
+          {...databaseHint}
           disabled={!canPickDatabase}
           onClick={() => useChrome.getState().requestPalette("database")}
           className={iconButton}
@@ -270,7 +285,7 @@ function WorkspaceTools({
           <button
             type="button"
             aria-label={t.sql}
-            title={sqlHint}
+            {...sqlHint}
             onClick={() => openQueryTab(workspace.id)}
             className={`${iconButton} w-auto px-2.5 font-sans text-xs font-bold tracking-wide`}
           >
@@ -285,7 +300,7 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.reload}
-          title={reloadHint}
+          {...reloadHint}
           disabled={!connected}
           onClick={() => reloadWorkspace(workspace)}
           className={iconButton}
@@ -295,7 +310,7 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.openAnything}
-          title={anythingHint}
+          {...anythingHint}
           onClick={() => useChrome.getState().requestPalette("all")}
           className={iconButton}
         >
@@ -307,7 +322,7 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.rowDetails}
-          title={detailsHint}
+          {...detailsHint}
           aria-pressed={rowDetails}
           disabled={table === null}
           onClick={() => table && useChrome.getState().toggleRowDetails(table.id)}

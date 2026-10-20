@@ -3,6 +3,7 @@ import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import { useSavedQueries } from "../../stores/savedQueries";
 import { type Workspace } from "../../stores/workspaces";
 import { ContextMenu, type MenuAnchor, keyboardMenuAnchor, restoreFocusOnClose } from "../sidebar/ContextMenu";
@@ -122,7 +123,7 @@ export function SavedQueries({ workspace }: { workspace: Workspace }) {
                 <button
                   type="button"
                   aria-label={S.open(q.name)}
-                  title={q.name}
+                  {...tip(q.name)}
                   onClick={() => void open(q.name)}
                   onContextMenu={(e: MouseEvent<HTMLButtonElement>) => {
                     e.preventDefault();

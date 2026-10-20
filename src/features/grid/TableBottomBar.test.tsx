@@ -58,19 +58,21 @@ test("bottom_bar_layout: view switch, + Row, centered counter, Filters, Columns 
   ]);
   expect(within(bar).getByText("1–300 of 1,250 rows")).toHaveAttribute("data-testid", "footer-range");
   // Shortcuts are named in tooltips and announced.
-  expect(screen.getByRole("button", { name: g.addRow })).toHaveAttribute("title", g.addRowShortcut("Ctrl+I"));
+  const hasTip = (el: HTMLElement, label: string, key: string) => {
+    expect(el).toHaveAttribute("data-tooltip", label);
+    expect(el).toHaveAttribute("data-tooltip-key", key);
+    expect(el).not.toHaveAttribute("title");
+  };
+  hasTip(screen.getByRole("button", { name: g.addRow }), g.addRowHint, "Ctrl+I");
   expect(screen.getByRole("button", { name: g.addRow })).toHaveAttribute("aria-keyshortcuts", "Control+I");
-  expect(screen.getByRole("button", { name: strings.filters.button(0) })).toHaveAttribute(
-    "title",
-    g.filtersShortcut("Ctrl+F"),
-  );
-  expect(screen.getByRole("button", { name: g.columns })).toHaveAttribute("title", g.columnsShortcut("Alt+F"));
-  expect(screen.getByRole("button", { name: g.prev })).toHaveAttribute("title", g.pageShortcut(g.prev, "Ctrl+←"));
+  hasTip(screen.getByRole("button", { name: strings.filters.button(0) }), g.filtersHint, "Ctrl+F");
+  hasTip(screen.getByRole("button", { name: g.columns }), g.columnsHint, "Alt+F");
+  hasTip(screen.getByRole("button", { name: g.prev }), g.prev, "Ctrl+←");
   expect(screen.getByRole("button", { name: g.prev })).toBeDisabled();
   expect(screen.getByRole("button", { name: g.next })).toBeEnabled();
-  expect(screen.getByRole("tab", { name: g.view.data })).toHaveAttribute("title", g.view.dataShortcut("Alt+1"));
+  hasTip(screen.getByRole("tab", { name: g.view.data }), g.view.dataHint, "Alt+1");
   expect(screen.getByRole("tab", { name: g.view.data })).toHaveAttribute("aria-controls", ids.data);
-  expect(screen.getByRole("tab", { name: g.view.index })).toHaveAttribute("title", g.view.indexShortcut("Alt+3"));
+  hasTip(screen.getByRole("tab", { name: g.view.index }), g.view.indexHint, "Alt+3");
   expect(screen.getByRole("tab", { name: g.view.index })).toHaveAttribute("aria-keyshortcuts", "Alt+3");
   expect(screen.getByRole("tab", { name: g.view.index })).toHaveAttribute("aria-controls", ids.index);
 });

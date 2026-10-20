@@ -27,6 +27,7 @@ import type {
   SshAuth,
   SslMode,
   TableInfo,
+  WherePreview,
   WorkspaceInfo,
 } from "./types";
 import { RESIZE_DIRECTIONS, type ResizeDirection } from "./types";
@@ -302,4 +303,11 @@ test("ResizeDirection", () => {
     '["North","South","East","West","NorthEast","NorthWest","SouthEast","SouthWest"]',
   );
   expect(all).toEqual(RESIZE_DIRECTIONS);
+});
+
+// query.rs WherePreview (filters_preview_sql): the placeholder SQL and its display text.
+test("WherePreview", () => {
+  const w: WherePreview = JSON.parse(`{"sql":"WHERE \\"note\\" = ?","display":"WHERE \\"note\\" = 'a'"}`);
+  expect(Object.keys(w)).toEqual(["sql", "display"]);
+  expect(w.display).toBe(`WHERE "note" = 'a'`);
 });

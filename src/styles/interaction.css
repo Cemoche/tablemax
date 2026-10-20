@@ -1,0 +1,66 @@
+/* Interaction styles (#109), imported by src/index.css into the base layer: Tailwind
+   utilities on a component still win over them. */
+
+/* Clickable controls show the pointer; disabled ones (disabled or aria-disabled) the
+   default arrow. The grid's canvas keeps its own cursors. */
+:where(
+    button,
+    select,
+    summary,
+    input[type="checkbox"],
+    input[type="radio"],
+    [role="button"],
+    [role="tab"],
+    [role="menuitem"],
+    [role="menuitemradio"],
+    [role="menuitemcheckbox"],
+    [role="option"],
+    [role="treeitem"],
+    [role="switch"]
+  ):not(:disabled, [aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+:where(
+    button,
+    select,
+    summary,
+    input[type="checkbox"],
+    input[type="radio"],
+    [role="button"],
+    [role="tab"],
+    [role="menuitem"],
+    [role="menuitemradio"],
+    [role="menuitemcheckbox"],
+    [role="option"],
+    [role="treeitem"],
+    [role="switch"]
+  ):is(:disabled, [aria-disabled="true"]) {
+  cursor: default;
+}
+
+/* Tooltips (TooltipLayer): a short fade and slide from the control's side, only when the
+   user has not asked for reduced motion (nothing applies under reduce). */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes tm-tooltip-in-bottom {
+    from {
+      opacity: 0;
+      transform: translateY(-3px) scale(0.98);
+    }
+  }
+
+  @keyframes tm-tooltip-in-top {
+    from {
+      opacity: 0;
+      transform: translateY(3px) scale(0.98);
+    }
+  }
+
+  .tm-tooltip[data-animate="true"][data-placement="bottom"] {
+    animation: tm-tooltip-in-bottom 120ms ease-out;
+  }
+
+  .tm-tooltip[data-animate="true"][data-placement="top"] {
+    animation: tm-tooltip-in-top 120ms ease-out;
+  }
+}

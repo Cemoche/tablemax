@@ -6,7 +6,8 @@ import { ariaShortcut, formatShortcut } from "../../lib/platform";
 import { readRawCondition } from "../../lib/quickFilter";
 import { matchCombination } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
-import type { Dialect, Filter, FilterCombine, FilterOp } from "../../lib/types";
+import { tip } from "../../lib/tooltip";
+import type { Dialect, Filter, FilterCombine, FilterOp, WherePreview } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
 import {
   ANY_COLUMN,
@@ -39,7 +40,7 @@ interface Props {
   /** False while the bar is hidden (it stays mounted): its SQL preview and menus close. */
   open?: boolean;
   /** The WHERE clause these filters give, with placeholders (the SQL button); absent: no SQL button. */
-  previewSql?: (filters: Filter[], combine: FilterCombine) => Promise<string>;
+  previewSql?: (filters: Filter[], combine: FilterCombine) => Promise<WherePreview>;
   /** Each new value above 0 puts the focus on the first row (the bar was opened from the keyboard or its button). */
   focusSeq: number;
   /** "Filter with column" (grid header menu): each new `seq` starts a row on `column` and focuses its value. */
@@ -341,7 +342,7 @@ export function FilterBar({
   };
 
   const shortcut = (action: KeymapActionId) => effectiveShortcut(action, keymap);
-  const hint = (label: string, action: KeymapActionId) => f.withShortcut(label, formatShortcut(shortcut(action)));
+  const hint = (label: string, action: KeymapActionId) => tip(label, formatShortcut(shortcut(action)));
   const h = f.hints;
   const hints = [
     f.hint(h.show, formatShortcut(shortcut("grid.filters"))),
@@ -368,7 +369,7 @@ export function FilterBar({
     if (Object.keys(r.errors).length > 0) return setSql({ status: "error", message: f.sqlRowErrors });
     setSql({ status: "loading" });
     previewSql?.(r.filters, mode).then(
-      (text) => run === sqlRun.current && setSql({ status: "ready", sql: text }),
+      (w) => run === sqlRun.current && setSql({ status: "ready", sql: w.display }),
       (err) => run === sqlRun.current && setSql({ status: "error", message: f.sqlFailed(toAppError(err).message) }),
     );
   };
@@ -435,7 +436,7 @@ export function FilterBar({
                 type="checkbox"
                 data-field="enabled"
                 aria-label={f.enabledLabel(row)}
-                title={hint(f.enabledLabel(row), "filters.toggle")}
+                {...hint(f.enabledLabel(row), "filters.toggle")}
                 aria-keyshortcuts={ariaShortcut(shortcut("filters.toggle"))}
                 checked={!off.has(d.id)}
                 onChange={() => toggle(d.id)}
@@ -532,9 +533,11 @@ export function FilterBar({
               {reading && (
                 <span
                   data-testid="raw-reading"
-                  title={`${
-                    reading.kind === "bound" ? f.rawRead.boundHint : reading.kind === "sql" ? f.rawRead.sqlHint : reading.message
-                  } ${f.rawRead.applyNote}`}
+                  {...tip(
+                    `${
+                      reading.kind === "bound" ? f.rawRead.boundHint : reading.kind === "sql" ? f.rawRead.sqlHint : reading.message
+                    } ${f.rawRead.applyNote}`,
+                  )}
                   className={`shrink-0 text-xs ${reading.kind === "error" ? "text-danger" : "text-text"}`}
                 >
                   <span aria-hidden="true">
@@ -550,7 +553,7 @@ export function FilterBar({
                 data-field="apply"
                 className={button}
                 aria-label={f.applyRow(row)}
-                title={f.withShortcut(f.applyRow(row), formatShortcut("Enter"))}
+                {...tip(f.applyRow(row), formatShortcut("Enter"))}
                 onClick={() => applyRow(d.id)}
               >
                 {f.applyRowText}
@@ -560,7 +563,7 @@ export function FilterBar({
                 data-field="remove"
                 className={button}
                 aria-label={f.removeRow(row)}
-                title={hint(f.removeRow(row), "filters.remove")}
+                {...hint(f.removeRow(row), "filters.remove")}
                 aria-keyshortcuts={ariaShortcut(shortcut("filters.remove"))}
                 onClick={() => remove(d.id)}
               >
@@ -571,7 +574,7 @@ export function FilterBar({
                 data-field="add"
                 className={button}
                 aria-label={f.addAfter(row)}
-                title={hint(f.addAfter(row), "filters.add")}
+                {...hint(f.addAfter(row), "filters.add")}
                 aria-keyshortcuts={ariaShortcut(shortcut("filters.add"))}
                 onClick={() => addAfter(d.id)}
               >
@@ -602,7 +605,7 @@ export function FilterBar({
           type="button"
           className={button}
           aria-disabled="true"
-          title={f.exportUnavailable}
+          {...tip(f.exportUnavailable)}
           aria-describedby={`${uid}-export`}
           onClick={(e) => e.preventDefault()}
         >
@@ -617,7 +620,7 @@ export function FilterBar({
               ref={sqlButton}
               type="button"
               className={button}
-              title={f.sqlTitle}
+              {...tip(f.sqlTitle)}
               aria-haspopup="dialog"
               aria-expanded={sql !== null}
               onClick={() => (sql ? closeSql(false) : showSql())}
@@ -629,19 +632,19 @@ export function FilterBar({
         )}
         <p
           data-testid="filter-hints"
-          title={hints}
+          {...tip(hints)}
           className="min-w-0 flex-1 truncate px-1 text-xs whitespace-pre text-text-2"
         >
           {hints}
         </p>
-        <button type="button" className={button} title={f.clearTitle} onClick={clearAll}>
+        <button type="button" className={button} {...tip(f.clearTitle)} onClick={clearAll}>
           {f.clear}
         </button>
         <div className="flex">
           <button
             type="button"
             className={`${button} rounded-r-none`}
-            title={hint(f.applyAll, mode === "or" ? "filters.applyAllOr" : "filters.applyAll")}
+            {...hint(f.applyAll, mode === "or" ? "filters.applyAllOr" : "filters.applyAll")}
             aria-keyshortcuts={ariaShortcut(shortcut(mode === "or" ? "filters.applyAllOr" : "filters.applyAll"))}
             onClick={() => applyAll(mode)}
           >

@@ -4,6 +4,7 @@ import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/
 import { ariaShortcut, formatShortcut } from "../../lib/platform";
 import type { ShortcutOptions } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import { useChrome } from "../../stores/chrome";
 import { ColumnsPopover } from "./ColumnsPopover";
 import { PagePopover } from "./PagePopover";
@@ -91,10 +92,10 @@ const ICON = { size: 15, strokeWidth: 1.6, "aria-hidden": true } as const;
  */
 const filtersControl =
   "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent aria-expanded:border-accent-strong aria-expanded:bg-accent-strong aria-expanded:text-accent-contrast aria-expanded:hover:bg-accent-strong";
-const VIEW_TEXT: Record<TableView, { label: string; hint: (shortcut: string) => string }> = {
-  data: { label: strings.grid.view.data, hint: strings.grid.view.dataShortcut },
-  structure: { label: strings.grid.view.structure, hint: strings.grid.view.structureShortcut },
-  index: { label: strings.grid.view.index, hint: strings.grid.view.indexShortcut },
+const VIEW_TEXT: Record<TableView, { label: string; hint: string }> = {
+  data: { label: strings.grid.view.data, hint: strings.grid.view.dataHint },
+  structure: { label: strings.grid.view.structure, hint: strings.grid.view.structureHint },
+  index: { label: strings.grid.view.index, hint: strings.grid.view.indexHint },
 };
 
 /**
@@ -158,7 +159,7 @@ export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props)
               aria-selected={view === k}
               aria-controls={panelIds[k]}
               tabIndex={view === k ? 0 : -1}
-              title={VIEW_TEXT[k].hint(formatShortcut(shortcut[k]))}
+              {...tip(VIEW_TEXT[k].hint, formatShortcut(shortcut[k]))}
               aria-keyshortcuts={keys(shortcut[k])}
               onClick={() => onView(k)}
               onKeyDown={onTabKey}
@@ -175,7 +176,7 @@ export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props)
             ref={data.addRow.ref}
             type="button"
             className={control}
-            title={g.addRowShortcut(formatShortcut(shortcut.addRow))}
+            {...tip(g.addRowHint, formatShortcut(shortcut.addRow))}
             aria-keyshortcuts={keys(shortcut.addRow)}
             onClick={data.addRow.onClick}
             disabled={data.addRow.disabled}
@@ -218,7 +219,7 @@ function DataControls({
     <button
       type="button"
       aria-label={label}
-      title={g.pageShortcut(label, formatShortcut(spec))}
+      {...tip(label, formatShortcut(spec))}
       aria-keyshortcuts={keys(spec)}
       className={`${control} w-7 px-0`}
       disabled={!enabled || paging.disabled}
@@ -235,7 +236,7 @@ function DataControls({
         className={filtersControl}
         aria-expanded={filters.open}
         aria-controls={filters.open ? filters.controls : undefined}
-        title={g.filtersShortcut(formatShortcut(shortcut.filters))}
+        {...tip(g.filtersHint, formatShortcut(shortcut.filters))}
         aria-keyshortcuts={keys(shortcut.filters)}
         onClick={filters.onToggle}
       >
@@ -249,7 +250,7 @@ function DataControls({
           className={control}
           aria-haspopup="dialog"
           aria-expanded={columns.open}
-          title={g.columnsShortcut(formatShortcut(shortcut.columns))}
+          {...tip(g.columnsHint, formatShortcut(shortcut.columns))}
           aria-keyshortcuts={keys(shortcut.columns)}
           onClick={() => columns.onOpenChange(!columns.open)}
         >
@@ -272,7 +273,7 @@ function DataControls({
           ref={pageRef}
           type="button"
           aria-label={g.pageSettings}
-          title={g.pageSettings}
+          {...tip(g.pageSettings)}
           aria-haspopup="dialog"
           aria-expanded={pageOpen}
           className={`${control} w-7 px-0`}

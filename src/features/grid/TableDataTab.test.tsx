@@ -262,14 +262,8 @@ test("the view switch names the effective shortcuts", async () => {
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await screen.findByTestId("grid");
-  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute(
-    "title",
-    strings.grid.view.dataShortcut("Alt+7"),
-  );
-  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute(
-    "title",
-    strings.grid.view.structureShortcut("Alt+8"),
-  );
+  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("data-tooltip-key", "Alt+7");
+  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("data-tooltip-key", "Alt+8");
 });
 
 test("editing through the grid, then commit applies the changes and reloads", async () => {
@@ -579,10 +573,13 @@ test("the filter bar reloads page 0 filtered and a capped count shows 500,000+",
   expect(screen.getByRole("button", { name: strings.filters.button(1) })).toBeInTheDocument();
 });
 
-test("sql_preview: the filter bar's SQL asks the backend for the page's WHERE of the checked rows", async () => {
+test("sql_preview: the filter bar's SQL asks the backend for the page's WHERE of the checked rows, shown with its values", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
-  vi.mocked(ipc.filtersPreviewSql).mockResolvedValue('WHERE "line" = CAST($1::text AS integer)');
+  vi.mocked(ipc.filtersPreviewSql).mockResolvedValue({
+    sql: 'WHERE "line" = CAST($1::text AS integer)',
+    display: `WHERE "line" = CAST('1'::text AS integer)`,
+  });
   const one = [{ column: "line", op: "eq" as const, values: ["1"] }];
   useGridViews.getState().setView("t1", { filters: one });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
@@ -590,7 +587,7 @@ test("sql_preview: the filter bar's SQL asks the backend for the page's WHERE of
   await userEvent.click(screen.getByRole("button", { name: strings.filters.sql }));
   const dialog = await screen.findByRole("dialog", { name: strings.filters.sqlPreviewLabel });
   expect(ipc.filtersPreviewSql).toHaveBeenCalledWith("w1", obj, one, "and");
-  expect(await within(dialog).findByText('WHERE "line" = CAST($1::text AS integer)')).toBeInTheDocument();
+  expect(await within(dialog).findByText(`WHERE "line" = CAST('1'::text AS integer)`)).toBeInTheDocument();
   // Escape closes the preview only, not the bar.
   await userEvent.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).toBeNull();

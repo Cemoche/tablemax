@@ -121,19 +121,79 @@ pub fn build_page(d: Dialect, info: &TableInfo, req: &PageRequest) -> AppResult<
     Ok(b.finish())
 }
 
-/// The WHERE clause [`build_page`] writes for `filters` joined by `combine` (`WHERE …`, or
-/// "" without filters), with its placeholders: the values are never written into it. A
-/// read-only preview (the filter bar's SQL button), refused like the page (unknown column,
-/// wrong value count, blank raw SQL).
+/// The filter bar's read-only SQL preview of a page's WHERE clause (`WHERE …`, or "" for
+/// both without filters).
+#[derive(Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WherePreview {
+    /// The clause [`build_page`] writes, with its placeholders: the values are never in it.
+    pub sql: String,
+    /// The same clause with each bound value written as a literal of the dialect
+    /// ([`display_literal`]), for reading and copying only: never sent to the database.
+    pub display: String,
+}
+
+/// Prints the placeholder SQL only: the display text holds user values.
+impl std::fmt::Debug for WherePreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "WherePreview {{ sql: {:?}, display: <redacted> }}",
+            self.sql
+        )
+    }
+}
+
+/// The WHERE clause [`build_page`] writes for `filters` joined by `combine`, twice: with its
+/// placeholders, and with the values written in their place for display. The display text
+/// is built by the same code path, each value rendered where its placeholder would go, so
+/// no placeholder is ever searched for in the text (a `?` in a raw SQL row or in a value
+/// stays as typed). Refused like the page (unknown column, wrong value count, blank raw
+/// SQL).
 pub fn where_preview(
     d: Dialect,
     info: &TableInfo,
     filters: &[Filter],
     combine: FilterCombine,
-) -> AppResult<String> {
+) -> AppResult<WherePreview> {
     let mut b = Builder::new(d);
     b.push_where(info, filters, combine)?;
-    Ok(b.sql.trim_start().to_string())
+    let mut shown = Builder::new(d);
+    shown.display = true;
+    shown.push_where(info, filters, combine)?;
+    Ok(WherePreview {
+        sql: b.sql.trim_start().to_string(),
+        display: shown.sql.trim_start().to_string(),
+    })
+}
+
+/// `p` as a SQL literal of `d`, as the engine would read it (display only, never executed):
+/// text between single quotes with quotes doubled; backslashes doubled on MySQL, which
+/// assumes its default sql_mode (under `NO_BACKSLASH_ESCAPES` a backslash is a plain
+/// character and the copied text would hold two); on PostgreSQL an `E''` literal when the
+/// text has a backslash (so the reading does not depend on standard_conforming_strings);
+/// bytes as `X'…'` (PostgreSQL: the `\x…` bytea text).
+pub(super) fn display_literal(d: Dialect, p: &SqlParam) -> String {
+    match p {
+        SqlParam::Text(s) => {
+            let quoted = s.replace('\'', "''");
+            match d {
+                Dialect::Sqlite => format!("'{quoted}'"),
+                Dialect::MySql => format!("'{}'", quoted.replace('\\', "\\\\")),
+                Dialect::Postgres if s.contains('\\') => {
+                    format!("E'{}'", quoted.replace('\\', "\\\\"))
+                }
+                Dialect::Postgres => format!("'{quoted}'"),
+            }
+        }
+        SqlParam::Bytes(b) => {
+            let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+            match d {
+                Dialect::Postgres => format!("E'\\\\x{hex}'"),
+                Dialect::MySql | Dialect::Sqlite => format!("X'{hex}'"),
+            }
+        }
+    }
 }
 
 /// `SELECT COUNT(*) FROM (SELECT 1 FROM t WHERE … LIMIT cap) AS t`: counts at most `cap`
@@ -241,6 +301,9 @@ pub(super) struct Builder {
     pub(super) d: Dialect,
     pub(super) sql: String,
     params: Vec<SqlParam>,
+    /// Writes each value as a literal ([`display_literal`]) instead of its placeholder: a
+    /// preview's text, never executed.
+    display: bool,
 }
 
 impl Builder {
@@ -249,6 +312,7 @@ impl Builder {
             d,
             sql: String::new(),
             params: Vec::new(),
+            display: false,
         }
     }
 
@@ -259,8 +323,13 @@ impl Builder {
         }
     }
 
-    /// Binds `p` and returns its placeholder (`$n` / `?`).
+    /// Binds `p` and returns its placeholder (`$n` / `?`), or its literal in display mode.
     fn push(&mut self, p: SqlParam) -> String {
+        if self.display {
+            let lit = display_literal(self.d, &p);
+            self.params.push(p);
+            return lit;
+        }
         self.params.push(p);
         match self.d {
             Dialect::Postgres => format!("${}", self.params.len()),
@@ -280,6 +349,10 @@ impl Builder {
     /// A value compared with (or written to) a column whose type without modifier is
     /// `base_type`.
     pub(super) fn typed(&mut self, v: &str, base_type: &str) -> String {
+        if self.display && self.d == Dialect::Postgres {
+            let lit = self.bind(v);
+            return pg_display_typed(v, base_type, lit);
+        }
         let p = self.bind(v);
         match self.d {
             Dialect::Postgres => format!("CAST({p}::text AS {base_type})"),
@@ -299,6 +372,10 @@ impl Builder {
     /// `%value%` with the value's own `!`, `%` and `_` escaped (`ESCAPE '!'`).
     fn contains_pattern(&mut self, v: &str) -> String {
         let escaped = v.replace('!', "!!").replace('%', "!%").replace('_', "!_");
+        if self.display {
+            // Read as the one pattern the concatenation gives.
+            return self.push(SqlParam::Text(format!("%{escaped}%")));
+        }
         let p = self.text(&escaped);
         match self.d {
             Dialect::MySql => format!("CONCAT('%', {p}, '%')"),
@@ -468,6 +545,45 @@ impl Builder {
             return Ok(format!("({empty})"));
         }
         Ok(format!("({})", parts.join(join)))
+    }
+}
+
+/// How the preview shows `v` compared with a PostgreSQL column of type `base_type`, `lit`
+/// being its text literal: as one would write it by hand rather than the page's
+/// `CAST($n::text AS type)`. Text types: the literal; integer types: the bare number when `v`
+/// is an integer within the type's range (else the cast that runs fails, and the preview
+/// shows the typed literal); numeric: the bare number when `v` is one; booleans: TRUE /
+/// FALSE; anything else, floats included (a bare 0.1 is a numeric): `'lit'::type`. The page
+/// itself still binds text and casts it.
+fn pg_display_typed(v: &str, base_type: &str, lit: String) -> String {
+    let t = base_type.trim().to_ascii_lowercase();
+    match t.as_str() {
+        "text" | "varchar" | "character varying" | "bpchar" | "char" | "character" | "name"
+        | "citext" => lit,
+        // Bare only where the cast that runs accepts it: an integer within the type's range.
+        "smallint" | "int2" if is_plain_integer(v) && v.parse::<i16>().is_ok() => v.to_string(),
+        "integer" | "int4" if is_plain_integer(v) && v.parse::<i32>().is_ok() => v.to_string(),
+        "bigint" | "int8" if is_plain_integer(v) && v.parse::<i64>().is_ok() => v.to_string(),
+        "numeric" | "decimal" if is_plain_number(v) => v.to_string(),
+        "boolean" | "bool" if v.eq_ignore_ascii_case("true") => "TRUE".into(),
+        "boolean" | "bool" if v.eq_ignore_ascii_case("false") => "FALSE".into(),
+        _ => format!("{lit}::{base_type}"),
+    }
+}
+
+/// `^-?\d+$` (`parse` alone would also take a leading `+`).
+fn is_plain_integer(v: &str) -> bool {
+    let v = v.strip_prefix('-').unwrap_or(v);
+    !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `^-?\d+(\.\d+)?$`
+fn is_plain_number(v: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let v = v.strip_prefix('-').unwrap_or(v);
+    match v.split_once('.') {
+        Some((int, frac)) => digits(int) && digits(frac),
+        None => digits(v),
     }
 }
 
@@ -1087,8 +1203,8 @@ mod tests {
 
     #[test]
     fn where_preview_is_the_page_where_without_values() {
-        // The filter bar's SQL button: the page's own WHERE, placeholders in place of the
-        // values (never written into the text), on every dialect, AND and OR.
+        // The filter bar's SQL button: `sql` is the page's own WHERE, placeholders in place
+        // of the values (never written into it), on every dialect, AND and OR.
         let filters = vec![
             f("id", FilterOp::Between, &["1", "secret-low"]),
             f("note", FilterOp::Contains, &["secret-text"]),
@@ -1101,18 +1217,24 @@ mod tests {
         ] {
             for combine in [FilterCombine::And, FilterCombine::Or] {
                 let w = where_preview(d, &info, &filters, combine).unwrap();
-                assert!(w.starts_with("WHERE "), "{w}");
-                assert!(!w.contains("secret"), "{w}");
+                assert!(w.sql.starts_with("WHERE "), "{}", w.sql);
+                assert!(!w.sql.contains("secret"), "{}", w.sql);
                 let req = PageRequest {
                     combine,
                     ..req_with(filters.clone())
                 };
                 let page = build_page(d, &info, &req).unwrap();
                 assert!(
-                    page.sql.contains(&format!(" {w} ORDER BY")),
-                    "{}\n{w}",
-                    page.sql
+                    page.sql.contains(&format!(" {} ORDER BY", w.sql)),
+                    "{}\n{}",
+                    page.sql,
+                    w.sql
                 );
+                // The page still binds every value: the display text is never what runs.
+                assert!(!page.sql.contains("secret"), "{}", page.sql);
+                assert!(!page.sql.contains(&w.display), "{}", page.sql);
+                assert!(w.display.starts_with("WHERE "), "{}", w.display);
+                assert!(w.display.contains("secret-text"), "{}", w.display);
             }
         }
         assert_eq!(
@@ -1122,13 +1244,17 @@ mod tests {
                 &filters[..1],
                 FilterCombine::And
             )
-            .unwrap(),
+            .unwrap()
+            .sql,
             "WHERE \"id\" BETWEEN CAST($1::text AS integer) AND CAST($2::text AS integer)"
         );
         // No filter: no clause. A bad filter is refused as the page refuses it.
         assert_eq!(
             where_preview(Dialect::MySql, &my_info(), &[], FilterCombine::Or).unwrap(),
-            ""
+            WherePreview {
+                sql: String::new(),
+                display: String::new()
+            }
         );
         assert_eq!(
             where_preview(
@@ -1140,6 +1266,314 @@ mod tests {
             .unwrap_err()
             .kind,
             ErrorKind::Invalid
+        );
+    }
+
+    /// The preview's display text for `filters` (AND) on `d`.
+    fn shown(d: Dialect, info: &TableInfo, filters: Vec<Filter>) -> String {
+        where_preview(d, info, &filters, FilterCombine::And)
+            .unwrap()
+            .display
+    }
+
+    #[test]
+    fn where_preview_display_inlines_values_on_postgres() {
+        let info = pg_info();
+        // Readable, not the page's casts (review #109): numbers bare, text a plain literal
+        // with its quotes doubled.
+        assert_eq!(
+            shown(
+                Dialect::Postgres,
+                &info,
+                vec![
+                    f("id", FilterOp::Eq, &["42"]),
+                    f("note", FilterOp::Neq, &["it's"]),
+                    f("amount", FilterOp::Between, &["1", "9.5"]),
+                    f("id", FilterOp::In, &["1", "2"]),
+                    f("note", FilterOp::IsNull, &[]),
+                ]
+            ),
+            "WHERE \"id\" = 42 \
+             AND \"note\" <> 'it''s' \
+             AND \"amount\" BETWEEN 1 AND 9.5 \
+             AND \"id\" IN (1, 2) \
+             AND \"note\" IS NULL"
+        );
+        // Contains reads as the pattern the page builds ('%' || value || '%'), its own
+        // wildcards escaped with `!`; a backslash makes an E'' literal with `\` doubled.
+        assert_eq!(
+            shown(
+                Dialect::Postgres,
+                &info,
+                vec![
+                    f("note", FilterOp::Contains, &["x"]),
+                    f("note", FilterOp::NotContains, &["50%_a\\b"]),
+                    f("note", FilterOp::Like, &["a%"]),
+                ]
+            ),
+            "WHERE CAST(\"note\" AS text) LIKE '%x%' ESCAPE '!' \
+             AND CAST(\"note\" AS text) NOT LIKE E'%50!%!_a\\\\b%' ESCAPE '!' \
+             AND CAST(\"note\" AS text) LIKE 'a%'::text"
+        );
+        // `$1` and `?` inside a value are plain text; bytea is shown as the text it is bound as.
+        assert_eq!(
+            shown(
+                Dialect::Postgres,
+                &info,
+                vec![
+                    f("note", FilterOp::Eq, &["$1 or ?"]),
+                    f("data", FilterOp::Eq, &["\\xdead"]),
+                    f("note", FilterOp::Eq, &["$2"]),
+                ]
+            ),
+            "WHERE \"note\" = '$1 or ?' \
+             AND \"data\" = E'\\\\xdead'::bytea \
+             AND \"note\" = '$2'"
+        );
+    }
+
+    #[test]
+    fn where_preview_display_inlines_values_on_mysql_and_sqlite() {
+        let my = my_info();
+        let lite = info_with("main", my_info().columns);
+        let filters = || {
+            vec![
+                f("id", FilterOp::Gte, &["2"]),
+                f("note", FilterOp::Eq, &["it's \\'; DROP TABLE x; --"]),
+                f("note", FilterOp::Contains, &["a?b"]),
+                f("note", FilterOp::Eq, &["{\"k\": \"v's\"}"]),
+            ]
+        };
+        // MySQL: backslashes are escapes under its default sql_mode, so they are doubled.
+        assert_eq!(
+            shown(Dialect::MySql, &my, filters()),
+            "WHERE `id` >= '2' \
+             AND `note` = 'it''s \\\\''; DROP TABLE x; --' \
+             AND `note` LIKE '%a?b%' ESCAPE '!' \
+             AND `note` = '{\"k\": \"v''s\"}'"
+        );
+        // SQLite: only quotes are doubled.
+        assert_eq!(
+            shown(Dialect::Sqlite, &lite, filters()),
+            "WHERE \"id\" >= '2' \
+             AND \"note\" = 'it''s \\''; DROP TABLE x; --' \
+             AND \"note\" LIKE '%a?b%' ESCAPE '!' \
+             AND \"note\" = '{\"k\": \"v''s\"}'"
+        );
+        // Booleans, dates and NULL-like words are values like any other: bound as text, so
+        // shown as text literals.
+        assert_eq!(
+            shown(
+                Dialect::Sqlite,
+                &lite,
+                vec![
+                    f("note", FilterOp::In, &["true", "2024-01-31", "NULL"]),
+                    f("id", FilterOp::IsNotNull, &[]),
+                ]
+            ),
+            "WHERE \"note\" IN ('true', '2024-01-31', 'NULL') AND \"id\" IS NOT NULL"
+        );
+    }
+
+    #[test]
+    fn where_preview_display_keeps_raw_sql_as_typed() {
+        // A raw SQL row is the user's own text: a `?`, a `$1` or a quote in it is never taken
+        // for a placeholder, and the values around it keep their order.
+        let raw = |sql: &str| Filter {
+            column: None,
+            op: FilterOp::Raw,
+            values: vec![sql.into()],
+        };
+        let filters = vec![
+            f("id", FilterOp::Eq, &["1"]),
+            raw("note ? 'k' OR note = '?' -- it's $1"),
+            f("note", FilterOp::Eq, &["after"]),
+        ];
+        assert_eq!(
+            shown(Dialect::MySql, &my_info(), filters.clone()),
+            "WHERE `id` = '1' AND (\nnote ? 'k' OR note = '?' -- it's $1\n) AND `note` = 'after'"
+        );
+        assert_eq!(
+            shown(Dialect::Postgres, &pg_info(), filters.clone()),
+            "WHERE \"id\" = 1 \
+             AND (\nnote ? 'k' OR note = '?' -- it's $1\n) \
+             AND \"note\" = 'after'"
+        );
+        // The executed page is unchanged: placeholders, the values bound in order.
+        let page = build_page(Dialect::MySql, &my_info(), &req_with(filters.clone())).unwrap();
+        assert_eq!(
+            page.sql,
+            "SELECT * FROM `shop`.`order` WHERE `id` = ? \
+             AND (\nnote ? 'k' OR note = '?' -- it's $1\n) AND `note` = ? \
+             ORDER BY `id` LIMIT 300 OFFSET 0"
+        );
+        assert_eq!(page.params, texts(&["1", "after"]));
+        let page = build_page(Dialect::Postgres, &pg_info(), &req_with(filters)).unwrap();
+        assert!(
+            page.sql.contains(
+                "WHERE \"id\" = CAST($1::text AS integer) \
+                 AND (\nnote ? 'k' OR note = '?' -- it's $1\n) \
+                 AND \"note\" = CAST($2::text AS text) ORDER"
+            ),
+            "{}",
+            page.sql
+        );
+        assert_eq!(page.params, texts(&["1", "after"]));
+    }
+
+    /// The PostgreSQL display of `value` compared with a column of type `ty`.
+    fn pg_shown(ty: &str, value: &str) -> String {
+        let info = info_with("public", vec![column("c", ty)]);
+        shown(
+            Dialect::Postgres,
+            &info,
+            vec![f("c", FilterOp::Eq, &[value])],
+        )
+    }
+
+    #[test]
+    fn where_preview_display_reads_like_postgres_sql() {
+        // Text types: the plain literal (E'' kept when a backslash needs it).
+        for ty in [
+            "text",
+            "character varying(20)",
+            "varchar",
+            "character(3)",
+            "bpchar",
+            "char",
+            "name",
+            "citext",
+        ] {
+            assert_eq!(pg_shown(ty, "it's"), "WHERE \"c\" = 'it''s'", "{ty}");
+        }
+        assert_eq!(pg_shown("text", "a\\b"), "WHERE \"c\" = E'a\\\\b'");
+        // Integers and numeric: a bare number when the value is one, else a typed literal.
+        for ty in [
+            "smallint",
+            "integer",
+            "bigint",
+            "int2",
+            "int4",
+            "int8",
+            "numeric(12,2)",
+            "decimal",
+        ] {
+            assert_eq!(pg_shown(ty, "-42"), "WHERE \"c\" = -42", "{ty}");
+        }
+        for ty in ["numeric(12,2)", "decimal"] {
+            assert_eq!(pg_shown(ty, "3.25"), "WHERE \"c\" = 3.25", "{ty}");
+        }
+        // Integer types: bare only for an integer within the column's range; what runs
+        // (`CAST('v'::text AS type)`) refuses anything else, so the preview shows the cast.
+        for (ty, v) in [
+            ("integer", "3.25"),
+            ("int4", "3.25"),
+            ("smallint", "40000"),
+            ("int2", "-32769"),
+            ("integer", "99999999999"),
+            ("int4", "2147483648"),
+            ("bigint", "9223372036854775808"),
+            ("int8", "-9223372036854775809"),
+            ("integer", "+5"),
+        ] {
+            assert_eq!(
+                pg_shown(ty, v),
+                format!("WHERE \"c\" = '{v}'::{ty}"),
+                "{ty} {v}"
+            );
+        }
+        for (ty, v) in [
+            ("integer", "007"),
+            ("integer", "-0"),
+            ("smallint", "32767"),
+            ("int2", "-32768"),
+            ("integer", "2147483647"),
+            ("bigint", "9223372036854775807"),
+            ("int8", "-9223372036854775808"),
+        ] {
+            assert_eq!(pg_shown(ty, v), format!("WHERE \"c\" = {v}"), "{ty} {v}");
+        }
+        let base = |ty: &str| ty.split('(').next().unwrap().to_string();
+        for (ty, v) in [
+            ("integer", "1e3"),
+            ("bigint", "12abc"),
+            ("numeric", "1."),
+            ("integer", " 1"),
+        ] {
+            assert_eq!(
+                pg_shown(ty, v),
+                format!("WHERE \"c\" = '{v}'::{}", base(ty)),
+                "{ty} {v}"
+            );
+        }
+        // Floating point: never bare (a bare 0.1 is numeric, not the float compared).
+        assert_eq!(pg_shown("real", "0.1"), "WHERE \"c\" = '0.1'::real");
+        assert_eq!(
+            pg_shown("double precision", "2"),
+            "WHERE \"c\" = '2'::double precision"
+        );
+        // Booleans: TRUE / FALSE for true / false in any case, else a typed literal.
+        assert_eq!(pg_shown("boolean", "true"), "WHERE \"c\" = TRUE");
+        assert_eq!(pg_shown("boolean", "FaLsE"), "WHERE \"c\" = FALSE");
+        assert_eq!(pg_shown("boolean", "yes"), "WHERE \"c\" = 'yes'::boolean");
+        // Any other type: 'literal'::type.
+        assert_eq!(
+            pg_shown("date", "2024-01-31"),
+            "WHERE \"c\" = '2024-01-31'::date"
+        );
+        assert_eq!(
+            pg_shown("jsonb", "{\"k\": \"v's\"}"),
+            "WHERE \"c\" = '{\"k\": \"v''s\"}'::jsonb"
+        );
+        assert_eq!(pg_shown("uuid", "x"), "WHERE \"c\" = 'x'::uuid");
+        // The executed page keeps its casts and binds the value.
+        let info = info_with("public", vec![column("c", "boolean")]);
+        let page = build_page(
+            Dialect::Postgres,
+            &info,
+            &req_with(vec![f("c", FilterOp::Eq, &["true"])]),
+        )
+        .unwrap();
+        assert!(
+            page.sql
+                .contains("WHERE \"c\" = CAST($1::text AS boolean) ORDER"),
+            "{}",
+            page.sql
+        );
+        assert_eq!(page.params, texts(&["true"]));
+    }
+
+    #[test]
+    fn display_literals_per_dialect() {
+        let t = |s: &str| SqlParam::Text(s.into());
+        assert_eq!(display_literal(Dialect::Sqlite, &t("a'b\\c")), "'a''b\\c'");
+        assert_eq!(display_literal(Dialect::MySql, &t("a'b\\c")), "'a''b\\\\c'");
+        assert_eq!(display_literal(Dialect::Postgres, &t("a'b")), "'a''b'");
+        assert_eq!(
+            display_literal(Dialect::Postgres, &t("a'b\\c")),
+            "E'a''b\\\\c'"
+        );
+        let b = SqlParam::Bytes(vec![0x00, 0xff]);
+        assert_eq!(display_literal(Dialect::Postgres, &b), "E'\\\\x00ff'");
+        assert_eq!(display_literal(Dialect::MySql, &b), "X'00ff'");
+        assert_eq!(display_literal(Dialect::Sqlite, &b), "X'00ff'");
+    }
+
+    #[test]
+    fn where_preview_debug_hides_the_values() {
+        let w = where_preview(
+            Dialect::Sqlite,
+            &info_with("main", my_info().columns),
+            &[f("note", FilterOp::Eq, &["s3cret-value"])],
+            FilterCombine::And,
+        )
+        .unwrap();
+        let out = format!("{w:?}");
+        assert!(!out.contains("s3cret-value"), "{out}");
+        assert!(out.contains(&format!("{:?}", w.sql)), "{out}");
+        assert_eq!(
+            serde_json::to_value(&w).unwrap(),
+            serde_json::json!({"sql": "WHERE \"note\" = ?", "display": "WHERE \"note\" = 's3cret-value'"})
         );
     }
 

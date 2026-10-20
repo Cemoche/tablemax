@@ -3,6 +3,7 @@ import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState
 import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
+import { tip, tipIfCut } from "../../lib/tooltip";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Tab, type Workspace, capabilitiesOf, isQueryModified, useWorkspaces } from "../../stores/workspaces";
 import {
@@ -37,6 +38,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
   const committing = usePendingChanges((s) => s.committing);
   const backShortcut = formatShortcut(useEffectiveShortcut("nav.back"));
   const forwardShortcut = formatShortcut(useEffectiveShortcut("nav.forward"));
+  const newTabShortcut = formatShortcut(useEffectiveShortcut("query.new"));
   const can = useCanNavigate(workspace);
   const { id, tabs, activeTabId } = workspace;
   const { sqlEditor } = capabilitiesOf(workspace);
@@ -142,7 +144,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
       <button
         type="button"
         aria-label={S.back}
-        title={S.backTitle(backShortcut)}
+        {...tip(S.back, backShortcut)}
         disabled={!can.back}
         onClick={() => goBack(id)}
         className={iconButton}
@@ -152,7 +154,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
       <button
         type="button"
         aria-label={S.forward}
-        title={S.forwardTitle(forwardShortcut)}
+        {...tip(S.forward, forwardShortcut)}
         disabled={!can.forward}
         onClick={() => goForward(id)}
         className={iconButton}
@@ -211,10 +213,13 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     tabIndex={-1}
                     aria-hidden="true"
                     aria-label={S.closeTab(t.title)}
-                    title={busy ? strings.grid.closeWhileCommitting : S.closeTab(t.title)}
-                    disabled={busy}
-                    onClick={() => closeTab(id, t.id)}
-                    className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon disabled:opacity-40 ${
+                    {...tip(busy ? strings.grid.closeWhileCommitting : S.closeTab(t.title))}
+                    // Still hovered for its reason while a commit runs; does nothing (review #109).
+                    aria-disabled={busy || undefined}
+                    onClick={() => {
+                      if (!busy) closeTab(id, t.id);
+                    }}
+                    className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon aria-disabled:opacity-40 ${
                       active
                         ? // A lone tab spans the bar, its × on hover only (as the reference, #103).
                           `${tabs.length > 1 ? "opacity-100" : "opacity-0 group-hover:opacity-100"} hover:bg-tab`
@@ -230,7 +235,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     aria-selected={active}
                     tabIndex={active ? 0 : -1}
                     aria-keyshortcuts="Delete F2 Shift+F10"
-                    title={t.title}
+                    {...tipIfCut(t.title)}
                     onClick={() => activateTab(id, t.id)}
                     onDoubleClick={() => pinTab(id, t.id)}
                     onKeyDown={(e) => onTabKeyDown(e, t)}
@@ -245,14 +250,14 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     </span>
                     {t.kind === "query" && t.database && workspace.database && t.database !== workspace.database && (
                       <span
-                        title={S.tabDatabase(t.database)}
+                        {...tip(S.tabDatabase(t.database))}
                         className="shrink-0 rounded-sm border border-border px-1 text-xs font-normal not-italic"
                       >
                         {t.database}
                       </span>
                     )}
                     {isQueryModified(t) && (
-                      <span aria-hidden="true" title={strings.savedQueries.modified} className="shrink-0 text-warning">
+                      <span aria-hidden="true" {...tip(strings.savedQueries.modified)} className="shrink-0 text-warning">
                         {strings.savedQueries.modifiedDot}
                       </span>
                     )}
@@ -267,14 +272,14 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
         <button
           type="button"
           aria-label={S.newQueryTab}
-          title={S.newQueryTab}
+          {...tip(S.newQueryTab, newTabShortcut)}
           onClick={() => openQueryTab(id)}
           className={iconButton}
         >
           <Plus aria-hidden="true" size={16} />
         </button>
       )}
-      <button type="button" aria-label={S.split} aria-disabled="true" title={S.splitSoon} className={iconButton}>
+      <button type="button" aria-label={S.split} aria-disabled="true" {...tip(S.splitSoon)} className={iconButton}>
         <Columns2 aria-hidden="true" size={16} />
       </button>
       <TabList workspace={workspace} />

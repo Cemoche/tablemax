@@ -1,6 +1,9 @@
 import { ChevronDown, Plus, Settings } from "lucide-react";
 import { useRef, useState } from "react";
+import { useEffectiveShortcut } from "../../lib/keymap";
+import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome } from "../../stores/chrome";
 import { type Workspace, capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
@@ -27,13 +30,15 @@ export function SidebarFooter({ workspace }: { workspace: Workspace }) {
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
   const more = useRef<HTMLButtonElement>(null);
   const newQuery = () => useWorkspaces.getState().openQueryTab(workspace.id);
+  const newQueryKey = formatShortcut(useEffectiveShortcut("query.new"));
+  const settingsKey = formatShortcut(useEffectiveShortcut("settings.open"));
 
   return (
     <div className="flex h-10 shrink-0 items-center gap-1.5 border-t border-sep px-2">
       <button
         type="button"
         aria-label={strings.settings.open}
-        title={strings.settings.open}
+        {...tip(strings.settings.open, settingsKey)}
         onClick={() => useChrome.getState().requestSettings()}
         className={`${iconButton} rounded-md`}
       >
@@ -41,7 +46,7 @@ export function SidebarFooter({ workspace }: { workspace: Workspace }) {
       </button>
       <div className="flex shrink-0 items-center overflow-hidden rounded-md border border-pill-border bg-btn">
         {sqlEditor && (
-          <button type="button" aria-label={S.newQuery} title={S.newQuery} onClick={newQuery} className={iconButton}>
+          <button type="button" aria-label={S.newQuery} {...tip(S.newQuery, newQueryKey)} onClick={newQuery} className={iconButton}>
             <Plus aria-hidden size={15} strokeWidth={1.6} />
           </button>
         )}
@@ -49,7 +54,7 @@ export function SidebarFooter({ workspace }: { workspace: Workspace }) {
           ref={more}
           type="button"
           aria-label={S.more}
-          title={S.more}
+          {...tip(S.more)}
           aria-haspopup="menu"
           aria-expanded={menu !== null}
           onClick={() => {
@@ -63,7 +68,7 @@ export function SidebarFooter({ workspace }: { workspace: Workspace }) {
       </div>
       <select
         aria-label={S.schema}
-        title={S.schema}
+        {...tip(S.schema)}
         value={workspace.currentSchema ?? ""}
         disabled={workspace.schemas.length === 0}
         onChange={(e) => setSchema(workspace.id, e.target.value)}

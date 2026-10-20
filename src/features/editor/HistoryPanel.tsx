@@ -1,6 +1,7 @@
 import { type MouseEvent, useEffect, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import type { HistoryEntry } from "../../lib/types";
 import { useChrome } from "../../stores/chrome";
 import type { Workspace } from "../../stores/workspaces";
@@ -115,7 +116,7 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
               <li key={h.id}>
                 <button
                   type="button"
-                  title={H.itemHint}
+                  {...tip(H.itemHint)}
                   onClick={() => openSqlTab(wsId, h.sql)}
                   onContextMenu={(e: MouseEvent<HTMLButtonElement>) => {
                     e.preventDefault();

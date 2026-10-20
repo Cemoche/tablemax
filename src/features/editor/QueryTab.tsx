@@ -6,6 +6,7 @@ import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { registerPendingFlush } from "../../lib/pendingFlush";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import { autoLimitTexts, useAutoLimit, useAutoLimitOn } from "../../stores/autoLimit";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome } from "../../stores/chrome";
@@ -332,15 +333,17 @@ export function QueryTab({ workspace, tab }: Props) {
         )}
         <span className="ml-auto flex min-w-0 items-center gap-1 text-sm">
           {linkedName && (
-            <span className="truncate text-muted" title={strings.savedQueries.linked(linkedName)}>
-              {linkedName}
+            <span className="truncate text-muted" {...tip(strings.savedQueries.linked(linkedName))}>
+              <span aria-hidden="true">{linkedName}</span>
+              {/* The tooltip's wording for assistive tech, always there (review #109). */}
+              <span className="sr-only">{strings.savedQueries.linked(linkedName)}</span>
             </span>
           )}
           {modified && (
             <span
               role="img"
               aria-label={strings.savedQueries.modified}
-              title={strings.savedQueries.modified}
+              {...tip(strings.savedQueries.modified)}
               className="text-warning"
             >
               {strings.savedQueries.modifiedDot}
@@ -350,17 +353,15 @@ export function QueryTab({ workspace, tab }: Props) {
         <button
           type="button"
           className={btn}
-          title={strings.savedQueries.saveHint(formatShortcut(saveShortcut))}
+          {...tip(strings.savedQueries.saveHint, formatShortcut(saveShortcut))}
           onClick={() => void save()}
         >
           {strings.savedQueries.save}
         </button>
-        <label
-          className="flex shrink-0 items-center gap-1 text-sm"
-          title={strings.query.autoLimitHint(autoLimitRows)}
-        >
+        <label className="flex shrink-0 items-center gap-1 text-sm">
           <input
             type="checkbox"
+            {...tip(strings.query.autoLimitHint(autoLimitRows))}
             checked={autoLimit}
             onChange={(e) => useAutoLimit.getState().setAutoLimit(tabId, e.target.checked)}
           />

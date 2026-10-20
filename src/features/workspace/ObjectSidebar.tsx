@@ -15,6 +15,7 @@ import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { qualifiedName } from "../../lib/sqlIdent";
 import { strings } from "../../lib/strings";
+import { tipIfCut } from "../../lib/tooltip";
 import type { DbObject, DbRoutine } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome, useOnRequest } from "../../stores/chrome";
@@ -485,7 +486,7 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
   };
 
   const rowClass = (selected: boolean) =>
-    `absolute inset-x-1.5 flex cursor-default items-center gap-1.5 rounded-md px-1.5 text-left whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent ${
+    `absolute inset-x-1.5 flex items-center gap-1.5 rounded-md px-1.5 text-left whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent ${
       selected ? "bg-sel" : "hover:bg-seg-sel"
     }`;
 
@@ -529,7 +530,7 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
         {...common}
         aria-label={name}
         aria-selected={selected}
-        title={name}
+        {...tipIfCut(name)}
         data-object-row={row.type === "object" ? name : undefined}
         onClick={(e) => {
           if (row.type === "routine") menuAt(row, index, e.currentTarget);

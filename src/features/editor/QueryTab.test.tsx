@@ -59,7 +59,7 @@ const rs = (n: number, truncated = false) => ({
 let emit: (e: ExecEvent) => void;
 let resolveExec: () => void;
 
-const setup = async (sql = "select 1; select 2", dialect: Dialect = "postgres") => {
+const setup = async (sql = "select 1; select 2", dialect: Dialect = "postgres", tabExtra: object = {}) => {
   useWorkspaces.setState({
     workspaces: [
       {
@@ -73,7 +73,7 @@ const setup = async (sql = "select 1; select 2", dialect: Dialect = "postgres") 
         database: null,
         schemas: ["public"],
         currentSchema: "public",
-        tabs: [{ id: "t1", kind: "query", title: "Query 1", sql, sqlSessionId: null }],
+        tabs: [{ id: "t1", kind: "query", title: "Query 1", sql, sqlSessionId: null, ...tabExtra }],
         activeTabId: "t1",
         mru: [],
       } satisfies Workspace,
@@ -477,7 +477,9 @@ test("the configured value is the one sent and the one the label and hint name",
   await setup("select * from t");
   const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(50) });
   expect(box).toBeChecked();
-  expect(box.closest("label")).toHaveAttribute("title", strings.query.autoLimitHint(50));
+  // The hint is the checkbox's own (review #109), not its label's.
+  expect(box).toHaveAttribute("data-tooltip", strings.query.autoLimitHint(50));
+  expect(box.closest("label")).not.toHaveAttribute("data-tooltip");
   await userEvent.click(screen.getByRole("button", { name: "Run all" }));
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t LIMIT 50"]);
@@ -685,10 +687,9 @@ test("the Save button names the effective shortcut; History and Saved queries le
   });
   onTestFinished(() => useSettings.setState({ settings: DEFAULT_SETTINGS }));
   await setup();
-  expect(screen.getByRole("button", { name: strings.savedQueries.save })).toHaveAttribute(
-    "title",
-    strings.savedQueries.saveHint("Ctrl+Shift+S"),
-  );
+  const save = screen.getByRole("button", { name: strings.savedQueries.save });
+  expect(save).toHaveAttribute("data-tooltip", strings.savedQueries.saveHint);
+  expect(save).toHaveAttribute("data-tooltip-key", "Ctrl+Shift+S");
   expect(screen.queryByRole("complementary", { name: strings.history.label })).toBeNull();
   expect(screen.queryByRole("region", { name: strings.savedQueries.label })).toBeNull();
 });
@@ -702,4 +703,11 @@ test("Ctrl+[ / Ctrl+] in the editor are left to the tab shortcuts: they do not i
   act(() => view.dispatch({ changes: { from: 0, insert: "  " } }));
   press(view, { key: "[", code: "BracketLeft", keyCode: 219, ctrlKey: true });
   expect(view.state.doc.toString()).toBe("  select 1");
+});
+
+test("a linked saved query names itself for assistive tech too, not only in its tooltip (review #109)", async () => {
+  await setup("select 1", "postgres", { savedName: "report", savedSql: "select 1" });
+  const described = screen.getByText(strings.savedQueries.linked("report"));
+  expect(described).toHaveClass("sr-only");
+  expect(described.parentElement).toHaveAttribute("data-tooltip", strings.savedQueries.linked("report"));
 });

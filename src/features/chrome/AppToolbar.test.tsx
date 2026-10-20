@@ -169,18 +169,31 @@ test("commit_group_replaces_the_edit_strip: pending count, Cancel while committi
   await user.click(cancel);
   expect(cancelCommit).toHaveBeenCalledWith("t1", "w1");
 
-  // Another table tab of the workspace commits: Commit waits, and says why.
-  act(() => usePendingChanges.setState({ committing: {}, committingIn: { w1: "t9" } }));
-  expect(commit).toBeDisabled();
-  expect(commit).toHaveAttribute("title", strings.grid.otherTabCommitting);
+  // Another table tab of the workspace commits: Commit waits, and says why. It stays
+  // focusable (aria-disabled, review #109) so its reason can be read; it does nothing.
+  const commitSpy = vi.fn(async () => true);
+  act(() => usePendingChanges.setState({ committing: {}, committingIn: { w1: "t9" }, commit: commitSpy }));
+  expect(commit).not.toBeDisabled();
+  expect(commit).toHaveAttribute("aria-disabled", "true");
+  expect(commit).toHaveAttribute("data-tooltip", strings.grid.otherTabCommitting);
+  expect(commit).toHaveAccessibleDescription(
+    `${strings.grid.pendingCount(2)} ${strings.grid.otherTabCommitting}`,
+  );
+  await user.click(commit);
+  act(() => commit.focus());
+  await user.keyboard("{Enter}");
+  await user.keyboard(" ");
+  expect(commitSpy).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: t.discard })).toBeEnabled();
   // A tab of another workspace committing never blocks this one.
   act(() => usePendingChanges.setState({ committingIn: { w2: "tX" } }));
   expect(commit).toBeEnabled();
-  expect(commit).not.toHaveAttribute("title", strings.grid.otherTabCommitting);
+  expect(commit).not.toHaveAttribute("aria-disabled");
+  expect(commit).toHaveAccessibleDescription(strings.grid.pendingCount(2));
+  expect(commit).not.toHaveAttribute("data-tooltip", strings.grid.otherTabCommitting);
   act(() => usePendingChanges.setState({ committingIn: {} }));
   expect(commit).toBeEnabled();
-  expect(commit).not.toHaveAttribute("title", strings.grid.otherTabCommitting);
+  expect(commit).not.toHaveAttribute("data-tooltip", strings.grid.otherTabCommitting);
 });
 
 test("the commit group is off on a SQL tab and on a disconnected workspace", () => {
@@ -403,7 +416,11 @@ test("the connections screen shows only the settings, the title and the window b
 test("the sidebar button names Ctrl+0", () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   setup();
-  expect(screen.getByRole("button", { name: t.sidebar })).toHaveAttribute("title", t.hint(t.sidebar, "Ctrl+0"));
+  const sidebar = screen.getByRole("button", { name: t.sidebar });
+  // Tooltip (#109): the label, and the key from the live keymap; no native title.
+  expect(sidebar).toHaveAttribute("data-tooltip", t.sidebar);
+  expect(sidebar).toHaveAttribute("data-tooltip-key", "Ctrl+0");
+  expect(sidebar).not.toHaveAttribute("title");
 });
 
 test("on the connections screen a gear button opens the settings", async () => {
@@ -411,4 +428,15 @@ test("on the connections screen a gear button opens the settings", async () => {
   render(<AppToolbar workspace={null} onEditConnection={vi.fn()} />);
   await userEvent.click(screen.getByRole("button", { name: strings.settings.open }));
   expect(useChrome.getState().settingsRequest).toBe(1);
+});
+
+test("a failed safe mode save is the button's description, not only its tooltip (review #109)", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.connectionSave).mockRejectedValue({ kind: "io", message: "disk full" });
+  setup();
+  const button = screen.getByRole("button", { name: t.safeMode(strings.safety.bannerModeConfirmWrites) });
+  await user.click(button);
+  await user.click(within(screen.getByRole("menu")).getAllByRole("menuitemradio")[3]);
+  await waitFor(() => expect(button).toHaveAccessibleDescription(expect.stringContaining("disk full")));
+  expect(button).toHaveAttribute("data-tooltip", expect.stringContaining("disk full"));
 });

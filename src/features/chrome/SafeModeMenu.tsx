@@ -1,8 +1,9 @@
 import { Check, Lock, LockOpen } from "lucide-react";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import { defaultSafeMode, safeModeBannerText, safeModeLabel } from "../../lib/safeMode";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import type { SafeMode } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
 import type { Workspace } from "../../stores/workspaces";
@@ -24,6 +25,7 @@ export function SafeModeMenu({ workspace }: { workspace: Workspace }) {
   const { envTag, mode } = useLiveEnv(workspace);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
   const button = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const saved = cfg?.safeMode ?? null;
@@ -89,7 +91,8 @@ export function SafeModeMenu({ workspace }: { workspace: Workspace }) {
         ref={button}
         type="button"
         aria-label={label}
-        title={error ?? label}
+        {...tip(error ?? label)}
+        aria-describedby={error ? errorId : undefined}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={!cfg}
@@ -124,6 +127,12 @@ export function SafeModeMenu({ workspace }: { workspace: Workspace }) {
           })}
           {mode !== chosen && <p className="border-t border-pill-border px-2 pt-1.5 pb-1 text-text-2">{t.safeModeLater}</p>}
         </div>
+      )}
+      {/* Why the last save failed, read with the button (not only its tooltip). */}
+      {error && (
+        <span id={errorId} hidden>
+          {error}
+        </span>
       )}
       {error && !open && (
         <p role="alert" className="absolute top-full left-0 z-50 mt-1.5 w-72 rounded-md bg-content px-2 py-1 text-sm text-danger shadow-lg">

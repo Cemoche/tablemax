@@ -1,6 +1,7 @@
 import { Copy, Minus, Square, X } from "lucide-react";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import { useChrome } from "../../stores/chrome";
 import { toggleMaximize } from "./windowState";
 
@@ -19,19 +20,19 @@ export function WindowControls() {
   const maximizeLabel = maximized ? strings.window.restore : strings.window.maximize;
   return (
     <div role="group" aria-label={strings.window.controls} className="ml-1 flex shrink-0 items-center gap-1.5">
-      <button type="button" aria-label={strings.window.minimize} title={strings.window.minimize} className={button} onClick={run(ipc.windowMinimize)}>
+      <button type="button" aria-label={strings.window.minimize} {...tip(strings.window.minimize)} className={button} onClick={run(ipc.windowMinimize)}>
         <Minus aria-hidden size={11} strokeWidth={2} />
       </button>
       <button
         type="button"
         aria-label={maximizeLabel}
-        title={maximizeLabel}
+        {...tip(maximizeLabel)}
         className={button}
         onClick={toggleMaximize}
       >
         {maximized ? <Copy aria-hidden size={10} strokeWidth={2} /> : <Square aria-hidden size={9} strokeWidth={2} />}
       </button>
-      <button type="button" aria-label={strings.window.close} title={strings.window.close} className={button} onClick={run(ipc.windowClose)}>
+      <button type="button" aria-label={strings.window.close} {...tip(strings.window.close)} className={button} onClick={run(ipc.windowClose)}>
         <X aria-hidden size={11} strokeWidth={2} />
       </button>
     </div>

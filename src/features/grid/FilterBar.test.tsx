@@ -3,20 +3,22 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
-import type { Dialect, Filter, FilterCombine } from "../../lib/types";
+import type { Dialect, Filter, FilterCombine, WherePreview } from "../../lib/types";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
+import { TooltipLayer } from "../chrome/TooltipLayer";
 import { FilterBar } from "./FilterBar";
 
 const cols = ["status", "total", "id", "notes"];
 const f = strings.filters;
+const none: WherePreview = { sql: "", display: "" };
 let onApply: ReturnType<typeof vi.fn<(filters: Filter[], combine: FilterCombine) => boolean>>;
 let onClose: ReturnType<typeof vi.fn<() => void>>;
-let previewSql: ReturnType<typeof vi.fn<(filters: Filter[], combine: FilterCombine) => Promise<string>>>;
+let previewSql: ReturnType<typeof vi.fn<(filters: Filter[], combine: FilterCombine) => Promise<WherePreview>>>;
 
 beforeEach(() => {
   onApply = vi.fn<(filters: Filter[], combine: FilterCombine) => boolean>(() => true);
   onClose = vi.fn<() => void>();
-  previewSql = vi.fn<(filters: Filter[], combine: FilterCombine) => Promise<string>>(async () => "");
+  previewSql = vi.fn<(filters: Filter[], combine: FilterCombine) => Promise<WherePreview>>(async () => none);
   useSettings.setState({ settings: DEFAULT_SETTINGS });
   const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   onTestFinished(() => spy.mockRestore());
@@ -408,10 +410,9 @@ test("applying one row sets the join control back to AND (what is applied now)",
   expect(onApply).toHaveBeenLastCalledWith([eq("status", "paid")], "and");
   expect(joinButton("AND")).toBeInTheDocument();
   // The row's Apply names its key as the platform writes it.
-  expect(screen.getByRole("button", { name: f.applyRow(1) })).toHaveAttribute(
-    "title",
-    f.withShortcut(f.applyRow(1), formatShortcut("Enter")),
-  );
+  const apply = screen.getByRole("button", { name: f.applyRow(1) });
+  expect(apply).toHaveAttribute("data-tooltip", f.applyRow(1));
+  expect(apply).toHaveAttribute("data-tooltip-key", formatShortcut("Enter"));
 });
 
 test("filter_row_layout: [✓] [column] [operator] [value…] [Apply] [−] [+]; the footer [⚙] [Export] [SQL] hints [Clear] [Apply All ⌄]", () => {
@@ -461,7 +462,7 @@ test("hint_line_follows_the_keymap: built from the effective shortcuts, a rebind
     expect(hints, text).toHaveTextContent(text);
   }
   // The whole line is its tooltip (it is cut when the bar is narrow).
-  expect(hints).toHaveAttribute("title", hints.textContent);
+  expect(hints).toHaveAttribute("data-tooltip", hints.textContent);
   act(() =>
     useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "filters.add": "Alt+N", "grid.filters": "Alt+S" } } }),
   );
@@ -510,29 +511,34 @@ test("clear_removes_all_filters: Clear applies no filter and leaves one blank ro
   expect(screen.getAllByRole("checkbox")).toHaveLength(1);
   expect(value(1)).toHaveValue("");
   expect(column(1)).toHaveFocus();
-  expect(screen.getByRole("button", { name: f.clear })).toHaveAttribute("title", f.clearTitle);
+  expect(screen.getByRole("button", { name: f.clear })).toHaveAttribute("data-tooltip", f.clearTitle);
 });
 
 test("export_is_disabled_with_a_tooltip: focusable, says why, does nothing", async () => {
   setup();
   const exp = screen.getByRole("button", { name: f.export });
   expect(exp).toHaveAttribute("aria-disabled", "true");
-  expect(exp).toHaveAttribute("title", f.exportUnavailable);
+  expect(exp).toHaveAttribute("data-tooltip", f.exportUnavailable);
   expect(exp).toHaveAccessibleDescription(f.exportUnavailable);
   await userEvent.click(exp);
   expect(onApply).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
-test("sql_preview: SQL shows the WHERE of the checked rows with placeholders, read-only; Escape returns to SQL", async () => {
+test("sql_preview: SQL shows the WHERE of the checked rows with the values written in, read-only; Escape returns to SQL", async () => {
   await twoRows();
-  previewSql.mockResolvedValue('WHERE "status" = $1 AND "total" > CAST($2::text AS numeric)');
+  previewSql.mockResolvedValue({
+    sql: 'WHERE "status" = $1 AND "total" > CAST($2::text AS numeric)',
+    display: `WHERE "status" = 'it''s paid' AND "total" > CAST('5'::text AS numeric)`,
+  });
   const sql = screen.getByRole("button", { name: f.sql });
   expect(sql).toHaveAttribute("aria-haspopup", "dialog");
   await userEvent.click(sql);
   const dialog = await screen.findByRole("dialog", { name: f.sqlPreviewLabel });
   expect(previewSql).toHaveBeenLastCalledWith([eq("status", "paid"), { column: "total", op: "gt", values: ["5"] }], "and");
-  const code = await within(dialog).findByText('WHERE "status" = $1 AND "total" > CAST($2::text AS numeric)');
+  // The display text (#109): the values as literals, not the placeholders.
+  const code = await within(dialog).findByText(`WHERE "status" = 'it''s paid' AND "total" > CAST('5'::text AS numeric)`);
+  expect(within(dialog).queryByText(/\$1/)).toBeNull();
   // Read-only, reachable by keyboard, with the note on values.
   expect(code.tagName).toBe("PRE");
   expect(code).toHaveFocus();
@@ -545,10 +551,26 @@ test("sql_preview: SQL shows the WHERE of the checked rows with placeholders, re
   // Unchecked rows are left out; with nothing left, no clause.
   await userEvent.click(check(1));
   await userEvent.click(check(2));
-  previewSql.mockResolvedValue("");
+  previewSql.mockResolvedValue(none);
   await userEvent.click(sql);
   expect(previewSql).toHaveBeenLastCalledWith([], "and");
   expect(await within(screen.getByRole("dialog")).findByText(f.sqlNone)).toBeInTheDocument();
+});
+
+test("sql_preview copy: Copy puts the text shown (values written in) on the clipboard", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  setup({ filters: [eq("id", "1")] });
+  previewSql.mockResolvedValue({ sql: 'WHERE "id" = $1', display: `WHERE "id" = '1'` });
+  await user.click(screen.getByRole("button", { name: f.sql }));
+  const dialog = await screen.findByRole("dialog");
+  await within(dialog).findByText(`WHERE "id" = '1'`);
+  await user.click(within(dialog).getByRole("button", { name: f.sqlCopy }));
+  expect(writeText).toHaveBeenCalledWith(`WHERE "id" = '1'`);
+  expect(await within(dialog).findByText(f.sqlCopied)).toBeInTheDocument();
+  writeText.mockRejectedValue(new Error("denied"));
+  await user.click(within(dialog).getByRole("button", { name: f.sqlCopy }));
+  expect(await within(dialog).findByText(f.sqlCopyFailed)).toBeInTheDocument();
 });
 
 test("sql_preview errors: a backend refusal, or rows to fix first (nothing asked)", async () => {
@@ -645,7 +667,7 @@ test("a refused Apply All keeps the join it had: the ⌄, the preview and Clear 
 });
 
 test("hiding the bar closes its SQL preview and menus: they do not come back when it reopens (review #103)", async () => {
-  previewSql.mockResolvedValue('WHERE "id" = $1');
+  previewSql.mockResolvedValue({ sql: 'WHERE "id" = $1', display: `WHERE "id" = '1'` });
   const { rerender } = setup({ filters: [eq("id", "1")] });
   await userEvent.click(screen.getByRole("button", { name: f.sql }));
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
@@ -673,4 +695,42 @@ test("the ⚙ menu's Hide names Escape as the hint line does", async () => {
   expect(hide).toHaveTextContent("Esc");
   expect(hide).not.toHaveTextContent("Escape");
   expect(hide).toHaveAttribute("aria-keyshortcuts", "Escape");
+});
+
+test("tooltip_escape: Escape on a shown tooltip closes the tooltip only, not the bar nor the SQL preview (#109)", async () => {
+  const user = userEvent.setup();
+  previewSql.mockResolvedValue({ sql: 'WHERE "id" = $1', display: `WHERE "id" = '1'` });
+  render(
+    <>
+      <TooltipLayer />
+      {ui({ filters: [eq("id", "1")] })}
+    </>,
+  );
+  // The keys go to the bar (a value field has the focus); the pointer rests on Clear.
+  act(() => value(1).focus());
+  const clear = screen.getByRole("button", { name: f.clear });
+  await user.hover(clear);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(f.clearTitle);
+  expect(clear).toHaveAccessibleDescription(f.clearTitle);
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+  // Without a tooltip, Escape hides the bar as before.
+  await user.keyboard("{Escape}");
+  expect(onClose).toHaveBeenCalledTimes(1);
+
+  // Over the open SQL preview: the first Escape takes the tooltip, the next the preview.
+  const sql = screen.getByRole("button", { name: f.sql });
+  await user.click(sql);
+  const dialog = await screen.findByRole("dialog", { name: f.sqlPreviewLabel });
+  await within(dialog).findByText(`WHERE "id" = '1'`);
+  await user.unhover(sql);
+  await user.hover(clear);
+  await screen.findByRole("tooltip");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(onClose).toHaveBeenCalledTimes(1);
 });

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { strings } from "../../lib/strings";
+import { tip, tipIfCut } from "../../lib/tooltip";
 import type { ConnectionConfig } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
 import type { Workspace } from "../../stores/workspaces";
@@ -95,7 +96,7 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={state === "error" && connectError ? s.errorTitle(text, connectError) : text}
+        {...(state === "error" && connectError ? tip(s.errorTitle(text, connectError)) : tipIfCut(text))}
         onClick={() => setOpen((o) => !o)}
         className={`flex h-8.5 w-full max-w-140 min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full px-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent ${look}`}
       >
