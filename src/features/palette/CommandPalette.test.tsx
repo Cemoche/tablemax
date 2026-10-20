@@ -46,7 +46,7 @@ const objectOptions = () =>
 
 const open = async (chord: string) => {
   const user = userEvent.setup();
-  render(<CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowWorkspace={vi.fn()} />);
+  render(<CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowConnections={vi.fn()} onShowWorkspace={vi.fn()} />);
   await user.keyboard(chord);
   return user;
 };
@@ -207,7 +207,7 @@ test("Mod+K picks a schema where the database cannot be switched; nothing when d
 
 test("the toolbar's Open Anything and database buttons open the palette", async () => {
   vi.mocked(ipc.databasesList).mockResolvedValue(["app", "other"]);
-  render(<CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowWorkspace={vi.fn()} />);
+  render(<CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowConnections={vi.fn()} onShowWorkspace={vi.fn()} />);
   act(() => useChrome.getState().requestPalette("all"));
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByRole("combobox")).toHaveAttribute("placeholder", strings.palette.placeholder);
@@ -221,7 +221,7 @@ test("it does not open over another modal dialog", async () => {
   render(
     <>
       <div role="dialog" aria-modal="true" />
-      <CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowWorkspace={vi.fn()} />
+      <CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowConnections={vi.fn()} onShowWorkspace={vi.fn()} />
     </>,
   );
   await userEvent.setup().keyboard(MOD_P);
@@ -231,7 +231,7 @@ test("it does not open over another modal dialog", async () => {
 test("selecting an object opens a preview tab", async () => {
   const onShow = vi.fn();
   const user = userEvent.setup();
-  render(<CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowWorkspace={onShow} />);
+  render(<CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowConnections={vi.fn()} onShowWorkspace={onShow} />);
   await user.keyboard(MOD_P);
   await user.type(await screen.findByRole("combobox"), "order_i");
   await user.click(await screen.findByText("order_items"));
@@ -312,7 +312,7 @@ test("Change database lists databasesList and Backspace on empty input goes back
 test("selecting a connection opens it through the callback", async () => {
   const onOpen = vi.fn();
   const user = userEvent.setup();
-  render(<CommandPalette onOpenConnection={onOpen} onNewConnection={vi.fn()} onShowWorkspace={vi.fn()} />);
+  render(<CommandPalette onOpenConnection={onOpen} onNewConnection={vi.fn()} onShowConnections={vi.fn()} onShowWorkspace={vi.fn()} />);
   await user.keyboard(MOD_P);
   await user.click(await screen.findByText("Prod PG"));
   expect(onOpen).toHaveBeenCalledWith(conn);

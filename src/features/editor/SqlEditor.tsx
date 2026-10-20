@@ -50,13 +50,16 @@ interface Props {
 const CM_DEFAULT_KEYMAP = defaultKeymap.filter(
   (b) => !["Mod-Enter", "Mod-/", "Mod-i", "Mod-[", "Mod-]", "Shift-Mod-k"].includes(b.key ?? ""),
 );
-// The completion list's keys (arrows, Enter, Escape…) without Ctrl-Space, which is
-// editor.complete's (#90): a rebound completion leaves Ctrl-Space inert. macOS keeps
-// CodeMirror's Alt-` / Alt-i.
-const CM_COMPLETION_KEYMAP = completionKeymap.filter((b) => b.key !== "Ctrl-Space");
+// The completion list's keys (arrows, Enter, Escape…) without the keys that start it
+// (Ctrl-Space, and Alt-` / Alt-i on macOS): starting it is editor.complete's (#90), so a
+// rebound completion leaves them inert and they never take a custom editor binding.
+export const CM_COMPLETION_KEYMAP = completionKeymap.filter((b) => b.run !== startCompletion);
 
-/** The editor's region for the keymap's precedence (spec §5.5 #90): its keys win in it. */
-const EDITOR_REGION = EditorView.editorAttributes.of({ [FOCUS_SCOPE_ATTR]: "editor" });
+/**
+ * The editor's region for the keymap's precedence (spec §5.5 #90): its keys win in it. On
+ * the text only, not on the whole editor: in CodeMirror's search panel the app keys act.
+ */
+const EDITOR_REGION = EditorView.contentAttributes.of({ [FOCUS_SCOPE_ATTR]: "editor" });
 
 /** Does `e` press one of `specs`? */
 const pressed = (e: KeyboardEvent, specs: readonly string[]) => specs.some((s) => matchShortcut(e, s));
@@ -316,10 +319,9 @@ export function SqlEditor({
       new LanguageSupport(DIALECTS[dialect].language),
       autocompletion({
         override: [(ctx) => completionRef.current?.(ctx) ?? null],
-        // Its keys come below, Ctrl-Space left to editor.complete.
+        // Its keys come after the app keymap below, starting it left to editor.complete.
         defaultKeymap: false,
       }),
-      Prec.highest(keymap.of(CM_COMPLETION_KEYMAP)),
       EDITOR_REGION,
       buildEditorTheme(dark),
       highlight,
@@ -357,6 +359,8 @@ export function SqlEditor({
           },
         ]),
       ),
+      // After the app keys (same precedence, later = lower): an app binding always wins.
+      Prec.highest(keymap.of(CM_COMPLETION_KEYMAP)),
       keymap.of(CM_DEFAULT_KEYMAP),
     ],
     [dialect, dark],

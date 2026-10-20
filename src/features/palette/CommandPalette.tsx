@@ -28,7 +28,7 @@ function focusActiveTab() {
 /** At most this many items are rendered per group (a 5 000-table schema stays fluid). */
 export const MAX_PER_GROUP = 200;
 
-/** A query starting with it lists the actions (Open Anything, spec §5.5); not shown to the user as text. */
+/** A query starting with it lists the actions (Open Anything, spec §5.5); the placeholder (strings.ts) names it. */
 export const ACTION_PREFIX = ">";
 
 type Mode = "all";
@@ -40,7 +40,7 @@ interface Props {
   /** Shows the new-connection form. */
   onNewConnection: () => void;
   /** Shows the connection list (as Ctrl+Shift+K). */
-  onShowConnections?: () => void;
+  onShowConnections: () => void;
   /** Called after the palette activates something of the workspace, so App shows it. */
   onShowWorkspace: () => void;
 }
@@ -172,7 +172,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnec
     workspace,
     tab: workspace?.tabs.find((t) => t.id === workspace.activeTabId) ?? null,
     newConnection: onNewConnection,
-    showConnections: () => onShowConnections?.(),
+    showConnections: onShowConnections,
     pickSchema: () => enterSub("schema"),
     pickDatabase: () => enterSub("database"),
   };

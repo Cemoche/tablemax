@@ -39,7 +39,7 @@ function Harness() {
   return (
     <>
       <WorkspaceView workspace={w} />
-      <CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowWorkspace={vi.fn()} />
+      <CommandPalette onOpenConnection={vi.fn()} onNewConnection={vi.fn()} onShowConnections={vi.fn()} onShowWorkspace={vi.fn()} />
     </>
   );
 }

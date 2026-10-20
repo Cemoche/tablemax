@@ -765,7 +765,7 @@ export const strings = {
     shortcutInvalid: "That combination cannot be used as a shortcut",
     shortcutConflict: (label: string) => `Already used by ${label}`,
     /** A saved custom binding that another action now uses too (a newer default, #90). */
-    shortcutCollision: (label: string) => `Also used by ${label}: both act on it. Change or reset one of them.`,
+    shortcutCollision: (label: string) => `Also used by ${label}. Change this shortcut or reset it.`,
     /** Between the combinations of one action (its default and alternates). */
     shortcutListSeparator: ", ",
     about: "About",
