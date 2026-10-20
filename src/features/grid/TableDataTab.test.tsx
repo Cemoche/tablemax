@@ -61,6 +61,25 @@ const key = (line: number): RowKey => [
   ["line", int(line)],
 ];
 const pending = () => usePendingChanges.getState();
+const commitName = strings.toolbar.commit;
+/**
+ * The toolbar's Commit and Discard (features/chrome/AppToolbar, tested there): the edit
+ * strip above the grid is gone (#103), the tab is driven through the pending changes store.
+ */
+function Toolbar({ tabId = "t1", workspaceId = "w1" }: { tabId?: string; workspaceId?: string }) {
+  const count = usePendingChanges((s) => s.count(tabId));
+  return (
+    <>
+      <button type="button" disabled={count === 0} onClick={() => void pending().commit(tabId, workspaceId, obj)}>
+        {commitName}
+      </button>
+      <button type="button" disabled={count === 0} onClick={() => pending().discard(tabId)}>
+        {strings.toolbar.discard}
+      </button>
+    </>
+  );
+}
+const discard = (tabId = "t1") => act(() => pending().discard(tabId));
 /** The toolbar's row details button (features/chrome) acts through the chrome store. */
 const toggleDetails = (tabId = "t1") => act(() => useChrome.getState().toggleRowDetails(tabId));
 const detailsOpen = (tabId = "t1") => useChrome.getState().rowDetails[tabId] === true;
@@ -139,7 +158,7 @@ test("a new page size waits for pending changes to be discarded", async () => {
   await act(async () => {});
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
   expect(screen.getByTestId("footer-range")).toHaveTextContent("1–300 of 900 rows");
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
+  discard();
   await waitFor(() =>
     expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ limit: 100, offset: 0 })),
   );
@@ -161,7 +180,7 @@ test("a latched page size survives a tab remount while changes are pending, unti
   await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("301–600 of 900 rows"));
   expect(ipc.tablePage).toHaveBeenCalledWith("w1", expect.objectContaining({ limit: 300, offset: 300 }));
   expect(ipc.tablePage).not.toHaveBeenCalledWith("w1", expect.objectContaining({ limit: 50 }));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
+  discard();
   await waitFor(() =>
     expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ limit: 50, offset: 0 })),
   );
@@ -205,16 +224,14 @@ test("a read-only table shows why and offers no + Row", async () => {
   expect(await screen.findByText(strings.grid.readOnlyNoKey)).toBeInTheDocument();
   expect(ipc.tableInfo).toHaveBeenCalledWith("w1", obj, false);
   expect(screen.queryByRole("button", { name: strings.grid.addRow })).toBeNull();
-  expect(screen.queryByRole("button", { name: strings.grid.commit("Ctrl+S") })).toBeNull();
   await waitFor(() => expect(grid?.editing?.model.cell(0, 3).editable).toBe(false));
 });
 
-test("the toolbar and view switch name the effective shortcuts", async () => {
+test("the view switch names the effective shortcuts", async () => {
   useSettings.setState({
     settings: {
       ...DEFAULT_SETTINGS,
       keymap: {
-        "grid.commit": "Mod+Shift+S",
         "grid.rowDetails": "Alt+I",
         "grid.viewData": "Alt+7",
         "grid.viewStructure": "Alt+8",
@@ -224,7 +241,7 @@ test("the toolbar and view switch name the effective shortcuts", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(1));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  expect(await screen.findByRole("button", { name: strings.grid.commit("Ctrl+Shift+S") })).toBeInTheDocument();
+  await screen.findByTestId("grid");
   expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute(
     "title",
     strings.grid.view.dataShortcut("Alt+7"),
@@ -245,25 +262,34 @@ test("editing through the grid, then commit applies the changes and reloads", as
     error: null,
   });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  const commit = await screen.findByRole("button", { name: strings.grid.commit("Ctrl+S") });
-  expect(commit).toBeDisabled();
-  expect(screen.getByRole("button", { name: strings.grid.discard })).toBeDisabled();
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  // No edit strip above the grid (#103): the toolbar commits.
+  expect(screen.queryByRole("button", { name: /commit/i })).toBeNull();
+  expect(screen.queryByRole("button", { name: /discard/i })).toBeNull();
   act(() => grid!.editing!.onEdit(1, 3, "changed"));
   await userEvent.click(screen.getByRole("button", { name: strings.grid.addRow }));
-  expect(screen.getByText(strings.grid.pendingCount(2))).toBeInTheDocument();
+  expect(pending().count("t1")).toBe(2);
   const changes = pending().toChanges("t1");
   expect(changes).toEqual([
     { kind: "update", key: key(1), set: [["note", { t: "text", v: "changed" }]] },
     { kind: "insert", values: [] },
   ]);
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.commit("Ctrl+S") }));
+  await act(() => pending().commit("t1", "w1", obj));
   expect(ipc.changesApply).toHaveBeenCalledWith("w1", obj, changes, false);
   await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
   expect(ipc.tableCount).toHaveBeenCalledTimes(2);
   expect(pending().count("t1")).toBe(0);
-  expect(screen.queryByText(strings.grid.pendingCount(2))).toBeNull();
+});
+
+test("why a cell cannot be edited still shows above the grid, without the edit strip (#103)", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(0, 4).editable).toBe(false));
+  expect(screen.queryByText(strings.grid.generatedColumn)).toBeNull();
+  act(() => grid!.editing!.onActivate(0, 4));
+  expect(screen.getByRole("status")).toHaveTextContent(strings.grid.generatedColumn);
 });
 
 test("a failed change shows its message and every change stays pending", async () => {
@@ -278,7 +304,8 @@ test("a failed change shows its message and every change stays pending", async (
   pending().setCell("t1", obj, key(0), "note", { t: "null" }, lines(1).rows[0], names);
   pending().toggleDelete("t1", obj, key(2));
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await userEvent.click(await screen.findByRole("button", { name: strings.grid.commit("Ctrl+S") }));
+  await screen.findByTestId("grid");
+  await act(() => pending().commit("t1", "w1", obj));
   expect(
     await screen.findByText(
       strings.grid.changeFailed(2, "the row was deleted or its key changed since it was loaded"),
@@ -300,7 +327,7 @@ test("paging and sorting are blocked while changes are pending", async () => {
   act(() => grid!.onSort!("note"));
   expect(useGridViews.getState().getView("t1")).toEqual({ page: 0, sort: null, filters: [], pageSize: 300 });
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
+  discard();
   expect(screen.queryByText(strings.grid.commitOrDiscardFirst)).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
   await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
@@ -864,7 +891,7 @@ test("the Data | Structure toggle switches views and keeps both mounted", async 
   expect(screen.getByTestId("structure")).not.toBeVisible();
   // Neither view started over: same page, the pending edit kept, the structure mounted once.
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
-  expect(screen.getByText(strings.grid.pendingCount(1))).toBeInTheDocument();
+  expect(pending().count("t1")).toBe(1);
   await user.click(screen.getByRole("tab", { name: v.structure }));
   expect(structureMounts).toBe(1);
 });
@@ -1131,7 +1158,7 @@ test("after a successful commit the grid stays locked until the reload lands", a
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   act(() => grid!.editing!.onEdit(1, 3, "changed"));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.commit("Ctrl+S") }));
+  await act(() => pending().commit("t1", "w1", obj));
   await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
   // The old page is still shown: nothing on it can be edited.
   expect(grid!.editing!.model.locked).toBe(true);
@@ -1142,7 +1169,7 @@ test("after a successful commit the grid stays locked until the reload lands", a
   expect(screen.getByRole("button", { name: strings.grid.addRow })).toBeEnabled();
 });
 
-test("Cancel while committing cancels the commit; a cancelled commit wrote nothing", async () => {
+test("a cancelled commit (the toolbar's Cancel) wrote nothing; the bottom bar says Committing… meanwhile", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   let reject: (e: unknown) => void = () => {};
@@ -1150,10 +1177,11 @@ test("Cancel while committing cancels the commit; a cancelled commit wrote nothi
   vi.mocked(ipc.changesCancel).mockResolvedValue(undefined);
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
-  expect(screen.queryByRole("button", { name: strings.grid.cancelCommitLabel })).toBeNull();
   act(() => grid!.editing!.onEdit(1, 3, "changed"));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.commit("Ctrl+S") }));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.cancelCommitLabel }));
+  act(() => void pending().commit("t1", "w1", obj));
+  expect(screen.getByTestId("footer-range")).toHaveTextContent(strings.grid.committing);
+  expect(screen.getByTestId("footer-range")).toHaveAttribute("aria-busy", "true");
+  await act(() => pending().cancelCommit("t1", "w1"));
   expect(ipc.changesCancel).toHaveBeenCalledWith("w1");
   await act(async () => reject({ kind: "cancelled", message: "commit cancelled" }));
   expect(screen.getByText(strings.grid.commitFailed(strings.grid.commitCancelled))).toBeInTheDocument();
@@ -1168,18 +1196,18 @@ test("a commit that lost its connection never claims nothing was written; reload
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   act(() => grid!.editing!.onEdit(1, 3, "changed"));
-  const commit = screen.getByRole("button", { name: strings.grid.commit("Ctrl+S") });
-  await userEvent.click(commit);
+  await act(() => pending().commit("t1", "w1", obj));
   expect(await screen.findByText(strings.grid.commitOutcomeUnknown)).toBeInTheDocument();
   expect(screen.queryByText(strings.grid.nothingWritten)).toBeNull();
-  expect(commit).toBeDisabled();
+  // The toolbar's Commit reads this flag (disabled until a reload).
+  expect(pending().tabs.t1?.outcomeUnknown).toBe(true);
   expect(pending().count("t1")).toBe(1);
   // Reloading is allowed (paging is not); once the page is back, Commit works again.
   // The toolbar's Reload (Mod+R) asks the tab through the chrome store.
   act(() => useChrome.getState().requestReload("t1"));
   await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.queryByText(strings.grid.commitOutcomeUnknown)).toBeNull());
-  expect(commit).toBeEnabled();
+  expect(pending().tabs.t1?.outcomeUnknown).toBeFalsy();
   expect(pending().count("t1")).toBe(1);
 });
 
@@ -1206,7 +1234,6 @@ test("with the structure shown, Alt+← and Ctrl+Space leave the hidden data vie
   await waitFor(() => expect(theTab()).toMatchObject({ object: obj }));
 });
 
-const commitName = strings.grid.commit("Ctrl+S");
 const applied = { applied: true, affected: [1, 1], failedIndex: null, error: null };
 
 function setWorkspace(envTag: "prod" | "local") {
@@ -1238,7 +1265,12 @@ async function refusedCommit() {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
   vi.mocked(ipc.changesApply).mockRejectedValueOnce({ kind: "confirmationRequired", message: "0,1" });
-  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  render(
+    <>
+      <Toolbar />
+      <TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />
+    </>,
+  );
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   act(() => grid!.editing!.onEdit(1, 3, "changed"));
   await userEvent.click(screen.getByRole("button", { name: strings.grid.addRow }));
@@ -1308,39 +1340,10 @@ test("an unprotected connection commits without a confirmation", async () => {
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   act(() => grid!.editing!.onEdit(1, 3, "changed"));
-  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  await act(() => pending().commit("t1", "w1", obj));
   await waitFor(() => expect(pending().count("t1")).toBe(0));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(ipc.changesApply).toHaveBeenCalledTimes(1);
-});
-
-test("Commit is disabled in the other table tabs of a workspace while one commits", async () => {
-  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
-  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
-  let resolve!: (o: Awaited<ReturnType<typeof ipc.changesApply>>) => void;
-  vi.mocked(ipc.changesApply).mockImplementation(() => new Promise((r) => (resolve = r)));
-  pending().toggleDelete("t2", obj, key(0));
-  pending().toggleDelete("t3", obj, key(0));
-  const b = render(<TableDataTab workspaceId="w1" tabId="t2" object={obj} dialect="postgres" />);
-  const c = render(<TableDataTab workspaceId="w2" tabId="t3" object={obj} dialect="postgres" />);
-  const commitB = await within(b.container).findByRole("button", { name: commitName });
-  const commitC = await within(c.container).findByRole("button", { name: commitName });
-  await waitFor(() => expect(commitB).toBeEnabled());
-  pending().toggleDelete("t1", obj, key(1));
-  let done!: Promise<boolean>;
-  act(() => {
-    done = pending().commit("t1", "w1", obj);
-  });
-  expect(commitB).toBeDisabled();
-  expect(commitB).toHaveAttribute("title", strings.grid.otherTabCommitting);
-  expect(commitC).toBeEnabled();
-  expect(commitC).not.toHaveAttribute("title");
-  await act(async () => {
-    resolve(applied);
-    await done;
-  });
-  expect(commitB).toBeEnabled();
-  expect(commitB).not.toHaveAttribute("title");
 });
 
 test("Discard after an unknown outcome drops the edits, reloads, and stays blocked until the page is back", async () => {
@@ -1352,9 +1355,9 @@ test("Discard after an unknown outcome drops the edits, reloads, and stays block
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   act(() => grid!.editing!.onEdit(1, 3, "changed"));
-  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  await act(() => pending().commit("t1", "w1", obj));
   expect(await screen.findByText(strings.grid.commitOutcomeUnknown)).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
+  discard();
   expect(pending().count("t1")).toBe(0);
   // Still blocked: the warning stays and the page is reloaded.
   expect(screen.getByText(strings.grid.commitOutcomeUnknown)).toBeInTheDocument();
@@ -1365,7 +1368,7 @@ test("Discard after an unknown outcome drops the edits, reloads, and stays block
   expect(ipc.changesApply).toHaveBeenCalledTimes(1);
   await act(async () => reloaded(lines(2)));
   await waitFor(() => expect(screen.queryByText(strings.grid.commitOutcomeUnknown)).toBeNull());
-  expect(screen.getByRole("button", { name: commitName })).toBeEnabled();
+  expect(pending().tabs.t1?.outcomeUnknown).toBeFalsy();
 });
 
 test("a cancel that lands on the COMMIT shows the cause-neutral unknown-outcome text", async () => {
@@ -1375,7 +1378,7 @@ test("a cancel that lands on the COMMIT shows the cause-neutral unknown-outcome 
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
   act(() => grid!.editing!.onEdit(1, 3, "changed"));
-  await userEvent.click(screen.getByRole("button", { name: commitName }));
+  await act(() => pending().commit("t1", "w1", obj));
   const text = await screen.findByText(strings.grid.commitOutcomeUnknown);
   expect(text).toHaveTextContent(/interrupted/);
   expect(text).not.toHaveTextContent(/connection was lost/i);
@@ -1394,7 +1397,7 @@ test("Mod+S from the structure view shows the confirmation, visible and focused"
   expect(pending().count("t1")).toBe(2);
 });
 
-test("after Run the focus comes back to Commit once the commit settled", async () => {
+test("after Run the focus comes back to what opened the confirmation (the toolbar's Commit) once the commit settled", async () => {
   await refusedCommit();
   vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);
   await userEvent.click(screen.getByRole("button", { name: commitName }));
@@ -1410,7 +1413,7 @@ test("after Run the focus comes back to Commit once the commit settled", async (
   await waitFor(() => expect(screen.getByRole("button", { name: commitName })).toHaveFocus());
 });
 
-test("after a successful Run the focus lands on + Row once the reload unlocks the tab (Commit is disabled)", async () => {
+test("after a successful Run the focus lands on + Row once the reload unlocks the tab (the toolbar's Commit is disabled)", async () => {
   await refusedCommit();
   vi.mocked(ipc.changesPreview).mockResolvedValue(["a", "b"]);
   let reloaded: (r: ResultSet) => void = () => {};

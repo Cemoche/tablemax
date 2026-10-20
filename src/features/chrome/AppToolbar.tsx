@@ -1,5 +1,5 @@
 import { CircleX, Database, Eye, ListChecks, PanelLeft, PanelRight, Plug, RotateCw, Search, Settings } from "lucide-react";
-import { type MouseEvent, type ReactNode, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
@@ -128,6 +128,14 @@ function WorkspaceTools({
       (s.committing[table.id] === true || s.confirming[table.id] !== undefined || s.awaitingReload[table.id] === true),
   );
   const outcomeUnknown = usePendingChanges((s) => (table ? s.tabs[table.id]?.outcomeUnknown === true : false));
+  // The tab's own commit runs (Discard's place holds Cancel), or another table tab of the
+  // workspace commits (Commit waits): what the edit strip above the grid showed (#103).
+  const committing = usePendingChanges((s) => (table ? s.committing[table.id] === true : false));
+  const otherCommitting = usePendingChanges((s) => {
+    const owner = s.committingIn[workspace.id];
+    return table !== null && owner !== undefined && owner !== table.id;
+  });
+  const countId = useId();
   const editorOpen = usePendingChanges((s) => (table ? s.editorOpen[table.id] === true : false));
   const rowDetails = useChrome((s) => s.rowDetails[tableId] === true);
 
@@ -187,16 +195,28 @@ function WorkspaceTools({
       </Group>
 
       <Group label={t.groups.changes}>
-        <button
-          type="button"
-          aria-label={t.discard}
-          title={t.discard}
-          disabled={count === 0 || busy}
-          onClick={() => table && usePendingChanges.getState().discard(table.id)}
-          className={iconButton}
-        >
-          <CircleX aria-hidden {...ICON} />
-        </button>
+        {committing ? (
+          <button
+            type="button"
+            aria-label={strings.grid.cancelCommitLabel}
+            title={strings.grid.cancelCommitLabel}
+            onClick={() => table && void usePendingChanges.getState().cancelCommit(table.id, workspace.id).catch(() => {})}
+            className={iconButton}
+          >
+            <CircleX aria-hidden {...ICON} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            aria-label={t.discard}
+            title={t.discard}
+            disabled={count === 0 || busy}
+            onClick={() => table && usePendingChanges.getState().discard(table.id)}
+            className={iconButton}
+          >
+            <CircleX aria-hidden {...ICON} />
+          </button>
+        )}
         <button
           type="button"
           aria-label={t.preview}
@@ -210,13 +230,28 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.commit}
-          title={commitHint}
-          disabled={count === 0 || busy || outcomeUnknown || editorOpen}
+          aria-describedby={count > 0 ? countId : undefined}
+          title={otherCommitting ? strings.grid.otherTabCommitting : commitHint}
+          disabled={count === 0 || busy || outcomeUnknown || editorOpen || otherCommitting}
           onClick={() => table && void usePendingChanges.getState().commit(table.id, workspace.id, table.object)}
-          className={iconButton}
+          className={`${iconButton} relative`}
         >
           <ListChecks aria-hidden {...ICON} />
+          {count > 0 && (
+            <span
+              data-testid="pending-count"
+              aria-hidden="true"
+              className="absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full bg-accent-strong px-0.75 text-center text-[10px] leading-3.5 font-semibold text-accent-contrast tabular-nums"
+            >
+              {count > 99 ? t.pendingCountMax : count}
+            </span>
+          )}
         </button>
+        {count > 0 && (
+          <span id={countId} hidden>
+            {strings.grid.pendingCount(count)}
+          </span>
+        )}
       </Group>
 
       <Group label={t.groups.database}>

@@ -84,7 +84,7 @@ beforeEach(() => {
   useChrome.setState({ rowDetails: {}, reloads: {}, previews: {}, paletteRequest: null, maximized: false });
   vi.mocked(onWindowResized).mockImplementation(async () => () => {});
   usePendingChanges.getState().drop("t1");
-  usePendingChanges.setState({ committing: {}, confirming: {}, awaitingReload: {} });
+  usePendingChanges.setState({ committing: {}, committingIn: {}, confirming: {}, awaitingReload: {} });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -141,10 +141,42 @@ test("commit_group_follows_pending_changes", async () => {
   await user.click(button(t.preview));
   expect(useChrome.getState().previews.t1).toBe(1);
 
-  // A running commit locks Commit and Discard.
+  // A running commit locks Commit; Discard gives way to Cancel the commit (below).
   act(() => usePendingChanges.setState({ committing: { t1: true } }));
   expect(button(t.commit)).toBeDisabled();
-  expect(button(t.discard)).toBeDisabled();
+  expect(screen.queryByRole("button", { name: t.discard })).toBeNull();
+});
+
+test("commit_group_replaces_the_edit_strip: pending count, Cancel while committing, another tab committing (#103)", async () => {
+  const user = userEvent.setup();
+  const cancelCommit = vi.fn(async () => {});
+  usePendingChanges.setState({ cancelCommit });
+  setup();
+  const commit = screen.getByRole("button", { name: t.commit });
+  expect(within(commit).queryByTestId("pending-count")).toBeNull();
+  act(() => {
+    usePendingChanges.getState().addInsert("t1", obj);
+    usePendingChanges.getState().addInsert("t1", obj);
+  });
+  // The count shows on Commit and is part of its description.
+  expect(within(commit).getByTestId("pending-count")).toHaveTextContent("2");
+  expect(commit).toHaveAccessibleDescription(strings.grid.pendingCount(2));
+
+  // Committing: Discard's place holds Cancel the commit (the strip's Cancel).
+  act(() => usePendingChanges.setState({ committing: { t1: true }, committingIn: { w1: "t1" } }));
+  const cancel = screen.getByRole("button", { name: strings.grid.cancelCommitLabel });
+  expect(cancel).toBeEnabled();
+  await user.click(cancel);
+  expect(cancelCommit).toHaveBeenCalledWith("t1", "w1");
+
+  // Another table tab of the workspace commits: Commit waits, and says why.
+  act(() => usePendingChanges.setState({ committing: {}, committingIn: { w1: "t9" } }));
+  expect(commit).toBeDisabled();
+  expect(commit).toHaveAttribute("title", strings.grid.otherTabCommitting);
+  expect(screen.getByRole("button", { name: t.discard })).toBeEnabled();
+  act(() => usePendingChanges.setState({ committingIn: {} }));
+  expect(commit).toBeEnabled();
+  expect(commit).not.toHaveAttribute("title", strings.grid.otherTabCommitting);
 });
 
 test("the commit group is off on a SQL tab and on a disconnected workspace", () => {

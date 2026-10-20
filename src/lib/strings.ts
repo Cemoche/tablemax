@@ -367,9 +367,7 @@ export const strings = {
     nullKey: "This row has a NULL key: it cannot be edited.",
     truncatedKey: "The key of this row is too long to be loaded: it cannot be edited.",
     addRow: "+ Row",
-    commit: (shortcut: string) => `Commit (${shortcut})`,
     committing: "Committing…",
-    discard: "Discard",
     pendingCount: (n: number) => `${n.toLocaleString("en-US")} pending ${n === 1 ? "change" : "changes"}`,
     commitOrDiscardFirst: "Commit or discard the pending changes first.",
     changeFailed: (n: number, message: string) => `Change ${n} failed: ${message}`,
@@ -380,7 +378,6 @@ export const strings = {
     nothingWritten: "Nothing was written; the changes are still pending.",
     commitOutcomeUnknown:
       "The commit was interrupted: some or all changes may have been saved. Reload and check before committing again.",
-    cancelCommit: "Cancel",
     cancelCommitLabel: "Cancel the commit",
     otherTabCommitting: "Another tab of this connection is committing.",
     confirmPreviewFailed: (message: string) => `the statements to confirm could not be prepared: ${message}`,
@@ -854,6 +851,8 @@ export const strings = {
     discard: "Discard changes",
     preview: "Preview SQL",
     commit: "Commit changes",
+    /** The pending count on Commit, above 99. */
+    pendingCountMax: "99+",
     safeMode: (mode: string) => `Safe mode: ${mode}`,
     safeModeMenu: "Safe mode",
     safeModeLater: "A looser mode applies the next time the connection opens.",
