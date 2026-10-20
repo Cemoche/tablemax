@@ -1,4 +1,4 @@
-import { type CompletionSource, autocompletion } from "@codemirror/autocomplete";
+import { type CompletionSource, autocompletion, completionKeymap, startCompletion } from "@codemirror/autocomplete";
 import { defaultKeymap, isolateHistory, toggleComment, toggleLineComment } from "@codemirror/commands";
 import { HighlightStyle, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
 import { MySQL, PostgreSQL, SQLite } from "@codemirror/lang-sql";
@@ -7,7 +7,7 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 import { tags as t } from "@lezer/highlight";
 import CodeMirror from "@uiw/react-codemirror";
 import { type CSSProperties, useEffect, useMemo, useRef } from "react";
-import { useEffectiveShortcut } from "../../lib/keymap";
+import { FOCUS_SCOPE_ATTR, useEffectiveShortcuts } from "../../lib/keymap";
 import { isModalOpen, matchCombination, matchShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { useResolvedDark } from "../../lib/theme";
@@ -50,6 +50,16 @@ interface Props {
 const CM_DEFAULT_KEYMAP = defaultKeymap.filter(
   (b) => !["Mod-Enter", "Mod-/", "Mod-i", "Mod-[", "Mod-]", "Shift-Mod-k"].includes(b.key ?? ""),
 );
+// The completion list's keys (arrows, Enter, Escape…) without Ctrl-Space, which is
+// editor.complete's (#90): a rebound completion leaves Ctrl-Space inert. macOS keeps
+// CodeMirror's Alt-` / Alt-i.
+const CM_COMPLETION_KEYMAP = completionKeymap.filter((b) => b.key !== "Ctrl-Space");
+
+/** The editor's region for the keymap's precedence (spec §5.5 #90): its keys win in it. */
+const EDITOR_REGION = EditorView.editorAttributes.of({ [FOCUS_SCOPE_ATTR]: "editor" });
+
+/** Does `e` press one of `specs`? */
+const pressed = (e: KeyboardEvent, specs: readonly string[]) => specs.some((s) => matchShortcut(e, s));
 
 export const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
 const FORMAT_LANGUAGE = { postgres: "postgresql", mySql: "mysql", sqlite: "sqlite" } as const;
@@ -266,10 +276,11 @@ export function SqlEditor({
   // The effective combinations, read by the keymap below through a ref: a keymap change
   // in the settings applies at once without rebuilding the extensions.
   const keys = {
-    run: useEffectiveShortcut("editor.run"),
-    runAll: useEffectiveShortcut("editor.runAll"),
-    format: useEffectiveShortcut("editor.format"),
-    comment: useEffectiveShortcut("editor.comment"),
+    run: useEffectiveShortcuts("editor.run"),
+    runAll: useEffectiveShortcuts("editor.runAll"),
+    format: useEffectiveShortcuts("editor.format"),
+    comment: useEffectiveShortcuts("editor.comment"),
+    complete: useEffectiveShortcuts("editor.complete"),
   };
   const keysRef = useRef(keys);
   keysRef.current = keys;
@@ -305,7 +316,11 @@ export function SqlEditor({
       new LanguageSupport(DIALECTS[dialect].language),
       autocompletion({
         override: [(ctx) => completionRef.current?.(ctx) ?? null],
+        // Its keys come below, Ctrl-Space left to editor.complete.
+        defaultKeymap: false,
       }),
+      Prec.highest(keymap.of(CM_COMPLETION_KEYMAP)),
+      EDITOR_REGION,
       buildEditorTheme(dark),
       highlight,
       currentStatementHighlight(dialect),
@@ -318,20 +333,25 @@ export function SqlEditor({
               if (isModalOpen()) return false;
               const k = keysRef.current;
               // Holding a combination acts once: its repeats are swallowed, not passed on.
-              if (e.repeat) return [k.run, k.runAll, k.format, k.comment].some((s) => matchCombination(e, s));
-              if (matchShortcut(e, k.run)) {
+              if (e.repeat) {
+                return [k.run, k.runAll, k.format, k.comment, k.complete].some((specs) =>
+                  specs.some((s) => matchCombination(e, s)),
+                );
+              }
+              if (pressed(e, k.run)) {
                 runRef.current("current");
                 return true;
               }
-              if (matchShortcut(e, k.runAll)) {
+              if (pressed(e, k.runAll)) {
                 runRef.current("all");
                 return true;
               }
-              if (matchShortcut(e, k.format)) {
+              if (pressed(e, k.format)) {
                 formatRef.current();
                 return true;
               }
-              if (matchShortcut(e, k.comment)) return toggleLineComment(view);
+              if (pressed(e, k.comment)) return toggleLineComment(view);
+              if (pressed(e, k.complete)) return startCompletion(view);
               return false;
             },
           },
@@ -351,7 +371,15 @@ export function SqlEditor({
       theme="none"
       extensions={extensions}
       // No active-line band: the current statement is highlighted instead (§5.1).
-      basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: false, autocompletion: false, defaultKeymap: false }}
+      // The default and completion keymaps come filtered above (app keys win, #88 / #90).
+      basicSetup={{
+        lineNumbers: true,
+        foldGutter: false,
+        highlightActiveLine: false,
+        autocompletion: false,
+        defaultKeymap: false,
+        completionKeymap: false,
+      }}
       onChange={onChange}
       onCreateEditor={(view) => {
         viewRef.current = view;

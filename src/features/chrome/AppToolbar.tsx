@@ -156,6 +156,32 @@ function WorkspaceTools({
   const databaseHint = useHint(t.database, "database.open");
   const sqlHint = useHint(t.sql, "editor.open");
   const reloadHint = useHint(t.reload, "workspace.reload");
+  const discardHint = useHint(t.discard, "grid.discard");
+  const previewHint = useHint(t.preview, "grid.preview");
+
+  // Spec §5.3 (#90): Discard / Preview as their buttons (Ctrl+Shift+Backspace is a text key
+  // in a field: not there), Reload the table tab only, Reconnect a disconnected workspace.
+  useAction(
+    "grid.discard",
+    () => {
+      if (table && count > 0 && !busy && !committing) usePendingChanges.getState().discard(table.id);
+    },
+    { skipInEditable: true },
+  );
+  useAction("grid.preview", () => {
+    if (table && count > 0) useChrome.getState().requestPreview(table.id);
+  });
+  // Capture + stop, like Alt+F: the grid would take the letter as the start of a cell edit.
+  useAction(
+    "tab.reload",
+    () => {
+      if (table) useChrome.getState().requestReload(table.id);
+    },
+    { enabled: table !== null, skipInEditable: true, capture: true, stopPropagation: true },
+  );
+  useAction("workspace.reconnect", () => {
+    if (workspace.status === "disconnected") useWorkspaces.getState().requestConnect(workspace.id);
+  });
   const anythingHint = useHint(t.openAnything, "palette.all");
   const detailsHint = useHint(t.rowDetails, "grid.rowDetails");
 
@@ -218,7 +244,7 @@ function WorkspaceTools({
           <button
             type="button"
             aria-label={t.discard}
-            {...tip(t.discard)}
+            {...discardHint}
             disabled={count === 0 || busy}
             onClick={() => table && usePendingChanges.getState().discard(table.id)}
             className={iconButton}
@@ -229,7 +255,7 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.preview}
-          {...tip(t.preview)}
+          {...previewHint}
           disabled={count === 0}
           onClick={() => table && useChrome.getState().requestPreview(table.id)}
           className={iconButton}

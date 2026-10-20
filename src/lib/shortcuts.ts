@@ -81,7 +81,7 @@ const CODE_KEYS: Record<string, string> = {
 };
 const NAMED_KEYS = new Set([
   "Enter", "Tab", "Escape", "Space", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-  "PageUp", "PageDown",
+  "PageUp", "PageDown", "NumpadAdd", "NumpadSubtract",
 ]);
 
 /**
@@ -186,6 +186,11 @@ export interface ShortcutOptions {
   skipInEditable?: boolean;
   /** Registers nothing while false (hooks cannot be called conditionally). Default true. */
   enabled?: boolean;
+  /**
+   * A matching event this returns true for is left alone (not prevented nor stopped): an
+   * action of the focused region's scope takes those keys (`useAction`, spec §5.5 #90).
+   */
+  yieldTo?: (e: KeyboardEvent) => boolean;
 }
 
 const EDITABLE = new Set(["INPUT", "TEXTAREA", "SELECT"]);
@@ -218,6 +223,8 @@ export function useShortcut(
     skipInEditable = false,
     enabled = true,
   } = opts;
+  const yieldRef = useRef(opts.yieldTo);
+  yieldRef.current = opts.yieldTo;
   const key = typeof spec === "string" ? spec : spec.join("\n");
   useEffect(() => {
     if (!enabled) return;
@@ -226,6 +233,7 @@ export function useShortcut(
       if (!specs.some((s) => matchCombination(e, s))) return;
       if (skipInEditable && isEditableTarget(e.target)) return;
       if (!allowInModal && isModalOpen()) return;
+      if (yieldRef.current?.(e)) return;
       e.preventDefault();
       if (stopPropagation) e.stopPropagation();
       if (e.repeat) return;

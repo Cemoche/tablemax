@@ -404,6 +404,8 @@ export function FilterBar({
       ref={ref}
       role="region"
       aria-label={f.barLabel}
+      // Its keys win over the table tab's and global ones while the focus is in it (#90).
+      data-shortcut-scope="filterBar"
       className="flex flex-col border-b border-sep bg-side px-3 py-1 text-sm text-text"
       onKeyDown={onKeyDown}
       onFocus={onFocus}
