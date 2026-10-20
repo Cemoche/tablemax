@@ -44,9 +44,10 @@ interface Props {
 // Mod-Enter (insertBlankLine), Mod-/ (toggleComment) and Mod-i (selectParentSyntax) are
 // editor.run / editor.comment / editor.format's keys: dropped, so a rebound action leaves
 // its old keys inert. Mod-[ / Mod-] (indentLess / indentMore) are tab.previous / tab.next's
-// (spec §5.5: the tab keys win in the editor).
+// (spec §5.5: the tab keys win in the editor). Shift-Mod-k (deleteLine) is
+// connection.open's key (#88): the app key wins, it must not delete a line on its way.
 const CM_DEFAULT_KEYMAP = defaultKeymap.filter(
-  (b) => !["Mod-Enter", "Mod-/", "Mod-i", "Mod-[", "Mod-]"].includes(b.key ?? ""),
+  (b) => !["Mod-Enter", "Mod-/", "Mod-i", "Mod-[", "Mod-]", "Shift-Mod-k"].includes(b.key ?? ""),
 );
 
 export const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;

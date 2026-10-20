@@ -705,6 +705,14 @@ test("Ctrl+[ / Ctrl+] in the editor are left to the tab shortcuts: they do not i
   expect(view.state.doc.toString()).toBe("  select 1");
 });
 
+test("Ctrl+Shift+K in the editor is left to the connection list: it does not delete the line (#88)", async () => {
+  editorMode.real = true;
+  await setup("select 1\nselect 2");
+  const view = editorView();
+  press(view, { key: "K", code: "KeyK", keyCode: 75, ctrlKey: true, shiftKey: true });
+  expect(view.state.doc.toString()).toBe("select 1\nselect 2");
+});
+
 test("a linked saved query names itself for assistive tech too, not only in its tooltip (review #109)", async () => {
   await setup("select 1", "postgres", { savedName: "report", savedSql: "select 1" });
   const described = screen.getByText(strings.savedQueries.linked("report"));
