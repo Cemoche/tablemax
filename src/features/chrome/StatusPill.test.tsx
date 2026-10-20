@@ -71,7 +71,7 @@ test("status_pill_text_and_color: tag | engine version : name : database : schem
   // The tag comes first, outside the text, outlined so it shows on any tint (#104 review).
   expect(pill().firstElementChild).toBe(pillTag());
   expect(pillTag()).toHaveClass("border", "border-current");
-  // Read out as "LOCAL | PostgreSQL …": a visually hidden separator follows the badge.
+  // Read out as "LOCAL | PostgreSQL …": the pill carries an explicit aria-label built from the same values.
   expect(pill()).toHaveAccessibleName("LOCAL | PostgreSQL 16.4 : Demo : tablemax_demo : public.orders");
   // The tint of the connection color and its own text color (≥ 4.5:1, tokens.test.ts).
   expect(pill().className).toContain("bg-swatch-2-tint");

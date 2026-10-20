@@ -237,7 +237,7 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > Amendement 2026-10-20 (#104) : nouveaux tokens (clair / sombre). `--swatch-1..6-tint` :
 > #BDCFF4 #BFE3A8 #F6E8A8 #E6E6E6 #F7C7C9 #DCCBF3 (la couleur claire elle-même) / #1D4068
 > #25583C #654E2E #343841 #5A1B1E #472E64 (la couleur sombre à 55 % sur `--win`) ;
-> `--swatch-N-tint-text` #1E1E1E / #F2F2F2 (≥ 7:1) ; `--swatch-N-text` disparaît.
+> `--swatch-N-tint-text` #1E1E1E / #F2F2F2 (≥ 6,9:1) ; `--swatch-N-text` disparaît.
 > `--swatch-1..6-icon` : #1F5FA8 #2E8B57 #A3793E #4A5160 #8E1C22 #6B3FA0 / #799FCB #82B99A
 > #C8AF8B #9297A0 #BB777A #A68CC6 (≥ 3:1 sur `--pill`). `--icon-table` #0A6CDB / #5AA2FF,
 > `--icon-view` #8A3FD1 / #B58CFF (≥ 3:1 sur `--side`, `--seg-sel`, `--sel`). Dans les deux
