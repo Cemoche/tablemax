@@ -207,6 +207,25 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
   ⌄ » ; résultats avec onglets Data / Message, mêmes règles de grille que les tables.
 - La complétion `Ctrl+Space` (dans l'éditeur) marche toujours, y compris après un changement d'onglet.
 
+> Amendement 2026-10-21 (#89) : barre (36 px, `role="toolbar"`, ← / → entre ses boutons) :
+> à gauche « No limit ⌄ » (bouton de menu, nom « Row limit: … », choix radio « No limit » /
+> « Limit N », N = réglage `autoLimitValue` ; c'est l'Auto LIMIT existant, choix par onglet
+> gardé en mémoire seulement), « Beautify » (`editor.format`, Ctrl+I, la sélection ou tout) ;
+> à droite Save, Cancel pendant l'exécution, puis « Run Current » (Ctrl+Enter) collé à son
+> « ⌄ » (menu Run Current / Run All, Ctrl+Shift+Enter ; les deux désactivés pendant
+> l'exécution). Le Ctrl+Shift+F de Beautify (§5.3 « reste aussi ») est laissé à la Task 10 :
+> c'est aujourd'hui `sidebar.search` (global), il faut d'abord la priorité de l'éditeur.
+> Résultats : onglets Data / Message (tablist, ← / →). Data = la grille de la Task 5, un
+> onglet « Result N » par jeu seulement quand il y en a plusieurs, « N rows · ms » à droite
+> des onglets ; Message = une ligne par instruction (lignes renvoyées, lignes modifiées ou
+> « done », avec la durée), « Running… », « Cancelled », l'erreur et l'indice de reconnexion
+> (pas de NOTICE : le backend n'en renvoie pas). Onglet par défaut : Data quand l'exécution a
+> renvoyé des lignes sans erreur ni annulation, sinon Message (une erreur ou une annulation
+> ne se voient que là) ; un onglet choisi à la main tient jusqu'à l'exécution suivante.
+> Focus : un onglet SQL activé alors que rien n'a le focus (raccourci clavier, l'onglet
+> d'avant a emporté le focus) met le focus dans son éditeur, pour taper ou `Ctrl+Space`
+> aussitôt ; un clic sur un onglet laisse le focus sur l'onglet.
+
 ### 2.6 Raccourcis et interactions
 - Tableau du §5.3 : raccourcis de TablePlus macOS, `⌘` → `Ctrl`, `⌥` → `Alt`, `⌃⌘` →
   `Ctrl+Alt` sauf conflit avec le bureau ; tous dans le registre de raccourcis existant
@@ -300,6 +319,19 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E7D32, nombres
 #B57AFF / #1D00FF, chaînes #CA6E6E / #E04978, commentaires #009B31, requête courante #30363F /
 #F3EEDE, sélection #003F84 / #FFEA84).
+
+> Amendement 2026-10-21 (#89) : tokens de l'éditeur SQL (clair / sombre) : `--sql-keyword`
+> #529BD8 / #529BD8, `--sql-function` #2E7D32 / #7CB342, `--sql-number` #1D00FF / #B57AFF,
+> `--sql-string` #E04978 / #CA6E6E, `--sql-comment` #009B31 / #009B31, `--sql-current`
+> #F3EEDE / #30363F, `--sql-selection` #FFEA84 / #003F84. Mots-clés : aussi les types,
+> booléens et `NULL` ; fonctions : les fonctions intégrées du dialecte (lang-sql) ; les
+> identifiants entre guillemets restent du texte (`--text`) ; ni gras ni italique. Requête
+> courante : fond des lignes de l'instruction que Run Current exécuterait (celle du curseur),
+> seulement sans sélection (la sélection s'exécute alors), et plus de bande de ligne active ;
+> rien au-delà de 200 000 caractères (le texte est redécoupé à chaque frappe). Contraste en
+> clair, à revoir : mots-clés 2,98:1 sur `--content` (2,57:1 sur `--sql-current`),
+> commentaires 3,66:1, chaînes 3,89:1 ; en sombre tout est ≥ 4,5:1 sur `--content`, ≥ 3,3:1
+> sur `--sql-current`. Les valeurs du §5.1 sont gardées telles quelles.
 
 ### 5.2 Dimensions (à 100 %)
 Barre du haut 52, pilules 34, boutons 28–32 ; colonne des connexions 80 ; barre latérale 262
