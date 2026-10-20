@@ -30,13 +30,14 @@ interface QueryRunsState {
   restore: (tabId: string, previous: QueryRun | undefined) => void;
 }
 
+/** The last `QueryRun.id` given. */
+let lastRunId = 0;
+
 /**
  * Per-query-tab run state, outside the component so it survives tab switches and keeps
  * receiving channel events while the tab is unmounted. The end of a batch is the
  * `batchFinished` event, never the execute promise.
  */
-let lastRunId = 0;
-
 export const useQueryRuns = create<QueryRunsState>((set) => {
   const patch = (tabId: string, fn: (r: QueryRun) => QueryRun) =>
     set((s) => {

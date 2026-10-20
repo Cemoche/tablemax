@@ -1,3 +1,7 @@
+/** A capped result set's note, after its row count (" (truncated to first 10,000)"). */
+const truncatedNote = (rows: number, truncated: boolean) =>
+  truncated ? ` (truncated to first ${rows.toLocaleString("en-US")})` : "";
+
 export const strings = {
   appName: "TableMax",
   tagline: "A free, fast database client",
@@ -278,12 +282,10 @@ export const strings = {
     resultSetsLabel: "Result sets",
     resultTab: (n: number) => `Result ${n}`,
     resultHeader: (rows: number, ms: number, truncated = false) =>
-      `${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"}${
-        truncated ? ` (truncated to first ${rows.toLocaleString("en-US")})` : ""
-      } · ${ms} ms`,
+      `${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"}${truncatedNote(rows, truncated)} · ${ms} ms`,
     noData: "No rows: this run returned no result set (see Message)",
-    statementRows: (stmt: number, rows: number, ms: number) =>
-      `Statement ${stmt}: ${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"} returned (${ms} ms)`,
+    statementRows: (stmt: number, rows: number, ms: number, truncated = false) =>
+      `Statement ${stmt}: ${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"} returned${truncatedNote(rows, truncated)} (${ms} ms)`,
     rowsAffected: (stmt: number, rows: number, ms: number) =>
       `Statement ${stmt}: ${rows.toLocaleString("en-US")} ${rows === 1 ? "row" : "rows"} affected (${ms} ms)`,
     done: (stmt: number, ms: number) => `Statement ${stmt}: done (${ms} ms)`,

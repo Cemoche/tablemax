@@ -339,6 +339,11 @@ export function QueryTab({ workspace, tab }: Props) {
   const formatKeys = useEffectiveShortcut("editor.format");
   const limitText = autoLimit ? strings.query.limitRows(autoLimitRows) : strings.query.noLimit;
   const setAutoLimit = (on: boolean) => useAutoLimit.getState().setAutoLimit(tabId, on);
+  // Running disables the button that was pressed: the focus goes to the editor, not <body>.
+  const runFromToolbar = (mode: RunMode) => {
+    runMode(mode);
+    viewRef.current?.focus();
+  };
 
   const cancel = () => {
     const sid = currentSessionId(wsId, tabId);
@@ -420,7 +425,7 @@ export function QueryTab({ workspace, tab }: Props) {
             className={`${btn} rounded-r-none`}
             {...tip(strings.query.runCurrentHint, formatShortcut(runShortcut))}
             aria-keyshortcuts={ariaShortcut(runShortcut)}
-            onClick={() => runMode("current")}
+            onClick={() => runFromToolbar("current")}
             disabled={running}
           >
             <Play aria-hidden size={13} strokeWidth={1.8} />
@@ -434,8 +439,8 @@ export function QueryTab({ workspace, tab }: Props) {
             disabled={running}
             className={`${btn} -ml-px rounded-l-none px-1`}
             items={[
-              { label: strings.query.runCurrent, shortcut: runShortcut, onSelect: () => runMode("current") },
-              { label: strings.query.runAll, shortcut: runAllShortcut, onSelect: () => runMode("all") },
+              { label: strings.query.runCurrent, shortcut: runShortcut, onSelect: () => runFromToolbar("current") },
+              { label: strings.query.runAll, shortcut: runAllShortcut, onSelect: () => runFromToolbar("all") },
             ]}
           >
             <ChevronDown aria-hidden size={13} strokeWidth={1.8} />

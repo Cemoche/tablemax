@@ -13,6 +13,7 @@ import { strings } from "../../lib/strings";
 import { useResolvedDark } from "../../lib/theme";
 import { registerEditorCommands } from "./editorCommands";
 import { type Statement, delimiterAt, splitStatements, statementAt } from "./splitStatements";
+import { isComment, tokenize } from "./sqlLexer";
 import type { Dialect } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
 import { isValidFontFamily } from "../settings/bounds";
@@ -213,9 +214,13 @@ export function currentStatementHighlight(dialect: Dialect) {
     if (split?.doc !== state.doc) split = { doc: state.doc, stmts: splitStatements(state.doc.toString(), dialect) };
     const stmt = statementAt(split.stmts, sel.head);
     if (!stmt) return Decoration.none;
+    // A comment after the previous `;` belongs to this statement: the band starts at its
+    // first code line.
+    const code = tokenize(state.sliceDoc(stmt.from, stmt.to), dialect).find((tok) => !isComment(tok));
+    const start = stmt.from + (code?.from ?? 0);
     const builder = new RangeSetBuilder<Decoration>();
     const last = state.doc.lineAt(stmt.to).number;
-    for (let n = state.doc.lineAt(stmt.from).number; n <= last; n++) {
+    for (let n = state.doc.lineAt(start).number; n <= last; n++) {
       const line = state.doc.line(n);
       builder.add(line.from, line.from, currentStatementLine);
     }

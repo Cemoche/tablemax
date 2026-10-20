@@ -108,7 +108,9 @@ export function ResultsPanel({ run }: { run: QueryRun | undefined }) {
                     key={r.index}
                     type="button"
                     role="tab"
+                    id={`${uid}-set-${r.index}`}
                     aria-selected={r === active}
+                    aria-controls={`${uid}-set-panel`}
                     tabIndex={r === active ? 0 : -1}
                     onClick={() => setSelected({ run: run.id, index: r.index })}
                     className={tabClass(r === active)}
@@ -119,7 +121,15 @@ export function ResultsPanel({ run }: { run: QueryRun | undefined }) {
               </div>
             )}
             {result ? (
-              <div className="min-h-0 flex-1">
+              <div
+                className="min-h-0 flex-1"
+                // With several sets, the grid is the panel of the "Result N" tabs.
+                {...(sets.length > 1 && {
+                  role: "tabpanel",
+                  id: `${uid}-set-panel`,
+                  "aria-labelledby": `${uid}-set-${active?.index}`,
+                })}
+              >
                 <DataGrid data={result} sortable={false} />
               </div>
             ) : (
@@ -131,7 +141,12 @@ export function ResultsPanel({ run }: { run: QueryRun | undefined }) {
             {ordered.map((r) => (
               <p key={r.index}>
                 {r.outcome.result
-                  ? strings.query.statementRows(r.index + 1, r.outcome.result.rows.length, r.outcome.elapsedMs)
+                  ? strings.query.statementRows(
+                      r.index + 1,
+                      r.outcome.result.rows.length,
+                      r.outcome.elapsedMs,
+                      r.outcome.result.truncated,
+                    )
                   : r.outcome.rowsAffected === null
                     ? strings.query.done(r.index + 1, r.outcome.elapsedMs)
                     : strings.query.rowsAffected(r.index + 1, r.outcome.rowsAffected, r.outcome.elapsedMs)}

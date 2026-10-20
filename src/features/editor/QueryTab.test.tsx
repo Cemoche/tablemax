@@ -256,6 +256,9 @@ test("a capped result says it was truncated", async () => {
     emit({ event: "batchFinished", data: { cancelled: false } });
   });
   expect(screen.getByText("10,000 rows (truncated to first 10,000) · 9 ms")).toBeInTheDocument();
+  // Message says so too.
+  await userEvent.click(screen.getByRole("tab", { name: strings.query.messageTab }));
+  expect(screen.getByText("Statement 1: 10,000 rows returned (truncated to first 10,000) (9 ms)")).toBeInTheDocument();
 });
 
 test("a lost connection drops the session and the next Run reconnects", async () => {
@@ -771,8 +774,10 @@ test("toolbar_actions_and_shortcuts: limit, Beautify and Run Current ⌄ act and
   await userEvent.click(runCurrent);
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["SELECT\n  2"]);
-  // While it runs: Run Current is disabled and Cancel is offered.
+  // While it runs: Run Current is disabled and Cancel is offered; the focus went to the
+  // editor (not to <body> with the disabled button).
   expect(runCurrent).toBeDisabled();
+  expect(view.hasFocus).toBe(true);
   expect(within(toolbar).getByRole("button", { name: strings.query.cancel })).toBeInTheDocument();
   act(() => emit({ event: "batchFinished", data: { cancelled: false } }));
   expect(runCurrent).toBeEnabled();
@@ -790,6 +795,8 @@ test("toolbar_actions_and_shortcuts: limit, Beautify and Run Current ⌄ act and
   expect(items[1]).toHaveTextContent("Ctrl+Shift+Enter");
   await userEvent.click(items[1]);
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
+  expect(more).toBeDisabled();
+  expect(view.hasFocus).toBe(true);
   expect(vi.mocked(ipc.sqlExecute).mock.calls[1][1]).toEqual(["SELECT\n  a,\n  b\nFROM\n  t", "SELECT\n  2"]);
   act(() => emit({ event: "batchFinished", data: { cancelled: false } }));
 
@@ -838,11 +845,16 @@ test("results_tabs_data_message: Data for rows, Message for statements without r
     emit({ event: "batchFinished", data: { cancelled: false } });
   });
   expect(selected()).toBe(strings.query.dataTab);
-  expect(tab(strings.query.dataTab)).toHaveAttribute("aria-controls", screen.getByRole("tabpanel").id);
+  expect(tab(strings.query.dataTab)).toHaveAttribute("aria-controls", screen.getAllByRole("tabpanel")[0].id);
   expect(screen.getByRole("tablist", { name: strings.query.resultSetsLabel })).toBeInTheDocument();
   expect(screen.getByTestId("grid")).toHaveAttribute("data-rows", "2");
   await userEvent.click(tab(strings.query.resultTab(2)));
   expect(screen.getByTestId("grid")).toHaveAttribute("data-rows", "5");
+  // The grid is the panel of the selected Result N tab.
+  const setPanel = screen.getByTestId("grid").parentElement as HTMLElement;
+  expect(setPanel).toHaveAttribute("role", "tabpanel");
+  expect(setPanel).toHaveAccessibleName(strings.query.resultTab(2));
+  expect(tab(strings.query.resultTab(2))).toHaveAttribute("aria-controls", setPanel.id);
 
   // Message lists every statement.
   await userEvent.click(tab(strings.query.messageTab));
