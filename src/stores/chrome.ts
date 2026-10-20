@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
+import { persistedWidth } from "../lib/persistedWidth";
 
 /** What a toolbar button asks the command palette to show. */
 export interface PaletteRequest {
@@ -15,18 +16,10 @@ export const ROW_DETAILS_MAX = 720;
 /** The width is a per-machine convenience, like the sidebar's. */
 export const ROW_DETAILS_WIDTH_KEY = "tablemax.rowDetailsWidth";
 
-export const clampRowDetailsWidth = (px: number) =>
-  Math.round(Math.min(ROW_DETAILS_MAX, Math.max(ROW_DETAILS_MIN, px)));
-
+const rowDetailsWidth = persistedWidth(ROW_DETAILS_WIDTH_KEY, ROW_DETAILS_DEFAULT, ROW_DETAILS_MIN, ROW_DETAILS_MAX);
+export const clampRowDetailsWidth = rowDetailsWidth.clamp;
 /** The width saved by the last session, or the default. */
-export function loadRowDetailsWidth(): number {
-  try {
-    const n = Number.parseInt(localStorage.getItem(ROW_DETAILS_WIDTH_KEY) ?? "", 10);
-    return Number.isFinite(n) ? clampRowDetailsWidth(n) : ROW_DETAILS_DEFAULT;
-  } catch {
-    return ROW_DETAILS_DEFAULT;
-  }
-}
+export const loadRowDetailsWidth = rowDetailsWidth.load;
 
 /**
  * Requests from the window's toolbar (features/chrome) to the parts that own the state:
@@ -101,13 +94,7 @@ export const useChrome = create<ChromeState>((set, get) => ({
   setRowDetails: (open) => set({ rowDetailsOpen: open }),
   rowDetailsWidth: loadRowDetailsWidth(),
   setRowDetailsWidth: (px) => set({ rowDetailsWidth: clampRowDetailsWidth(px) }),
-  saveRowDetailsWidth: () => {
-    try {
-      localStorage.setItem(ROW_DETAILS_WIDTH_KEY, String(get().rowDetailsWidth));
-    } catch {
-      // Storage unavailable: the width only lasts for this session.
-    }
-  },
+  saveRowDetailsWidth: () => rowDetailsWidth.save(get().rowDetailsWidth),
   reloads: {},
   requestReload: (id) => set((s) => ({ reloads: bump(s.reloads, id) })),
   previews: {},
