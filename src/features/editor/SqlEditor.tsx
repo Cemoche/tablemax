@@ -43,8 +43,11 @@ interface Props {
 
 // Mod-Enter (insertBlankLine), Mod-/ (toggleComment) and Mod-i (selectParentSyntax) are
 // editor.run / editor.comment / editor.format's keys: dropped, so a rebound action leaves
-// its old keys inert.
-const CM_DEFAULT_KEYMAP = defaultKeymap.filter((b) => !["Mod-Enter", "Mod-/", "Mod-i"].includes(b.key ?? ""));
+// its old keys inert. Mod-[ / Mod-] (indentLess / indentMore) are tab.previous / tab.next's
+// (spec §5.5: the tab keys win in the editor).
+const CM_DEFAULT_KEYMAP = defaultKeymap.filter(
+  (b) => !["Mod-Enter", "Mod-/", "Mod-i", "Mod-[", "Mod-]"].includes(b.key ?? ""),
+);
 
 export const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
 const FORMAT_LANGUAGE = { postgres: "postgresql", mySql: "mysql", sqlite: "sqlite" } as const;

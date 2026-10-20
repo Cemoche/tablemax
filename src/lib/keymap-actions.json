@@ -15,7 +15,6 @@
   "grid.rowDetails",
   "grid.viewData",
   "grid.viewStructure",
-  "grid.back",
   "font.increase",
   "font.decrease",
   "database.open",
@@ -24,5 +23,16 @@
   "workspace.previous",
   "workspace.next",
   "sidebar.toggle",
-  "sidebar.search"
+  "sidebar.search",
+  "nav.back",
+  "nav.forward",
+  "tab.goto1",
+  "tab.goto2",
+  "tab.goto3",
+  "tab.goto4",
+  "tab.goto5",
+  "tab.goto6",
+  "tab.goto7",
+  "tab.goto8",
+  "tab.goto9"
 ]

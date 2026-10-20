@@ -2,6 +2,7 @@ import { create } from "zustand";
 import * as ipc from "../lib/ipc";
 import { strings } from "../lib/strings";
 import type { Capabilities, ConnectionConfig, Dialect, EnvTag, ObjectRef, SafeMode, WorkspaceInfo } from "../lib/types";
+import { useChrome } from "./chrome";
 import { useConnections } from "./connections";
 import { type GridView, type TrailEntry, useGridViews } from "./gridViews";
 import { usePendingChanges } from "./pendingChanges";
@@ -29,6 +30,22 @@ export type Tab =
        */
       database?: string | null;
     };
+
+/**
+ * A step of a workspace's back / forward history: the tab visited and, for a table tab, the
+ * table it showed, so a step whose preview tab was since replaced (a single click on another
+ * table) shows that table again in the preview tab.
+ */
+export interface NavEntry {
+  tabId: string;
+  object?: ObjectRef;
+}
+
+/** Back / forward history of a workspace (Alt+← / Alt+→): `index` is the current entry. */
+export interface NavHistory {
+  entries: NavEntry[];
+  index: number;
+}
 
 /**
  * `disconnected`: restored from the last session (or a cancelled/failed reconnect); its
@@ -68,6 +85,8 @@ export interface Workspace {
   mru: string[];
   /** Non-blocking message shown above the tabs until dismissed (absent/null: none). */
   notice?: string | null;
+  /** Tabs visited, for back / forward (absent until the first visit; not saved in the session). */
+  nav?: NavHistory;
 }
 
 interface WorkspacesState {
@@ -133,10 +152,34 @@ interface WorkspacesState {
    */
   closeTab: (wsId: string, tabId: string) => void;
   /**
-   * A close waiting for "Discard N pending changes?": a tab (`tabId`), or the whole
-   * workspace (`tabId` null; `tabs` = table tabs with pending changes).
+   * A close waiting for "Discard N pending changes?": a tab (`tabId`), the tabs `tabIds`
+   * ("Close others"; `tabId` null), or else the whole workspace (`tabId` null). `tabs` =
+   * table tabs with pending changes.
    */
-  closeRequest: { wsId: string; tabId: string | null; count: number; tabs: number } | null;
+  closeRequest: {
+    wsId: string;
+    tabId: string | null;
+    count: number;
+    tabs: number;
+    tabIds?: string[];
+  } | null;
+  /**
+   * Closes every tab but `keepTabId` (tabs whose commit runs stay). With pending changes in
+   * any of them, asks once first (`closeRequest` with `tabIds`); cancel closes none.
+   */
+  closeOtherTabs: (wsId: string, keepTabId: string) => void;
+  /** Renames a tab to `title` trimmed; false (and nothing changes) when that is empty. */
+  renameTab: (wsId: string, tabId: string, title: string) => boolean;
+  /**
+   * One step back (-1) or forward (1) in the workspace's history: skips closed tabs and the
+   * tab shown; a table whose preview tab was replaced opens again in the preview tab. False
+   * when there is no such step.
+   */
+  navigate: (wsId: string, dir: -1 | 1) => boolean;
+  /** The previous (-1) or next (1) tab in tab bar order, wrapping around. */
+  cycleTab: (wsId: string, dir: -1 | 1) => void;
+  /** Activates the tab at `index` in tab bar order (nothing past the last tab). */
+  activateTabAt: (wsId: string, index: number) => void;
   /** Discards the pending changes of `closeRequest` and closes its tab or workspace. */
   confirmClose: () => Promise<void>;
   cancelClose: () => void;
@@ -251,6 +294,115 @@ const touch = (mru: string[], id: string) => [id, ...mru.filter((x) => x !== id)
 
 const sameObject = (a: ObjectRef, b: ObjectRef) => a.schema === b.schema && a.name === b.name;
 
+/** At most this many back / forward steps are kept per workspace. */
+const NAV_MAX = 100;
+
+function navEntry(w: Workspace, tabId: string): NavEntry {
+  const t = w.tabs.find((x) => x.id === tabId);
+  return t?.kind === "table" ? { tabId, object: t.object } : { tabId };
+}
+
+/** The workspace with a history, started at its active tab when it has none yet. */
+function seeded(w: Workspace): Workspace {
+  if (w.nav) return w;
+  return {
+    ...w,
+    nav: w.activeTabId ? { entries: [navEntry(w, w.activeTabId)], index: 0 } : { entries: [], index: -1 },
+  };
+}
+
+/**
+ * Shows `tabId` (already in `w.tabs`) as a visit: active, most recent, and a new history step
+ * after the current one (the forward steps are dropped). Visiting the current step again
+ * only refreshes it.
+ */
+function visit(w0: Workspace, tabId: string): Workspace {
+  const w = seeded(w0);
+  const nav = w.nav as NavHistory;
+  const entry = navEntry(w, tabId);
+  let next: NavHistory;
+  if (nav.entries[nav.index]?.tabId === tabId) {
+    next = { entries: nav.entries.map((e, i) => (i === nav.index ? entry : e)), index: nav.index };
+  } else {
+    const entries = [...nav.entries.slice(0, nav.index + 1), entry].slice(-NAV_MAX);
+    next = { entries, index: entries.length - 1 };
+  }
+  return { ...w, activeTabId: tabId, mru: touch(w.mru, tabId), nav: next };
+}
+
+/** The history without the steps of a closed tab (the same tab twice in a row collapses). */
+function dropFromNav(nav: NavHistory | undefined, tabId: string): NavHistory | undefined {
+  if (!nav) return nav;
+  const entries: NavEntry[] = [];
+  let index = -1;
+  nav.entries.forEach((e, i) => {
+    if (e.tabId !== tabId && entries[entries.length - 1]?.tabId !== e.tabId) entries.push(e);
+    if (i <= nav.index) index = entries.length - 1;
+  });
+  return { entries, index };
+}
+
+/**
+ * The step `navigate(dir)` would take from `w`, or null: a step whose tab is open and not
+ * shown, or whose table's preview tab was replaced (and the active tab does not show it).
+ */
+function navTarget(w: Workspace, dir: -1 | 1): { at: number; tab: Tab | null; entry: NavEntry } | null {
+  const nav = w.nav;
+  if (!nav) return null;
+  const active = w.tabs.find((t) => t.id === w.activeTabId);
+  for (let at = nav.index + dir; at >= 0 && at < nav.entries.length; at += dir) {
+    const entry = nav.entries[at];
+    const tab = w.tabs.find((t) => t.id === entry.tabId) ?? null;
+    if (tab) {
+      if (tab.id !== w.activeTabId) return { at, tab, entry };
+    } else if (entry.object && !(active?.kind === "table" && sameObject(active.object, entry.object))) {
+      return { at, tab: null, entry };
+    }
+  }
+  return null;
+}
+
+/** Can `w` go back (-1) or forward (1) in its history? (The tab bar's arrows.) */
+export function canNavigate(w: Workspace, dir: -1 | 1): boolean {
+  return navTarget(w, dir) !== null;
+}
+
+/**
+ * Puts `object` in a table tab of `w` without activating it: an open tab of it (pinned when
+ * opened without `preview`), else a new tab, in place of the preview tab for `preview`.
+ * `dropped`: the preview tab replaced.
+ */
+function placeTable(
+  w: Workspace,
+  object: ObjectRef,
+  preview: boolean,
+): { w: Workspace; tabId: string; dropped: string | null } {
+  const existing = w.tabs.find((t) => t.kind === "table" && sameObject(t.object, object));
+  if (existing) {
+    const tabs =
+      !preview && existing.kind === "table" && existing.preview
+        ? w.tabs.map((t) => (t.id === existing.id ? { ...existing, preview: false } : t))
+        : w.tabs;
+    return { w: { ...w, tabs }, tabId: existing.id, dropped: null };
+  }
+  const tab: Tab = { id: crypto.randomUUID(), kind: "table", object, title: object.name, preview };
+  const old = preview ? w.tabs.find((t) => t.kind === "table" && t.preview) : undefined;
+  if (old) {
+    return {
+      w: { ...w, tabs: w.tabs.map((t) => (t.id === old.id ? tab : t)), mru: w.mru.filter((x) => x !== old.id) },
+      tabId: tab.id,
+      dropped: old.id,
+    };
+  }
+  return { w: { ...w, tabs: [...w.tabs, tab] }, tabId: tab.id, dropped: null };
+}
+
+/** Forgets the view state of a preview tab that another table replaced. */
+function forgetReplaced(tabId: string) {
+  useGridViews.getState().dropView(tabId);
+  useChrome.getState().dropTableView(tabId);
+}
+
 /** The highest `n` of the query tabs titled `strings.workspace.queryTitle(n)`. */
 function lastQueryNumber(tabs: Tab[]): number {
   let max = 0;
@@ -308,6 +460,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     const closing = get().workspaces.find((w) => w.id === id);
     for (const t of closing?.tabs ?? []) {
       useGridViews.getState().dropView(t.id);
+      useChrome.getState().dropTableView(t.id);
       useQueryRuns.getState().drop(t.id);
       usePendingChanges.getState().drop(t.id);
     }
@@ -336,6 +489,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     useGridViews.getState().dropView(tabId);
     useQueryRuns.getState().drop(tabId);
     usePendingChanges.getState().drop(tabId);
+    useChrome.getState().dropTableView(tabId);
     update(wsId, (w) => {
       const idx = w.tabs.findIndex((t) => t.id === tabId);
       const tabs = w.tabs.filter((t) => t.id !== tabId);
@@ -344,7 +498,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
         w.activeTabId === tabId
           ? (mru[0] ?? (tabs[idx] ?? tabs[idx - 1])?.id ?? null)
           : w.activeTabId;
-      return { ...w, tabs, activeTabId, mru };
+      return { ...w, tabs, activeTabId, mru, nav: dropFromNav(w.nav, tabId) };
     });
   };
 
@@ -494,37 +648,13 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     setSchema: (wsId, schema) => update(wsId, (w) => ({ ...w, currentSchema: schema })),
 
     openTableTab: (wsId, object, opts) => {
-      const preview = opts?.preview ?? false;
       let dropped: string | null = null;
       update(wsId, (w) => {
-        const existing = w.tabs.find((t) => t.kind === "table" && sameObject(t.object, object));
-        if (existing) {
-          const tabs =
-            !preview && existing.kind === "table" && existing.preview
-              ? w.tabs.map((t) => (t.id === existing.id ? { ...existing, preview: false } : t))
-              : w.tabs;
-          return { ...w, tabs, activeTabId: existing.id, mru: touch(w.mru, existing.id) };
-        }
-        const tab: Tab = {
-          id: crypto.randomUUID(),
-          kind: "table",
-          object,
-          title: object.name,
-          preview,
-        };
-        const old = preview ? w.tabs.find((t) => t.kind === "table" && t.preview) : undefined;
-        let tabs: Tab[];
-        let mru = w.mru;
-        if (old) {
-          dropped = old.id;
-          tabs = w.tabs.map((t) => (t.id === old.id ? tab : t));
-          mru = mru.filter((x) => x !== old.id);
-        } else {
-          tabs = [...w.tabs, tab];
-        }
-        return { ...w, tabs, activeTabId: tab.id, mru: touch(mru, tab.id) };
+        const r = placeTable(seeded(w), object, opts?.preview ?? false);
+        dropped = r.dropped;
+        return visit(r.w, r.tabId);
       });
-      if (dropped) useGridViews.getState().dropView(dropped);
+      if (dropped) forgetReplaced(dropped);
     },
 
     pinTab: (wsId, tabId) =>
@@ -594,7 +724,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
           sql,
           sqlSessionId: null,
         };
-        return { ...w, tabs: [...w.tabs, tab], activeTabId: tab.id, mru: touch(w.mru, tab.id) };
+        return visit({ ...w, tabs: [...w.tabs, tab] }, tab.id);
       }),
 
     closeTab: (wsId, tabId) => {
@@ -613,6 +743,10 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     confirmClose: async () => {
       const req = get().closeRequest;
       set({ closeRequest: null });
+      if (req?.tabIds) {
+        for (const t of req.tabIds) if (!get().isCommitting(req.wsId, t)) doCloseTab(req.wsId, t);
+        return;
+      }
       if (!req || get().isCommitting(req.wsId, req.tabId ?? undefined)) return;
       if (req.tabId !== null) doCloseTab(req.wsId, req.tabId);
       else await doCloseWorkspace(req.wsId);
@@ -620,12 +754,63 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
 
     cancelClose: () => set({ closeRequest: null }),
 
+    closeOtherTabs: (wsId, keepTabId) => {
+      const tabs = get().workspaces.find((w) => w.id === wsId)?.tabs ?? [];
+      if (!tabs.some((t) => t.id === keepTabId)) return;
+      const others = tabs.filter((t) => t.id !== keepTabId && !get().isCommitting(wsId, t.id)).map((t) => t.id);
+      const counts = others.map((id) => usePendingChanges.getState().count(id)).filter((n) => n > 0);
+      if (counts.length > 0) {
+        const count = counts.reduce((a, b) => a + b, 0);
+        set({ closeRequest: { wsId, tabId: null, count, tabs: counts.length, tabIds: others } });
+        return;
+      }
+      for (const id of others) doCloseTab(wsId, id);
+    },
+
+    renameTab: (wsId, tabId, title) => {
+      const name = title.trim();
+      const ws = get().workspaces.find((w) => w.id === wsId);
+      if (!name || !ws?.tabs.some((t) => t.id === tabId)) return false;
+      update(wsId, (w) => ({ ...w, tabs: w.tabs.map((t) => (t.id === tabId ? { ...t, title: name } : t)) }));
+      return true;
+    },
+
+    navigate: (wsId, dir) => {
+      const w = get().workspaces.find((x) => x.id === wsId);
+      const target = w && navTarget(w, dir);
+      if (!w || !target) return false;
+      const { at, tab, entry } = target;
+      let dropped: string | null = null;
+      update(wsId, (x) => {
+        const nav = x.nav as NavHistory;
+        if (tab) return { ...x, activeTabId: tab.id, mru: touch(x.mru, tab.id), nav: { ...nav, index: at } };
+        // Its preview tab was replaced: the table comes back in the preview tab.
+        const r = placeTable(x, entry.object as ObjectRef, true);
+        dropped = r.dropped;
+        const entries = nav.entries.map((e, i) => (i === at ? { ...e, tabId: r.tabId } : e));
+        return { ...r.w, activeTabId: r.tabId, mru: touch(r.w.mru, r.tabId), nav: { entries, index: at } };
+      });
+      if (dropped) forgetReplaced(dropped);
+      get().requestConnect(wsId);
+      return true;
+    },
+
+    cycleTab: (wsId, dir) => {
+      const w = get().workspaces.find((x) => x.id === wsId);
+      if (!w || w.tabs.length === 0) return;
+      const i = w.tabs.findIndex((t) => t.id === w.activeTabId);
+      const n = w.tabs.length;
+      const next = i < 0 ? (dir > 0 ? 0 : n - 1) : (i + dir + n) % n;
+      get().activateTab(wsId, w.tabs[next].id);
+    },
+
+    activateTabAt: (wsId, index) => {
+      const tab = get().workspaces.find((x) => x.id === wsId)?.tabs[index];
+      if (tab) get().activateTab(wsId, tab.id);
+    },
+
     activateTab: (wsId, tabId) => {
-      update(wsId, (w) =>
-        w.tabs.some((t) => t.id === tabId)
-          ? { ...w, activeTabId: tabId, mru: touch(w.mru, tabId) }
-          : w,
-      );
+      update(wsId, (w) => (w.tabs.some((t) => t.id === tabId) ? visit(w, tabId) : w));
       get().requestConnect(wsId);
     },
 
@@ -665,7 +850,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
     openSavedQueryTab: (wsId, name, sql) =>
       update(wsId, (w) => {
         const linked = w.tabs.find((t) => t.kind === "query" && t.savedName === name);
-        if (linked) return { ...w, activeTabId: linked.id, mru: touch(w.mru, linked.id) };
+        if (linked) return visit(w, linked.id);
         const tab: Tab = {
           id: crypto.randomUUID(),
           kind: "query",
@@ -675,7 +860,7 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
           savedName: name,
           savedSql: sql,
         };
-        return { ...w, tabs: [...w.tabs, tab], activeTabId: tab.id, mru: touch(w.mru, tab.id) };
+        return visit({ ...w, tabs: [...w.tabs, tab] }, tab.id);
       }),
 
     sidebarVisible: true,

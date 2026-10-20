@@ -1,13 +1,45 @@
-import { useAction, useEffectiveShortcut } from "../../lib/keymap";
+import { type KeymapActionId, alternateShortcuts, useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
+import { useShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { usePendingChanges } from "../../stores/pendingChanges";
+import { useSettings } from "../../stores/settings";
 import { type Tab, type Workspace, capabilitiesOf, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
 import { Sidebar, useSidebarShortcuts } from "../sidebar/Sidebar";
 import { TabBar } from "./TabBar";
 import { TabSwitcher } from "./TabSwitcher";
+import { useNavigationShortcuts } from "./navigation";
+
+/**
+ * The tab keys of a workspace that move in tab bar order (spec §5.3): the alternates of
+ * `tab.next` / `tab.previous` (Mod+] / Mod+[, Mod+PageDown / Mod+PageUp; their main
+ * combinations, Ctrl+Tab, keep the most-recent order in TabSwitcher), and `tab.goto1`…`9`.
+ * They also act in the SQL editor, whose own Mod+[ / Mod+] are dropped (SqlEditor).
+ */
+function useTabShortcuts(wsId: string) {
+  const cycleTab = useWorkspaces((s) => s.cycleTab);
+  const nextAlt = useSettings((s) => alternateShortcuts("tab.next", s.settings.keymap).join("\n"));
+  const prevAlt = useSettings((s) => alternateShortcuts("tab.previous", s.settings.keymap).join("\n"));
+  useShortcut(nextAlt.split("\n"), () => cycleTab(wsId, 1), { enabled: nextAlt !== "" });
+  useShortcut(prevAlt.split("\n"), () => cycleTab(wsId, -1), { enabled: prevAlt !== "" });
+  useGotoTab(wsId, 1);
+  useGotoTab(wsId, 2);
+  useGotoTab(wsId, 3);
+  useGotoTab(wsId, 4);
+  useGotoTab(wsId, 5);
+  useGotoTab(wsId, 6);
+  useGotoTab(wsId, 7);
+  useGotoTab(wsId, 8);
+  useGotoTab(wsId, 9);
+}
+
+/** `tab.goto<n>` (Mod+n) activates the n-th tab; nothing when there are fewer tabs. */
+function useGotoTab(wsId: string, n: number) {
+  const activateTabAt = useWorkspaces((s) => s.activateTabAt);
+  useAction(`tab.goto${n}` as KeymapActionId, () => activateTabAt(wsId, n - 1));
+}
 
 export function TabContent({ workspace, tab }: { workspace: Workspace; tab: Tab }) {
   if (tab.kind === "table") {
@@ -66,6 +98,8 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   const connected = workspace.status === "connected";
 
   useSidebarShortcuts(id, connected);
+  useTabShortcuts(id);
+  useNavigationShortcuts(id, true);
   useAction("query.new", () => {
     if (sqlEditor) openQueryTab(id);
   });

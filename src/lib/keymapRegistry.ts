@@ -33,8 +33,10 @@ type Spec = {
 const SPECS = {
   "query.new": { scope: "global", defaultShortcut: "Mod+T" },
   "tab.close": { scope: "global", defaultShortcut: "Mod+W" },
-  "tab.next": { scope: "global", defaultShortcut: "Ctrl+Tab" },
-  "tab.previous": { scope: "global", defaultShortcut: "Ctrl+Shift+Tab" },
+  // Ctrl+Tab keeps the most-recent order (TabSwitcher); the alternates move in tab bar
+  // order (spec §5.3: Ctrl+[ / Ctrl+], and §5.5: Ctrl+PageUp / PageDown for AltGr layouts).
+  "tab.next": { scope: "global", defaultShortcut: "Ctrl+Tab", alternates: ["Mod+]", "Mod+PageDown"] },
+  "tab.previous": { scope: "global", defaultShortcut: "Ctrl+Shift+Tab", alternates: ["Mod+[", "Mod+PageUp"] },
   "palette.all": { scope: "global", defaultShortcut: "Mod+P" },
   "settings.open": { scope: "global", defaultShortcut: "Mod+," },
   "query.save": { scope: "queryTab", defaultShortcut: "Mod+S" },
@@ -48,7 +50,6 @@ const SPECS = {
   "grid.rowDetails": { scope: "tableTab", defaultShortcut: "Mod+I" },
   "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1" },
   "grid.viewStructure": { scope: "tableTab", defaultShortcut: "Alt+2" },
-  "grid.back": { scope: "tableTab", defaultShortcut: "Alt+ArrowLeft" },
   "font.increase": { scope: "global", defaultShortcut: "Mod+=" },
   "font.decrease": { scope: "global", defaultShortcut: "Mod+-" },
   "database.open": { scope: "global", defaultShortcut: "Mod+K" },
@@ -58,6 +59,19 @@ const SPECS = {
   "workspace.next": { scope: "global", defaultShortcut: "Mod+Shift+]", alternates: ["Mod+Shift+PageDown"] },
   "sidebar.toggle": { scope: "global", defaultShortcut: "Mod+0" },
   "sidebar.search": { scope: "global", defaultShortcut: "Mod+Shift+F" },
+  // Task 4: back / forward in the workspace's history; in a table tab showing its rows, back
+  // first goes along the foreign key trail (the former `grid.back`).
+  "nav.back": { scope: "global", defaultShortcut: "Alt+ArrowLeft" },
+  "nav.forward": { scope: "global", defaultShortcut: "Alt+ArrowRight" },
+  "tab.goto1": { scope: "global", defaultShortcut: "Mod+1" },
+  "tab.goto2": { scope: "global", defaultShortcut: "Mod+2" },
+  "tab.goto3": { scope: "global", defaultShortcut: "Mod+3" },
+  "tab.goto4": { scope: "global", defaultShortcut: "Mod+4" },
+  "tab.goto5": { scope: "global", defaultShortcut: "Mod+5" },
+  "tab.goto6": { scope: "global", defaultShortcut: "Mod+6" },
+  "tab.goto7": { scope: "global", defaultShortcut: "Mod+7" },
+  "tab.goto8": { scope: "global", defaultShortcut: "Mod+8" },
+  "tab.goto9": { scope: "global", defaultShortcut: "Mod+9" },
 } as const satisfies Record<keyof typeof strings.keymap, Spec>;
 
 export type KeymapActionId = keyof typeof SPECS;
@@ -146,6 +160,18 @@ export function effectiveShortcuts(id: KeymapActionId, keymap: Record<string, st
   if (typeof custom === "string" && isValidShortcut(custom)) return [custom];
   const spec: Spec = SPECS[id];
   return [spec.defaultShortcut, ...(spec.alternates ?? [])];
+}
+
+/**
+ * The alternates of `id` that are bound: its default alternates, or none once a valid
+ * custom shortcut replaces them (for an action whose alternates act differently from its
+ * main combination: `tab.next` / `tab.previous`).
+ */
+export function alternateShortcuts(id: KeymapActionId, keymap: Record<string, string>): string[] {
+  const custom = own(keymap, id) ? keymap[id] : undefined;
+  if (typeof custom === "string" && isValidShortcut(custom)) return [];
+  const spec: Spec = SPECS[id];
+  return [...(spec.alternates ?? [])];
 }
 
 /** Two scopes can be active for the same keydown (see `ShortcutScope`). */

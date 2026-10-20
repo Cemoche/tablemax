@@ -181,3 +181,82 @@ test("Mod+E opens the SQL editor in a new SQL tab", () => {
 test("no environment banner above the workspace (the status pill shows it)", () => {
   expect(screen.queryByRole("status", { name: "Environment" })).toBeNull();
 });
+
+// ---- Task 4: tab shortcuts (spec §5.3) ----
+
+const three = () =>
+  renderLive({
+    tabs: [
+      { id: "a", kind: "query", title: "Query 1", sql: "", sqlSessionId: null },
+      { id: "b", kind: "query", title: "Query 2", sql: "", sqlSessionId: null },
+      { id: "c", kind: "query", title: "Query 3", sql: "", sqlSessionId: null },
+    ],
+    activeTabId: "a",
+    mru: ["a", "c", "b"],
+  });
+const activeId = () => useWorkspaces.getState().workspaces[0].activeTabId;
+
+test("ctrl_brackets_and_pageup_cycle_tabs: Ctrl+] / Ctrl+[ and Ctrl+PageDown / PageUp move in bar order", () => {
+  three();
+  press({ code: "BracketRight" });
+  expect(activeId()).toBe("b");
+  press({ code: "PageDown" });
+  expect(activeId()).toBe("c");
+  press({ code: "BracketRight" });
+  expect(activeId()).toBe("a");
+  press({ code: "BracketLeft" });
+  expect(activeId()).toBe("c");
+  press({ code: "PageUp" });
+  expect(activeId()).toBe("b");
+  // Ctrl+Shift+[ stays the previous workspace: the tab does not move.
+  press({ code: "BracketLeft", shiftKey: true });
+  expect(activeId()).toBe("b");
+});
+
+test("Ctrl+Tab keeps the most-recent order, Ctrl+] the bar order", () => {
+  three();
+  // MRU is a, c, b: Ctrl+Tab then releasing Ctrl goes to c (the bar order would give b).
+  press({ code: "Tab" });
+  act(() => {
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control", code: "ControlLeft" }));
+  });
+  expect(activeId()).toBe("c");
+});
+
+test("a custom Next tab combination replaces Ctrl+] and Ctrl+PageDown too", () => {
+  three();
+  act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "tab.next": "Alt+N" } } }));
+  press({ code: "BracketRight" });
+  press({ code: "PageDown" });
+  expect(activeId()).toBe("a");
+});
+
+test("ctrl_number_goes_to_tab: Ctrl+1…9 activate that tab; past the last, nothing", () => {
+  three();
+  press({ code: "Digit3" });
+  expect(activeId()).toBe("c");
+  press({ code: "Digit1" });
+  expect(activeId()).toBe("a");
+  press({ code: "Digit2" });
+  expect(activeId()).toBe("b");
+  press({ code: "Digit9" });
+  expect(activeId()).toBe("b");
+});
+
+test("Alt+← / Alt+→ go back and forward in the workspace's tab history, not while typing", async () => {
+  three();
+  press({ code: "Digit3" });
+  press({ code: "ArrowLeft", ctrlKey: false, altKey: true });
+  expect(activeId()).toBe("a");
+  press({ code: "ArrowRight", ctrlKey: false, altKey: true });
+  expect(activeId()).toBe("c");
+  const field = document.createElement("input");
+  document.body.appendChild(field);
+  field.focus();
+  act(() => {
+    field.dispatchEvent(
+      new KeyboardEvent("keydown", { code: "ArrowLeft", key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true }),
+    );
+  });
+  expect(activeId()).toBe("c");
+});

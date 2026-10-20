@@ -46,10 +46,15 @@ interface ChromeState {
   editorInserts: Record<string, string>;
   requestInsert: (tabId: string, sql: string) => void;
   takeInsert: (tabId: string) => string | null;
-  /** One-shot: the view a table tab shows when it mounts or now ("Open structure"). */
+  /**
+   * The view each table tab shows (absent: Data). Kept here, not in the tab's component:
+   * only the active tab of the active workspace is mounted, so a tab or workspace switch
+   * unmounts it. Set by the tab's switch and by the sidebar's "Open structure"; dropped
+   * when the tab closes (workspaces).
+   */
   tableViews: Record<string, "data" | "structure">;
-  requestTableView: (tabId: string, view: "data" | "structure") => void;
-  takeTableView: (tabId: string) => "data" | "structure" | null;
+  setTableView: (tabId: string, view: "data" | "structure") => void;
+  dropTableView: (tabId: string) => void;
 }
 
 const bump = (m: Record<string, number>, id: string) => ({ ...m, [id]: (m[id] ?? 0) + 1 });
@@ -93,13 +98,9 @@ export const useChrome = create<ChromeState>((set, get) => ({
     return sql;
   },
   tableViews: {},
-  requestTableView: (tabId, view) => set((s) => ({ tableViews: { ...s.tableViews, [tabId]: view } })),
-  takeTableView: (tabId) => {
-    const view = get().tableViews[tabId];
-    if (view === undefined) return null;
-    set((s) => ({ tableViews: omit(s.tableViews, tabId) }));
-    return view;
-  },
+  setTableView: (tabId, view) =>
+    set((s) => (s.tableViews[tabId] === view ? s : { tableViews: { ...s.tableViews, [tabId]: view } })),
+  dropTableView: (tabId) => set((s) => (tabId in s.tableViews ? { tableViews: omit(s.tableViews, tabId) } : s)),
 }));
 
 /**
