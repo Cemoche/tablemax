@@ -453,7 +453,7 @@ test("only a character meant as text starts a cell edit: never Alt+letter or Ctr
 
 test("row numbers: our marker renderer, right-aligned; a selected row's number on --rownum-selected (#102)", () => {
   render(<Selecting ed={editing()} />);
-  expect(editor!.rowMarkers).toMatchObject({ kind: "number", theme: { textLight: "#8a8a8a" } });
+  expect(editor!.rowMarkers).toMatchObject({ kind: "number", width: 46, theme: { textLight: "#8a8a8a" } });
   const renderer = editor!.renderers!.find((r) => r.kind === InnerGridCellKind.Marker)!;
   expect(renderer).not.toBe(markerCellRenderer);
   const drawRow = (row: number) => {

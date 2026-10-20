@@ -50,14 +50,13 @@ import {
   selectionBlock,
   withSelectedRow,
 } from "./gridSelection";
-import { useGridTheme } from "./gridTheme";
-import { type RowNumberStyle, gridRenderers } from "./rowNumbers";
+import { markerFontSize, useGridTheme } from "./gridTheme";
+import { type RowNumberStyle, gridRenderers, rowNumberWidth } from "./rowNumbers";
 import { QuickLook } from "./QuickLook";
 
-/** Spec §5.2 at 100 %: rows 26 (they grow with a larger data font), header 30, numbers 46. */
+/** Spec §5.2 at 100 %: rows 26 (they grow with a larger data font), header 30, numbers 46 (wider for long numbers: rowNumberWidth). */
 const MIN_ROW_HEIGHT = 26;
 const HEADER_HEIGHT = 30;
-const ROW_NUMBER_WIDTH = 46;
 
 /** Editing hooks of a table grid; row/col are display rows and columns of `model` (its own column order). */
 export interface GridEditing {
@@ -660,7 +659,11 @@ export function DataGrid({
         theme={theme}
         rowHeight={rowHeight}
         headerHeight={HEADER_HEIGHT}
-        rowMarkers={{ kind: "number", width: ROW_NUMBER_WIDTH, theme: rowThemes.rowNumber }}
+        rowMarkers={{
+          kind: "number",
+          width: rowNumberWidth(rowCount, markerFontSize(g.fontSize)),
+          theme: rowThemes.rowNumber,
+        }}
         getRowThemeOverride={getRowThemeOverride}
         smoothScrollX
         smoothScrollY

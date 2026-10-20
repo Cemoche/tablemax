@@ -138,7 +138,7 @@
 
 **Interfaces:**
 - `PageRequest` gagne `#[serde(default)] combine: FilterCombine` (`And` défaut | `Or`), utilisé par `build_page` et `build_filtered_count`.
-- `TableBottomBar` : [Data | Structure] (Ctrl+Alt+[ / ], Alt+1 / Alt+2 gardés) · `+ Row` (Ctrl+I) · compteur centré · Filters (Ctrl+F, ouvre / ferme la barre et place le focus) · Columns (Ctrl+Alt+F, popover : cocher / décocher les colonnes visibles, Show all) · pagination [‹ | réglages | ›] (Ctrl+← / Ctrl+→ avec la grille active ; popover offset / limit / Go).
+- `TableBottomBar` : [Data | Structure] (Ctrl+Alt+[ / ], Alt+1 / Alt+2 gardés) · `+ Row` (Ctrl+I) · compteur centré · Filters (Ctrl+F, ouvre / ferme la barre et place le focus) · Columns (Ctrl+Alt+F, popover : cocher / décocher les colonnes visibles, Show all) · pagination [‹ | réglages | ›] (Ctrl+← / Ctrl+→ avec la grille active ; popover offset / limit / Go). Amendé le 2026-10-20 (#102) : hors macOS Columns = Alt+F et la vue = Alt+1 / Alt+2 seulement (Ctrl+Alt est AltGr) ; ⌘⌥F et ⌘⌥[ / ] sur macOS.
 - `FilterBar` : une ligne par filtre : case (Ctrl+B), colonne (Any column, Raw SQL, colonnes), opérateur (ceux du type, existants), valeur, Apply (Enter : ce filtre seul), + (Ctrl+I dans la barre), − (Ctrl+Shift+I) ; Apply All [AND | OR] (Ctrl+Enter / Ctrl+Shift+Enter) ; Échap ferme une barre vide ; teinte « appliqué » sur les lignes actives.
 
 - [ ] **Step 1: Tests qui échouent** : Rust `filters_combined_with_or` (query.rs + un test d'intégration par moteur), TS `bottom_bar_layout`, `columns_popover_hides_columns`, `page_popover_offset_limit`, `apply_row_applies_only_that_filter`, `apply_all_and_or`, `ctrl_b_toggles_filter`, `raw_sql_mode_uses_quick_syntax`, `filter_bar_keyboard_flow`, `escape_closes_empty_bar`.

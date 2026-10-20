@@ -11,6 +11,19 @@ type Renderer = NonNullable<DataEditorCoreProps["renderers"]>[number];
 
 /** Space between a row number and the first data column. */
 export const ROW_NUMBER_PAD = 8;
+/** Spec §5.2 at 100 %: the numbers column is 46 px wide, wider only for long numbers. */
+export const ROW_NUMBER_MIN_WIDTH = 46;
+/** A digit's width in em, rounded up for the interface fonts (no canvas to measure in tests). */
+const DIGIT_EM = 0.62;
+
+/**
+ * Width of the numbers column: room for the largest number (`rowCount`, numbers start at 1)
+ * at `fontPx`, with ROW_NUMBER_PAD on both sides, never under ROW_NUMBER_MIN_WIDTH.
+ */
+export function rowNumberWidth(rowCount: number, fontPx: number): number {
+  const digits = String(Math.max(1, Math.floor(rowCount))).length;
+  return Math.max(ROW_NUMBER_MIN_WIDTH, Math.ceil(digits * fontPx * DIGIT_EM) + 2 * ROW_NUMBER_PAD);
+}
 
 /** How the row numbers are drawn, read at each draw (the theme and selection change). */
 export interface RowNumberStyle {
@@ -34,7 +47,11 @@ export function rowNumberRenderer(style: () => RowNumberStyle): Renderer {
   const draw: Renderer["draw"] = (args, cell) => {
     const marker = cell as MarkerCell;
     if (marker.markerKind !== "number") {
-      (markerCellRenderer as Renderer).draw(args, marker);
+      // Other marker kinds (checkboxes): Glide's renderer, with its own prep.
+      const glide = markerCellRenderer as Renderer;
+      const prep = glide.drawPrep?.(args, undefined);
+      glide.draw(args, marker);
+      prep?.deprep?.(args);
       return;
     }
     const { ctx, rect, theme, row } = args;

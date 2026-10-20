@@ -148,6 +148,22 @@ test("ctrl_b_after_apply_all: with the focus on Apply All or AND / OR, Ctrl+B to
   expect(check(2)).not.toBeChecked();
 });
 
+test("remove_needs_its_row: Ctrl+Shift+I from Apply All or AND / OR removes nothing (it could re-run the query) (#102)", async () => {
+  await twoRows();
+  await userEvent.click(screen.getByRole("button", { name: f.applyAll }));
+  expect(onApply).toHaveBeenCalledTimes(1);
+  await userEvent.keyboard("{Control>}{Shift>}I{/Shift}{/Control}");
+  await userEvent.click(screen.getByRole("button", { name: f.combineOr }));
+  await userEvent.keyboard("{Control>}{Shift>}I{/Shift}{/Control}");
+  expect(screen.getAllByRole("checkbox", { name: /^Use condition/ })).toHaveLength(2);
+  expect(onApply).toHaveBeenCalledTimes(1);
+  // In its row it removes that row (applied: the other one is applied again).
+  value(2).focus();
+  await userEvent.keyboard("{Control>}{Shift>}I{/Shift}{/Control}");
+  expect(screen.getAllByRole("checkbox", { name: /^Use condition/ })).toHaveLength(1);
+  expect(onApply).toHaveBeenLastCalledWith([eq("status", "paid")], "and");
+});
+
 test("raw_sql_mode_uses_quick_syntax: Raw SQL takes the quick syntax as bound filters, other text as SQL", async () => {
   setup();
   await userEvent.selectOptions(column(1), f.rawSql);

@@ -252,7 +252,7 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const ownRow = rowOf(e.target);
-    // The row keys act on the focused row; from the bar's other controls, on the row focused
+    // Toggle and add act on the focused row; from the bar's other controls, on the row focused
     // last (else the only row): Ctrl+B after a click on Apply All toggles a row (#102).
     const remembered = rows.some((r) => r.id === lastRow.current) ? lastRow.current! : undefined;
     const rowId = ownRow ?? remembered ?? (rows.length === 1 ? rows[0].id : undefined);
@@ -264,7 +264,8 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
     };
     if (isKey("filters.toggle", e)) return act(() => rowId && toggle(rowId));
     if (isKey("filters.add", e)) return act(() => addAfter(rowId ?? rows[rows.length - 1].id));
-    if (isKey("filters.remove", e)) return act(() => rowId && remove(rowId));
+    // Removing needs the focus in its row: it may re-run the query (an applied row).
+    if (isKey("filters.remove", e)) return act(() => ownRow && remove(ownRow));
     if (isKey("filters.applyAll", e)) return act(() => applyAll("and"));
     if (isKey("filters.applyAllOr", e)) return act(() => applyAll("or"));
     // The table tab's Filters key closes the bar from inside it.

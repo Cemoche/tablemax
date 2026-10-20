@@ -1,6 +1,6 @@
 import { InnerGridCellKind, type MarkerCell, markerCellRenderer } from "@glideapps/glide-data-grid";
 import { expect, test, vi } from "vitest";
-import { ROW_NUMBER_PAD, type RowNumberStyle, gridRenderers, rowNumberRenderer } from "./rowNumbers";
+import { ROW_NUMBER_MIN_WIDTH, ROW_NUMBER_PAD, type RowNumberStyle, gridRenderers, rowNumberRenderer, rowNumberWidth } from "./rowNumbers";
 
 /** A canvas context that records what is drawn. */
 function fakeCtx() {
@@ -83,4 +83,32 @@ test("the renderer list swaps only Glide's marker renderer", () => {
   expect(markers[0]).not.toBe(markerCellRenderer);
   expect(markers[0].drawPrep).toBeUndefined();
   expect(list.some((r) => r.kind === "text")).toBe(true);
+});
+
+test("the numbers column widens for long numbers and large fonts, never under 46 px (review #102)", () => {
+  // Default data size 13 (numbers at 11 px): 46 px up to 4 digits.
+  expect(rowNumberWidth(300, 11)).toBe(ROW_NUMBER_MIN_WIDTH);
+  expect(rowNumberWidth(9999, 11)).toBe(ROW_NUMBER_MIN_WIDTH);
+  expect(rowNumberWidth(0, 11)).toBe(ROW_NUMBER_MIN_WIDTH);
+  // Data size 24 (numbers at 22 px): 4 digits need more than 46 px.
+  const w = rowNumberWidth(1000, 22);
+  expect(w).toBeGreaterThan(ROW_NUMBER_MIN_WIDTH);
+  // Room for every digit (about 0.6 em each) and the padding on both sides.
+  expect(w).toBeGreaterThanOrEqual(4 * 22 * 0.6 + 2 * ROW_NUMBER_PAD);
+  expect(rowNumberWidth(100000, 11)).toBeGreaterThan(rowNumberWidth(10000, 11));
+});
+
+test("other marker kinds draw as Glide does, prep included", () => {
+  const { ctx, calls } = fakeCtx();
+  const renderer = rowNumberRenderer(() => style([]));
+  const cell = marker(3, "checkbox");
+  const draw = vi.spyOn(markerCellRenderer, "draw").mockImplementation(() => {});
+  const prep = vi.spyOn(markerCellRenderer, "drawPrep");
+  renderer.draw({ ctx, rect: { x: 0, y: 0, width: 46, height: 26 }, theme: {}, row: 2, col: 0, cell } as never, cell);
+  expect(prep).toHaveBeenCalled();
+  expect(draw).toHaveBeenCalled();
+  expect(calls).toEqual([]);
+  expect(ctx.textAlign).toBe("start");
+  draw.mockRestore();
+  prep.mockRestore();
 });

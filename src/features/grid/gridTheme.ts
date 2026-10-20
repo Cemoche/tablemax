@@ -16,6 +16,11 @@ const FALLBACK_MONO = "ui-monospace, monospace";
 const FALLBACK_SIZE = "13px";
 /** The data font size when the settings say nothing (spec §2.2). */
 export const DEFAULT_DATA_FONT_SIZE = 13;
+/** The row numbers' font size in px: 2 px under the data, at least 9. */
+export function markerFontSize(dataFontSize: number): number {
+  return Math.max(9, dataFontSize - 2);
+}
+
 /** NULL / EMPTY / DEFAULT are this much smaller than the data (11.5 px at 13 px, spec §2.3). */
 const PLACEHOLDER_SHRINK = 1.5;
 
@@ -76,7 +81,7 @@ export function buildGridTheme(
     fontFamily: monoFamily ?? v("--font-mono", FALLBACK_MONO),
     baseFontStyle: `${dataFontSize}px`,
     headerFontStyle: `500 ${uiSize}`,
-    markerFontStyle: `${Math.max(9, dataFontSize - 2)}px`,
+    markerFontStyle: `${markerFontSize(dataFontSize)}px`,
     editorFontSize: `${dataFontSize}px`,
   };
 }

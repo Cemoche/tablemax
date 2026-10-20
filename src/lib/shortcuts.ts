@@ -89,7 +89,6 @@ const NAMED_KEYS = new Set([
 export function shortcutKeyOf(e: Pick<KeyboardEvent, "key" | "code">): string {
   const letter = eventLetter(e);
   if (letter) return letter;
-  if (LATIN_LETTER.test(e.key ?? "")) return "";
   const code = e.code ?? "";
   if (/^Digit[0-9]$/.test(code)) return code.slice(5);
   if (/^F([1-9]|1[0-2])$/.test(code) || NAMED_KEYS.has(code)) return code;
