@@ -27,8 +27,7 @@ const vars: Record<string, string> = {
   "--accent": "#888",
   "--row-selected-text": "#999",
   "--cell-focus": "#f42",
-  "--rownum": "#8a8",
-  "--rownum-selected": "#06c",
+  "--row-selected": "#06c",
   "--sel": "#464",
   "--font-mono": '"JetBrains Mono", ui-monospace, monospace',
   "--font-ui": "system-ui, sans-serif",
@@ -62,25 +61,30 @@ test("data in the mono font at the data font size, headers in the interface font
   expect(headerFont(read)).toBe("500 13px system-ui, sans-serif");
 });
 
-test("zebra_rows: odd rows use --row-b, selected rows --accent with white text", () => {
+test("zebra_rows: odd rows use --row-b, selected rows --row-selected (the deeper accent) with white text (#103)", () => {
   const r = buildRowThemes(read);
   expect(r.odd).toEqual({ bgCell: "#1b1" });
   expect(r.selected).toMatchObject({
-    bgCell: "#888",
+    bgCell: "#06c",
     textDark: "#999",
     textLight: "#999",
-    accentLight: "#888",
+    accentLight: "#06c",
   });
-  // Row numbers use --rownum.
-  expect(r.rowNumber).toMatchObject({ textLight: "#8a8" });
 });
 
-test("row numbers: the interface font, a deeper accent fill and white text on selected rows (#102)", () => {
-  expect(buildRowNumberColors(read)).toEqual({ family: "system-ui, sans-serif", selectedFill: "#06c", selectedText: "#999" });
+test("row numbers: the interface font, the header's colours, and the selected row's fill and text (#103)", () => {
+  expect(buildRowNumberColors(read)).toEqual({
+    family: "system-ui, sans-serif",
+    fill: "#222",
+    text: "#333",
+    selectedFill: "#06c",
+    selectedText: "#999",
+  });
   // Smaller than the data.
   expect(buildGridTheme(read, 13).markerFontStyle).toBe("11px");
   const { result } = renderHook(() => useGridTheme(read, 13));
   expect(result.current.rowNumbers.selectedFill).toBe("#06c");
+  expect(result.current.rowNumbers.fill).toBe("#222");
 });
 
 test("placeholders_uppercase_dim: NULL / EMPTY / DEFAULT use --placeholder, 1.5 px under the data size", () => {

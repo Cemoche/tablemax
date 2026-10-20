@@ -51,11 +51,10 @@ const THEME_TOKENS = [
   "--grid-sep",
   "--cell-text",
   "--placeholder",
-  "--rownum",
-  "--rownum-selected",
   "--bottom",
   "--btn",
   "--accent",
+  "--accent-strong",
   "--cell-focus",
   "--inserted",
   "--modified",
@@ -98,18 +97,26 @@ test("light_theme_contrast", () => {
   }
 });
 
-test("row numbers read 4.5:1 on both row colours and on a selected row, dimmer than the data (#102)", () => {
+test("selection_contrast: white reads 4.5:1 on selected rows and filled controls (--accent-strong), not on the accent (#103)", () => {
+  const white = values(LIGHT)["--row-selected-text"];
   for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
     const v = values(selector);
-    const ratio = (fg: string, bg: string) => contrastRatio(v[fg], v[bg]);
-    for (const row of ["--row-a", "--row-b"]) {
-      expect(ratio("--rownum", row), `${selector} rownum on ${row}`).toBeGreaterThanOrEqual(4.5);
-      // Dimmer than the data: clearly less contrast than --cell-text.
-      expect(ratio("--rownum", row), `${selector} rownum dimmer on ${row}`).toBeLessThan(ratio("--cell-text", row) / 2);
-    }
-    // A selected row's number: white on the deeper accent (the accent itself gives 4.0:1).
-    const white = values(LIGHT)["--row-selected-text"];
-    expect(contrastRatio(white, v["--rownum-selected"]), `${selector} selected number`).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(white, v["--accent-strong"]), `${selector} white on accent-strong`).toBeGreaterThanOrEqual(4.5);
+    // The §5.1 accent alone gives 4.0:1 (light) / 3.9:1 (dark): white text never sits on it.
+    expect(contrastRatio(white, v["--accent"]), `${selector} white on accent`).toBeLessThan(4.5);
+  }
+  // Selected rows (grid) use the deeper fill; the §5.1 accent itself is unchanged.
+  expect(values(LIGHT)["--row-selected"]).toBe("var(--accent-strong)");
+  expect(values(LIGHT)["--accent"]).toBe("#007AFF");
+  expect(values(DARK_FORCED)["--accent"]).toBe("#3A7BF6");
+});
+
+test("row_number_column: the header's colours on every row, readable in both themes; #102's row number tokens are gone (#103)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = values(selector);
+    expect(contrastRatio(v["--head-text"], v["--grid-head"]), `${selector} head-text on grid-head`).toBeGreaterThanOrEqual(4.5);
+    expect(v["--rownum"], selector).toBeUndefined();
+    expect(v["--rownum-selected"], selector).toBeUndefined();
   }
 });
 

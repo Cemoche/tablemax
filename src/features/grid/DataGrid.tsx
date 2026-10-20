@@ -51,6 +51,7 @@ import {
   withSelectedRow,
 } from "./gridSelection";
 import { markerFontSize, useGridTheme } from "./gridTheme";
+import { drawCenteredHeader } from "./headerLabels";
 import { type RowNumberStyle, gridRenderers, rowNumberWidth } from "./rowNumbers";
 import { QuickLook } from "./QuickLook";
 
@@ -332,7 +333,14 @@ export function DataGrid({
   const highlighted = useMemo(() => highlightedRows(selection), [selection]);
   // Row numbers drawn by our marker renderer (right-aligned, interface font, #102); it reads
   // the selection and colours of the last render.
-  const rowNumberStyle = useRef<RowNumberStyle>({ selected: () => false, family: "", selectedFill: "", selectedText: "" });
+  const rowNumberStyle = useRef<RowNumberStyle>({
+    selected: () => false,
+    family: "",
+    fill: "",
+    text: "",
+    selectedFill: "",
+    selectedText: "",
+  });
   rowNumberStyle.current = { selected: (row) => highlighted.has(row), ...rowNumbers };
   const renderers = useMemo(() => gridRenderers(() => rowNumberStyle.current), []);
   // What Glide's DataEditor adds to its core, which takes no other renderers.
@@ -662,8 +670,8 @@ export function DataGrid({
         rowMarkers={{
           kind: "number",
           width: rowNumberWidth(rowCount, markerFontSize(g.fontSize)),
-          theme: rowThemes.rowNumber,
         }}
+        drawHeader={drawCenteredHeader}
         getRowThemeOverride={getRowThemeOverride}
         smoothScrollX
         smoothScrollY

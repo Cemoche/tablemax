@@ -156,7 +156,7 @@ export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props)
               aria-keyshortcuts={keys(shortcut[k])}
               onClick={() => onView(k)}
               onKeyDown={onTabKey}
-              className="rounded-[5px] px-2.5 text-text outline-none aria-selected:bg-accent aria-selected:text-accent-contrast focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
+              className="rounded-[5px] px-2.5 text-text outline-none aria-selected:bg-accent-strong aria-selected:text-accent-contrast focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
             >
               {VIEW_TEXT[k].label}
             </button>

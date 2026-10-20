@@ -37,7 +37,7 @@ export function headerFont(readVar: ReadVar = readCssVar): string {
  * `--font-mono` at `dataFontSize` (`monoFamily` replaces the token's family list while the
  * web font loads); headers medium at the interface size (their family is set per column:
  * see `headerFont`). `accentColor` is the active cell's border (`--cell-focus`); the accent
- * itself colours links and selected rows (`buildRowThemes`).
+ * itself colours links, `--row-selected` the selected rows (`buildRowThemes`).
  */
 export function buildGridTheme(
   readVar: ReadVar = readCssVar,
@@ -64,7 +64,7 @@ export function buildGridTheme(
     bgBubble: v("--seg-sel", head),
     textDark: text,
     textMedium: secondary,
-    // NULL / EMPTY / DEFAULT placeholders (see `muted`); row numbers use --rownum.
+    // NULL / EMPTY / DEFAULT placeholders (see `muted`); row numbers: buildRowNumberColors.
     textLight: placeholder,
     textHeader: v("--head-text", text),
     textHeaderSelected: onAccent,
@@ -89,32 +89,36 @@ export function buildGridTheme(
 export interface RowThemes {
   /** Every other row (zebra, `--row-b`). */
   odd: Partial<Theme>;
-  /** A selected row, or a row of the current range: the accent, white text. */
+  /** A selected row, or a row of the current range: `--row-selected`, white text. */
   selected: Partial<Theme>;
-  /** The row numbers column (`--rownum`). */
-  rowNumber: Partial<Theme>;
 }
 
 /** The row numbers' own colours and font (see `rowNumberRenderer`). */
 export interface RowNumberColors {
   /** The interface font: the numbers stand apart from the data's mono font. */
   family: string;
-  /** A selected row's number cell (`--rownum-selected`, white reads 4.5:1 on it). */
+  /** Every number cell: the column header's background (`--grid-head`), no zebra (#103). */
+  fill: string;
+  /** Every number: the column header's text (`--head-text`). */
+  text: string;
+  /** A selected row's number cell (`--row-selected`, white reads 4.5:1 on it). */
   selectedFill: string;
   /** A selected row's number (`--row-selected-text`). */
   selectedText: string;
 }
 
-/** Colours of the row numbers on selected rows, and their font (missing tokens: the row's). */
+/** Colours of the row numbers and their font (missing tokens: the row's own). */
 export function buildRowNumberColors(readVar: ReadVar = readCssVar): RowNumberColors {
   return {
     family: readVar("--font-ui") || FALLBACK_FONT,
-    selectedFill: readVar("--rownum-selected"),
+    fill: readVar("--grid-head"),
+    text: readVar("--head-text"),
+    selectedFill: readVar("--row-selected"),
     selectedText: readVar("--row-selected-text"),
   };
 }
 
-/** Row overrides: zebra, selected rows and the row numbers (missing tokens override nothing). */
+/** Row overrides: zebra and selected rows (missing tokens override nothing). */
 export function buildRowThemes(readVar: ReadVar = readCssVar): RowThemes {
   const only = (pairs: [keyof Theme, string][]): Partial<Theme> => {
     const out: Partial<Theme> = {};
@@ -126,16 +130,16 @@ export function buildRowThemes(readVar: ReadVar = readCssVar): RowThemes {
   };
   return {
     odd: only([["bgCell", "--row-b"]]),
+    // The deeper accent (#103): white on the §5.1 accent reads only 4.0:1.
     selected: only([
-      ["bgCell", "--accent"],
-      // Glide blends `accentLight` over a selected cell: the accent over itself stays the accent.
-      ["accentLight", "--accent"],
+      ["bgCell", "--row-selected"],
+      // Glide blends `accentLight` over a selected cell: the fill over itself stays the fill.
+      ["accentLight", "--row-selected"],
       ["textDark", "--row-selected-text"],
       ["textMedium", "--row-selected-text"],
       ["textLight", "--row-selected-text"],
       ["linkColor", "--row-selected-text"],
     ]),
-    rowNumber: only([["textLight", "--rownum"]]),
   };
 }
 

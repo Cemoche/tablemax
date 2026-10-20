@@ -182,6 +182,15 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > `--row-a` et `--row-b` ; nouveau `--rownum-selected` #0062CC / #2B63D9, fond du numéro d'une
 > ligne sélectionnée (blanc à 4,5:1, contre 4,0:1 sur `--accent`).
 
+> Amendement 2026-10-20 (#103) : nouveau `--accent-strong` #0062CC (clair) / #2B63D9 (sombre),
+> accent plus profond sous un texte blanc (5,8:1 / 5,4:1, contre 4,0:1 / 3,9:1 sur `--accent`) ;
+> `--row-selected` = `--accent-strong` (lignes sélectionnées), et les contrôles remplis de la
+> barre du bas (segment Data / Structure / Index actif, `Filters` ouvert) l'utilisent ;
+> `--accent` reste #007AFF / #3A7BF6. La colonne des numéros de ligne prend les couleurs de
+> l'en-tête (`--grid-head` / `--head-text`, 13,9:1 / 12,8:1) sur chaque ligne, sans zébrure
+> ni teinte d'insertion / suppression ; une ligne sélectionnée y garde `--row-selected` et du
+> blanc. `--rownum` et `--rownum-selected` (#102) disparaissent.
+
 Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E7D32, nombres
 #B57AFF / #1D00FF, chaînes #CA6E6E / #E04978, commentaires #009B31, requête courante #30363F /
 #F3EEDE, sélection #003F84 / #FFEA84).

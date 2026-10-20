@@ -31,18 +31,20 @@ const marker = (row: number, markerKind: MarkerCell["markerKind"] = "number"): M
 const style = (selected: number[]): RowNumberStyle => ({
   selected: (r) => selected.includes(r),
   family: "system-ui, sans-serif",
+  fill: "#F5F5F5",
+  text: "#262626",
   selectedFill: "#0062CC",
   selectedText: "#FFFFFF",
 });
 
-function draw(s: RowNumberStyle, row: number, cell = marker(row + 1)) {
+function draw(s: RowNumberStyle, row: number, cell = marker(row + 1), bgCell = "#FFFFFF") {
   const { ctx, calls } = fakeCtx();
   const renderer = rowNumberRenderer(() => s);
   renderer.draw(
     {
       ctx,
       rect: { x: 0, y: 26 * row, width: 46, height: 26 },
-      theme: { textLight: "#6E6E6E", markerFontStyle: "11px" },
+      theme: { textLight: "#6E6E6E", markerFontStyle: "11px", bgCell },
       row,
       col: 0,
       cell,
@@ -52,28 +54,32 @@ function draw(s: RowNumberStyle, row: number, cell = marker(row + 1)) {
   return calls;
 }
 
-test("row numbers are right-aligned, in --rownum and the interface font, on the row's own background", () => {
-  const calls = draw(style([]), 2);
-  // No fill: the row's background (zebra included) shows.
-  expect(calls.map((c) => c.op)).toEqual(["fillText"]);
-  const [text] = calls;
-  expect(text.args[0]).toBe("3");
-  expect(text.args[1]).toBe(46 - ROW_NUMBER_PAD);
-  expect(text.textAlign).toBe("right");
-  expect(text.fillStyle).toBe("#6E6E6E");
-  expect(text.font).toBe("11px system-ui, sans-serif");
+test("row numbers are right-aligned in the interface font, in the header's colours on every row (no zebra, #103)", () => {
+  // Odd row (zebra), an inserted row, a deleted row: the row's own background never shows.
+  for (const bg of ["#F4F5F5", "#DAEBC2", "#F5A6B0"]) {
+    const calls = draw(style([]), 2, marker(3), bg);
+    expect(calls.map((c) => c.op)).toEqual(["fillRect", "fillText"]);
+    expect(calls[0]).toMatchObject({ args: [0, 52, 46, 26], fillStyle: "#F5F5F5" });
+    const text = calls[1];
+    expect(text.args[0]).toBe("3");
+    expect(text.args[1]).toBe(46 - ROW_NUMBER_PAD);
+    expect(text.textAlign).toBe("right");
+    expect(text.fillStyle).toBe("#262626");
+    expect(text.font).toBe("11px system-ui, sans-serif");
+  }
 });
 
-test("a selected row's number is white on the deeper accent fill", () => {
+test("a selected row's number is white on the selected rows' fill", () => {
   const calls = draw(style([2]), 2);
   expect(calls[0]).toMatchObject({ op: "fillRect", args: [0, 52, 46, 26], fillStyle: "#0062CC" });
   expect(calls[1]).toMatchObject({ op: "fillText", fillStyle: "#FFFFFF", textAlign: "right" });
 });
 
-test("missing tokens: the selected row keeps its own fill and textLight", () => {
-  const calls = draw({ ...style([2]), selectedFill: "", selectedText: "" }, 2);
+test("missing tokens: the row's own fill and textLight", () => {
+  const calls = draw({ ...style([2]), fill: "", text: "", selectedFill: "", selectedText: "" }, 2);
   expect(calls.map((c) => c.op)).toEqual(["fillText"]);
   expect(calls[0].fillStyle).toBe("#6E6E6E");
+  expect(draw({ ...style([]), fill: "", text: "" }, 1).map((c) => c.op)).toEqual(["fillText"]);
 });
 
 test("the renderer list swaps only Glide's marker renderer", () => {

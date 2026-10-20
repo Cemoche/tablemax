@@ -43,15 +43,14 @@
   --grid-sep: #E3E3E3;
   --cell-text: #262626;
   --placeholder: #8D8D8D;
-  /* Row numbers (#102): spec §5.1's #8A8A8A darkened to 4.5:1 on both row colours; on a
-     selected row their cell is a deeper accent (white reads 4.0:1 on the accent itself). */
-  --rownum: #6E6E6E;
-  --rownum-selected: #0062CC;
   --bottom: #F3F3F3;
   --btn: #FFFFFF;
   /* An applied filter row: --accent at 15 % over --side (its text stays --text). */
   --filter-applied: #D0E3F6;
   --accent: #007AFF;
+  /* A deeper accent under white text (#103): selected rows, filled controls. White reads
+     5.8:1 on it, 4.0:1 on --accent. */
+  --accent-strong: #0062CC;
   --cell-focus: #FF4245;
   --inserted: #DAEBC2;
   --modified: #FFE18E;
@@ -90,8 +89,8 @@
   --env-staging: #b26a00;
   --env-prod: #c62828;
 
-  /* Same in both themes. */
-  --row-selected: var(--accent);
+  /* Same in both themes. Selected rows: the deeper accent, white text at 4.5:1 (#103). */
+  --row-selected: var(--accent-strong);
   --row-selected-text: #FFFFFF;
   --accent-contrast: #FFFFFF;
 
@@ -135,13 +134,11 @@
     --grid-sep: #303030;
     --cell-text: #E6E6E6;
     --placeholder: #737373;
-    /* Row numbers: #8A8A8A lightened to 4.5:1 on --row-b; deeper accent under a selected row. */
-    --rownum: #959595;
-    --rownum-selected: #2B63D9;
     --bottom: #242424;
     --btn: #343434;
     --filter-applied: #232D3F;
     --accent: #3A7BF6;
+    --accent-strong: #2B63D9;
     --cell-focus: #FF4245;
     --inserted: #558C3A;
     --modified: #8B6826;
@@ -203,13 +200,11 @@
   --grid-sep: #303030;
   --cell-text: #E6E6E6;
   --placeholder: #737373;
-  /* Row numbers: #8A8A8A lightened to 4.5:1 on --row-b; deeper accent under a selected row. */
-  --rownum: #959595;
-  --rownum-selected: #2B63D9;
   --bottom: #242424;
   --btn: #343434;
   --filter-applied: #232D3F;
   --accent: #3A7BF6;
+  --accent-strong: #2B63D9;
   --cell-focus: #FF4245;
   --inserted: #558C3A;
   --modified: #8B6826;
