@@ -91,7 +91,7 @@ export function TableDataTab(props: Props) {
   // Kept across foreign key navigation (the panel shows the referenced row once selected).
   const { view, setView } = useTableView(props.tabId);
   // Shortcuts of the data view (Ctrl+Space, Alt+←) only act while it is shown.
-  const detail = useRowDetail(props.tabId, view === "data");
+  const detail = useRowDetail(view === "data");
   // The structure and the indexes load when first asked for; then every view seen stays
   // mounted (hidden) so switching keeps the page, the pending changes and the structure's section.
   const [seen, setSeen] = useState({ structure: false, index: false });
@@ -209,6 +209,8 @@ function TableDataView({
   const layoutKey = JSON.stringify([connectionId ?? workspaceId, database, object.schema, object.name]);
   const storedLayout = useGridViews((st) => st.layouts[layoutKey]);
   const [quickLook, setQuickLook] = useState<{ row: number; col: number } | null>(null);
+  /** Bumped to put the focus back in the grid (Escape in the row details). */
+  const [gridFocus, setGridFocus] = useState(0);
   /** Rows selected in the grid: the bottom bar's centre says "1 of 415 rows selected". */
   const [selectedRows, setSelectedRows] = useState(0);
   const [filterStart, setFilterStart] = useState<{ column: string; seq: number } | null>(null);
@@ -482,24 +484,27 @@ function TableDataView({
                     onRowsAction={e.rowsAction}
                     onCopyCells={copy.copyCells}
                     onSelectedRows={setSelectedRows}
+                    focusRequest={gridFocus}
                   />
                 )}
               </div>
               {e.editable && <PendingChangesPanel workspaceId={workspaceId} tabId={tabId} object={object} />}
             </div>
-            {detail.open && t.result && e.model && (
+            {/* Shown as soon as the switch is on: empty while the page loads or failed to. */}
+            {detail.open && (
               <RowDetailPanel
                 workspaceId={workspaceId}
                 object={object}
-                data={t.result}
+                data={t.result ?? null}
                 info={e.info}
-                model={e.model}
+                model={e.model ?? null}
                 row={e.selectedRow}
                 onChange={e.setValue}
                 onAction={e.runAction}
                 linksAt={links.linksAt}
                 onOpenLink={links.open}
                 onClose={detail.close}
+                onEscape={() => setGridFocus((n) => n + 1)}
               />
             )}
           </div>

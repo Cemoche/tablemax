@@ -122,6 +122,8 @@ export interface DataGridProps {
   onPageKey?: (dir: "previous" | "next") => void;
   /** How many rows are selected (by their numbers, or the rows of the active cell's range). */
   onSelectedRows?: (count: number) => void;
+  /** Each new value puts the focus in the grid (Escape in the row details); not the first. */
+  focusRequest?: number;
 }
 
 const EMPTY_SELECTION: GridSelection = { columns: CompactSelection.empty(), rows: CompactSelection.empty() };
@@ -241,6 +243,7 @@ export function DataGrid({
   onCopyCells,
   onPageKey,
   onSelectedRows,
+  focusRequest = 0,
 }: DataGridProps) {
   const g = useGridTheme();
   const { theme, muted: mutedOverride, edit: editThemes, rows: rowThemes, rowNumbers } = g;
@@ -334,6 +337,12 @@ export function DataGrid({
   );
 
   const highlighted = useMemo(() => highlightedRows(selection), [selection]);
+  const seenFocusRequest = useRef(focusRequest);
+  useEffect(() => {
+    if (focusRequest === seenFocusRequest.current) return;
+    seenFocusRequest.current = focusRequest;
+    gridRef.current?.focus();
+  }, [focusRequest]);
   const onSelectedRowsRef = useRef(onSelectedRows);
   onSelectedRowsRef.current = onSelectedRows;
   useEffect(() => onSelectedRowsRef.current?.(highlighted.size), [highlighted.size]);

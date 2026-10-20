@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, type ReactNode, useRef } from "react";
+import type { ReactNode } from "react";
 import { useAction } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import {
@@ -13,12 +13,11 @@ import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { HistoryPanel } from "../editor/HistoryPanel";
 import { SavedQueries } from "../editor/SavedQueries";
 import { ObjectSidebar } from "../workspace/ObjectSidebar";
+import { ResizeEdge } from "../chrome/ResizeEdge";
 import { SidebarFooter } from "./SidebarFooter";
 
 const S = strings.sidebar;
 const SEGMENTS: SidebarSegment[] = ["items", "queries", "history"];
-/** Arrow keys on the resize handle move it by this much. */
-const KEY_STEP = 10;
 
 /**
  * The sidebar's shortcuts, bound by the workspace view whether the sidebar is shown or not:
@@ -97,51 +96,15 @@ function SidebarFrame({ children }: { children: ReactNode }) {
 function ResizeHandle({ width }: { width: number }) {
   const setWidth = useSidebar((s) => s.setWidth);
   const saveWidth = useSidebar((s) => s.saveWidth);
-  const drag = useRef<{ x: number; width: number } | null>(null);
-
-  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    drag.current = { x: e.clientX, width };
-    const move = (ev: globalThis.PointerEvent) => {
-      if (drag.current) setWidth(drag.current.width + ev.clientX - drag.current.x);
-    };
-    const up = () => {
-      drag.current = null;
-      saveWidth();
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", up);
-      document.body.style.removeProperty("cursor");
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
-    document.body.style.cursor = "col-resize";
-  };
-
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === "ArrowLeft") setWidth(width - KEY_STEP);
-    else if (e.key === "ArrowRight") setWidth(width + KEY_STEP);
-    else return;
-    e.preventDefault();
-  };
-
   return (
-    <div
-      role="separator"
-      aria-label={S.resize}
-      aria-orientation="vertical"
-      aria-valuenow={width}
-      aria-valuemin={SIDEBAR_MIN}
-      aria-valuemax={SIDEBAR_MAX}
-      tabIndex={0}
-      onPointerDown={onPointerDown}
-      onKeyDown={onKeyDown}
-      onKeyUp={(e) => {
-        if (e.key === "ArrowLeft" || e.key === "ArrowRight") saveWidth();
-      }}
-      className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize outline-none hover:bg-accent/30 focus-visible:bg-accent/50"
+    <ResizeEdge
+      side="right"
+      width={width}
+      min={SIDEBAR_MIN}
+      max={SIDEBAR_MAX}
+      label={S.resize}
+      setWidth={setWidth}
+      saveWidth={saveWidth}
     />
   );
 }

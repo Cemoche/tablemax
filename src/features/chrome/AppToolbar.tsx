@@ -126,7 +126,6 @@ function WorkspaceTools({
   const caps = capabilitiesOf(workspace);
   const tab = workspace.tabs.find((x) => x.id === workspace.activeTabId) ?? null;
   const table = connected && tab?.kind === "table" ? tab : null;
-  const tableId = table?.id ?? "";
 
   // The commit group acts on the active table tab's pending changes (as Mod+S does).
   const count = usePendingChanges((s) => (table ? s.count(table.id) : 0));
@@ -146,7 +145,8 @@ function WorkspaceTools({
   const countId = useId();
   const reasonId = useId();
   const editorOpen = usePendingChanges((s) => (table ? s.editorOpen[table.id] === true : false));
-  const rowDetails = useChrome((s) => s.rowDetails[tableId] === true);
+  // One panel for the window (#79), shown by table tabs: off where none is active.
+  const rowDetails = useChrome((s) => s.rowDetailsOpen) && table !== null;
 
   const [connectionOpen, setConnectionOpen] = useState(false);
   const connectionButton = useRef<HTMLButtonElement>(null);
@@ -331,7 +331,7 @@ function WorkspaceTools({
           {...detailsHint}
           aria-pressed={rowDetails}
           disabled={table === null}
-          onClick={() => table && useChrome.getState().toggleRowDetails(table.id)}
+          onClick={() => table && useChrome.getState().toggleRowDetails()}
           className={iconButton}
         >
           <PanelRight aria-hidden {...ICON} />

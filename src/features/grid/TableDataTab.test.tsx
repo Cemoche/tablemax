@@ -81,8 +81,9 @@ function Toolbar({ tabId = "t1", workspaceId = "w1" }: { tabId?: string; workspa
 }
 const discard = (tabId = "t1") => act(() => pending().discard(tabId));
 /** The toolbar's row details button (features/chrome) acts through the chrome store. */
-const toggleDetails = (tabId = "t1") => act(() => useChrome.getState().toggleRowDetails(tabId));
-const detailsOpen = (tabId = "t1") => useChrome.getState().rowDetails[tabId] === true;
+const toggleDetails = () => act(() => useChrome.getState().toggleRowDetails());
+/** One panel for the window (#79): it stays open across tab and workspace switches. */
+const detailsOpen = () => useChrome.getState().rowDetailsOpen;
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -101,7 +102,7 @@ beforeEach(() => {
     epoch: {},
   });
   useSettings.setState({ settings: DEFAULT_SETTINGS });
-  useChrome.setState({ rowDetails: {}, reloads: {}, previews: {}, paletteRequest: null, tableViews: {} });
+  useChrome.setState({ rowDetailsOpen: false, reloads: {}, previews: {}, paletteRequest: null, tableViews: {} });
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo());
   vi.mocked(ipc.changesPreview).mockResolvedValue([]);
 });
@@ -1056,7 +1057,7 @@ test("a held Alt+1 / Alt+2: the repeats never reach the grid (no type-to-edit) a
   expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
 });
 
-test("space_toggles_row_detail: Ctrl+Space toggles the row details on the physical Space key; Space in the grid too", async () => {
+test("ctrl_space_space_and_button_toggle_panel: Ctrl+Space on the physical Space key, Space in the grid and the toolbar button", async () => {
   const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   onTestFinished(() => spy.mockRestore());
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
@@ -1077,6 +1078,65 @@ test("space_toggles_row_detail: Ctrl+Space toggles the row details on the physic
   // Space, from the grid (which has the focus then).
   act(() => grid!.onToggleDetails!());
   expect(detailsOpen()).toBe(false);
+  expect(screen.queryByRole("complementary", { name: strings.grid.rowDetails })).toBeNull();
+  // The toolbar's button (features/chrome) goes through the same store.
+  toggleDetails();
+  expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
+  // Opening never takes the focus from the grid (the rows keep moving under the keys).
+  const focusBefore = grid!.focusRequest ?? 0;
+  press({ code: "Space", key: " ", ctrlKey: true });
+  press({ code: "Space", key: " ", ctrlKey: true });
+  expect(detailsOpen()).toBe(true);
+  expect(grid!.focusRequest ?? 0).toBe(focusBefore);
+});
+
+test("edit_in_panel_creates_pending_change: the same change as the grid's cell editor, discarded the same way", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(
+    <>
+      <Toolbar />
+      <TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />
+    </>,
+  );
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  // The grid's cell editor, for reference.
+  act(() => grid!.editing!.onEdit(1, 3, "from the grid"));
+  const fromGrid = pending().toChanges("t1");
+  discard();
+  expect(pending().count("t1")).toBe(0);
+
+  toggleDetails();
+  act(() => grid!.editing!.onSelect(1));
+  const note = screen.getByLabelText("note") as HTMLTextAreaElement;
+  await userEvent.clear(note);
+  await userEvent.type(note, "from the grid");
+  expect(pending().toChanges("t1")).toEqual(fromGrid);
+  // The grid shows it as an edited cell, the field with the pending colour.
+  expect(grid!.editing!.model.cell(1, 3).edited).toBe(true);
+  expect(note.className).toContain("bg-pending-edit");
+  await userEvent.click(screen.getByRole("button", { name: strings.toolbar.discard }));
+  expect(pending().count("t1")).toBe(0);
+  expect(note.value).toBe("note 1");
+});
+
+test("Escape in the panel, or closing it from inside, hands the focus back to the grid", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  toggleDetails();
+  act(() => grid!.editing!.onSelect(1));
+  const before = grid!.focusRequest ?? 0;
+  await userEvent.click(screen.getByLabelText("note"));
+  await userEvent.keyboard("{Escape}");
+  expect(grid!.focusRequest).toBe(before + 1);
+  expect(detailsOpen()).toBe(true);
+  // Ctrl+Space typed in a field of the panel closes it: the focus goes back to the grid.
+  await userEvent.click(screen.getByLabelText("note"));
+  await userEvent.keyboard("{Control>} {/Control}");
+  expect(detailsOpen()).toBe(false);
+  expect(grid!.focusRequest).toBe(before + 2);
 });
 
 test("custom view and row details combinations work and the defaults no longer do", async () => {
@@ -1499,12 +1559,12 @@ test("the toolbar's Reload and row details buttons act on the tab", async () => 
   act(() => useChrome.getState().requestReload("t2"));
   expect(ipc.tablePage).toHaveBeenCalledTimes(2);
 
-  act(() => useChrome.getState().toggleRowDetails("t1"));
+  act(() => useChrome.getState().toggleRowDetails());
   expect(detailsOpen()).toBe(true);
   expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
-  // Closed again when the tab goes away (as before: the panel starts closed).
+  // One panel for the window (#79): it stays open when the tab goes away (a switch).
   unmount();
-  expect(useChrome.getState().rowDetails.t1).toBeFalsy();
+  expect(detailsOpen()).toBe(true);
 });
 
 test("a tab keeps Structure when it is shown again (a workspace or tab switch unmounts it)", async () => {
@@ -1830,4 +1890,24 @@ test("page_popover_offset_limit: Go loads that offset and limit; the grid's Ctrl
   await waitFor(() =>
     expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ offset: 250, limit: 100 })),
   );
+});
+
+test("with the panel on, it is there while the page loads and after a failed load (empty)", async () => {
+  vi.mocked(ipc.tablePage)
+    .mockImplementationOnce(() => new Promise<ResultSet>(() => {}))
+    .mockRejectedValueOnce({ kind: "connectionLost", message: "server gone" });
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  toggleDetails();
+  const region = () => screen.queryByRole("complementary", { name: strings.grid.rowDetails });
+  // Loading: no page yet, the panel shows no row.
+  const first = render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  expect(region()).toBeInTheDocument();
+  expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
+  first.unmount();
+  // The first load failed: the error shows and the panel stays, empty.
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  expect(await screen.findByText("server gone")).toBeInTheDocument();
+  expect(grid).toBeNull();
+  expect(region()).toBeInTheDocument();
+  expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
 });

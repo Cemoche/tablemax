@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persistedWidth } from "../lib/persistedWidth";
 import { useWorkspaces } from "./workspaces";
 
 /** What the sidebar shows (spec §2.3: the Items / Queries / History segmented control). */
@@ -13,18 +14,10 @@ export const SIDEBAR_MAX = 640;
 /** The width is a per-machine convenience, like the collapsed connection groups. */
 export const SIDEBAR_WIDTH_KEY = "tablemax.sidebarWidth";
 
-export const clampSidebarWidth = (px: number) =>
-  Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, px)));
-
+const width = persistedWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_MAX);
+export const clampSidebarWidth = width.clamp;
 /** The width saved by the last session, or the default. */
-export function loadSidebarWidth(): number {
-  try {
-    const n = Number.parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? "", 10);
-    return Number.isFinite(n) ? clampSidebarWidth(n) : SIDEBAR_DEFAULT;
-  } catch {
-    return SIDEBAR_DEFAULT;
-  }
-}
+export const loadSidebarWidth = width.load;
 
 interface SidebarState {
   /** Workspace id -> shown segment (Items when absent). */
@@ -53,13 +46,7 @@ export const useSidebar = create<SidebarState>((set, get) => ({
   setSegment: (wsId, segment) => set((s) => ({ segments: { ...s.segments, [wsId]: segment } })),
   width: loadSidebarWidth(),
   setWidth: (px) => set({ width: clampSidebarWidth(px) }),
-  saveWidth: () => {
-    try {
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(get().width));
-    } catch {
-      // Storage unavailable: the width only lasts for this session.
-    }
-  },
+  saveWidth: () => width.save(get().width),
   match: "contains",
   showTables: true,
   showViews: true,

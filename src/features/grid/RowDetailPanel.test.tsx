@@ -1,9 +1,16 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { CellValue, ResultSet, RowKey } from "../../lib/types";
+import {
+  ROW_DETAILS_DEFAULT,
+  ROW_DETAILS_MIN,
+  ROW_DETAILS_WIDTH_KEY,
+  loadRowDetailsWidth,
+  useChrome,
+} from "../../stores/chrome";
 import type { PendingTab } from "../../stores/pendingChanges";
 import { col, tableInfo } from "../../test/tableInfo";
 import { buildGridModel } from "./editModel";
@@ -43,38 +50,138 @@ const key: RowKey = [
 
 function renderPanel(
   d: ResultSet,
-  opts: { pending?: PendingTab; locked?: boolean; row?: number | null } = {},
+  opts: { pending?: PendingTab; locked?: boolean; row?: number | null; info?: typeof info } = {},
 ) {
   const onChange = vi.fn();
   const onAction = vi.fn();
-  const model = buildGridModel(d, info, opts.pending, opts.locked ?? false);
+  const onEscape = vi.fn();
+  const onClose = vi.fn();
+  const i = opts.info ?? info;
+  const model = buildGridModel(d, i, opts.pending, opts.locked ?? false);
   const view = render(
     <RowDetailPanel
       workspaceId="w1"
       object={obj}
       data={d}
-      info={info}
+      info={i}
       model={model}
       row={opts.row === undefined ? 0 : opts.row}
       onChange={onChange}
       onAction={onAction}
       linksAt={() => []}
       onOpenLink={() => {}}
-      onClose={() => {}}
+      onClose={onClose}
+      onEscape={onEscape}
     />,
   );
-  return { onChange, onAction, view };
+  return { onChange, onAction, onEscape, onClose, view };
 }
 
 const field = (name: string) => screen.getByLabelText(name) as HTMLTextAreaElement;
 
 beforeEach(() => {
   vi.resetAllMocks();
+  localStorage.removeItem(ROW_DETAILS_WIDTH_KEY);
+  useChrome.setState({ rowDetailsWidth: ROW_DETAILS_DEFAULT });
 });
 
-test("without a selected row it says how to get one", () => {
+test("no_row_selected_state: without a selected row it says so, with no field (the search stays)", () => {
   renderPanel(data(), { row: null });
   expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
+  expect(strings.grid.rowDetailsEmpty).toBe("No row selected");
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.getByRole("searchbox", { name: strings.grid.rowDetailsSearchLabel })).toBeInTheDocument();
+});
+
+test("while the page loads (no data or model yet) the panel is there, empty", () => {
+  render(
+    <RowDetailPanel
+      workspaceId="w1"
+      object={obj}
+      data={null}
+      info={null}
+      model={null}
+      row={null}
+      onChange={() => {}}
+      onAction={() => {}}
+      linksAt={() => []}
+      onOpenLink={() => {}}
+      onClose={() => {}}
+      onEscape={() => {}}
+    />,
+  );
+  expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
+  expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
+});
+
+test("field_search_filters_fields: Search for field… keeps the fields whose name matches", async () => {
+  renderPanel(data());
+  const search = screen.getByRole("searchbox", { name: strings.grid.rowDetailsSearchLabel });
+  expect(search).toHaveAttribute("placeholder", strings.grid.rowDetailsSearch);
+  expect(strings.grid.rowDetailsSearch).toBe("Search for field…");
+  await userEvent.type(search, "OT");
+  // note and total match, case aside; the others are gone.
+  expect(field("note")).toBeInTheDocument();
+  expect(field("total")).toBeInTheDocument();
+  expect(screen.queryByLabelText("doc")).toBeNull();
+  expect(screen.queryByLabelText("order_id")).toBeNull();
+  await userEvent.clear(search);
+  await userEvent.type(search, "zzz");
+  expect(screen.getByText(strings.grid.rowDetailsNoMatch)).toBeInTheDocument();
+  await userEvent.clear(search);
+  expect(screen.getAllByRole("textbox")).toHaveLength(names.length);
+});
+
+test("the panel is a labelled region; Escape in it hands the focus back to the grid", async () => {
+  const { onEscape, onClose, onChange, onAction } = renderPanel(data());
+  expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
+  await userEvent.type(field("note"), "!");
+  await userEvent.keyboard("{Escape}");
+  expect(onEscape).toHaveBeenCalledOnce();
+  // What was typed stays pending: Escape only leaves the panel, it reverts nothing.
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenLastCalledWith(0, 3, { t: "text", v: "hello!" });
+  expect(onAction).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("searchbox", { name: strings.grid.rowDetailsSearchLabel }));
+  await userEvent.keyboard("{Escape}");
+  expect(onEscape).toHaveBeenCalledTimes(2);
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetailsClose }));
+  expect(onClose).toHaveBeenCalledOnce();
+});
+
+test("a read-only table (a view, no key) shows read-only fields and no actions", () => {
+  renderPanel(data(), { info: { ...info, kind: "view", rowKey: null } });
+  for (const n of names) expect(field(n)).toHaveAttribute("readonly");
+  expect(screen.queryByRole("button", { name: strings.grid.menu.setNull })).toBeNull();
+});
+
+test("panel_width_persists: 280 px by default, resized from its left edge by drag or keys, clamped and saved", () => {
+  renderPanel(data());
+  const aside = screen.getByRole("complementary", { name: strings.grid.rowDetails });
+  expect(ROW_DETAILS_DEFAULT).toBe(280);
+  expect(aside.style.width).toBe("280px");
+  const edge = screen.getByRole("separator", { name: strings.grid.rowDetailsResize });
+  expect(edge).toHaveAttribute("aria-valuenow", "280");
+  expect(edge).toHaveAttribute("aria-valuemin", String(ROW_DETAILS_MIN));
+  // The edge is on the left: moving it left widens the panel.
+  fireEvent.keyDown(edge, { key: "ArrowLeft" });
+  fireEvent.keyUp(edge, { key: "ArrowLeft" });
+  expect(aside.style.width).toBe("290px");
+  expect(edge).toHaveAttribute("aria-valuenow", "290");
+  expect(localStorage.getItem(ROW_DETAILS_WIDTH_KEY)).toBe("290");
+  // Dragged right past the minimum: clamped to 240, saved once at the end of the drag.
+  fireEvent.pointerDown(edge, { button: 0, clientX: 500 });
+  fireEvent.pointerMove(window, { clientX: 700 });
+  expect(aside.style.width).toBe(`${ROW_DETAILS_MIN}px`);
+  expect(localStorage.getItem(ROW_DETAILS_WIDTH_KEY)).toBe("290");
+  fireEvent.pointerUp(window, { clientX: 700 });
+  expect(localStorage.getItem(ROW_DETAILS_WIDTH_KEY)).toBe(String(ROW_DETAILS_MIN));
+  // The next start reads it back.
+  expect(loadRowDetailsWidth()).toBe(ROW_DETAILS_MIN);
+  act(() => useChrome.setState({ rowDetailsWidth: loadRowDetailsWidth() }));
+  expect(aside.style.width).toBe(`${ROW_DETAILS_MIN}px`);
+  localStorage.setItem(ROW_DETAILS_WIDTH_KEY, "nonsense");
+  expect(loadRowDetailsWidth()).toBe(ROW_DETAILS_DEFAULT);
 });
 
 test("shows every column with its type and value, JSON indented", () => {
@@ -206,4 +313,29 @@ test("a failed full-value load can be retried", async () => {
   await userEvent.click(screen.getByRole("button", { name: strings.grid.retry }));
   await waitFor(() => expect(field("note").value).toBe("full now"));
   expect(ipc.cellValue).toHaveBeenCalledTimes(2);
+});
+
+test("a small content area caps the panel at 60 % of it, keeping the saved width for a wider window", () => {
+  const rect = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue({ width: 500, height: 400, x: 0, y: 0, top: 0, left: 0, right: 500, bottom: 400, toJSON: () => ({}) });
+  try {
+    useChrome.setState({ rowDetailsWidth: 720 });
+    renderPanel(data());
+    const aside = screen.getByRole("complementary", { name: strings.grid.rowDetails });
+    expect(aside.className).toContain("max-w-[60%]");
+    expect(aside.style.width).toBe("300px");
+    const edge = screen.getByRole("separator", { name: strings.grid.rowDetailsResize });
+    expect(edge).toHaveAttribute("aria-valuenow", "300");
+    expect(edge).toHaveAttribute("aria-valuemax", "300");
+    expect(useChrome.getState().rowDetailsWidth).toBe(720);
+    // Widening past the cap stays at the cap; narrowing starts from what is shown.
+    fireEvent.keyDown(edge, { key: "ArrowLeft" });
+    expect(aside.style.width).toBe("300px");
+    fireEvent.keyDown(edge, { key: "ArrowRight" });
+    expect(aside.style.width).toBe("290px");
+    expect(useChrome.getState().rowDetailsWidth).toBe(290);
+  } finally {
+    rect.mockRestore();
+  }
 });

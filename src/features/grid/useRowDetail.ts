@@ -1,20 +1,21 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import { useAction } from "../../lib/keymap";
 import { useChrome } from "../../stores/chrome";
 
 /**
- * Whether the row details panel of table tab `tabId` is shown (chrome store, so the
- * toolbar button reads and toggles it too): the toolbar, the tab's own button or
- * `grid.rowDetails` (Ctrl+Space; Space in the grid, see DataGrid) toggles it, unless a modal is open or
- * `shortcut` is false (the data view is hidden). Only the active tab is mounted, so the
- * shortcut acts on it. The panel starts closed each time the tab mounts.
+ * Whether the row details panel is shown. It is one switch for the window (chrome store,
+ * read and toggled by the toolbar button too), so it stays open across tab and workspace
+ * switches (#79). The active table tab binds `grid.rowDetails` (Ctrl+Space; Space in the
+ * grid, see DataGrid) to it, unless a modal is open or `shortcut` is false (the data view
+ * is hidden). Only the active tab of the active workspace is mounted, so exactly one tab
+ * binds it at a time; a SQL tab binds nothing, which leaves Ctrl+Space to the editor's
+ * completion.
  */
-export function useRowDetail(tabId: string, shortcut = true) {
-  const open = useChrome((s) => s.rowDetails[tabId] === true);
-  const toggle = useCallback(() => useChrome.getState().toggleRowDetails(tabId), [tabId]);
-  const close = useCallback(() => useChrome.getState().setRowDetails(tabId, false), [tabId]);
+export function useRowDetail(shortcut = true) {
+  const open = useChrome((s) => s.rowDetailsOpen);
+  const toggle = useCallback(() => useChrome.getState().toggleRowDetails(), []);
+  const close = useCallback(() => useChrome.getState().setRowDetails(false), []);
 
-  useEffect(() => close, [close]);
   useAction("grid.rowDetails", toggle, { enabled: shortcut });
 
   return { open, toggle, close };
