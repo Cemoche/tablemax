@@ -1,15 +1,17 @@
 import type { EditorView } from "@codemirror/view";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, CircleStop, Play, WandSparkles } from "lucide-react";
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { isConfirmationRequired, parseConfirmationIndices, toAppError } from "../../lib/errors";
 import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { registerPendingFlush } from "../../lib/pendingFlush";
-import { formatShortcut } from "../../lib/platform";
+import { ariaShortcut, formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import { tip } from "../../lib/tooltip";
 import { autoLimitTexts, useAutoLimit, useAutoLimitOn } from "../../stores/autoLimit";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome } from "../../stores/chrome";
+import { MenuButton } from "../grid/MenuButton";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
 import { useLiveEnv } from "../workspace/useLiveEnv";
 import { useQueryRuns } from "../../stores/queryRuns";
@@ -18,14 +20,40 @@ import { useSettings } from "../../stores/settings";
 import { type Tab, type Workspace, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 import { buildCompletionSource } from "./completion";
 import { ConfirmDialog, NameDialog } from "./Dialogs";
+import { runEditorCommand } from "./editorCommands";
 import { ResultsPanel } from "./ResultsPanel";
 import { type EditorSelection, type RunMode, SqlEditor, insertAtCursor } from "./SqlEditor";
 import { type Statement, delimiterAt, splitStatements, statementAt } from "./splitStatements";
 
 const SAVE_DEBOUNCE_MS = 300;
 
+/** A toolbar button (spec §5.2: controls 24–26 px in a 36 px bar). */
 const btn =
-  "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
+  "flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent aria-expanded:bg-seg-sel disabled:text-icon-dim disabled:hover:bg-btn";
+
+/**
+ * ← / → (Home / End) move the focus along the toolbar's buttons (WAI-ARIA toolbar); the
+ * keys stay a menu's while one is open.
+ */
+function onToolbarKey(e: KeyboardEvent<HTMLElement>) {
+  if (e.ctrlKey || e.metaKey || e.altKey || (e.target as Element).closest('[role="menu"]')) return;
+  const buttons = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")].filter(
+    (b) => !b.closest('[role="menu"]'),
+  );
+  const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  if (at < 0) return;
+  const next =
+    e.key === "ArrowRight" ? at + 1 : e.key === "ArrowLeft" ? at - 1 : e.key === "Home" ? 0 : e.key === "End" ? -1 : null;
+  if (next === null) return;
+  e.preventDefault();
+  buttons[(next + buttons.length) % buttons.length]?.focus();
+}
+
+/** No element has the focus (its owner was just removed): a new editor may take it. */
+function focusIsIdle(): boolean {
+  const el = document.activeElement;
+  return !el || el === document.body || el.hasAttribute("data-tab-content");
+}
 
 /** History refresh after a run: the backend records the batch just after it ends. */
 const HISTORY_SETTLE_MS = 500;
@@ -306,6 +334,11 @@ export function QueryTab({ workspace, tab }: Props) {
   // Mounted only for the active SQL tab: in a table tab Mod+S stays the grid's commit.
   useAction("query.save", () => void save());
   const saveShortcut = useEffectiveShortcut("query.save");
+  const runShortcut = useEffectiveShortcut("editor.run");
+  const runAllShortcut = useEffectiveShortcut("editor.runAll");
+  const formatKeys = useEffectiveShortcut("editor.format");
+  const limitText = autoLimit ? strings.query.limitRows(autoLimitRows) : strings.query.noLimit;
+  const setAutoLimit = (on: boolean) => useAutoLimit.getState().setAutoLimit(tabId, on);
 
   const cancel = () => {
     const sid = currentSessionId(wsId, tabId);
@@ -314,20 +347,37 @@ export function QueryTab({ workspace, tab }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1">
-        <button type="button" className={btn} onClick={() => runMode("current")} disabled={running}>
-          {strings.query.run}
+      <div
+        role="toolbar"
+        aria-label={strings.query.toolbarLabel}
+        onKeyDown={onToolbarKey}
+        className="flex h-9 shrink-0 items-center gap-1.5 border-b border-grid-sep bg-bottom px-2"
+      >
+        <MenuButton
+          label={strings.query.limitButton(limitText)}
+          title={strings.query.autoLimitHint(autoLimitRows)}
+          menuLabel={strings.query.limitMenu}
+          className={btn}
+          items={[
+            { label: strings.query.noLimit, checked: !autoLimit, onSelect: () => setAutoLimit(false) },
+            { label: strings.query.limitRows(autoLimitRows), checked: autoLimit, onSelect: () => setAutoLimit(true) },
+          ]}
+        >
+          {limitText}
+          <ChevronDown aria-hidden size={13} strokeWidth={1.8} />
+        </MenuButton>
+        <button
+          type="button"
+          className={btn}
+          {...tip(strings.query.beautifyHint, formatShortcut(formatKeys))}
+          aria-keyshortcuts={ariaShortcut(formatKeys)}
+          onClick={() => runEditorCommand(tabId, "format")}
+        >
+          <WandSparkles aria-hidden size={14} strokeWidth={1.6} />
+          {strings.query.beautify}
         </button>
-        <button type="button" className={btn} onClick={() => runMode("all")} disabled={running}>
-          {strings.query.runAll}
-        </button>
-        {running && (
-          <button type="button" className={`${btn} text-danger`} onClick={cancel}>
-            {strings.query.cancel}
-          </button>
-        )}
         {notice && (
-          <span role="status" className="truncate text-sm text-warning">
+          <span role="status" className="min-w-0 truncate text-sm text-warning">
             {notice}
           </span>
         )}
@@ -358,15 +408,39 @@ export function QueryTab({ workspace, tab }: Props) {
         >
           {strings.savedQueries.save}
         </button>
-        <label className="flex shrink-0 items-center gap-1 text-sm">
-          <input
-            type="checkbox"
-            {...tip(strings.query.autoLimitHint(autoLimitRows))}
-            checked={autoLimit}
-            onChange={(e) => useAutoLimit.getState().setAutoLimit(tabId, e.target.checked)}
-          />
-          {strings.query.autoLimit(autoLimitRows)}
-        </label>
+        {running && (
+          <button type="button" className={`${btn} text-danger`} onClick={cancel}>
+            <CircleStop aria-hidden size={14} strokeWidth={1.6} />
+            {strings.query.cancel}
+          </button>
+        )}
+        <div className="flex">
+          <button
+            type="button"
+            className={`${btn} rounded-r-none`}
+            {...tip(strings.query.runCurrentHint, formatShortcut(runShortcut))}
+            aria-keyshortcuts={ariaShortcut(runShortcut)}
+            onClick={() => runMode("current")}
+            disabled={running}
+          >
+            <Play aria-hidden size={13} strokeWidth={1.8} />
+            {strings.query.runCurrent}
+          </button>
+          <MenuButton
+            label={strings.query.runMenu}
+            title={strings.query.runMenu}
+            menuLabel={strings.query.runMenuLabel}
+            align="end"
+            disabled={running}
+            className={`${btn} -ml-px rounded-l-none px-1`}
+            items={[
+              { label: strings.query.runCurrent, shortcut: runShortcut, onSelect: () => runMode("current") },
+              { label: strings.query.runAll, shortcut: runAllShortcut, onSelect: () => runMode("all") },
+            ]}
+          >
+            <ChevronDown aria-hidden size={13} strokeWidth={1.8} />
+          </MenuButton>
+        </div>
       </div>
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
@@ -374,6 +448,9 @@ export function QueryTab({ workspace, tab }: Props) {
             <SqlEditor
               onView={(v) => {
                 viewRef.current = v;
+                // The tab became active from the keyboard (its opener went with the old
+                // tab): typing and Ctrl+Space go to the editor at once.
+                if (v && focusIsIdle()) v.focus();
               }}
               tabId={tab.id}
               value={text}

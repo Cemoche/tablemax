@@ -28,6 +28,8 @@ interface Props {
   align?: "start" | "end";
   /** True closes an open menu (its container was hidden). */
   closed?: boolean;
+  /** The button cannot be pressed (an open menu closes). */
+  disabled?: boolean;
 }
 
 const itemClass =
@@ -39,9 +41,19 @@ const itemClass =
  * closes and gives the focus back to the button; Tab or a press outside closes it. A choice
  * gives the focus back to the button before it acts, so an action that moves the focus wins.
  */
-export function MenuButton({ label, title, menuLabel, className, children, items, align = "start", closed = false }: Props) {
+export function MenuButton({
+  label,
+  title,
+  menuLabel,
+  className,
+  children,
+  items,
+  align = "start",
+  closed = false,
+  disabled = false,
+}: Props) {
   const [open, setOpen] = useState(false);
-  if (closed && open) setOpen(false);
+  if ((closed || disabled) && open) setOpen(false);
   const button = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const menuId = useId();
@@ -101,6 +113,7 @@ export function MenuButton({ label, title, menuLabel, className, children, items
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        disabled={disabled}
         onClick={() => (open ? close(false) : setOpen(true))}
         className={className}
       >

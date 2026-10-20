@@ -56,6 +56,25 @@ const rs = (n: number, truncated = false) => ({
   truncated,
 });
 
+/** Run All, from the Run Current ⌄ menu of the toolbar. */
+const runAll = async () => {
+  await userEvent.click(screen.getByRole("button", { name: strings.query.runMenu }));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.query.runAll }));
+};
+
+/** The "No limit ⌄" button of the toolbar and the row limit it shows. */
+const limitButton = () => screen.getByRole("button", { name: /^Row limit:/ });
+const expectLimit = (rows: number | null) =>
+  expect(limitButton()).toHaveAccessibleName(
+    strings.query.limitButton(rows === null ? strings.query.noLimit : strings.query.limitRows(rows)),
+  );
+const pickLimit = async (rows: number | null) => {
+  await userEvent.click(limitButton());
+  await userEvent.click(
+    screen.getByRole("menuitemradio", { name: rows === null ? strings.query.noLimit : strings.query.limitRows(rows) }),
+  );
+};
+
 let emit: (e: ExecEvent) => void;
 let resolveExec: () => void;
 
@@ -108,9 +127,9 @@ beforeEach(() => {
   });
 });
 
-test("run shows one result tab per result set and error with index", async () => {
+test("run shows the result set, the statements and the error with its index", async () => {
   await setup("select 1; update t set a=1; select boom");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(ipc.sqlSessionOpen).toHaveBeenCalledWith("w1", null);
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][0]).toBe("s1");
@@ -134,22 +153,27 @@ test("run shows one result tab per result set and error with index", async () =>
     emit({ event: "batchFinished", data: { cancelled: false } });
   });
 
-  expect(screen.getByRole("tab", { name: "Result 1" })).toBeInTheDocument();
-  expect(screen.queryByRole("tab", { name: "Result 2" })).toBeNull();
-  expect(screen.getByTestId("grid")).toHaveAttribute("data-rows", "3");
-  expect(screen.getByTestId("grid")).toHaveAttribute("data-sortable", "false");
-  expect(screen.getByText("3 rows · 7 ms")).toBeInTheDocument();
+  // An error: the Message tab is shown.
+  expect(screen.getByRole("tab", { name: strings.query.messageTab })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByText(strings.query.statementRows(1, 3, 7))).toBeInTheDocument();
   expect(screen.getByText("Statement 2: 5 rows affected (2 ms)")).toBeInTheDocument();
   expect(screen.getByRole("alert")).toHaveTextContent("Statement 3: relation boom missing");
   expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+
+  await userEvent.click(screen.getByRole("tab", { name: strings.query.dataTab }));
+  // One result set: no Result N tabs.
+  expect(screen.queryByRole("tab", { name: "Result 1" })).toBeNull();
+  expect(screen.getByTestId("grid")).toHaveAttribute("data-rows", "3");
+  expect(screen.getByTestId("grid")).toHaveAttribute("data-sortable", "false");
+  expect(screen.getByText("3 rows · 7 ms")).toBeInTheDocument();
 });
 
 test("a second Run reuses the session", async () => {
   await setup("select 1");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
   act(() => emit({ event: "batchFinished", data: { cancelled: false } }));
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
   expect(ipc.sqlSessionOpen).toHaveBeenCalledTimes(1);
 });
@@ -157,7 +181,7 @@ test("a second Run reuses the session", async () => {
 test("cancel button calls sqlCancel while running and disappears on batchFinished", async () => {
   await setup("select pg_sleep(10)");
   expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   const cancel = await screen.findByRole("button", { name: "Cancel" });
   await userEvent.click(cancel);
   expect(ipc.sqlCancel).toHaveBeenCalledWith("s1");
@@ -181,14 +205,14 @@ test("Ctrl+Enter runs the statement under the cursor, Ctrl+Shift+Enter everythin
 test("rejected execute shows an index-less error and stops running", async () => {
   await setup("select 1");
   vi.mocked(ipc.sqlExecute).mockRejectedValueOnce({ kind: "invalid", message: "a query is already running" });
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   expect(await screen.findByRole("alert")).toHaveTextContent("a query is already running");
   expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
 });
 
 test("run state survives unmount/remount and events keep landing while unmounted", async () => {
   const { unmount } = await setup("select 1");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await screen.findByRole("button", { name: "Cancel" });
   unmount();
   expect(useQueryRuns.getState().runs.t1.running).toBe(true);
@@ -211,7 +235,7 @@ test("closing the tab while the session is opening closes the session and never 
   );
   vi.mocked(ipc.sqlSessionClose).mockResolvedValue(undefined);
   await setup("select 1");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlSessionOpen).toHaveBeenCalled());
   act(() => useWorkspaces.getState().closeTab("w1", "t1"));
   await act(async () => resolveOpen("s9"));
@@ -222,7 +246,7 @@ test("closing the tab while the session is opening closes the session and never 
 
 test("a capped result says it was truncated", async () => {
   await setup("select * from big");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   act(() => {
     emit({
@@ -237,7 +261,7 @@ test("a capped result says it was truncated", async () => {
 test("a lost connection drops the session and the next Run reconnects", async () => {
   vi.mocked(ipc.sqlSessionClose).mockResolvedValue(undefined);
   await setup("select 1");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
   act(() => {
     emit({
@@ -252,7 +276,7 @@ test("a lost connection drops the session and the next Run reconnects", async ()
   expect(screen.getByText("Connection lost — run again to reconnect")).toBeInTheDocument();
 
   vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s2");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
   expect(ipc.sqlSessionOpen).toHaveBeenCalledTimes(2);
   expect(vi.mocked(ipc.sqlExecute).mock.calls[1][0]).toBe("s2");
@@ -263,7 +287,7 @@ test("a query tab keeps its database: a lost session reopens there after a datab
   vi.mocked(ipc.sqlSessionClose).mockResolvedValue(undefined);
   await setup("select 1");
   act(() => useWorkspaces.setState((s) => ({ workspaces: s.workspaces.map((w) => ({ ...w, database: "app" })) })));
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
   expect(ipc.sqlSessionOpen).toHaveBeenLastCalledWith("w1", "app");
   expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: "s1", database: "app" });
@@ -274,7 +298,7 @@ test("a query tab keeps its database: a lost session reopens there after a datab
   // The workspace moved to another database meanwhile.
   act(() => useWorkspaces.setState((s) => ({ workspaces: s.workspaces.map((w) => ({ ...w, database: "other" })) })));
   vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s2");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
   expect(ipc.sqlSessionOpen).toHaveBeenLastCalledWith("w1", "app");
   expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: "s2", database: "app" });
@@ -283,7 +307,7 @@ test("a query tab keeps its database: a lost session reopens there after a datab
 test("only PostgreSQL query tabs pin a database", async () => {
   await setup("select 1", "mySql");
   act(() => useWorkspaces.setState((s) => ({ workspaces: s.workspaces.map((w) => ({ ...w, database: "shop" })) })));
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(ipc.sqlSessionOpen).toHaveBeenCalledWith("w1", null);
 });
@@ -292,7 +316,7 @@ test("an execute rejected with connectionLost also drops the session", async () 
   vi.mocked(ipc.sqlSessionClose).mockResolvedValue(undefined);
   await setup("select 1");
   vi.mocked(ipc.sqlExecute).mockRejectedValueOnce({ kind: "connectionLost", message: "gone" });
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   expect(await screen.findByText("Connection lost — run again to reconnect")).toBeInTheDocument();
   expect(ipc.sqlSessionClose).toHaveBeenCalledWith("s1");
   expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ sqlSessionId: null });
@@ -300,7 +324,7 @@ test("an execute rejected with connectionLost also drops the session", async () 
 
 test("other errors keep the session", async () => {
   await setup("select boom");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   act(() => {
     emit({ event: "statementFailed", data: { index: 0, error: { kind: "query", message: "x" } } });
@@ -318,7 +342,7 @@ describe("safe mode confirmation", () => {
   test("a refused batch opens the dialog listing every statement, flagged ones marked", async () => {
     await setup("select 1; delete from t; select 2");
     refuse("1");
-    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await runAll();
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("n · DEV");
     const items = screen.getAllByRole("listitem");
@@ -331,7 +355,7 @@ describe("safe mode confirmation", () => {
   test("Run resends exactly the same statements with confirmed: true", async () => {
     await setup("select 1; delete from t; select 2");
     refuse("1");
-    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await runAll();
     await screen.findByRole("dialog");
     await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Run" }));
     await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
@@ -346,19 +370,19 @@ describe("safe mode confirmation", () => {
   test("Cancel runs nothing more and clears the pending run", async () => {
     await setup("delete from t");
     refuse("0");
-    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await runAll();
     await screen.findByRole("dialog");
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(ipc.sqlExecute).toHaveBeenCalledTimes(1);
     expect(useQueryRuns.getState().runs["t1"]).toBeUndefined();
     expect(screen.getByText(strings.query.empty("Ctrl+Enter"))).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run all" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: strings.query.runCurrent })).toBeEnabled();
   });
 
   test("a cancelled confirmation keeps the previous results", async () => {
     await setup("select 1");
-    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await runAll();
     await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
     act(() => {
       emit({
@@ -370,7 +394,7 @@ describe("safe mode confirmation", () => {
     expect(await screen.findByTestId("grid")).toHaveAttribute("data-rows", "3");
     const before = useQueryRuns.getState().runs["t1"];
     refuse("0");
-    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await runAll();
     await screen.findByRole("dialog");
     expect(screen.getByTestId("grid")).toHaveAttribute("data-rows", "3");
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -388,7 +412,7 @@ describe("safe mode confirmation", () => {
           reject = rej;
         }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await runAll();
     await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
     act(() => useWorkspaces.getState().closeTab("w1", "t1"));
     await act(async () => reject({ kind: "confirmationRequired", message: "0" }));
@@ -401,7 +425,7 @@ describe("safe mode confirmation", () => {
     useConnections.setState({ items: [{ id: "c1", envTag: "prod", safeMode: null } as ConnectionConfig] });
     await setup("delete from t");
     refuse("0");
-    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await runAll();
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("n · PROD");
     expect(dialog).toHaveTextContent("Safe mode: confirm writes");
@@ -411,7 +435,7 @@ describe("safe mode confirmation", () => {
     autoLimitSettings(true, 50);
     await setup("select * from t; delete from t");
     refuse("1");
-    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await runAll();
     const dialog = await screen.findByRole("dialog");
     const items = within(dialog).getAllByRole("listitem");
     expect(items[0]).toHaveTextContent("select * from t LIMIT 50");
@@ -432,7 +456,7 @@ describe("safe mode confirmation", () => {
   test("an unparsable refusal flags every statement", async () => {
     await setup("select 1; select 2");
     refuse("???");
-    await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+    await runAll();
     await screen.findByRole("dialog");
     expect(screen.getAllByRole("listitem").every((i) => i.getAttribute("data-flagged") === "true")).toBe(true);
   });
@@ -446,19 +470,20 @@ test("the tab loads the completion catalog of the current schema", async () => {
 const autoLimitSettings = (autoLimitDefault: boolean, autoLimitValue = 1000) =>
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, autoLimitDefault, autoLimitValue } });
 
-test("Auto LIMIT rewrites the SELECTs sent by Run", async () => {
+test("the row limit (Auto LIMIT) rewrites the SELECTs sent by Run", async () => {
   await setup("select * from t; update t set a = 1");
-  const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) });
-  expect(box).not.toBeChecked();
-  await userEvent.click(box);
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  expectLimit(null);
+  await pickLimit(1000);
+  expectLimit(1000);
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t LIMIT 1000", "update t set a = 1"]);
   act(() => emit({ event: "batchFinished", data: { cancelled: false } }));
 
-  // Off again: statements go as typed.
-  await userEvent.click(box);
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  // No limit again: statements go as typed.
+  await pickLimit(null);
+  expectLimit(null);
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
   expect(vi.mocked(ipc.sqlExecute).mock.calls[1][1]).toEqual(["select * from t", "update t set a = 1"]);
 });
@@ -466,21 +491,23 @@ test("Auto LIMIT rewrites the SELECTs sent by Run", async () => {
 test("default on: a new query tab runs with LIMIT <value>", async () => {
   autoLimitSettings(true);
   await setup("select * from t");
-  expect(screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) })).toBeChecked();
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  expectLimit(1000);
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t LIMIT 1000"]);
 });
 
-test("the configured value is the one sent and the one the label and hint name", async () => {
+test("the configured value is the one sent and the one the button, menu and hint name", async () => {
   autoLimitSettings(true, 50);
   await setup("select * from t");
-  const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(50) });
-  expect(box).toBeChecked();
-  // The hint is the checkbox's own (review #109), not its label's.
-  expect(box).toHaveAttribute("data-tooltip", strings.query.autoLimitHint(50));
-  expect(box.closest("label")).not.toHaveAttribute("data-tooltip");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  expectLimit(50);
+  expect(limitButton()).toHaveTextContent(strings.query.limitRows(50));
+  expect(limitButton()).toHaveAttribute("data-tooltip", strings.query.autoLimitHint(50));
+  await userEvent.click(limitButton());
+  expect(screen.getByRole("menuitemradio", { name: strings.query.limitRows(50) })).toHaveAttribute("aria-checked", "true");
+  expect(screen.getByRole("menuitemradio", { name: strings.query.noLimit })).toHaveAttribute("aria-checked", "false");
+  await userEvent.keyboard("{Escape}");
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t LIMIT 50"]);
 });
@@ -488,44 +515,43 @@ test("the configured value is the one sent and the one the label and hint name",
 test("default off: no LIMIT", async () => {
   autoLimitSettings(false, 50);
   await setup("select * from t");
-  expect(screen.getByRole("checkbox", { name: strings.query.autoLimit(50) })).not.toBeChecked();
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  expectLimit(null);
+  expect(limitButton()).toHaveTextContent(strings.query.noLimit);
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t"]);
 });
 
-test("a tab toggled off by hand stays off when the default changes", async () => {
+test("a tab set to No limit by hand stays so when the default changes", async () => {
   autoLimitSettings(true);
   await setup("select * from t");
-  const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) });
-  await userEvent.click(box);
-  expect(box).not.toBeChecked();
+  await pickLimit(null);
+  expectLimit(null);
   act(() => autoLimitSettings(false));
   act(() => autoLimitSettings(true));
-  expect(box).not.toBeChecked();
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  expectLimit(null);
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t"]);
 });
 
-test("a tab not toggled by hand follows the default as it changes", async () => {
+test("a tab not set by hand follows the default as it changes", async () => {
   await setup("select * from t");
-  const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) });
-  expect(box).not.toBeChecked();
+  expectLimit(null);
   act(() => autoLimitSettings(true));
-  expect(box).toBeChecked();
+  expectLimit(1000);
 });
 
-test("Auto LIMIT is remembered per tab, in memory only", async () => {
+test("the row limit is remembered per tab, in memory only", async () => {
   const { unmount } = await setup("select 1");
-  await userEvent.click(screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) }));
+  await pickLimit(1000);
   unmount();
   const ws = useWorkspaces.getState().workspaces[0];
   const tab = ws.tabs[0];
   if (tab.kind !== "query") throw new Error("x");
   render(<QueryTab workspace={ws} tab={tab} />);
   await act(async () => {});
-  expect(screen.getByRole("checkbox", { name: strings.query.autoLimit(1000) })).toBeChecked();
+  expectLimit(1000);
   expect(Object.keys(tab)).not.toContain("autoLimit"); // not part of the session snapshot
 });
 
@@ -551,7 +577,7 @@ test("Mod+I (Beautify) formats the selection in one undoable transaction", async
   expect(view.state.selection.main).toMatchObject({ from: 0, to: "SELECT\n  a,\n  b\nFROM\n  t".length });
 
   // The text reaches the tab (it is what Run sends).
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["SELECT\n  a,\n  b\nFROM\n  t", "select c from u"]);
 
@@ -660,7 +686,7 @@ test("a finished run tells the sidebar's History of its connection to reload", a
     vi.useRealTimers();
   });
   await setup("select 1");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   act(() => {
     emit({ event: "batchFinished", data: { cancelled: false } });
@@ -673,7 +699,7 @@ test("a finished run tells the sidebar's History of its connection to reload", a
 
 test("a run with a DELIMITER block sends the procedure whole, without the DELIMITER lines", async () => {
   await setup("DELIMITER //\nCREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END //\nDELIMITER ;\nCALL p();", "mySql");
-  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await runAll();
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual([
     "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END",
@@ -718,4 +744,162 @@ test("a linked saved query names itself for assistive tech too, not only in its 
   const described = screen.getByText(strings.savedQueries.linked("report"));
   expect(described).toHaveClass("sr-only");
   expect(described.parentElement).toHaveAttribute("data-tooltip", strings.savedQueries.linked("report"));
+});
+
+test("toolbar_actions_and_shortcuts: limit, Beautify and Run Current ⌄ act and name their keys", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  editorMode.real = true;
+  await setup("select a,b from t; select 2");
+  const toolbar = screen.getByRole("toolbar", { name: strings.query.toolbarLabel });
+
+  // Beautify: the editor's format (Ctrl+I), whole text with no selection.
+  const beautify = within(toolbar).getByRole("button", { name: strings.query.beautify });
+  expect(beautify).toHaveAttribute("data-tooltip", strings.query.beautifyHint);
+  expect(beautify).toHaveAttribute("data-tooltip-key", "Ctrl+I");
+  expect(beautify).toHaveAttribute("aria-keyshortcuts", "Control+I");
+  await userEvent.click(beautify);
+  const view = editorView();
+  await waitFor(() => expect(view.state.doc.toString()).toBe("SELECT\n  a,\n  b\nFROM\n  t;\n\nSELECT\n  2"));
+
+  // Run Current: the statement under the cursor (Ctrl+Enter).
+  act(() => view.dispatch({ selection: { anchor: view.state.doc.length } }));
+  const runCurrent = within(toolbar).getByRole("button", { name: strings.query.runCurrent });
+  expect(runCurrent).toHaveAttribute("data-tooltip", strings.query.runCurrentHint);
+  expect(runCurrent).toHaveAttribute("data-tooltip-key", "Ctrl+Enter");
+  expect(runCurrent).toHaveAttribute("aria-keyshortcuts", "Control+Enter");
+  await userEvent.click(runCurrent);
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["SELECT\n  2"]);
+  // While it runs: Run Current is disabled and Cancel is offered.
+  expect(runCurrent).toBeDisabled();
+  expect(within(toolbar).getByRole("button", { name: strings.query.cancel })).toBeInTheDocument();
+  act(() => emit({ event: "batchFinished", data: { cancelled: false } }));
+  expect(runCurrent).toBeEnabled();
+
+  // The ⌄ menu: Run Current and Run All with their keys, as a menu button.
+  const more = within(toolbar).getByRole("button", { name: strings.query.runMenu });
+  expect(more).toHaveAttribute("aria-haspopup", "menu");
+  expect(more).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(more);
+  expect(more).toHaveAttribute("aria-expanded", "true");
+  const menu = screen.getByRole("menu", { name: strings.query.runMenuLabel });
+  const items = within(menu).getAllByRole("menuitem");
+  expect(items.map((i) => i.getAttribute("aria-label"))).toEqual([strings.query.runCurrent, strings.query.runAll]);
+  expect(items.map((i) => i.getAttribute("aria-keyshortcuts"))).toEqual(["Control+Enter", "Control+Shift+Enter"]);
+  expect(items[1]).toHaveTextContent("Ctrl+Shift+Enter");
+  await userEvent.click(items[1]);
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[1][1]).toEqual(["SELECT\n  a,\n  b\nFROM\n  t", "SELECT\n  2"]);
+  act(() => emit({ event: "batchFinished", data: { cancelled: false } }));
+
+  // The limit menu button.
+  expect(limitButton()).toHaveAttribute("aria-haspopup", "menu");
+  await pickLimit(1000);
+  expectLimit(1000);
+
+  // The keys follow the keymap: a custom Run combination is the one shown.
+  await act(async () =>
+    useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "editor.run": "Alt+Enter", "editor.format": "Mod+Shift+B" } } }),
+  );
+  expect(runCurrent).toHaveAttribute("data-tooltip-key", "Alt+Enter");
+  expect(beautify).toHaveAttribute("data-tooltip-key", "Ctrl+Shift+B");
+
+  // Left / Right move along the toolbar.
+  limitButton().focus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(beautify).toHaveFocus();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(limitButton()).toHaveFocus();
+});
+
+test("the toolbar is 36 px high, under the tab", async () => {
+  await setup("select 1");
+  expect(screen.getByRole("toolbar", { name: strings.query.toolbarLabel })).toHaveClass("h-9");
+});
+
+test("results_tabs_data_message: Data for rows, Message for statements without rows, errors and cancels", async () => {
+  await setup("select 1; update t set a = 1; select 2");
+  const tab = (name: string) => screen.getByRole("tab", { name });
+  const selected = () => screen.getAllByRole("tab").find((t) => t.getAttribute("aria-selected") === "true" && ["Data", "Message"].includes(t.textContent ?? ""))?.textContent;
+  // Before any run: the hint, no tabs.
+  expect(screen.queryByRole("tablist", { name: strings.query.resultsLabel })).toBeNull();
+
+  // Rows: Data, with one tab per result set when there are several.
+  await runAll();
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("tablist", { name: strings.query.resultsLabel })).toBeInTheDocument();
+  expect(selected()).toBe(strings.query.messageTab); // running, nothing yet
+  expect(screen.getByText(strings.query.running)).toBeInTheDocument();
+  act(() => {
+    emit({ event: "statementFinished", data: { index: 0, outcome: { result: rs(2), rowsAffected: null, elapsedMs: 3 } } });
+    emit({ event: "statementFinished", data: { index: 1, outcome: { result: null, rowsAffected: 4, elapsedMs: 1 } } });
+    emit({ event: "statementFinished", data: { index: 2, outcome: { result: rs(5), rowsAffected: null, elapsedMs: 2 } } });
+    emit({ event: "batchFinished", data: { cancelled: false } });
+  });
+  expect(selected()).toBe(strings.query.dataTab);
+  expect(tab(strings.query.dataTab)).toHaveAttribute("aria-controls", screen.getByRole("tabpanel").id);
+  expect(screen.getByRole("tablist", { name: strings.query.resultSetsLabel })).toBeInTheDocument();
+  expect(screen.getByTestId("grid")).toHaveAttribute("data-rows", "2");
+  await userEvent.click(tab(strings.query.resultTab(2)));
+  expect(screen.getByTestId("grid")).toHaveAttribute("data-rows", "5");
+
+  // Message lists every statement.
+  await userEvent.click(tab(strings.query.messageTab));
+  expect(screen.queryByTestId("grid")).toBeNull();
+  expect(screen.getByText(strings.query.statementRows(1, 2, 3))).toBeInTheDocument();
+  expect(screen.getByText(strings.query.rowsAffected(2, 4, 1))).toBeInTheDocument();
+  expect(screen.getByText(strings.query.statementRows(3, 5, 2))).toBeInTheDocument();
+  // Arrow keys move between Data and Message.
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(tab(strings.query.dataTab)).toHaveFocus();
+  expect(selected()).toBe(strings.query.dataTab);
+
+  // A new run follows its own outcome again: statements without rows → Message.
+  await runAll();
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
+  act(() => {
+    emit({ event: "statementFinished", data: { index: 0, outcome: { result: null, rowsAffected: 1, elapsedMs: 1 } } });
+    emit({ event: "batchFinished", data: { cancelled: false } });
+  });
+  expect(selected()).toBe(strings.query.messageTab);
+  expect(screen.getByText(strings.query.rowsAffected(1, 1, 1))).toBeInTheDocument();
+  // Data says there is nothing to show.
+  await userEvent.click(tab(strings.query.dataTab));
+  expect(screen.getByText(strings.query.noData)).toBeInTheDocument();
+
+  // Rows then an error: Message, so the error is seen.
+  await runAll();
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(3));
+  act(() => {
+    emit({ event: "statementFinished", data: { index: 0, outcome: { result: rs(1), rowsAffected: null, elapsedMs: 1 } } });
+    emit({ event: "statementFailed", data: { index: 1, error: { kind: "query", message: "boom" } } });
+    emit({ event: "batchFinished", data: { cancelled: false } });
+  });
+  expect(selected()).toBe(strings.query.messageTab);
+  expect(screen.getByRole("alert")).toHaveTextContent("Statement 2: boom");
+
+  // Cancelled: Message says so.
+  await runAll();
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(4));
+  act(() => {
+    emit({ event: "statementFinished", data: { index: 0, outcome: { result: rs(1), rowsAffected: null, elapsedMs: 1 } } });
+    emit({ event: "batchFinished", data: { cancelled: true } });
+  });
+  expect(selected()).toBe(strings.query.messageTab);
+  expect(screen.getByText(strings.query.cancelled)).toBeInTheDocument();
+});
+
+test("a tab chosen by hand stays chosen while the run goes on", async () => {
+  await setup("select 1; select 2");
+  await runAll();
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  act(() => emit({ event: "statementFinished", data: { index: 0, outcome: { result: rs(1), rowsAffected: null, elapsedMs: 1 } } }));
+  expect(screen.getByRole("tab", { name: strings.query.dataTab })).toHaveAttribute("aria-selected", "true");
+  await userEvent.click(screen.getByRole("tab", { name: strings.query.messageTab }));
+  act(() => {
+    emit({ event: "statementFinished", data: { index: 1, outcome: { result: rs(2), rowsAffected: null, elapsedMs: 1 } } });
+    emit({ event: "batchFinished", data: { cancelled: false } });
+  });
+  expect(screen.getByRole("tab", { name: strings.query.messageTab })).toHaveAttribute("aria-selected", "true");
 });

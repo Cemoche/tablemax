@@ -8,6 +8,8 @@ export interface StatementResult {
 }
 
 export interface QueryRun {
+  /** Unique per run started (the results panel keeps a tab chosen by hand for one run only). */
+  id: number;
   running: boolean;
   /** Number of statements in the batch. */
   total: number;
@@ -33,6 +35,8 @@ interface QueryRunsState {
  * receiving channel events while the tab is unmounted. The end of a batch is the
  * `batchFinished` event, never the execute promise.
  */
+let lastRunId = 0;
+
 export const useQueryRuns = create<QueryRunsState>((set) => {
   const patch = (tabId: string, fn: (r: QueryRun) => QueryRun) =>
     set((s) => {
@@ -46,7 +50,7 @@ export const useQueryRuns = create<QueryRunsState>((set) => {
       set((s) => ({
         runs: {
           ...s.runs,
-          [tabId]: { running: true, total, results: [], error: null, cancelled: false },
+          [tabId]: { id: ++lastRunId, running: true, total, results: [], error: null, cancelled: false },
         },
       })),
     applyEvent: (tabId, e) =>
