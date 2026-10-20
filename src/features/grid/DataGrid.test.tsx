@@ -453,7 +453,11 @@ test("an edited cell on a selected row keeps its edit colour with readable text 
   act(() => editor!.onCellClicked!([-1, 1], click()));
   // Selected (white text on the accent row): the edit keeps --modified, with the text that
   // reads best on it (here --cell-text: white on #ffe18e is 1.3:1).
-  expect(editor!.getCellContent([2, 1]).themeOverride).toMatchObject({ bgCell: "#ffe18e", textDark: "#262626" });
+  expect(editor!.getCellContent([2, 1]).themeOverride).toMatchObject({
+    bgCell: "#ffe18e",
+    accentLight: "#ffe18e",
+    textDark: "#262626",
+  });
   expect(editor!.getCellContent([1, 1]).themeOverride).toBeUndefined();
 });
 

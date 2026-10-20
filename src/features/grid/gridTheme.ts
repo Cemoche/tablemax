@@ -119,8 +119,9 @@ export interface EditThemes {
   /** A cell with a pending value. */
   edited: Partial<Theme>;
   /**
-   * A cell with a pending value on a selected row: it keeps --modified (the edit stays
-   * visible) and drops the row's white text for the one that reads best on --modified.
+   * A cell with a pending value on a selected row: it keeps --modified as its fill and its
+   * selection fill (the edit stays visible) and drops the row's white text for the one
+   * that reads best on --modified.
    */
   editedOnAccent: Partial<Theme>;
   /** A row to insert. */
@@ -152,7 +153,10 @@ export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
   const text: Partial<Theme> = best ? { textDark: best, textMedium: best, textLight: best, linkColor: best } : {};
   return {
     edited: only("bgCell", "--modified"),
-    editedOnAccent: { ...only("bgCell", "--modified"), ...text },
+    // Glide fills a selected cell with the opaque accentLight over bgCell (a row selected by
+    // its number, the active cell's range): --modified there too keeps the edit visible under
+    // its readable text, while the row's accent and the --cell-focus ring show the selection.
+    editedOnAccent: { ...only("bgCell", "--modified"), ...only("accentLight", "--modified"), ...text },
     inserted: only("bgCell", "--inserted"),
     deleted: { ...only("bgCell", "--deleted"), ...only("textDark", "--text-2") },
     failed: only("textDark", "--danger"),

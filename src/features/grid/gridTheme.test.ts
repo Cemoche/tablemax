@@ -168,6 +168,11 @@ test("an edited cell on a selected row keeps --modified and readable text, in bo
     const t = buildEditThemes((n) => vars[n] ?? "").editedOnAccent;
     expect(t.bgCell, name).toBe(vars["--modified"]);
     expect(contrastRatio(t.textDark!, t.bgCell!), name).toBeGreaterThanOrEqual(4.5);
+    // Glide fills a selected cell (a row selected by its number, the active cell's range)
+    // with the theme's opaque accentLight over bgCell: it must stay --modified, under the
+    // same readable text, or the edit would show as #262626 on the accent (3.8:1).
+    expect(t.accentLight, name).toBe(t.bgCell);
+    expect(contrastRatio(t.textDark!, t.accentLight!), name).toBeGreaterThanOrEqual(4.5);
     // Links and placeholders on it use the same colour.
     expect(t.linkColor, name).toBe(t.textDark);
     expect(t.textLight, name).toBe(t.textDark);
