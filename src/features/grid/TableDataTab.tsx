@@ -350,7 +350,8 @@ function TableDataView({
                 start={filterStart}
               />
             </div>
-          )}      {t.error && (
+          )}
+          {t.error && (
             <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger">
               <div className="min-w-0 flex-1">
                 <p className="font-semibold">{strings.grid.loadFailed}</p>

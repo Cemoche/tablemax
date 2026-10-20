@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { strings } from "../../lib/strings";
 import { useGridViews } from "../../stores/gridViews";
+import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { ColumnsPopover } from "./ColumnsPopover";
 
 const c = strings.grid.columnsPopover;
@@ -52,4 +53,18 @@ test("Escape closes it and asks for the focus back", async () => {
   render(<ColumnsPopover columns={cols} layoutKey={KEY} onClose={onClose} />);
   await userEvent.keyboard("{Escape}");
   expect(onClose).toHaveBeenCalledWith(true);
+});
+
+test("Ctrl+Alt+F closes it from a focused checkbox (the key that opened it), and never reaches the tab", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  useSettings.setState({ settings: DEFAULT_SETTINGS });
+  render(<ColumnsPopover columns={cols} layoutKey={KEY} onClose={onClose} />);
+  expect(box("id")).toHaveFocus();
+  const outer = vi.fn();
+  window.addEventListener("keydown", outer);
+  onTestFinished(() => window.removeEventListener("keydown", outer));
+  await userEvent.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect(onClose).toHaveBeenCalledWith(true);
+  expect(outer.mock.calls.some(([e]) => (e as KeyboardEvent).code === "KeyF")).toBe(false);
 });

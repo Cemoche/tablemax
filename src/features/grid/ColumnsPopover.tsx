@@ -1,6 +1,9 @@
-import { useEffect, useId, useRef } from "react";
+import { type KeyboardEvent, useEffect, useId, useRef } from "react";
+import { effectiveShortcuts } from "../../lib/keymap";
+import { matchCombination } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { useGridViews } from "../../stores/gridViews";
+import { useSettings } from "../../stores/settings";
 import { reconcileLayout } from "./columnLayout";
 import { popoverBox, popoverButton, useDismiss } from "./PagePopover";
 
@@ -25,7 +28,15 @@ export function ColumnsPopover({ columns, layoutKey, onClose }: Props) {
   const stored = useGridViews((s) => s.layouts[layoutKey]);
   const layout = reconcileLayout(stored, columns);
   const shown = layout.order.filter((n) => !layout.hidden.includes(n));
+  const keymap = useSettings((st) => st.settings.keymap);
   useDismiss(ref, onClose);
+  // The key that opened it closes it too, also from a checkbox (the tab's listener skips fields).
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!effectiveShortcuts("grid.columns", keymap).some((spec) => matchCombination(e.nativeEvent, spec))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.repeat) onClose(true);
+  };
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus();
   }, []);
@@ -35,7 +46,13 @@ export function ColumnsPopover({ columns, layoutKey, onClose }: Props) {
     setHidden(layout.hidden.includes(name) ? layout.hidden.filter((h) => h !== name) : [...layout.hidden, name]);
 
   return (
-    <div ref={ref} role="dialog" aria-label={c.label} className={`${popoverBox} right-0 flex w-64 flex-col gap-1`}>
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label={c.label}
+      className={`${popoverBox} right-0 flex w-64 flex-col gap-1`}
+      onKeyDown={onKeyDown}
+    >
       <span id={lastId} hidden>
         {c.lastShown}
       </span>

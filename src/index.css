@@ -29,6 +29,7 @@
   --color-rownum: var(--rownum);
   --color-bottom: var(--bottom);
   --color-btn: var(--btn);
+  --color-filter-applied: var(--filter-applied);
   --color-cell-focus: var(--cell-focus);
   --color-row-selected: var(--row-selected);
   --color-row-selected-text: var(--row-selected-text);

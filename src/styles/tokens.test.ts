@@ -143,3 +143,15 @@ test("tab text is readable on the capsules in both themes (ruling R3: surfaces u
   expect(values(LIGHT)["--tab"]).toBe("#DCDCDC");
   expect(values(LIGHT)["--tab-sel"]).toBe("#FFFFFF");
 });
+
+test("an applied filter row's tint keeps its text readable in both themes (ruling R3: the text, not the surface)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = values(selector);
+    // The tint is the accent at 15 % over the bar (--side), written out as a color.
+    expect(v["--filter-applied"], selector).toMatch(/^#[0-9A-F]{6}$/i);
+    // The row's own text (the "and" between two values) is --text, readable on the tint.
+    expect(contrastRatio(v["--text"], v["--filter-applied"]), `${selector} text on tint`).toBeGreaterThanOrEqual(4.5);
+  }
+  // --text-2 would not be (light: 4.06:1): the row must not use it.
+  expect(contrastRatio(values(LIGHT)["--text-2"], values(LIGHT)["--filter-applied"])).toBeLessThan(4.5);
+});

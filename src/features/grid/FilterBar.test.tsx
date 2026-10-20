@@ -1,6 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
+import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, Filter, FilterCombine } from "../../lib/types";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
@@ -295,4 +296,53 @@ test("a row error blocks Apply All; untouched blank rows are left out", async ()
   // Only the untouched row 2 is left (now row 1): Apply All clears the filters.
   await userEvent.click(screen.getByRole("button", { name: f.applyAll }));
   expect(onApply).toHaveBeenLastCalledWith([], "and");
+});
+
+test("a Raw SQL row says how it is read: filter syntax (bound) or SQL as written; under OR it may need SQL", async () => {
+  setup();
+  await userEvent.selectOptions(column(1), f.rawSql);
+  const raw = screen.getByRole("textbox", { name: f.rawLabel(1) });
+  const reading = () => within(rowGroup(1)).getByTestId("raw-reading");
+  await userEvent.type(raw, "status = active");
+  // `active` is no column: a value, bound.
+  expect(reading()).toHaveTextContent(f.rawRead.bound);
+  expect(raw).toHaveAccessibleDescription(f.rawRead.boundHint);
+  // `id` is a column: two columns compared, in SQL.
+  await userEvent.clear(raw);
+  await userEvent.type(raw, "total = id");
+  expect(reading()).toHaveTextContent(f.rawRead.sql);
+  expect(raw).toHaveAccessibleDescription(f.rawRead.sqlHint);
+  // Under OR, several conditions only the filter syntax knows: an error before sending.
+  await userEvent.clear(raw);
+  await userEvent.type(raw, "notes contains 'x' AND id = 1");
+  expect(reading()).toHaveTextContent(f.rawRead.bound);
+  await userEvent.click(screen.getByRole("button", { name: f.combineOr }));
+  expect(reading()).toHaveTextContent(f.rawRead.error);
+  expect(raw).toHaveAccessibleDescription(f.rawOrNeedsSql);
+  await userEvent.click(screen.getByRole("button", { name: f.applyAll }));
+  expect(screen.getByRole("alert")).toHaveTextContent(f.rawOrNeedsSql);
+  expect(onApply).not.toHaveBeenCalled();
+  // Applied alone (AND) the row is fine.
+  await userEvent.click(screen.getByRole("button", { name: f.applyRow(1) }));
+  expect(onApply).toHaveBeenLastCalledWith(
+    [
+      { column: "notes", op: "contains", values: ["x"] },
+      { column: "id", op: "eq", values: ["1"] },
+    ],
+    "and",
+  );
+});
+
+test("applying one row sets the join control back to AND (what is applied now)", async () => {
+  await twoRows();
+  await userEvent.click(screen.getByRole("button", { name: f.combineOr }));
+  await userEvent.click(screen.getByRole("button", { name: f.applyRow(1) }));
+  expect(onApply).toHaveBeenLastCalledWith([eq("status", "paid")], "and");
+  expect(screen.getByRole("button", { name: f.combineAnd })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: f.combineOr })).toHaveAttribute("aria-pressed", "false");
+  // The row's Apply names its key as the platform writes it.
+  expect(screen.getByRole("button", { name: f.applyRow(1) })).toHaveAttribute(
+    "title",
+    f.withShortcut(f.applyRow(1), formatShortcut("Enter")),
+  );
 });

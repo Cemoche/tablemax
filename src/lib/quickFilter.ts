@@ -1,3 +1,4 @@
+import { strings } from "./strings";
 import type { Filter, FilterCombine, FilterOp } from "./types";
 
 // Quick-filter grammar (case-insensitive keywords):
@@ -20,8 +21,9 @@ import type { Filter, FilterCombine, FilterOp } from "./types";
 // case-insensitive column match is an error. Any error returns no filters at all.
 //
 // The filter bar's "Raw SQL" mode reads its text with this grammar first
-// (`rawConditionFilters`): there a value must not be read as SQL by the user (a bare word
-// naming a column, a "…" identifier, CURRENT_DATE…), else the text is sent as SQL.
+// (`readRawCondition`): there a value must not be one SQL reads otherwise (a bare word
+// naming a column, a "…" identifier, TRUE / FALSE / DEFAULT / CURRENT_DATE…, an expression
+// such as `t.cost`, `cost+1` or `-cost`), else the text is sent as SQL.
 
 const RESERVED = new Set([
   "and", "not", "is", "null", "in", "between", "like", "ilike", "contains", "any",
@@ -92,11 +94,19 @@ const OPS: Record<string, FilterOp> = {
 /** Bare words SQL reads as values of its own (not text): the Raw SQL mode sends them as SQL. */
 const SQL_VALUE_WORDS = new Set([
   "current_date", "current_time", "current_timestamp", "localtime", "localtimestamp",
-  "current_user", "session_user",
+  "current_user", "session_user", "true", "false", "unknown", "default",
 ]);
+/**
+ * A bare word the Raw SQL mode may bind as text: letters, digits, `_ % : -` only (`paid`,
+ * `2024-01-31`, `a%`). Anything with another character (`t.cost`, `cost+1`, `a||b`) is an
+ * expression: the row is sent as SQL.
+ */
+const PLAIN_WORD = /^[\p{L}\p{N}_%:-]+$/u;
 
 class Parser {
   private p = 0;
+  /** A value was a bare word other than a number: text here, a name for SQL. */
+  bareWord = false;
   constructor(
     private t: Token[],
     private columns: string[],
@@ -154,8 +164,14 @@ class Parser {
       if (t.k === "dq") return fail("a double-quoted name");
       if (t.k === "word" && !NUMBER.test(t.s)) {
         const w = t.s.toLowerCase();
-        if (SQL_VALUE_WORDS.has(w) || this.columns.some((c) => c.toLowerCase() === w)) {
-          return fail(`"${t.s}" is a name`);
+        if (
+          !PLAIN_WORD.test(t.s) ||
+          // `-cost`: minus an expression, not text.
+          t.s.startsWith("-") ||
+          SQL_VALUE_WORDS.has(w) ||
+          this.columns.some((c) => c.toLowerCase() === w)
+        ) {
+          return fail(`"${t.s}" is SQL`);
         }
       }
     }
@@ -165,6 +181,7 @@ class Parser {
       if (RESERVED.has(t.s.toLowerCase())) {
         return fail(`"${t.s}" is a keyword: quote it ('${t.s}') to use it as a value`);
       }
+      if (!NUMBER.test(t.s)) this.bareWord = true;
       return t.s;
     }
     return fail(`expected a value, found ${this.describe(t)}`);
@@ -277,17 +294,37 @@ export function parseQuickFilter(
   }
 }
 
+/** How a Raw SQL row of the filter bar is read (see `readRawCondition`). */
+export type RawReading =
+  | { kind: "bound"; filters: Filter[] }
+  | { kind: "sql"; filters: Filter[] }
+  | { kind: "error"; message: string };
+
 /**
- * The filters of a "Raw SQL" row of the filter bar (spec §2.3: the quick syntax becomes the
- * Raw SQL mode). Text in the quick syntax becomes bound filters: one condition always,
- * several (joined by AND) only when the bar's filters are ANDed too, since under OR the
- * row's conditions must stay together. Anything else is the user's own SQL, sent as typed
- * (a `raw` filter, between parentheses on the backend). `text` must not be blank.
+ * A "Raw SQL" row of the filter bar (spec §2.3: the quick syntax becomes the Raw SQL mode).
+ * Text in the quick syntax becomes bound filters ("bound"): one condition always, several
+ * (joined by AND) only when the bar's filters are ANDed too, since under OR the row's
+ * conditions must stay together. Under OR such a row is sent as SQL when SQL reads it the
+ * same, else it is an error (CONTAINS, `any`, a bare word value: only the quick syntax knows
+ * them). Anything else is the user's own SQL, sent as typed ("sql": a `raw` filter, between
+ * parentheses on the backend). `text` must not be blank.
  */
-export function rawConditionFilters(text: string, columns: string[], combine: FilterCombine = "and"): Filter[] {
-  const r = parseQuickFilter(text, columns, true);
-  if (r.error === null && r.filters.length > 0 && (r.filters.length === 1 || combine === "and")) return r.filters;
-  return [{ column: null, op: "raw", values: [text] }];
+export function readRawCondition(text: string, columns: string[], combine: FilterCombine = "and"): RawReading {
+  const sql: RawReading = { kind: "sql", filters: [{ column: null, op: "raw", values: [text] }] };
+  let parser: Parser;
+  let filters: Filter[];
+  try {
+    parser = new Parser(tokenize(text), columns, true);
+    filters = parser.parseAll();
+  } catch (e) {
+    if (e instanceof QuickFilterError) return sql;
+    throw e;
+  }
+  if (filters.length === 0) return sql;
+  if (filters.length === 1 || combine === "and") return { kind: "bound", filters };
+  const quickOnly =
+    parser.bareWord || filters.some((f) => f.column === null || f.op === "contains" || f.op === "notContains");
+  return quickOnly ? { kind: "error", message: strings.filters.rawOrNeedsSql } : sql;
 }
 
 const SIMPLE_WORD = /^[A-Za-z_][A-Za-z0-9_]*$/;

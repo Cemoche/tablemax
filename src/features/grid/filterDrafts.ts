@@ -1,4 +1,4 @@
-import { ANY_OPS, ARITY, rawConditionFilters } from "../../lib/quickFilter";
+import { ANY_OPS, ARITY, readRawCondition } from "../../lib/quickFilter";
 import { strings } from "../../lib/strings";
 import type { Dialect, Filter, FilterCombine, FilterOp } from "../../lib/types";
 import { formatValueList, splitValueList } from "../../lib/valueList";
@@ -90,7 +90,7 @@ export function draftsFromFilters(filters: Filter[]): FilterDraft[] {
 /**
  * The rows as filters (all of them, and per row id: a Raw SQL row may give several), or a
  * message per invalid row id (then no filters at all). A Raw SQL row reads the quick syntax
- * against `columns` (`rawConditionFilters`, which depends on `combine`); without columns
+ * against `columns` (`readRawCondition`, which depends on `combine`); without columns
  * it is always SQL.
  */
 export function filtersFromDrafts(
@@ -107,7 +107,11 @@ export function filtersFromDrafts(
     if (d.column === RAW_SQL) {
       const sql = d.values[0] ?? "";
       if (sql.trim() === "") errors[d.id] = strings.filters.rawEmpty;
-      else byRow[d.id] = rawConditionFilters(sql, opts.columns ?? [], opts.combine);
+      else {
+        const r = readRawCondition(sql, opts.columns ?? [], opts.combine);
+        if (r.kind === "error") errors[d.id] = r.message;
+        else byRow[d.id] = r.filters;
+      }
       continue;
     }
     const column = d.column === ANY_COLUMN ? null : d.column;

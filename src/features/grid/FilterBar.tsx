@@ -1,6 +1,7 @@
-import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { type KeymapActionId, effectiveShortcut, effectiveShortcuts } from "../../lib/keymap";
 import { ariaShortcut, formatShortcut } from "../../lib/platform";
+import { readRawCondition } from "../../lib/quickFilter";
 import { matchCombination } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import type { Dialect, Filter, FilterCombine, FilterOp } from "../../lib/types";
@@ -89,6 +90,7 @@ const without = <T,>(s: Set<T>, v: T) => {
  */
 export function FilterBar({ id, dialect, columns, filters, combine, onApply, onClose, focusSeq, start = null }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const uid = useId();
   const keymap = useSettings((s) => s.settings.keymap);
   const [state, setState] = useState(() => rowsFrom(filters, columns));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -178,9 +180,12 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
     setState((s) => ({ ...s, applied: r.byRow, dirty: new Set() }));
     return true;
   };
+  /** One row alone, with AND: the join control follows (it shows how the filters are applied). */
   const applyRow = (rowId: string) => {
     const row = rows.find((r) => r.id === rowId);
-    if (row) applyRows([row], "and");
+    if (!row) return;
+    setMode("and");
+    applyRows([row], "and");
   };
   const applyAll = (how: FilterCombine) => {
     setMode(how);
@@ -287,6 +292,10 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
           const columnChoices =
             typeof d.column === "string" && !columns.includes(d.column) ? [...columns, d.column] : columns;
           const arity = arityOf(d.op);
+          // How a Raw SQL row reads, with the join Apply All would use (shown next to it).
+          const rawText = d.column === RAW_SQL ? (d.values[0] ?? "") : "";
+          const reading = rawText.trim() === "" ? null : readRawCondition(rawText, columns, mode);
+          const readingId = `${uid}-reading-${d.id}`;
           const setValue = (k: number, v: string) =>
             update(d.id, (x) => ({ ...x, values: x.values.map((old, j) => (j === k ? v : old)) }));
           return (
@@ -296,7 +305,7 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
                 aria-label={f.rowLabel(row, isApplied)}
                 data-row-id={d.id}
                 data-applied={isApplied ? "true" : undefined}
-                className={`-mx-1.5 flex h-[38px] items-center gap-1.5 rounded-md px-1.5 ${isApplied ? "bg-accent/15" : ""}`}
+                className={`-mx-1.5 flex h-[38px] items-center gap-1.5 rounded-md px-1.5 ${isApplied ? "bg-filter-applied" : ""}`}
               >
                 <input
                   type="checkbox"
@@ -341,6 +350,7 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
                     type="text"
                     data-field="value"
                     aria-label={f.rawLabel(row)}
+                    aria-describedby={reading ? readingId : undefined}
                     placeholder={f.rawPlaceholder}
                     spellCheck={false}
                     autoComplete="off"
@@ -377,7 +387,7 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
                     />
                     {arity === 2 && (
                       <>
-                        <span className="text-text-2">{f.and}</span>
+                        <span className="text-text">{f.and}</span>
                         <input
                           type="text"
                           aria-label={f.secondValueLabel(row)}
@@ -391,11 +401,27 @@ export function FilterBar({ id, dialect, columns, filters, combine, onApply, onC
                     )}
                   </>
                 )}
+                {reading && (
+                  <span
+                    data-testid="raw-reading"
+                    title={
+                      reading.kind === "bound" ? f.rawRead.boundHint : reading.kind === "sql" ? f.rawRead.sqlHint : reading.message
+                    }
+                    className={`shrink-0 text-xs ${reading.kind === "error" ? "text-danger" : "text-text"}`}
+                  >
+                    <span aria-hidden="true">
+                      {reading.kind === "bound" ? f.rawRead.bound : reading.kind === "sql" ? f.rawRead.sql : f.rawRead.error}
+                    </span>
+                    <span id={readingId} hidden>
+                      {reading.kind === "bound" ? f.rawRead.boundHint : reading.kind === "sql" ? f.rawRead.sqlHint : reading.message}
+                    </span>
+                  </span>
+                )}
                 <button
                   type="button"
                   className={button}
                   aria-label={f.applyRow(row)}
-                  title={f.withShortcut(f.applyRow(row), "Enter")}
+                  title={f.withShortcut(f.applyRow(row), formatShortcut("Enter"))}
                   onClick={() => applyRow(d.id)}
                 >
                   {f.applyRowText}

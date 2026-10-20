@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Filter } from "./types";
-import { formatQuickFilter, parseQuickFilter, rawConditionFilters } from "./quickFilter";
+import { formatQuickFilter, parseQuickFilter, readRawCondition } from "./quickFilter";
+import { strings } from "./strings";
 
 const cols = ["status", "total", "id", "name", "created_at", "notes", "order date", 'we"ird', "back`tick", "é名"];
 const ok = (s: string, c = cols) => {
@@ -244,7 +245,13 @@ describe("formatQuickFilter", () => {
   });
 });
 
-describe("rawConditionFilters", () => {
+/** The filters a Raw SQL row gives (or its reading when it is an error). */
+const rawConditionFilters = (...a: Parameters<typeof readRawCondition>) => {
+  const r = readRawCondition(...a);
+  return r.kind === "error" ? r : r.filters;
+};
+
+describe("readRawCondition", () => {
   const columns = ["id", "status", "total", "cost", "note"];
   const sql = (text: string): Filter[] => [{ column: null, op: "raw", values: [text] }];
   test("raw_sql_mode_uses_quick_syntax: one quick condition becomes a bound filter", () => {
@@ -277,11 +284,62 @@ describe("rawConditionFilters", () => {
     expect(rawConditionFilters("status NOT ILIKE 'p%'", columns)).toEqual(sql("status NOT ILIKE 'p%'"));
     expect(rawConditionFilters("created < current_date", ["created"])).toEqual(sql("created < current_date"));
     expect(rawConditionFilters("nope = 1", columns)).toEqual(sql("nope = 1"));
+    // Words SQL reads as expressions or keywords are never bound as text.
+    const more = ["active", "price", "x", ...columns];
+    expect(rawConditionFilters("active = true", more)).toEqual(sql("active = true"));
+    expect(rawConditionFilters("active = FALSE", more)).toEqual(sql("active = FALSE"));
+    expect(rawConditionFilters("active = unknown", more)).toEqual(sql("active = unknown"));
+    expect(rawConditionFilters("total = default", more)).toEqual(sql("total = default"));
+    expect(rawConditionFilters("total > cost+1", more)).toEqual(sql("total > cost+1"));
+    expect(rawConditionFilters("price > t.cost", more)).toEqual(sql("price > t.cost"));
+    expect(rawConditionFilters("x > -cost", more)).toEqual(sql("x > -cost"));
+    expect(rawConditionFilters("total > cost*2", more)).toEqual(sql("total > cost*2"));
+    expect(rawConditionFilters("note = a||b", more)).toEqual(sql("note = a||b"));
+    expect(rawConditionFilters("total > 10/2", more)).toEqual(sql("total > 10/2"));
+    // A plain word, a number, a date or a pattern stays a bound value.
+    expect(rawConditionFilters("status = paid", more)).toEqual([{ column: "status", op: "eq", values: ["paid"] }]);
+    expect(rawConditionFilters("total > -5", more)).toEqual([{ column: "total", op: "gt", values: ["-5"] }]);
+    expect(rawConditionFilters("note like a%", more)).toEqual([{ column: "note", op: "like", values: ["a%"] }]);
+    expect(rawConditionFilters("note = 2024-01-31", more)).toEqual([
+      { column: "note", op: "eq", values: ["2024-01-31"] },
+    ]);
     // Under OR the conditions of one row must stay together: the SQL keeps them so.
     expect(rawConditionFilters("status = 'paid' AND total > 5", columns, "or")).toEqual(
       sql("status = 'paid' AND total > 5"),
     );
+    // SQL-compatible conditions written together stay valid SQL under OR.
+    expect(readRawCondition("status = 'paid' AND total > 5", columns, "or").kind).toBe("sql");
     // One condition reads the same under OR.
     expect(rawConditionFilters("total > 5", columns, "or")).toEqual([{ column: "total", op: "gt", values: ["5"] }]);
+  });
+});
+
+describe("readRawCondition: how a row is read", () => {
+  const columns = ["id", "status", "notes"];
+  test("bound filters, SQL as written, or an error", () => {
+    expect(readRawCondition("notes contains 'x'", columns).kind).toBe("bound");
+    expect(readRawCondition("id % 2 = 0", columns).kind).toBe("sql");
+    expect(readRawCondition("notes contains 'x' AND id = 1", columns, "and").kind).toBe("bound");
+  });
+  test("under OR, several conditions only the filter syntax knows must be written as SQL", () => {
+    for (const text of [
+      "notes contains 'x' AND id = 1",
+      "notes not contains 'x' AND id = 1",
+      "any = 'x' AND id = 1",
+      // A bare word is text for the filter syntax, a name for SQL.
+      "status = paid AND id = 1",
+    ]) {
+      expect(readRawCondition(text, columns, "or"), text).toEqual({
+        kind: "error",
+        message: strings.filters.rawOrNeedsSql,
+      });
+    }
+  });
+});
+
+test("a Raw SQL row the filter syntax cannot even split (an open quote) is SQL as written", () => {
+  expect(readRawCondition("note = 'it", ["note"])).toEqual({
+    kind: "sql",
+    filters: [{ column: null, op: "raw", values: ["note = 'it"] }],
   });
 });
