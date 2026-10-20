@@ -5,9 +5,8 @@ import { useAction } from "./lib/keymap";
 import { ConnectPrompt } from "./features/connections/ConnectPrompt";
 import { ConnectionForm } from "./features/connections/ConnectionForm";
 import { ImportDialog } from "./features/connections/ImportDialog";
-import { UrlImportDialog } from "./features/connections/UrlImportDialog";
-import { blankConnection } from "./features/connections/connectionDraft";
 import { ConnectionList } from "./features/connections/ConnectionList";
+import { WelcomePane } from "./features/connections/WelcomePane";
 import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlow";
 import { toAppError } from "./lib/errors";
 import { AppToolbar } from "./features/chrome/AppToolbar";
@@ -29,17 +28,21 @@ type View = "connections" | "workspace";
 function App() {
   const items = useConnections((s) => s.items);
   const load = useConnections((s) => s.load);
-  const [selected, setSelected] = useState<ConnectionConfig | null>(null);
-  /** DB password pasted in a URL, pre-filled in the form of the unsaved connection. */
-  const [draftPassword, setDraftPassword] = useState<string | null>(null);
-  const [draftSslExplicit, setDraftSslExplicit] = useState(false);
-  const [urlDialog, setUrlDialog] = useState(false);
+  /** The row selected in the connection list. */
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  /**
+   * The form shown on the connections screen in place of the list: a saved connection,
+   * or null for a new one; no form shows the list.
+   */
+  const [form, setForm] = useState<{ connection: ConnectionConfig | null } | null>(null);
   const [importDialog, setImportDialog] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const select = (cfg: ConnectionConfig | null, password: string | null = null, sslExplicit = false) => {
-    setSelected(cfg);
-    setDraftPassword(password);
-    setDraftSslExplicit(sslExplicit);
+  const listSearch = useRef<HTMLInputElement>(null);
+  /** Ctrl+Shift+K asked for the list: its search takes the focus once it is on screen. */
+  const focusListSearch = useRef(false);
+  const editForm = (cfg: ConnectionConfig | null) => {
+    if (cfg) setSelectedId(cfg.id);
+    setForm({ connection: cfg });
   };
   const workspaces = useWorkspaces((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaces((s) => s.activeWorkspaceId);
@@ -72,6 +75,22 @@ function App() {
     () => setSettingsOpen(true),
   );
   useFontShortcuts();
+  // Spec §5.3 / §5.5: Ctrl+N a new connection's form, Ctrl+Shift+K the connection list,
+  // from anywhere (a workspace included).
+  useAction("connection.new", () => {
+    editForm(null);
+    setView("connections");
+  });
+  useAction("connection.open", () => {
+    setForm(null);
+    setView("connections");
+    focusListSearch.current = true;
+  });
+  useEffect(() => {
+    if (!focusListSearch.current || !listSearch.current) return;
+    focusListSearch.current = false;
+    listSearch.current.focus();
+  });
 
   // Connections first (a restored workspace takes its name and color from its
   // connection), then the last session, disconnected: nothing connects at startup.
@@ -103,7 +122,10 @@ function App() {
     setConnectError(null);
     try {
       const initial = { password, sshSecret, acceptFingerprint: null };
-      if (await openFlow.start(initial, cfg, flowTarget(cfg))) setView("workspace");
+      if (await openFlow.start(initial, cfg, flowTarget(cfg))) {
+        setForm(null);
+        setView("workspace");
+      }
     } catch (e) {
       const message = toAppError(e).message;
       // A restored workspace stays in place, disconnected: its view shows the error.
@@ -135,7 +157,7 @@ function App() {
         workspace={showWorkspace ? activeWorkspace : null}
         connectError={shownConnectError}
         onEditConnection={(cfg) => {
-          select(cfg);
+          editForm(cfg);
           setView("connections");
         }}
       />
@@ -158,52 +180,45 @@ function App() {
               connectError={shownConnectError}
             />
           </main>
+        ) : form ? (
+          <main className="min-w-0 flex-1 overflow-y-auto bg-content">
+            {loadError && <p className="mx-auto w-[620px] max-w-full px-5 pt-3 text-danger">{loadError}</p>}
+            <ConnectionForm
+              connection={form.connection}
+              onSaved={(cfg) => editForm(cfg)}
+              onDeleted={() => {
+                setSelectedId(null);
+                setForm(null);
+              }}
+              onConnect={open}
+              onClose={() => setForm(null)}
+            />
+          </main>
         ) : (
           <>
-            <ConnectionList
-              items={items}
-              selectedId={selected?.id ?? null}
-              onSelect={(cfg) => select(cfg)}
-              onOpen={(cfg) => open(cfg)}
-              onNew={() => select(null)}
-              onNewFromUrl={() => setUrlDialog(true)}
-              onImport={() => setImportDialog(true)}
-            />
-            <main className="min-w-0 flex-1 overflow-y-auto">
-              {loadError && <p className="p-3 text-danger">{loadError}</p>}
-              <ConnectionForm
-                connection={selected}
-                initialPassword={draftPassword}
-                sslExplicit={draftSslExplicit}
-                onSaved={(cfg) => select(cfg)}
-                onDeleted={() => select(null)}
-                onConnect={open}
+            <WelcomePane onCreate={() => editForm(null)} onImport={() => setImportDialog(true)} />
+            <main className="flex min-w-0 flex-1 flex-col">
+              {loadError && <p className="bg-content px-4 py-2 text-danger">{loadError}</p>}
+              <ConnectionList
+                items={items}
+                selectedId={selectedId}
+                searchRef={listSearch}
+                onSelect={(cfg) => setSelectedId(cfg.id)}
+                onOpen={(cfg) => open(cfg)}
+                onEdit={(cfg) => editForm(cfg)}
+                onNew={() => editForm(null)}
               />
             </main>
           </>
         )}
       </div>
-      {urlDialog && (
-        <UrlImportDialog
-          onCancel={() => setUrlDialog(false)}
-          onResult={(config, password, sslExplicit) => {
-            const draft = { ...blankConnection(), ...config };
-            const fallback =
-              draft.kind === "sqlite"
-                ? (draft.sqlitePath?.split("/").pop() ?? "")
-                : (draft.database ?? draft.host);
-            select({ ...draft, name: fallback }, password, sslExplicit);
-            setUrlDialog(false);
-          }}
-        />
-      )}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {importDialog && <ImportDialog onClose={() => setImportDialog(false)} />}
       <CloseConfirm />
       <CommandPalette
         onOpenConnection={(cfg) => void open(cfg)}
         onNewConnection={() => {
-          select(null);
+          editForm(null);
           setView("connections");
         }}
         onShowWorkspace={() => setView("workspace")}

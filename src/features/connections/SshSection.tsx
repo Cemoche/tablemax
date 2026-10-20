@@ -3,6 +3,7 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { PasswordMode, SshAuth, SshSettings } from "../../lib/types";
 import { FileField } from "./FileField";
+import { boxRowClass, fieldClass, inlineLabelClass, labelClass } from "./formStyles";
 
 interface Props {
   ssh: SshSettings | null;
@@ -23,8 +24,6 @@ const NEW_SSH: SshSettings = {
   secretMode: "keyring",
 };
 
-const field = "w-full rounded-sm border border-border bg-bg px-2 py-1";
-
 /** The agent has no secret; a password always needs one (no "none" storage). */
 function withAuth(ssh: SshSettings, auth: SshAuth): SshSettings {
   const secretMode: PasswordMode =
@@ -36,7 +35,10 @@ function withAuth(ssh: SshSettings, auth: SshAuth): SshSettings {
   return { ...ssh, auth, secretMode };
 }
 
-/** SSH tunnel settings of a network connection (not shown for SQLite). */
+/**
+ * The "Over SSH" box of a network connection (not shown for SQLite): its checkbox opens
+ * the tunnel's lines (host and port, user, authentication, key file, secret and its storage).
+ */
 export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Props) {
   const [aliases, setAliases] = useState<string[]>([]);
   const enabled = ssh !== null;
@@ -59,27 +61,34 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
     stored !== null && stored.auth === ssh?.auth && stored.secretMode === "keyring";
 
   return (
-    <fieldset className="flex flex-col gap-2 rounded-sm border border-border p-3">
-      <legend className="px-1">
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => {
-              onSecretChange("");
-              onChange(e.target.checked ? NEW_SSH : null);
-            }}
-          />
-          {strings.ssh.enable}
-        </label>
-      </legend>
+    <div
+      role="group"
+      aria-label={strings.ssh.box}
+      data-form-row=""
+      className={`flex flex-col rounded-lg border border-sep px-2 ${enabled ? "gap-2 py-1.5" : "h-9 justify-center"}`}
+    >
+      <label className="flex h-7 items-center gap-2 text-text">
+        <input
+          type="checkbox"
+          className="accent-accent"
+          checked={enabled}
+          onChange={(e) => {
+            onSecretChange("");
+            onChange(e.target.checked ? NEW_SSH : null);
+          }}
+        />
+        {strings.ssh.enable}
+      </label>
       {ssh && (
         <>
-          <div className="flex gap-3">
-            <label className="flex flex-[3] flex-col gap-1">
-              <span className="text-muted">{strings.ssh.host}</span>
+          <div className={boxRowClass}>
+            <label htmlFor="cf-ssh-host" className={labelClass}>
+              {strings.ssh.host}
+            </label>
+            <div className="flex min-w-0 items-center gap-2">
               <input
-                className={field}
+                id="cf-ssh-host"
+                className={fieldClass}
                 list="ssh-host-aliases"
                 placeholder={strings.ssh.hostPlaceholder}
                 value={ssh.host}
@@ -90,31 +99,38 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
                   <option key={a} value={a} />
                 ))}
               </datalist>
-            </label>
-            <label className="flex flex-1 flex-col gap-1">
-              <span className="text-muted">{strings.ssh.port}</span>
+              <span aria-hidden className={inlineLabelClass}>
+                {strings.form.port}
+              </span>
               <input
                 type="number"
-                className={field}
+                aria-label={strings.ssh.port}
+                className={`${fieldClass} w-24 shrink-0`}
                 placeholder={fromConfig ?? strings.ssh.defaultPort}
                 value={ssh.port ?? ""}
                 onChange={(e) => patch({ port: e.target.value === "" ? null : Number(e.target.value) })}
               />
-            </label>
+            </div>
           </div>
-          <label className="flex flex-col gap-1">
-            <span className="text-muted">{strings.ssh.user}</span>
+          <div className={boxRowClass}>
+            <label htmlFor="cf-ssh-user" className={labelClass}>
+              {strings.ssh.user}
+            </label>
             <input
-              className={field}
+              id="cf-ssh-user"
+              className={fieldClass}
               placeholder={fromConfig}
               value={ssh.user ?? ""}
               onChange={(e) => patch({ user: e.target.value || null })}
             />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-muted">{strings.ssh.auth}</span>
+          </div>
+          <div className={boxRowClass}>
+            <span aria-hidden className={labelClass}>
+              {strings.ssh.authShort}
+            </span>
             <select
-              className={field}
+              aria-label={strings.ssh.auth}
+              className={fieldClass}
               value={ssh.auth}
               onChange={(e) => {
                 onSecretChange("");
@@ -127,23 +143,39 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
                 </option>
               ))}
             </select>
-          </label>
+          </div>
           {isKey && (
             <FileField
               id="ssh-key-file"
-              label={strings.ssh.keyFile}
+              label={strings.ssh.keyFileShort}
+              name={strings.ssh.keyFile}
               purpose="sshKey"
               value={ssh.keyFile}
               placeholder={strings.ssh.keyFilePlaceholder}
+              rowClass={boxRowClass}
               onChange={(keyFile) => patch({ keyFile })}
             />
           )}
           {ssh.auth !== "agent" && (
-            <div className="flex gap-3">
-              <label className="flex flex-1 flex-col gap-1">
-                <span className="text-muted">{strings.ssh.secretMode}</span>
+            <div className={boxRowClass}>
+              <span aria-hidden className={labelClass}>
+                {isKey ? strings.ssh.passphrase : strings.form.password}
+              </span>
+              <div className="flex min-w-0 items-center gap-2">
+                {ssh.secretMode === "keyring" && (
+                  <input
+                    type="password"
+                    aria-label={isKey ? strings.ssh.passphrase : strings.ssh.password}
+                    className={fieldClass}
+                    autoComplete="off"
+                    value={secret}
+                    placeholder={secretStored ? strings.form.passwordStored : ""}
+                    onChange={(e) => onSecretChange(e.target.value)}
+                  />
+                )}
                 <select
-                  className={field}
+                  aria-label={strings.ssh.secretMode}
+                  className={`${fieldClass} ${ssh.secretMode === "keyring" ? "w-44 shrink-0" : ""}`}
                   value={ssh.secretMode}
                   onChange={(e) => patch({ secretMode: e.target.value as PasswordMode })}
                 >
@@ -151,24 +183,11 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
                   <option value="ask">{strings.passwordMode.ask}</option>
                   {isKey && <option value="none">{strings.ssh.noPassphrase}</option>}
                 </select>
-              </label>
-              {ssh.secretMode === "keyring" && (
-                <label className="flex flex-[2] flex-col gap-1">
-                  <span className="text-muted">{isKey ? strings.ssh.passphrase : strings.ssh.password}</span>
-                  <input
-                    type="password"
-                    className={field}
-                    autoComplete="off"
-                    value={secret}
-                    placeholder={secretStored ? strings.form.passwordStored : ""}
-                    onChange={(e) => onSecretChange(e.target.value)}
-                  />
-                </label>
-              )}
+              </div>
             </div>
           )}
         </>
       )}
-    </fieldset>
+    </div>
   );
 }

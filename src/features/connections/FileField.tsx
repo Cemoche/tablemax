@@ -2,21 +2,12 @@ import { useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import type { FilePurpose } from "../../lib/types";
+import { buttonClass, fieldClass, labelClass } from "./formStyles";
 
-interface Props {
-  id: string;
-  label: string;
-  purpose: FilePurpose;
-  value: string | null;
-  placeholder?: string;
-  onChange: (path: string | null) => void;
-}
-
-const btn = "rounded-sm border border-border px-2 py-1 hover:bg-surface-2";
-
-/** Read-only path chosen with the native picker (opened by the backend), with Clear. */
-export function FileField({ id, label, purpose, value, placeholder, onChange }: Props) {
+/** The native file picker (opened by the backend): the chosen path, or the error to show. */
+export function useFilePick(purpose: FilePurpose, onChange: (path: string) => void) {
   const [error, setError] = useState<string | null>(null);
   const browse = async () => {
     setError(null);
@@ -27,34 +18,59 @@ export function FileField({ id, label, purpose, value, placeholder, onChange }: 
       setError(toAppError(e).message);
     }
   };
+  return { browse, error };
+}
+
+interface Props {
+  id: string;
+  /** Visible label, in the label column. */
+  label: string;
+  /** Accessible name of the path, when the visible label is a short form of it. */
+  name?: string;
+  purpose: FilePurpose;
+  value: string | null;
+  placeholder?: string;
+  onChange: (path: string | null) => void;
+  /** Leave out Browse… (the SSL files are browsed from the SSL mode line). */
+  noBrowse?: boolean;
+  /** Class of the line (the form's row, or the Over SSH box's). */
+  rowClass: string;
+}
+
+/** A form line with a read-only path chosen with the native picker, Browse… and Clear. */
+export function FileField({ id, label, name, purpose, value, placeholder, onChange, noBrowse, rowClass }: Props) {
+  const { browse, error } = useFilePick(purpose, onChange);
+  const what = name ?? label;
   return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="text-muted">
+    <div data-form-row="" className={rowClass}>
+      <label htmlFor={id} className={labelClass}>
         {label}
       </label>
-      <div className="flex gap-2">
+      <div className="flex min-w-0 items-center gap-2">
         <input
           id={id}
           readOnly
-          className="min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 py-1 font-mono"
+          aria-label={name}
+          className={`${fieldClass} font-mono`}
           value={value ?? ""}
           placeholder={placeholder ?? strings.ssl.noFile}
         />
-        <button type="button" className={btn} aria-label={strings.ssl.browseFor(label)} onClick={browse}>
-          {strings.ssl.browse}
-        </button>
+        {error && (
+          <span role="alert" className="max-w-40 shrink-0 truncate text-xs text-danger" {...tip(error)}>
+            {error}
+          </span>
+        )}
+        {!noBrowse && (
+          <button type="button" className={buttonClass} aria-label={strings.ssl.browseFor(what)} onClick={browse}>
+            {strings.ssl.browse}
+          </button>
+        )}
         {value !== null && (
-          <button
-            type="button"
-            className={btn}
-            aria-label={strings.ssl.clearFor(label)}
-            onClick={() => onChange(null)}
-          >
+          <button type="button" className={buttonClass} aria-label={strings.ssl.clearFor(what)} onClick={() => onChange(null)}>
             {strings.ssl.clear}
           </button>
         )}
       </div>
-      {error && <span className="text-xs text-danger">{error}</span>}
     </div>
   );
 }

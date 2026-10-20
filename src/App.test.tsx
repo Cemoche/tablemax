@@ -93,6 +93,7 @@ beforeEach(() => {
   vi.mocked(ipc.routinesList).mockResolvedValue([]);
   vi.mocked(ipc.databasesList).mockResolvedValue([]);
   vi.mocked(ipc.workspaceClose).mockResolvedValue(undefined);
+  vi.mocked(ipc.appVersion).mockResolvedValue("1.2.3");
 });
 afterEach(async () => {
   // Let pending promise callbacks settle before checking for unhandled rejections.
@@ -219,12 +220,8 @@ test("corrupt_session_is_ignored at startup: empty start, the file is not overwr
   }
 });
 
-/** The connection's row in the connection list (not its workspace button in the switcher). */
-const listRow = (name: string) =>
-  screen
-    .getAllByText(name)
-    .map((e) => e.closest("button"))
-    .find((b) => b && !b.closest("nav"))!;
+/** The connection's row in the connection list (not its workspace button in the column). */
+const listRow = (name: string) => screen.getByRole("option", { name });
 
 test("a restored connection reopened from the connection list shows why it failed", async () => {
   const user = userEvent.setup();
@@ -262,4 +259,41 @@ test("prod_title_kept: no environment banner, the pill badge and the window titl
   expect(within(header).getByText(strings.statusPill.tags.prod)).toBeInTheDocument();
   // The old banner is gone.
   expect(screen.queryByRole("status", { name: "Environment" })).toBeNull();
+});
+
+test("Ctrl+Shift+K shows the connection list from a workspace, its search focused", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByRole("tab", { name: "users" });
+  await user.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
+  expect(await screen.findByRole("option", { name: "Prod PG" })).toBeInTheDocument();
+  expect(screen.getByRole("searchbox", { name: strings.connections.searchLabel })).toHaveFocus();
+  expect(screen.getByRole("region", { name: strings.connections.welcomeLabel })).toBeInTheDocument();
+});
+
+test("Ctrl+N opens a new connection's form; its back button returns to the list", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.sessionLoad).mockResolvedValue(null);
+  render(<App />);
+  await screen.findByRole("option", { name: "Prod PG" });
+  await user.keyboard("{Control>}n{/Control}");
+  expect(screen.getByRole("heading", { name: strings.form.newTitle })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "Prod PG" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: strings.connections.back }));
+  expect(screen.getByRole("option", { name: "Prod PG" })).toBeInTheDocument();
+});
+
+test("the row menu's Edit… opens the connection's form; Create connection… a new one", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.sessionLoad).mockResolvedValue(null);
+  render(<App />);
+  const row = await screen.findByRole("option", { name: "Prod PG" });
+  row.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  await user.click(screen.getByRole("menuitem", { name: strings.connections.edit }));
+  expect(screen.getByRole("heading", { name: strings.form.editTitle })).toBeInTheDocument();
+  expect(screen.getByLabelText(strings.form.name)).toHaveValue("Prod PG");
+  await user.click(screen.getByRole("button", { name: strings.connections.back }));
+  await user.click(screen.getByRole("button", { name: strings.connections.create }));
+  expect(screen.getByRole("heading", { name: strings.form.newTitle })).toBeInTheDocument();
 });
