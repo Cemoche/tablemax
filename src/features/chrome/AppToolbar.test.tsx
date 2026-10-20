@@ -385,9 +385,49 @@ test("discard_preview_shortcuts: Ctrl+Shift+Backspace / Ctrl+Shift+P act like th
   field.focus();
   await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
   expect(discard).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
   field.remove();
+  // Elsewhere it asks first (no undo); Cancel keeps the changes and gives the focus back.
+  const opener = document.createElement("button");
+  document.body.appendChild(opener);
+  opener.focus();
   await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  const ask = screen.getByRole("dialog", { name: strings.grid.discardTitle });
+  expect(ask).toHaveTextContent(strings.grid.discardConfirm(1));
+  expect(discard).not.toHaveBeenCalled();
+  await user.click(within(ask).getByRole("button", { name: strings.grid.discardCancel }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(discard).not.toHaveBeenCalled();
+  expect(opener).toHaveFocus();
+  // Escape cancels too; Enter discards (Discard has the focus).
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(discard).not.toHaveBeenCalled();
+  await user.keyboard("{Control>}{Shift>}{Backspace}{/Shift}{/Control}");
+  expect(screen.getByRole("button", { name: strings.grid.discardOk })).toHaveFocus();
+  await user.keyboard("{Enter}");
   expect(discard).toHaveBeenCalledWith("t1");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(opener).toHaveFocus();
+  opener.remove();
+});
+
+test("discard_preview_off_in_query_tabs: their keys are not taken where no table tab is active (#90)", async () => {
+  setup(ws({ activeTabId: "q1" }));
+  const backspace = new KeyboardEvent("keydown", {
+    key: "Backspace",
+    code: "Backspace",
+    ctrlKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  const p = new KeyboardEvent("keydown", { key: "P", code: "KeyP", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
+  document.body.dispatchEvent(backspace);
+  document.body.dispatchEvent(p);
+  expect(backspace.defaultPrevented).toBe(false);
+  expect(p.defaultPrevented).toBe(false);
 });
 
 test("reload_tab_and_reconnect: Alt+R reloads the table tab only; Ctrl+Shift+R reconnects a disconnected workspace (#90)", async () => {

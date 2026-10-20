@@ -1,5 +1,6 @@
 import { CircleX, Command, Database, Eye, ListChecks, PanelLeft, PanelRight, Plug, RotateCw, Settings } from "lucide-react";
 import { type MouseEvent, type ReactNode, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import * as ipc from "../../lib/ipc";
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
@@ -12,6 +13,7 @@ import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { useSettings } from "../../stores/settings";
 import { type Workspace, capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
+import { ConfirmDialog } from "../workspace/ConfirmDialog";
 import { ConnectionPopover } from "./ConnectionPopover";
 import { SafeModeMenu } from "./SafeModeMenu";
 import { StatusPill } from "./StatusPill";
@@ -159,18 +161,36 @@ function WorkspaceTools({
   const discardHint = useHint(t.discard, "grid.discard");
   const previewHint = useHint(t.preview, "grid.preview");
 
-  // Spec §5.3 (#90): Discard / Preview as their buttons (Ctrl+Shift+Backspace is a text key
+  // Spec §5.3 (#90): Discard / Preview of the table tab (Ctrl+Shift+Backspace is a text key
   // in a field: not there), Reload the table tab only, Reconnect a disconnected workspace.
+  // Discard's shortcut asks first (one Shift away from Ctrl+Backspace, and no undo); its
+  // button, a deliberate press, discards at once. Enter discards, Escape / Cancel keep.
+  const [discardAsk, setDiscardAsk] = useState<{ tabId: string; count: number; back: Element | null } | null>(
+    null,
+  );
   useAction(
     "grid.discard",
     () => {
-      if (table && count > 0 && !busy && !committing) usePendingChanges.getState().discard(table.id);
+      if (table && count > 0 && !busy && !committing) {
+        setDiscardAsk({ tabId: table.id, count, back: document.activeElement });
+      }
     },
-    { skipInEditable: true },
+    { enabled: table !== null, skipInEditable: true },
   );
-  useAction("grid.preview", () => {
-    if (table && count > 0) useChrome.getState().requestPreview(table.id);
-  });
+  const answerDiscard = (discard: boolean) => {
+    const ask = discardAsk;
+    setDiscardAsk(null);
+    if (!ask) return;
+    if (discard) usePendingChanges.getState().discard(ask.tabId);
+    if (ask.back instanceof HTMLElement && ask.back.isConnected) ask.back.focus();
+  };
+  useAction(
+    "grid.preview",
+    () => {
+      if (table && count > 0) useChrome.getState().requestPreview(table.id);
+    },
+    { enabled: table !== null },
+  );
   // Capture + stop, like Alt+F: the grid would take the letter as the start of a cell edit.
   useAction(
     "tab.reload",
@@ -363,6 +383,20 @@ function WorkspaceTools({
           <PanelRight aria-hidden {...ICON} />
         </button>
       </Group>
+      {discardAsk &&
+        // On the body: a press on the overlay must not move the window (the toolbar's drag).
+        createPortal(
+          <ConfirmDialog
+            title={strings.grid.discardTitle}
+            message={strings.grid.discardConfirm(discardAsk.count)}
+            confirmLabel={strings.grid.discardOk}
+            cancelLabel={strings.grid.discardCancel}
+            initialFocus="confirm"
+            onConfirm={() => answerDiscard(true)}
+            onCancel={() => answerDiscard(false)}
+          />,
+          document.body,
+        )}
     </>
   );
 }
