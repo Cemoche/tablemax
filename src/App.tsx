@@ -12,6 +12,7 @@ import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlo
 import { toAppError } from "./lib/errors";
 import { AppToolbar } from "./features/chrome/AppToolbar";
 import { ResizeHandles } from "./features/chrome/ResizeHandles";
+import { TooltipLayer } from "./features/chrome/TooltipLayer";
 import { CommandPalette } from "./features/palette/CommandPalette";
 import { useWindowTitle } from "./features/workspace/useWindowTitle";
 import { OpenConnectionsColumn } from "./features/chrome/OpenConnectionsColumn";
@@ -209,6 +210,7 @@ function App() {
       />
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />
       <ResizeHandles />
+      <TooltipLayer />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import type { CellValue, EditValue, ObjectRef, ResultSet, TableInfo } from "../../lib/types";
 import { type EditCell, type GridModel, type MenuAction, menuActions } from "./editModel";
 import { cellText, readOnlyReason } from "./editing";
@@ -241,7 +242,7 @@ function Field({
                 key={`${i}\u0000${l.fk.name}`}
                 type="button"
                 aria-label={strings.grid.openReferencedIn(l.object.name)}
-                title={strings.grid.openReferencedIn(l.object.name)}
+                {...tip(strings.grid.openReferencedIn(l.object.name))}
                 onClick={() => onOpenLink(l)}
                 className="max-w-40 truncate rounded-sm px-1 text-xs text-accent hover:bg-surface-2"
               >

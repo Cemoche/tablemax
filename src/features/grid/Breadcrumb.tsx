@@ -3,6 +3,7 @@ import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { formatQuickFilter } from "../../lib/quickFilter";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import type { Filter, FilterCombine, ObjectRef } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
 import { backTo } from "./tableNavigation";
@@ -34,7 +35,7 @@ export function Breadcrumb({ workspaceId, tabId, object, filters, combine = "and
   return (
     <nav
       aria-label={strings.grid.trail.label}
-      title={strings.grid.trail.back(formatShortcut(backShortcut))}
+      {...tip(strings.grid.trail.back, formatShortcut(backShortcut))}
       className="flex min-w-0 items-center gap-1 overflow-hidden border-b border-border bg-surface px-3 py-1 text-sm"
     >
       {trail.map((entry, i) => (

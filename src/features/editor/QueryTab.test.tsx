@@ -477,7 +477,7 @@ test("the configured value is the one sent and the one the label and hint name",
   await setup("select * from t");
   const box = screen.getByRole("checkbox", { name: strings.query.autoLimit(50) });
   expect(box).toBeChecked();
-  expect(box.closest("label")).toHaveAttribute("title", strings.query.autoLimitHint(50));
+  expect(box.closest("label")).toHaveAttribute("data-tooltip", strings.query.autoLimitHint(50));
   await userEvent.click(screen.getByRole("button", { name: "Run all" }));
   await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
   expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from t LIMIT 50"]);
@@ -685,10 +685,9 @@ test("the Save button names the effective shortcut; History and Saved queries le
   });
   onTestFinished(() => useSettings.setState({ settings: DEFAULT_SETTINGS }));
   await setup();
-  expect(screen.getByRole("button", { name: strings.savedQueries.save })).toHaveAttribute(
-    "title",
-    strings.savedQueries.saveHint("Ctrl+Shift+S"),
-  );
+  const save = screen.getByRole("button", { name: strings.savedQueries.save });
+  expect(save).toHaveAttribute("data-tooltip", strings.savedQueries.saveHint);
+  expect(save).toHaveAttribute("data-tooltip-key", "Ctrl+Shift+S");
   expect(screen.queryByRole("complementary", { name: strings.history.label })).toBeNull();
   expect(screen.queryByRole("region", { name: strings.savedQueries.label })).toBeNull();
 });

@@ -262,14 +262,8 @@ test("the view switch names the effective shortcuts", async () => {
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await screen.findByTestId("grid");
-  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute(
-    "title",
-    strings.grid.view.dataShortcut("Alt+7"),
-  );
-  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute(
-    "title",
-    strings.grid.view.structureShortcut("Alt+8"),
-  );
+  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("data-tooltip-key", "Alt+7");
+  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("data-tooltip-key", "Alt+8");
 });
 
 test("editing through the grid, then commit applies the changes and reloads", async () => {

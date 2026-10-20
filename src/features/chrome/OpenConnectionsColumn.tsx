@@ -1,6 +1,7 @@
 import { Database, LayoutList, X } from "lucide-react";
 import { useAction } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
@@ -36,7 +37,7 @@ function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
         data-workspace-tile=""
         aria-label={w.name}
         aria-current={current ? "true" : undefined}
-        title={w.name}
+        {...tip(w.name)}
         onClick={onSelect}
         className={`flex w-full flex-col items-center gap-1 rounded-lg px-1 pt-2 pb-1.5 ${focusRing} ${
           current ? "bg-sel" : "hover:bg-seg-sel"
@@ -56,7 +57,7 @@ function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
       <button
         type="button"
         aria-label={C.close(w.name)}
-        title={busy ? strings.grid.closeWhileCommitting : C.close(w.name)}
+        {...tip(busy ? strings.grid.closeWhileCommitting : C.close(w.name))}
         disabled={busy}
         onClick={() => {
           // The workspace is already gone from the UI; a failed backend close (e.g. a lost
@@ -99,7 +100,7 @@ export function OpenConnectionsColumn({ connectionsActive, onShowConnections, on
       <button
         type="button"
         aria-pressed={connectionsActive}
-        title={C.connections}
+        {...tip(C.connections)}
         onClick={onShowConnections}
         className={`flex flex-col items-center gap-1 rounded-lg px-1 py-1.5 text-text-2 aria-pressed:bg-sel aria-pressed:text-text hover:bg-seg-sel ${focusRing}`}
       >

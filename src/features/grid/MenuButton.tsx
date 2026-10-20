@@ -1,6 +1,7 @@
 import { Check } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { ariaShortcut, formatShortcut } from "../../lib/platform";
+import { tip } from "../../lib/tooltip";
 
 export interface MenuEntry {
   /** The item's text. */
@@ -96,7 +97,7 @@ export function MenuButton({ label, title, menuLabel, className, children, items
         ref={button}
         type="button"
         aria-label={label}
-        title={title}
+        {...tip(title)}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}

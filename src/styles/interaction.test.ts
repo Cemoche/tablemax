@@ -50,3 +50,8 @@ test("pointer_cursor: disabled controls do not", () => {
     style?.remove();
   }
 });
+
+test("tooltip_motion: a short entry animation, none under reduced motion", () => {
+  expect(css).toMatch(/\.tm-tooltip\[data-animate="true"\]\[data-placement="bottom"\]\s*\{\s*animation:[^;]*120ms/);
+  expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.tm-tooltip\s*\{\s*animation: none/);
+});

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import type { ConnectionConfig } from "../../lib/types";
 
 interface Props {
@@ -132,7 +133,7 @@ export function ConnectionList({
           <button
             type="button"
             onClick={() => setMenuOpen((o) => !o)}
-            title={strings.connections.newMenu}
+            {...tip(strings.connections.newMenu)}
             aria-label={strings.connections.newMenu}
             aria-haspopup="menu"
             aria-expanded={menuOpen}

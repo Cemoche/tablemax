@@ -1,6 +1,7 @@
 import { Check, Search, SlidersHorizontal } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import { useShallow } from "zustand/react/shallow";
 import { type MatchMode, useSidebar } from "../../stores/sidebar";
 
@@ -120,7 +121,7 @@ function SearchOptions() {
         ref={button}
         type="button"
         aria-label={S.searchOptions}
-        title={S.searchOptions}
+        {...tip(S.searchOptions)}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}

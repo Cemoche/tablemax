@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "./styles/tokens.css";
-/* Pointer cursor (#109), under the utilities. */
+/* Pointer cursor and tooltip motion (#109), under the utilities. */
 @import "./styles/interaction.css" layer(base);
 
 @theme inline {

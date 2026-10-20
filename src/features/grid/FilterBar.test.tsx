@@ -5,6 +5,7 @@ import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import type { Dialect, Filter, FilterCombine, WherePreview } from "../../lib/types";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
+import { TooltipLayer } from "../chrome/TooltipLayer";
 import { FilterBar } from "./FilterBar";
 
 const cols = ["status", "total", "id", "notes"];
@@ -409,10 +410,9 @@ test("applying one row sets the join control back to AND (what is applied now)",
   expect(onApply).toHaveBeenLastCalledWith([eq("status", "paid")], "and");
   expect(joinButton("AND")).toBeInTheDocument();
   // The row's Apply names its key as the platform writes it.
-  expect(screen.getByRole("button", { name: f.applyRow(1) })).toHaveAttribute(
-    "title",
-    f.withShortcut(f.applyRow(1), formatShortcut("Enter")),
-  );
+  const apply = screen.getByRole("button", { name: f.applyRow(1) });
+  expect(apply).toHaveAttribute("data-tooltip", f.applyRow(1));
+  expect(apply).toHaveAttribute("data-tooltip-key", formatShortcut("Enter"));
 });
 
 test("filter_row_layout: [✓] [column] [operator] [value…] [Apply] [−] [+]; the footer [⚙] [Export] [SQL] hints [Clear] [Apply All ⌄]", () => {
@@ -462,7 +462,7 @@ test("hint_line_follows_the_keymap: built from the effective shortcuts, a rebind
     expect(hints, text).toHaveTextContent(text);
   }
   // The whole line is its tooltip (it is cut when the bar is narrow).
-  expect(hints).toHaveAttribute("title", hints.textContent);
+  expect(hints).toHaveAttribute("data-tooltip", hints.textContent);
   act(() =>
     useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "filters.add": "Alt+N", "grid.filters": "Alt+S" } } }),
   );
@@ -511,14 +511,14 @@ test("clear_removes_all_filters: Clear applies no filter and leaves one blank ro
   expect(screen.getAllByRole("checkbox")).toHaveLength(1);
   expect(value(1)).toHaveValue("");
   expect(column(1)).toHaveFocus();
-  expect(screen.getByRole("button", { name: f.clear })).toHaveAttribute("title", f.clearTitle);
+  expect(screen.getByRole("button", { name: f.clear })).toHaveAttribute("data-tooltip", f.clearTitle);
 });
 
 test("export_is_disabled_with_a_tooltip: focusable, says why, does nothing", async () => {
   setup();
   const exp = screen.getByRole("button", { name: f.export });
   expect(exp).toHaveAttribute("aria-disabled", "true");
-  expect(exp).toHaveAttribute("title", f.exportUnavailable);
+  expect(exp).toHaveAttribute("data-tooltip", f.exportUnavailable);
   expect(exp).toHaveAccessibleDescription(f.exportUnavailable);
   await userEvent.click(exp);
   expect(onApply).not.toHaveBeenCalled();
@@ -695,4 +695,42 @@ test("the ⚙ menu's Hide names Escape as the hint line does", async () => {
   expect(hide).toHaveTextContent("Esc");
   expect(hide).not.toHaveTextContent("Escape");
   expect(hide).toHaveAttribute("aria-keyshortcuts", "Escape");
+});
+
+test("tooltip_escape: Escape on a shown tooltip closes the tooltip only, not the bar nor the SQL preview (#109)", async () => {
+  const user = userEvent.setup();
+  previewSql.mockResolvedValue({ sql: 'WHERE "id" = $1', display: `WHERE "id" = '1'` });
+  render(
+    <>
+      <TooltipLayer />
+      {ui({ filters: [eq("id", "1")] })}
+    </>,
+  );
+  // The keys go to the bar (a value field has the focus); the pointer rests on Clear.
+  act(() => value(1).focus());
+  const clear = screen.getByRole("button", { name: f.clear });
+  await user.hover(clear);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(f.clearTitle);
+  expect(clear).toHaveAccessibleDescription(f.clearTitle);
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+  // Without a tooltip, Escape hides the bar as before.
+  await user.keyboard("{Escape}");
+  expect(onClose).toHaveBeenCalledTimes(1);
+
+  // Over the open SQL preview: the first Escape takes the tooltip, the next the preview.
+  const sql = screen.getByRole("button", { name: f.sql });
+  await user.click(sql);
+  const dialog = await screen.findByRole("dialog", { name: f.sqlPreviewLabel });
+  await within(dialog).findByText(`WHERE "id" = '1'`);
+  await user.unhover(sql);
+  await user.hover(clear);
+  await screen.findByRole("tooltip");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(onClose).toHaveBeenCalledTimes(1);
 });

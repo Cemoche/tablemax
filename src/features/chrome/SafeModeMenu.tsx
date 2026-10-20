@@ -3,6 +3,7 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import { defaultSafeMode, safeModeBannerText, safeModeLabel } from "../../lib/safeMode";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import type { SafeMode } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
 import type { Workspace } from "../../stores/workspaces";
@@ -89,7 +90,7 @@ export function SafeModeMenu({ workspace }: { workspace: Workspace }) {
         ref={button}
         type="button"
         aria-label={label}
-        title={error ?? label}
+        {...tip(error ?? label)}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={!cfg}

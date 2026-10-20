@@ -122,7 +122,7 @@ test("a long name is shown on two lines at most, with the full name in the toolt
   useWorkspaces.setState({ workspaces: [ws("w1", long)], activeWorkspaceId: "w1" });
   renderColumn();
   const tile = screen.getByRole("button", { name: long });
-  expect(tile).toHaveAttribute("title", long);
+  expect(tile).toHaveAttribute("data-tooltip", long);
   expect(within(tile).getByText(long)).toHaveClass("line-clamp-2");
 });
 
@@ -174,5 +174,5 @@ test("a workspace with a running commit cannot be closed yet", () => {
   renderColumn();
   const close = screen.getByRole("button", { name: C.close("Local PG") });
   expect(close).toBeDisabled();
-  expect(close).toHaveAttribute("title", strings.grid.closeWhileCommitting);
+  expect(close).toHaveAttribute("data-tooltip", strings.grid.closeWhileCommitting);
 });

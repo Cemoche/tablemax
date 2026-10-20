@@ -9,6 +9,10 @@ import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { SettingsDialog } from "../settings/SettingsDialog";
 import { WorkspaceView } from "./WorkspaceView";
 
+/** Elements whose tooltip (#109) is `label`. */
+const byTooltip = (label: string) =>
+  [...document.querySelectorAll<HTMLElement>("[data-tooltip]")].filter((e) => e.dataset.tooltip === label);
+
 vi.mock("../../lib/ipc");
 vi.mock("./ObjectSidebar", () => ({ ObjectSidebar: () => null }));
 vi.mock("../editor/QueryTab", () => ({ QueryTab: () => null }));
@@ -129,11 +133,11 @@ test("a query tab on another database than the workspace shows a database badge"
       { id: "c", kind: "query", title: "Query 3", sql: "", sqlSessionId: null },
     ],
   });
-  const badges = screen.getAllByTitle(strings.workspace.tabDatabase("app"));
+  const badges = byTooltip(strings.workspace.tabDatabase("app"));
   expect(badges).toHaveLength(1);
   expect(badges[0]).toHaveTextContent("app");
   expect(screen.getByRole("tab", { name: /Query 1/ })).toContainElement(badges[0]);
-  expect(screen.queryByTitle(strings.workspace.tabDatabase("other"))).toBeNull();
+  expect(byTooltip(strings.workspace.tabDatabase("other"))).toEqual([]);
 });
 
 test("a workspace notice is shown until dismissed", async () => {

@@ -214,8 +214,6 @@ export const strings = {
     // Task 4: capsule tab bar.
     back: "Back",
     forward: "Forward",
-    backTitle: (shortcut: string) => `Back (${shortcut})`,
-    forwardTitle: (shortcut: string) => `Forward (${shortcut})`,
     split: "Split view",
     splitSoon: "Split view is not available yet",
     tabMenu: {
@@ -335,17 +333,17 @@ export const strings = {
     next: "Next page",
     /** The bar under the grid (spec §2.3). */
     bottomBar: "Table",
-    addRowShortcut: (shortcut: string) => `Add a row (${shortcut})`,
-    filtersShortcut: (shortcut: string) => `Show or hide the filters (${shortcut})`,
+    /** Bottom bar tooltips; the key is shown next to them (#109). */
+    addRowHint: "Add a row",
+    filtersHint: "Show or hide the filters",
     columns: "Columns",
-    columnsShortcut: (shortcut: string) => `Choose the columns shown (${shortcut})`,
+    columnsHint: "Choose the columns shown",
     columnsPopover: {
       label: "Columns shown",
       showAll: "Show all",
       /** The last shown column cannot be hidden. */
       lastShown: "At least one column stays shown",
     },
-    pageShortcut: (label: string, shortcut: string) => `${label} (${shortcut})`,
     pageSettings: "Offset and limit",
     pagePopover: {
       label: "Offset and limit",
@@ -472,7 +470,8 @@ export const strings = {
       label: "Navigation trail",
       separator: "›",
       crumb: (table: string, filter: string) => (filter ? `${table} (${filter})` : table),
-      back: (shortcut: string) => `Back (${shortcut})`,
+      /** The trail's tooltip, with the Back key. */
+      back: "Back",
     },
     discardTitle: "Discard pending changes?",
     discardConfirm: (n: number) =>
@@ -507,9 +506,9 @@ export const strings = {
       data: "Data",
       structure: "Structure",
       index: "Index",
-      dataShortcut: (shortcut: string) => `Show the rows (${shortcut})`,
-      structureShortcut: (shortcut: string) => `Show the structure (${shortcut})`,
-      indexShortcut: (shortcut: string) => `Show the indexes (${shortcut})`,
+      dataHint: "Show the rows",
+      structureHint: "Show the structure",
+      indexHint: "Show the indexes",
     },
     countAtLeast: (n: number) => `${n.toLocaleString("en-US")}+`,
   },
@@ -582,8 +581,6 @@ export const strings = {
       column: "Column",
       operator: "Operator",
     },
-    /** A control's tooltip with its shortcut. */
-    withShortcut: (label: string, shortcut: string) => `${label} (${shortcut})`,
     ops: {
       eq: "=",
       neq: "!=",
@@ -858,7 +855,7 @@ export const strings = {
     empty: "No saved queries",
     loadFailed: "Could not load the saved queries",
     save: "Save",
-    saveHint: (shortcut: string) => `Save the query (${shortcut})`,
+    saveHint: "Save the query",
     open: (name: string) => `Open ${name}`,
     linked: (name: string) => `Saved as ${name}`,
     modified: "Modified since last save",
@@ -911,8 +908,6 @@ export const strings = {
     reload: "Reload",
     openAnything: "Open anything",
     rowDetails: "Row details",
-    /** Tooltip of a toolbar button with a shortcut. */
-    hint: (label: string, shortcut: string) => `${label} (${shortcut})`,
   },
   /** Buttons of the frameless window (features/chrome/WindowControls). */
   window: {

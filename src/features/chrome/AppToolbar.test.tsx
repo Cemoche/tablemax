@@ -172,15 +172,15 @@ test("commit_group_replaces_the_edit_strip: pending count, Cancel while committi
   // Another table tab of the workspace commits: Commit waits, and says why.
   act(() => usePendingChanges.setState({ committing: {}, committingIn: { w1: "t9" } }));
   expect(commit).toBeDisabled();
-  expect(commit).toHaveAttribute("title", strings.grid.otherTabCommitting);
+  expect(commit).toHaveAttribute("data-tooltip", strings.grid.otherTabCommitting);
   expect(screen.getByRole("button", { name: t.discard })).toBeEnabled();
   // A tab of another workspace committing never blocks this one.
   act(() => usePendingChanges.setState({ committingIn: { w2: "tX" } }));
   expect(commit).toBeEnabled();
-  expect(commit).not.toHaveAttribute("title", strings.grid.otherTabCommitting);
+  expect(commit).not.toHaveAttribute("data-tooltip", strings.grid.otherTabCommitting);
   act(() => usePendingChanges.setState({ committingIn: {} }));
   expect(commit).toBeEnabled();
-  expect(commit).not.toHaveAttribute("title", strings.grid.otherTabCommitting);
+  expect(commit).not.toHaveAttribute("data-tooltip", strings.grid.otherTabCommitting);
 });
 
 test("the commit group is off on a SQL tab and on a disconnected workspace", () => {
@@ -403,7 +403,11 @@ test("the connections screen shows only the settings, the title and the window b
 test("the sidebar button names Ctrl+0", () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   setup();
-  expect(screen.getByRole("button", { name: t.sidebar })).toHaveAttribute("title", t.hint(t.sidebar, "Ctrl+0"));
+  const sidebar = screen.getByRole("button", { name: t.sidebar });
+  // Tooltip (#109): the label, and the key from the live keymap; no native title.
+  expect(sidebar).toHaveAttribute("data-tooltip", t.sidebar);
+  expect(sidebar).toHaveAttribute("data-tooltip-key", "Ctrl+0");
+  expect(sidebar).not.toHaveAttribute("title");
 });
 
 test("on the connections screen a gear button opens the settings", async () => {

@@ -368,7 +368,7 @@ test("long_names_truncate: one line with an ellipsis, the full name in the toolt
   vi.mocked(ipc.objectsList).mockResolvedValue([{ schema: "public", name: long, kind: "table" }]);
   render(<ObjectSidebar workspace={workspace} />);
   const row = await screen.findByRole("treeitem", { name: new RegExp(long) });
-  expect(row).toHaveAttribute("title", long);
+  expect(row).toHaveAttribute("data-tooltip", long);
   expect(row).toHaveClass("whitespace-nowrap");
   expect(within(row).getByText(long)).toHaveClass("truncate");
 });

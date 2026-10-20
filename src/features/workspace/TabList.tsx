@@ -1,6 +1,7 @@
 import { ChevronDown } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
+import { tip } from "../../lib/tooltip";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { tabKindLabel, tabSchema } from "./tabInfo";
 
@@ -64,7 +65,7 @@ export function TabList({ workspace }: { workspace: Workspace }) {
       <button
         type="button"
         aria-label={strings.workspace.tabList}
-        title={strings.workspace.tabList}
+        {...tip(strings.workspace.tabList)}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => (open ? close() : setOpen(true))}

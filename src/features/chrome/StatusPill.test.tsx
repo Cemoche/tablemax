@@ -109,7 +109,7 @@ test("connecting, reconnecting and error use the state tokens", () => {
   rerender(<StatusPill workspace={ws({ status: "disconnected" })} connectError="password authentication failed" />);
   expect(pill()).toHaveTextContent(s.error("Demo"));
   expect(pill().className).toContain("text-status-error");
-  expect(pill()).toHaveAttribute("title", expect.stringContaining("password authentication failed"));
+  expect(pill()).toHaveAttribute("data-tooltip", expect.stringContaining("password authentication failed"));
 
   rerender(<StatusPill workspace={ws({ status: "disconnected" })} />);
   expect(pill()).toHaveTextContent(s.disconnected("Demo"));
@@ -130,7 +130,7 @@ test("status_pill_keeps_prod_badge_when_truncated", () => {
   expect(badge.className).toContain("shrink-0");
   expect(text.contains(badge)).toBe(false);
   // The full text stays readable as a tooltip.
-  expect(button).toHaveAttribute("title", expect.stringContaining(long));
+  expect(button).toHaveAttribute("data-tooltip", expect.stringContaining(long));
 
   // Also while connecting or failed.
   rerender(<StatusPill workspace={ws({ envTag: "prod", status: "connecting" })} />);

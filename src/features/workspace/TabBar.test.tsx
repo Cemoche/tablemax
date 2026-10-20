@@ -11,6 +11,10 @@ import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces
 import { CloseConfirm } from "./CloseConfirm";
 import { TabBar } from "./TabBar";
 
+/** Elements whose tooltip (#109) is `label`. */
+const byTooltip = (label: string) =>
+  [...document.querySelectorAll<HTMLElement>("[data-tooltip]")].filter((e) => e.dataset.tooltip === label);
+
 vi.mock("../../lib/ipc");
 
 const users: ObjectRef = { schema: "public", name: "users" };
@@ -130,7 +134,7 @@ test("preview_tab_italic: only a preview table tab is in italic", () => {
 test("long_names_truncate: a long name is cut with an ellipsis and shown whole in the tooltip", () => {
   setup([{ id: "t", kind: "table", object: { schema: "public", name: LONG }, title: LONG, preview: false }]);
   const t = tab(LONG);
-  expect(t).toHaveAttribute("title", LONG);
+  expect(t).toHaveAttribute("data-tooltip", LONG);
   expect(within(t).getByText(LONG)).toHaveClass("truncate");
   expect(t.closest("[data-tab-id]")).toHaveClass("min-w-0");
 });
@@ -237,7 +241,8 @@ test("back_forward_navigation: the arrows walk the history and are disabled at i
   const forward = screen.getByRole("button", { name: strings.workspace.forward });
   expect(back).toBeDisabled();
   expect(forward).toBeDisabled();
-  expect(back).toHaveAttribute("title", strings.workspace.backTitle("Alt+←"));
+  expect(back).toHaveAttribute("data-tooltip", strings.workspace.back);
+  expect(back).toHaveAttribute("data-tooltip-key", "Alt+←");
   await userEvent.click(tab("Query 2"));
   expect(back).toBeEnabled();
   await userEvent.click(back);
@@ -262,7 +267,7 @@ test("the split button is disabled and says why", () => {
   setup([q("a", "Query 1")]);
   const split = screen.getByRole("button", { name: strings.workspace.split });
   expect(split).toHaveAttribute("aria-disabled", "true");
-  expect(split).toHaveAttribute("title", strings.workspace.splitSoon);
+  expect(split).toHaveAttribute("data-tooltip", strings.workspace.splitSoon);
 });
 
 test("middle click closes a tab and a double click pins a preview tab", async () => {
@@ -375,6 +380,6 @@ test("inactive capsule text and the database badge use the tab text token", () =
   const capsule = screen.getByRole("tab", { name: /Query 2/ }).closest("[data-tab-id]");
   expect(capsule).toHaveClass("text-tab-text");
   expect(capsule).not.toHaveClass("text-text-2");
-  const badge = screen.getByTitle(strings.workspace.tabDatabase("app"));
+  const [badge] = byTooltip(strings.workspace.tabDatabase("app"));
   expect(badge.className).not.toMatch(/text-text-2/);
 });

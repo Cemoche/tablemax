@@ -155,7 +155,7 @@ test("while a commit runs the tab's close button waits (Committing…)", async (
   render(<View />);
   const close = closeButtonOf("users");
   expect(close).toBeDisabled();
-  expect(close).toHaveAttribute("title", strings.grid.closeWhileCommitting);
+  expect(close).toHaveAttribute("data-tooltip", strings.grid.closeWhileCommitting);
   await userEvent.keyboard("{Control>}w{/Control}");
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(current().tabs).toHaveLength(2);

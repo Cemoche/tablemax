@@ -104,11 +104,12 @@ test("clicking the first item restores its object, filters, sort and page", asyn
 test("the trail's tooltip names the effective Back shortcut", () => {
   const { unmount } = render(<Harness />);
   const nav = () => screen.getByRole("navigation", { name: strings.grid.trail.label });
-  expect(nav()).toHaveAttribute("title", strings.grid.trail.back("Alt+←"));
+  expect(nav()).toHaveAttribute("data-tooltip", strings.grid.trail.back);
+  expect(nav()).toHaveAttribute("data-tooltip-key", "Alt+←");
   unmount();
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "nav.back": "Alt+Backspace" } } });
   render(<Harness />);
-  expect(nav()).toHaveAttribute("title", strings.grid.trail.back("Alt+Backspace"));
+  expect(nav()).toHaveAttribute("data-tooltip-key", "Alt+Backspace");
 });
 
 test("Alt+← goes back one step", async () => {
