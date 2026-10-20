@@ -115,6 +115,8 @@ export interface DataGridProps {
   onRowsAction?: (action: RowsAction, rows: number[]) => void;
   /** grid.copyCells (Ctrl+Shift+C) on the selected cells (the table's columns, as shown). Absent: copied here. */
   onCopyCells?: (block: CellBlock) => void;
+  /** grid.previousPage / grid.nextPage (Ctrl+← / Ctrl+→): only while the grid has the focus. */
+  onPageKey?: (dir: "previous" | "next") => void;
 }
 
 const EMPTY_SELECTION: GridSelection = { columns: CompactSelection.empty(), rows: CompactSelection.empty() };
@@ -231,6 +233,7 @@ export function DataGrid({
   onQuickLook,
   onRowsAction,
   onCopyCells,
+  onPageKey,
 }: DataGridProps) {
   const g = useGridTheme();
   const { theme, muted: mutedOverride, edit: editThemes, rows: rowThemes } = g;
@@ -550,6 +553,13 @@ export function DataGrid({
       const rows = selectedRows();
       if (rows.length === 0 || !take()) return;
       onRowsAction(remove ? "delete" : "duplicate", rows);
+      return;
+    }
+    // Page keys (Glide jumps to the first / last column on them): only here, so a text
+    // field keeps its word moves.
+    const page = isAction("grid.previousPage", e) ? "previous" : isAction("grid.nextPage", e) ? "next" : null;
+    if (onPageKey && page) {
+      if (take()) onPageKey(page);
       return;
     }
     if (isAction("grid.copyCells", e)) {

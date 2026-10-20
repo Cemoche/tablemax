@@ -96,6 +96,16 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "grid.copyCells",
     "grid.duplicateRows",
     "grid.deleteRows",
+    "grid.addRow",
+    "grid.filters",
+    "grid.columns",
+    "grid.previousPage",
+    "grid.nextPage",
+    "filters.toggle",
+    "filters.add",
+    "filters.remove",
+    "filters.applyAll",
+    "filters.applyAllOr",
 ];
 /// At most this many keymap entries are kept (defensive: one per known id fits well below).
 pub const KEYMAP_MAX_ENTRIES: usize = 64;

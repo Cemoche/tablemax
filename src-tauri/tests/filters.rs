@@ -13,7 +13,9 @@ use std::time::Duration;
 use common::{mysql_urls, params_from_url, pg_urls, unique_schema};
 use tablemax_lib::driver::mysql::connect_mysql;
 use tablemax_lib::driver::postgres::connect_postgres;
-use tablemax_lib::driver::query::{Filter, FilterOp, build_filtered_count, build_page, read_count};
+use tablemax_lib::driver::query::{
+    Filter, FilterCombine, FilterOp, build_filtered_count, build_page, read_count,
+};
 use tablemax_lib::driver::sqlite::connect_sqlite;
 use tablemax_lib::driver::{
     ConnectParams, Dialect, DriverKind, ObjectRef, PageRequest, ResultSet, RowCount, Session,
@@ -129,6 +131,7 @@ impl Fx {
             offset,
             sort: None,
             filters,
+            combine: FilterCombine::And,
         })
         .await
     }
@@ -155,7 +158,7 @@ impl Fx {
 
     async fn count(&self, name: &str, filters: &[Filter], cap: u64) -> RowCount {
         let info = self.s.table_info(&self.obj(name)).await.unwrap();
-        let stmt = build_filtered_count(self.d(), &info, filters, cap).unwrap();
+        let stmt = build_filtered_count(self.d(), &info, filters, FilterCombine::And, cap).unwrap();
         read_count(&self.s.query(&stmt).await.unwrap(), cap).unwrap()
     }
 
@@ -696,6 +699,7 @@ async fn check_query_cancel(fx: &Fx, slow: &str) {
         offset: 0,
         sort: None,
         filters: vec![f("n", FilterOp::Gt, &["0"]), raw(slow)],
+        combine: FilterCombine::And,
     };
     let stmt = build_page(fx.d(), &info, &req).unwrap();
     let run = tokio::spawn(async move { s.query(&stmt).await });
@@ -895,6 +899,7 @@ async fn sorted_pages_are_stable() {
                         offset,
                         sort: Some(("g".into(), dir)),
                         filters: vec![],
+                        combine: FilterCombine::And,
                     })
                     .await
                     .unwrap();

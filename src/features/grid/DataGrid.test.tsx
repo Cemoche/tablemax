@@ -519,3 +519,20 @@ test("held keys act once: the repeats of Enter, Space and Delete are swallowed (
   expect(onRowsAction).not.toHaveBeenCalled();
   expect(onQuickLook).not.toHaveBeenCalled();
 });
+
+test("Ctrl+← / Ctrl+→ in the grid ask for the previous / next page instead of Glide's column jump", () => {
+  const onPageKey = vi.fn();
+  render(<DataGrid data={data} editing={editing()} onPageKey={onPageKey} />);
+  const left = press("ArrowLeft", "ArrowLeft", { ctrlKey: true });
+  expect(left.cancel).toHaveBeenCalled();
+  expect(onPageKey).toHaveBeenLastCalledWith("previous");
+  press("ArrowRight", "ArrowRight", { ctrlKey: true });
+  expect(onPageKey).toHaveBeenLastCalledWith("next");
+  // A held key pages once.
+  expect(press("ArrowRight", "ArrowRight", { ctrlKey: true, repeat: true }).cancel).toHaveBeenCalled();
+  expect(onPageKey).toHaveBeenCalledTimes(2);
+  // Plain and Shift arrows stay Glide's (move, extend the selection).
+  expect(press("ArrowLeft", "ArrowLeft").cancel).not.toHaveBeenCalled();
+  expect(press("ArrowLeft", "ArrowLeft", { ctrlKey: true, shiftKey: true }).cancel).not.toHaveBeenCalled();
+  expect(onPageKey).toHaveBeenCalledTimes(2);
+});

@@ -1,14 +1,21 @@
 import { create } from "zustand";
 import type { ColumnLayout } from "../lib/columnLayout";
-import type { Filter, ObjectRef, SortDir } from "../lib/types";
+import type { Filter, FilterCombine, ObjectRef, SortDir } from "../lib/types";
 
 export interface GridView {
+  /** Pages of `pageSize` rows after `startOffset`. */
   page: number;
   sort: [string, SortDir] | null;
-  /** Joined by AND; changing them goes back to page 0 (usePagedTable.setFilters). */
+  /** Changing them goes back to the first row (usePagedTable.setFilters). */
   filters: Filter[];
+  /** How `filters` are joined; absent = AND. */
+  combine?: FilterCombine;
   /** The page size the tab latched (usePagedTable); absent = the current setting. */
   pageSize?: number;
+  /** The limit chosen in the page popover: it replaces the page size setting for this tab. */
+  limit?: number;
+  /** The offset chosen in the page popover, where page 0 starts; absent = 0. */
+  startOffset?: number;
 }
 
 /** A table a tab showed before following a foreign key, with its view at that moment. */

@@ -39,7 +39,9 @@ use crate::driver::dml::{
     render_preview, suggests_schema_change,
 };
 use crate::driver::meta::TableInfo;
-use crate::driver::query::{Filter, Statement, build_filtered_count, build_page, read_count};
+use crate::driver::query::{
+    Filter, FilterCombine, Statement, build_filtered_count, build_page, read_count,
+};
 use crate::driver::{
     self, AnySession, Canceller, Capabilities, ConnectParams, Dialect, DriverKind, ObjectRef,
     PageRequest, ResultSet, RowCount, Session, SessionBase, StatementOutcome,
@@ -1403,12 +1405,13 @@ impl SessionManager {
     /// (`Settings::exact_count_threshold`). Without filters: the driver's count (estimated
     /// above the threshold where the engine keeps an estimate). With filters: counted up to
     /// one past the threshold ([`filtered_count_cap`]), then `Estimate(exact_threshold)`
-    /// ("at least").
+    /// ("at least"). `combine` joins the filters as the page does.
     pub async fn table_count(
         &self,
         workspace_id: &str,
         obj: &ObjectRef,
         filters: &[Filter],
+        combine: FilterCombine,
         exact_threshold: u64,
     ) -> AppResult<RowCount> {
         if filters.is_empty() {
@@ -1423,7 +1426,7 @@ impl SessionManager {
         self.on_browse(workspace_id, |browse| {
             let info = info.clone();
             async move {
-                let stmt = build_filtered_count(browse.dialect(), &info, filters, cap)?;
+                let stmt = build_filtered_count(browse.dialect(), &info, filters, combine, cap)?;
                 read_count(&browse.query(&stmt).await?, cap)
             }
         })
@@ -2905,6 +2908,7 @@ mod tests {
             offset: 0,
             sort: None,
             filters,
+            combine: FilterCombine::And,
         }
     }
 
@@ -2945,38 +2949,93 @@ mod tests {
 
         assert_eq!(
             fx.mgr
-                .table_count(&ws, &items, &[], EXACT_COUNT_THRESHOLD)
+                .table_count(&ws, &items, &[], FilterCombine::And, EXACT_COUNT_THRESHOLD)
                 .await
                 .unwrap(),
             RowCount::Exact(2)
         );
         assert_eq!(
             fx.mgr
-                .table_count(&ws, &items, &only_b, EXACT_COUNT_THRESHOLD)
+                .table_count(
+                    &ws,
+                    &items,
+                    &only_b,
+                    FilterCombine::And,
+                    EXACT_COUNT_THRESHOLD
+                )
                 .await
                 .unwrap(),
             RowCount::Exact(1)
+        );
+        // OR widens: a row matching either filter counts once, the page lists both.
+        let a_or_b = vec![
+            filter(Some("name"), FilterOp::Eq, &["a"]),
+            filter(Some("name"), FilterOp::Eq, &["b"]),
+        ];
+        let mut either = page(items.clone(), a_or_b.clone());
+        either.combine = FilterCombine::Or;
+        assert_eq!(fx.mgr.table_page(&ws, &either).await.unwrap().rows.len(), 2);
+        assert_eq!(
+            fx.mgr
+                .table_count(
+                    &ws,
+                    &items,
+                    &a_or_b,
+                    FilterCombine::Or,
+                    EXACT_COUNT_THRESHOLD
+                )
+                .await
+                .unwrap(),
+            RowCount::Exact(2)
+        );
+        assert_eq!(
+            fx.mgr
+                .table_count(
+                    &ws,
+                    &items,
+                    &a_or_b,
+                    FilterCombine::And,
+                    EXACT_COUNT_THRESHOLD
+                )
+                .await
+                .unwrap(),
+            RowCount::Exact(0)
         );
         // The exact count threshold is the caller's (the user setting): with filters, the
         // count stops one past it ("at least" the threshold). SQLite counts unfiltered
         // tables exactly whatever the threshold.
         let both = vec![filter(Some("name"), FilterOp::Gte, &["a"])];
         assert_eq!(
-            fx.mgr.table_count(&ws, &items, &both, 1).await.unwrap(),
+            fx.mgr
+                .table_count(&ws, &items, &both, FilterCombine::And, 1)
+                .await
+                .unwrap(),
             RowCount::Estimate(1)
         );
         assert_eq!(
-            fx.mgr.table_count(&ws, &items, &both, 2).await.unwrap(),
+            fx.mgr
+                .table_count(&ws, &items, &both, FilterCombine::And, 2)
+                .await
+                .unwrap(),
             RowCount::Exact(2)
         );
         assert_eq!(
-            fx.mgr.table_count(&ws, &items, &[], 1).await.unwrap(),
+            fx.mgr
+                .table_count(&ws, &items, &[], FilterCombine::And, 1)
+                .await
+                .unwrap(),
             RowCount::Exact(2)
         );
         let none = vec![filter(None, FilterOp::Contains, &["zz"])];
         assert_eq!(
             fx.mgr
-                .table_count(&ws, &items, &none, EXACT_COUNT_THRESHOLD)
+                .table_count(
+                    &ws,
+                    &items,
+                    &none,
+                    FilterCombine::And,
+                    EXACT_COUNT_THRESHOLD
+                )
                 .await
                 .unwrap(),
             RowCount::Exact(0)
@@ -2990,7 +3049,7 @@ mod tests {
         assert_eq!(e.unwrap_err().kind, ErrorKind::Invalid);
         let e = fx
             .mgr
-            .table_count(&ws, &items, &bad, EXACT_COUNT_THRESHOLD)
+            .table_count(&ws, &items, &bad, FilterCombine::And, EXACT_COUNT_THRESHOLD)
             .await
             .unwrap_err();
         assert_eq!(e.kind, ErrorKind::Invalid);
@@ -3150,7 +3209,7 @@ mod tests {
         ));
         assert_eq!(
             fx.mgr
-                .table_count(&ws, &items, &[], EXACT_COUNT_THRESHOLD)
+                .table_count(&ws, &items, &[], FilterCombine::And, EXACT_COUNT_THRESHOLD)
                 .await
                 .unwrap(),
             RowCount::Exact(2)

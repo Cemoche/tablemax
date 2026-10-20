@@ -7,6 +7,9 @@
 //! truncate the value before comparing), so the server parses it like a literal. MySQL and
 //! SQLite bind the text as is (`?`) and convert it with their own comparison rules.
 //!
+//! Filters are joined by AND (default) or OR ([`FilterCombine`]); with OR each filter is
+//! written between its own parentheses, so no condition can bind to its neighbour.
+//!
 //! LIKE patterns escape with `!` (`ESCAPE '!'`): a backslash literal would depend on
 //! MySQL's NO_BACKSLASH_ESCAPES and PostgreSQL's standard_conforming_strings.
 
@@ -77,13 +80,22 @@ pub struct Filter {
     pub values: Vec<String>,
 }
 
+/// How the filters of a page are joined. Absent from older frontends: `And`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FilterCombine {
+    #[default]
+    And,
+    Or,
+}
+
 /// `SELECT * FROM t [WHERE …] [ORDER BY …] LIMIT n OFFSET m`. The order is the explicit
 /// sort, then the default order (row key, else SQLite's rowid) as a tiebreaker so OFFSET
 /// paging stays stable; without a key or rowid, the sort alone (or no ORDER BY).
 pub fn build_page(d: Dialect, info: &TableInfo, req: &PageRequest) -> AppResult<Statement> {
     let mut b = Builder::new(d);
     b.sql = format!("SELECT * FROM {}", qualified(d, &info.object));
-    b.push_where(info, &req.filters)?;
+    b.push_where(info, &req.filters, req.combine)?;
     let mut order = Vec::new();
     if let Some((col, dir)) = &req.sort {
         known_column(info, col)?;
@@ -110,11 +122,12 @@ pub fn build_page(d: Dialect, info: &TableInfo, req: &PageRequest) -> AppResult<
 }
 
 /// `SELECT COUNT(*) FROM (SELECT 1 FROM t WHERE … LIMIT cap) AS t`: counts at most `cap`
-/// rows (see [`read_count`]).
+/// rows (see [`read_count`]), the filters joined like the page's.
 pub fn build_filtered_count(
     d: Dialect,
     info: &TableInfo,
     filters: &[Filter],
+    combine: FilterCombine,
     cap: u64,
 ) -> AppResult<Statement> {
     let mut b = Builder::new(d);
@@ -122,7 +135,7 @@ pub fn build_filtered_count(
         "SELECT COUNT(*) FROM (SELECT 1 FROM {}",
         qualified(d, &info.object)
     );
-    b.push_where(info, filters)?;
+    b.push_where(info, filters, combine)?;
     b.sql.push_str(&format!(" LIMIT {cap}) AS t"));
     Ok(b.finish())
 }
@@ -293,14 +306,28 @@ impl Builder {
         format!("CAST({quoted} AS {ty})")
     }
 
-    fn push_where(&mut self, info: &TableInfo, filters: &[Filter]) -> AppResult<()> {
+    /// ` WHERE c1 AND c2…`, or ` WHERE (c1) OR (c2)…`: under OR every condition has its
+    /// own parentheses (a raw SQL condition keeps its own as well).
+    fn push_where(
+        &mut self,
+        info: &TableInfo,
+        filters: &[Filter],
+        combine: FilterCombine,
+    ) -> AppResult<()> {
         let mut conds = Vec::with_capacity(filters.len());
         for f in filters {
-            conds.push(self.condition(info, f)?);
+            let c = self.condition(info, f)?;
+            conds.push(match combine {
+                FilterCombine::And => c,
+                FilterCombine::Or => format!("({c})"),
+            });
         }
         if !conds.is_empty() {
             self.sql.push_str(" WHERE ");
-            self.sql.push_str(&conds.join(" AND "));
+            self.sql.push_str(&conds.join(match combine {
+                FilterCombine::And => " AND ",
+                FilterCombine::Or => " OR ",
+            }));
         }
         Ok(())
     }
@@ -537,6 +564,7 @@ mod tests {
             offset: 0,
             sort: None,
             filters,
+            combine: FilterCombine::And,
         }
     }
 
@@ -806,6 +834,7 @@ mod tests {
             Dialect::MySql,
             &my_info(),
             &[f("nope", FilterOp::IsNull, &[])],
+            FilterCombine::And,
             10,
         )
         .unwrap_err();
@@ -900,6 +929,7 @@ mod tests {
             Dialect::Postgres,
             &pg_info(),
             &[f("note", FilterOp::Eq, &["x"])],
+            FilterCombine::And,
             500_001,
         )
         .unwrap();
@@ -908,7 +938,8 @@ mod tests {
             r#"SELECT COUNT(*) FROM (SELECT 1 FROM "public"."order" WHERE "note" = CAST($1::text AS text) LIMIT 500001) AS t"#
         );
         assert_eq!(s.params, texts(&["x"]));
-        let s = build_filtered_count(Dialect::MySql, &my_info(), &[], 11).unwrap();
+        let s =
+            build_filtered_count(Dialect::MySql, &my_info(), &[], FilterCombine::Or, 11).unwrap();
         assert_eq!(
             s.sql,
             "SELECT COUNT(*) FROM (SELECT 1 FROM `shop`.`order` LIMIT 11) AS t"
@@ -942,6 +973,104 @@ mod tests {
     }
 
     #[test]
+    fn filters_combined_with_or() {
+        // OR: every filter in its own parentheses, values still bound in textual order.
+        let mut req = req_with(vec![
+            f("id", FilterOp::Between, &["1", "5"]),
+            f("note", FilterOp::Contains, &["x"]),
+            Filter {
+                column: None,
+                op: FilterOp::Raw,
+                values: vec!["id = 9 -- trailing comment".into()],
+            },
+            any(FilterOp::Eq, "7"),
+        ]);
+        req.combine = FilterCombine::Or;
+        let s = build_page(Dialect::Postgres, &pg_info(), &req).unwrap();
+        assert_eq!(
+            s.sql,
+            "SELECT * FROM \"public\".\"order\" WHERE \
+             (\"id\" BETWEEN CAST($1::text AS integer) AND CAST($2::text AS integer)) \
+             OR (CAST(\"note\" AS text) LIKE '%' || $3::text || '%' ESCAPE '!') \
+             OR ((\nid = 9 -- trailing comment\n)) \
+             OR ((CAST(\"id\" AS text) = $4::text OR CAST(\"amount\" AS text) = $5::text \
+             OR CAST(\"note\" AS text) = $6::text)) \
+             ORDER BY \"id\" LIMIT 300 OFFSET 0"
+        );
+        assert_eq!(s.params, texts(&["1", "5", "x", "7", "7", "7"]));
+
+        // MySQL / SQLite placeholders, and the capped count follows the same combination.
+        let req = PageRequest {
+            combine: FilterCombine::Or,
+            ..req_with(vec![
+                f("id", FilterOp::Eq, &["1"]),
+                f("note", FilterOp::IsNull, &[]),
+            ])
+        };
+        let s = build_page(Dialect::MySql, &my_info(), &req).unwrap();
+        assert!(
+            s.sql.contains("WHERE (`id` = ?) OR (`note` IS NULL) ORDER"),
+            "{}",
+            s.sql
+        );
+        let s = build_filtered_count(
+            Dialect::Sqlite,
+            &info_with("main", my_info().columns),
+            &req.filters,
+            FilterCombine::Or,
+            11,
+        )
+        .unwrap();
+        assert_eq!(
+            s.sql,
+            r#"SELECT COUNT(*) FROM (SELECT 1 FROM "main"."order" WHERE ("id" = ?) OR ("note" IS NULL) LIMIT 11) AS t"#
+        );
+        assert_eq!(s.params, texts(&["1"]));
+
+        // AND keeps its SQL unchanged; one filter or none reads the same either way.
+        let and = build_filtered_count(
+            Dialect::MySql,
+            &my_info(),
+            &req.filters,
+            FilterCombine::And,
+            11,
+        )
+        .unwrap();
+        assert!(
+            and.sql.contains("WHERE `id` = ? AND `note` IS NULL LIMIT"),
+            "{}",
+            and.sql
+        );
+        let one = PageRequest {
+            combine: FilterCombine::Or,
+            ..req_with(vec![f("id", FilterOp::Eq, &["1"])])
+        };
+        let s = build_page(Dialect::MySql, &my_info(), &one).unwrap();
+        assert!(s.sql.contains("WHERE (`id` = ?) ORDER"), "{}", s.sql);
+        let none = PageRequest {
+            combine: FilterCombine::Or,
+            ..req_with(vec![])
+        };
+        let s = build_page(Dialect::MySql, &my_info(), &none).unwrap();
+        assert_eq!(
+            s.sql,
+            "SELECT * FROM `shop`.`order` ORDER BY `id` LIMIT 300 OFFSET 0"
+        );
+
+        // A bad filter is still refused under OR.
+        let bad = PageRequest {
+            combine: FilterCombine::Or,
+            ..req_with(vec![f("nope", FilterOp::Eq, &["1"])])
+        };
+        assert_eq!(
+            build_page(Dialect::MySql, &my_info(), &bad)
+                .unwrap_err()
+                .kind,
+            ErrorKind::Invalid
+        );
+    }
+
+    #[test]
     fn statement_debug_hides_params() {
         let s = Statement {
             sql: "SELECT ?".into(),
@@ -971,5 +1100,18 @@ mod tests {
         }))
         .unwrap();
         assert!(req.filters.is_empty());
+        // Absent combine = AND (older frontends); camelCase on the wire.
+        assert_eq!(req.combine, FilterCombine::And);
+        let req: PageRequest = serde_json::from_value(serde_json::json!({
+            "object": {"schema": "public", "name": "t"},
+            "limit": 300, "offset": 0, "sort": null, "filters": [], "combine": "or"
+        }))
+        .unwrap();
+        assert_eq!(req.combine, FilterCombine::Or);
+        assert_eq!(
+            serde_json::to_value(FilterCombine::And).unwrap(),
+            serde_json::json!("and")
+        );
+        assert!(serde_json::from_value::<FilterCombine>(serde_json::json!("xor")).is_err());
     }
 }

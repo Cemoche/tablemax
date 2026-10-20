@@ -61,6 +61,9 @@ const key = (line: number): RowKey => [
   ["line", int(line)],
 ];
 const pending = () => usePendingChanges.getState();
+/** The toolbar's row details button (features/chrome) acts through the chrome store. */
+const toggleDetails = (tabId = "t1") => act(() => useChrome.getState().toggleRowDetails(tabId));
+const detailsOpen = (tabId = "t1") => useChrome.getState().rowDetails[tabId] === true;
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -89,11 +92,11 @@ test("footer shows range with ≈ for estimates and pages forward", async () => 
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "estimate", v: 1234567 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() =>
-    expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of ≈ 1,234,567"),
+    expect(screen.getByTestId("footer-range")).toHaveTextContent("1–300 of ≈ 1,234,567 rows"),
   );
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
   await waitFor(() =>
-    expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 301–600 of ≈ 1,234,567"),
+    expect(screen.getByTestId("footer-range")).toHaveTextContent("301–600 of ≈ 1,234,567 rows"),
   );
   expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
 });
@@ -103,10 +106,10 @@ test("the page size comes from the settings (request and range label)", async ()
   vi.mocked(ipc.tablePage).mockResolvedValue(page(50));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–50 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–50 of 900 rows"));
   expect(ipc.tablePage).toHaveBeenCalledWith("w1", expect.objectContaining({ limit: 50, offset: 0 }));
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 51–100 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("51–100 of 900 rows"));
   expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ limit: 50, offset: 50 }));
 });
 
@@ -114,9 +117,9 @@ test("a new page size is adopted at page 0 when nothing is pending", async () =>
   vi.mocked(ipc.tablePage).mockResolvedValue(page(300));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–300 of 900 rows"));
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 301–600 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("301–600 of 900 rows"));
   vi.mocked(ipc.tablePage).mockClear();
   act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 100 } }));
   await waitFor(() =>
@@ -131,11 +134,11 @@ test("a new page size waits for pending changes to be discarded", async () => {
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
   pending().toggleDelete("t1", obj, key(0));
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–300 of 900 rows"));
   act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 100 } }));
   await act(async () => {});
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
-  expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900");
+  expect(screen.getByTestId("footer-range")).toHaveTextContent("1–300 of 900 rows");
   await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
   await waitFor(() =>
     expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ limit: 100, offset: 0 })),
@@ -147,15 +150,15 @@ test("a latched page size survives a tab remount while changes are pending, unti
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
   const ui = <TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />;
   const first = render(ui);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–300 of 900 rows"));
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 301–600 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("301–600 of 900 rows"));
   pending().toggleDelete("t1", obj, key(0));
   act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 50 } }));
   first.unmount();
   vi.mocked(ipc.tablePage).mockClear();
   render(ui);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 301–600 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("301–600 of 900 rows"));
   expect(ipc.tablePage).toHaveBeenCalledWith("w1", expect.objectContaining({ limit: 300, offset: 300 }));
   expect(ipc.tablePage).not.toHaveBeenCalledWith("w1", expect.objectContaining({ limit: 50 }));
   await userEvent.click(screen.getByRole("button", { name: strings.grid.discard }));
@@ -170,7 +173,7 @@ test("after a commit the tab adopts the changed page size at page 0 with a singl
   vi.mocked(ipc.changesApply).mockResolvedValue({ applied: true, affected: [1], failedIndex: null, error: null });
   pending().toggleDelete("t1", obj, key(0));
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–300 of 900 rows"));
   act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, pageSize: 100 } }));
   await act(async () => {});
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
@@ -191,7 +194,7 @@ test("error shows message with Retry; connectionLost hints", async () => {
   expect(screen.getByText(strings.grid.reopenHint)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-  expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–1 of 1");
+  expect(screen.getByTestId("footer-range")).toHaveTextContent("1–1 of 1 rows");
 });
 
 test("a read-only table shows why and offers no + Row", async () => {
@@ -222,10 +225,6 @@ test("the toolbar and view switch name the effective shortcuts", async () => {
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   expect(await screen.findByRole("button", { name: strings.grid.commit("Ctrl+Shift+S") })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: strings.grid.rowDetails })).toHaveAttribute(
-    "title",
-    strings.grid.rowDetailsShortcut("Alt+I"),
-  );
   expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute(
     "title",
     strings.grid.view.dataShortcut("Alt+7"),
@@ -295,7 +294,7 @@ test("paging and sorting are blocked while changes are pending", async () => {
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
   pending().toggleDelete("t1", obj, key(0));
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–300 of 900"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–300 of 900 rows"));
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
   expect(screen.getByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
   act(() => grid!.onSort!("note"));
@@ -364,8 +363,9 @@ test("Reload is blocked while changes are pending", async () => {
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   pending().toggleDelete("t1", obj, key(0));
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–2 of 2"));
-  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–2 of 2 rows"));
+  // The toolbar's Reload (Mod+R) asks the tab through the chrome store.
+  act(() => useChrome.getState().requestReload("t1"));
   expect(screen.getByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
 });
@@ -422,9 +422,8 @@ test("Row details shows the selected row, follows it and edits it through the st
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
-  const toggle = screen.getByRole("button", { name: strings.grid.rowDetails });
-  await userEvent.click(toggle);
-  expect(toggle).toHaveAttribute("aria-pressed", "true");
+  toggleDetails();
+  expect(detailsOpen()).toBe(true);
   expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument();
   act(() => grid!.editing!.onSelect(1));
   const note = () => screen.getByLabelText("note") as HTMLTextAreaElement;
@@ -459,7 +458,7 @@ test("a commit and a reload with shifted rows keep the details on the same recor
   vi.mocked(ipc.changesApply).mockResolvedValue({ applied: true, affected: [1], failedIndex: null, error: null });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
+  toggleDetails();
   act(() => grid!.editing!.onSelect(1));
   const note = () => screen.getByLabelText("note") as HTMLTextAreaElement;
   await userEvent.type(note(), "!");
@@ -489,10 +488,11 @@ test("a record missing from the new page leaves the details empty", async () => 
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
+  toggleDetails();
   act(() => grid!.editing!.onSelect(1));
   expect((screen.getByLabelText("note") as HTMLTextAreaElement).value).toBe("note 1");
-  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+  // The toolbar's Reload (Mod+R) asks the tab through the chrome store.
+  act(() => useChrome.getState().requestReload("t1"));
   await waitFor(() => expect(screen.getByText(strings.grid.rowDetailsEmpty)).toBeInTheDocument());
   expect(grid!.editing!.selectedRow).toBeNull();
 });
@@ -502,7 +502,7 @@ test("+ Row moves the grid selection with the selected record", async () => {
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
+  toggleDetails();
   act(() => grid!.editing!.onSelect(1));
   expect(grid!.editing!.selectedRow).toBe(1);
   await userEvent.click(screen.getByRole("button", { name: strings.grid.addRow }));
@@ -510,23 +510,54 @@ test("+ Row moves the grid selection with the selected record", async () => {
   expect((screen.getByLabelText("note") as HTMLTextAreaElement).value).toBe("note 1");
 });
 
-test("the quick filter reloads page 0 filtered and a capped count shows 500,000+", async () => {
+test("the filter bar reloads page 0 filtered and a capped count shows 500,000+", async () => {
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("of 3"));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "estimate", v: 500000 });
-  await userEvent.type(
-    screen.getByRole("textbox", { name: strings.filters.quickLabel }),
-    "note contains x{Enter}",
-  );
+  // Closed at first (nothing applied); the Filters button opens it with the focus in it.
+  expect(screen.queryByRole("region", { name: strings.filters.barLabel })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.button(0) }));
+  expect(screen.getByRole("combobox", { name: strings.filters.columnLabel(1) })).toHaveFocus();
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: strings.filters.columnLabel(1) }), "note");
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: strings.filters.opLabel(1) }), "contains");
+  await userEvent.type(screen.getByRole("textbox", { name: strings.filters.valueLabel(1) }), "x{Enter}");
   const filters = [{ column: "note", op: "contains", values: ["x"] }];
   await waitFor(() =>
     expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ offset: 0, filters })),
   );
-  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–3 of 500,000+"));
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, filters, "and");
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–3 of 500,000+ rows"));
   expect(screen.getByRole("button", { name: strings.filters.button(1) })).toBeInTheDocument();
+});
+
+test("apply_all_and_or: Apply All with OR reaches the page and the count", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  const two = [
+    { column: "line", op: "eq" as const, values: ["1"] },
+    { column: "line", op: "eq" as const, values: ["2"] },
+  ];
+  useGridViews.getState().setView("t1", { filters: two });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  // Applied filters open the bar (without taking the focus).
+  const bar = await screen.findByRole("region", { name: strings.filters.barLabel });
+  expect(bar).not.toContainElement(document.activeElement as HTMLElement);
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.combineOr }));
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.applyAll }));
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ filters: two, combine: "or" })),
+  );
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", obj, two, "or");
+  // A quick filter from the cell menu would widen an OR: it replaces the filters.
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.filterEquals("note", "note 1") }));
+  expect(useGridViews.getState().getView("t1")).toMatchObject({
+    filters: [{ column: "note", op: "eq", values: ["note 1"] }],
+  });
+  expect(useGridViews.getState().getView("t1").combine ?? "and").toBe("and");
 });
 
 test("a filter change with pending changes is blocked like a page change", async () => {
@@ -534,10 +565,12 @@ test("a filter change with pending changes is blocked like a page change", async
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await userEvent.click(await screen.findByRole("button", { name: strings.grid.addRow }));
-  const quick = screen.getByRole("textbox", { name: strings.filters.quickLabel });
-  await userEvent.type(quick, "id = 1{Enter}");
+  await userEvent.click(screen.getByRole("button", { name: strings.filters.button(0) }));
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: strings.filters.columnLabel(1) }), "id");
+  const value = screen.getByRole("textbox", { name: strings.filters.valueLabel(1) });
+  await userEvent.type(value, "1{Enter}");
   expect(await screen.findByText(strings.grid.commitOrDiscardFirst)).toBeInTheDocument();
-  expect(quick).toHaveValue("id = 1");
+  expect(value).toHaveValue("1");
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
   expect(useGridViews.getState().getView("t1").filters).toEqual([]);
 });
@@ -608,9 +641,10 @@ test("Ctrl+click on a foreign key opens the referenced row in the same tab", asy
       offset: 0,
       sort: null,
       filters,
+      combine: "and",
     }),
   );
-  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", ordersRef, filters);
+  expect(ipc.tableCount).toHaveBeenLastCalledWith("w1", ordersRef, filters, "and");
   expect(ipc.tableInfo).toHaveBeenLastCalledWith("w1", ordersRef, false);
   expect(theTab()).toMatchObject({ id: "t1", object: ordersRef, title: "orders" });
   expect(screen.getByRole("navigation", { name: strings.grid.trail.label })).toHaveTextContent(
@@ -665,11 +699,11 @@ test("the row details link opens the referenced row and the details stay open", 
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   render(<StoreTab />);
   await waitFor(() => expect(grid?.editing?.linkAt(0, 1)).toBe(true));
-  await userEvent.click(screen.getByRole("button", { name: strings.grid.rowDetails }));
+  toggleDetails();
   act(() => grid!.editing!.onSelect(0));
   await userEvent.click(screen.getByRole("button", { name: strings.grid.openReferencedIn("orders") }));
   await waitFor(() => expect(theTab()).toMatchObject({ object: ordersRef }));
-  expect(screen.getByRole("button", { name: strings.grid.rowDetails })).toHaveAttribute("aria-pressed", "true");
+  expect(detailsOpen()).toBe(true);
 });
 
 /** A clipboard holding the last text written (jsdom has none). */
@@ -855,7 +889,8 @@ test("Alt+2 shows the structure and Alt+1 the data, not while typing or with a m
   await user.keyboard("{Control>}{Alt>}2{/Alt}{/Control}");
   expect(selected(v.data)).toBe("true");
   // Typing in a field (Option+2 types a character on macOS).
-  await user.click(screen.getByRole("textbox", { name: strings.filters.quickLabel }));
+  await user.click(screen.getByRole("button", { name: strings.filters.button(0) }));
+  await user.click(screen.getByRole("textbox", { name: strings.filters.valueLabel(1) }));
   await user.keyboard("{Alt>}2{/Alt}");
   expect(selected(v.data)).toBe("true");
   (document.activeElement as HTMLElement).blur();
@@ -927,21 +962,20 @@ test("space_toggles_row_detail: Ctrl+Space toggles the row details on the physic
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await screen.findByTestId("grid");
-  const details = screen.getByRole("button", { name: strings.grid.rowDetails });
   const press = (init: KeyboardEventInit) =>
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
     });
   press({ code: "Space", key: " ", metaKey: true });
-  expect(details).toHaveAttribute("aria-pressed", "false");
+  expect(detailsOpen()).toBe(false);
   press({ code: "Space", key: " ", ctrlKey: true });
-  expect(details).toHaveAttribute("aria-pressed", "true");
+  expect(detailsOpen()).toBe(true);
   // Ctrl+I is now the add row key of the spec (Task 6), not the row details.
   press({ code: "KeyI", key: "i", ctrlKey: true });
-  expect(details).toHaveAttribute("aria-pressed", "true");
+  expect(detailsOpen()).toBe(true);
   // Space, from the grid (which has the focus then).
   act(() => grid!.onToggleDetails!());
-  expect(details).toHaveAttribute("aria-pressed", "false");
+  expect(detailsOpen()).toBe(false);
 });
 
 test("custom view and row details combinations work and the defaults no longer do", async () => {
@@ -956,11 +990,10 @@ test("custom view and row details combinations work and the defaults no longer d
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await screen.findByTestId("grid");
-  const details = screen.getByRole("button", { name: strings.grid.rowDetails });
   await user.keyboard("{Control>} {/Control}");
-  expect(details).toHaveAttribute("aria-pressed", "false");
+  expect(detailsOpen()).toBe(false);
   await user.keyboard("{Control>}{Shift>}i{/Shift}{/Control}");
-  expect(details).toHaveAttribute("aria-pressed", "true");
+  expect(detailsOpen()).toBe(true);
   const selected = (name: string) => screen.getByRole("tab", { name }).getAttribute("aria-selected");
   await user.keyboard("{Alt>}2{/Alt}");
   expect(selected(strings.grid.view.data)).toBe("true");
@@ -1112,7 +1145,8 @@ test("a commit that lost its connection never claims nothing was written; reload
   expect(commit).toBeDisabled();
   expect(pending().count("t1")).toBe(1);
   // Reloading is allowed (paging is not); once the page is back, Commit works again.
-  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+  // The toolbar's Reload (Mod+R) asks the tab through the chrome store.
+  act(() => useChrome.getState().requestReload("t1"));
   await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.queryByText(strings.grid.commitOutcomeUnknown)).toBeNull());
   expect(commit).toBeEnabled();
@@ -1129,16 +1163,15 @@ test("with the structure shown, Alt+← and Ctrl+Space leave the hidden data vie
   await waitFor(() => expect(grid?.editing?.linkAt(0, 1)).toBe(true));
   act(() => grid!.editing!.onOpenLink(0, 1));
   await waitFor(() => expect(theTab()).toMatchObject({ object: ordersRef }));
-  const details = screen.getByRole("button", { name: strings.grid.rowDetails });
   await user.click(screen.getByRole("tab", { name: strings.grid.view.structure }));
   await user.keyboard("{Control>} {/Control}");
   await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
-  expect(details).toHaveAttribute("aria-pressed", "false");
+  expect(detailsOpen()).toBe(false);
   expect(theTab()).toMatchObject({ object: ordersRef });
   // Back on the data view both work again.
   await user.click(screen.getByRole("tab", { name: strings.grid.view.data }));
   await user.keyboard("{Control>} {/Control}");
-  expect(details).toHaveAttribute("aria-pressed", "true");
+  expect(detailsOpen()).toBe(true);
   await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
   await waitFor(() => expect(theTab()).toMatchObject({ object: obj }));
 });
@@ -1381,7 +1414,7 @@ test("the toolbar's Reload and row details buttons act on the tab", async () => 
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
   const { unmount } = render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
-  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("Rows 1–2 of 2"));
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–2 of 2 rows"));
   expect(ipc.tablePage).toHaveBeenCalledTimes(1);
   act(() => useChrome.getState().requestReload("t1"));
   await waitFor(() => expect(ipc.tablePage).toHaveBeenCalledTimes(2));
@@ -1389,9 +1422,8 @@ test("the toolbar's Reload and row details buttons act on the tab", async () => 
   act(() => useChrome.getState().requestReload("t2"));
   expect(ipc.tablePage).toHaveBeenCalledTimes(2);
 
-  const details = screen.getByRole("button", { name: strings.grid.rowDetails });
   act(() => useChrome.getState().toggleRowDetails("t1"));
-  expect(details).toHaveAttribute("aria-pressed", "true");
+  expect(detailsOpen()).toBe(true);
   expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
   // Closed again when the tab goes away (as before: the panel starts closed).
   unmount();
@@ -1536,9 +1568,9 @@ test("the grid's header menu filters on a column and sorts in one direction", as
   act(() => grid!.onSortTo!("note", null));
   expect(useGridViews.getState().getView("t1").sort).toBeNull();
   act(() => grid!.onFilterColumn!("note"));
-  const field = screen.getByRole("textbox", { name: strings.filters.quickLabel });
-  expect(field).toHaveFocus();
-  expect(field).toHaveValue("note = ");
+  // The filter bar opens on a row for that column, its value focused.
+  expect(screen.getByRole("combobox", { name: strings.filters.columnLabel(1) })).toHaveValue("c:note");
+  expect(screen.getByRole("textbox", { name: strings.filters.valueLabel(1) })).toHaveFocus();
   // Each table keeps its own column layout.
   expect(grid!.layoutKey).toBeTruthy();
 });
@@ -1604,4 +1636,83 @@ test("duplicating several rows inserts them in row order, even when one must loa
     { t: "text", v: "0" },
     { t: "text", v: "1" },
   ]);
+});
+
+test("bottom bar keys: Ctrl+F opens the filters with the focus, closes them from inside; Ctrl+Alt+F Columns; Ctrl+I + Row", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  const user = userEvent.setup();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  const el = screen.getByTestId("grid");
+  el.tabIndex = 0;
+  el.focus();
+  const bar = () => screen.queryByRole("region", { name: strings.filters.barLabel });
+  await user.keyboard("{Control>}f{/Control}");
+  expect(bar()).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: strings.filters.columnLabel(1) })).toHaveFocus();
+  expect(screen.getByRole("button", { name: strings.filters.button(0) })).toHaveAttribute("aria-expanded", "true");
+  // Inside the bar Ctrl+F closes it; the grid gets the focus back.
+  await user.keyboard("{Control>}f{/Control}");
+  expect(bar()).toBeNull();
+  expect(el).toHaveFocus();
+  // Escape in the empty bar closes it too.
+  await user.keyboard("{Control>}f{/Control}");
+  await user.keyboard("{Escape}");
+  expect(bar()).toBeNull();
+  expect(el).toHaveFocus();
+
+  // Columns.
+  await user.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
+  expect(screen.getByRole("dialog", { name: strings.grid.columnsPopover.label })).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: strings.grid.columns })).toHaveFocus();
+
+  // + Row from the grid; in the filter bar Ctrl+I adds a filter row instead.
+  el.focus();
+  await user.keyboard("{Control>}i{/Control}");
+  expect(pending().count("t1")).toBe(1);
+  await user.click(screen.getByRole("button", { name: strings.filters.button(0) }));
+  await user.click(screen.getByRole("textbox", { name: strings.filters.valueLabel(1) }));
+  await user.keyboard("{Control>}i{/Control}");
+  expect(pending().count("t1")).toBe(1);
+  expect(screen.getAllByRole("checkbox", { name: /^Use condition/ })).toHaveLength(2);
+
+  // Ctrl+Alt+] / [ switch the view (Alt+1 / Alt+2 still do).
+  el.focus();
+  await user.keyboard("{Control>}{Alt>}[BracketRight]{/Alt}{/Control}");
+  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
+  // The structure view keeps only the view switch in the bar.
+  expect(screen.queryByRole("button", { name: strings.grid.columns })).toBeNull();
+  await user.keyboard("{Control>}{Alt>}[BracketLeft]{/Alt}{/Control}");
+  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("aria-selected", "true");
+});
+
+test("page_popover_offset_limit: Go loads that offset and limit; the grid's Ctrl+→ / Ctrl+← page from there", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(page(100));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 900 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("1–100 of 900 rows"));
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.pageSettings }));
+  const p = strings.grid.pagePopover;
+  await userEvent.clear(screen.getByRole("textbox", { name: p.offset }));
+  await userEvent.type(screen.getByRole("textbox", { name: p.offset }), "250");
+  await userEvent.clear(screen.getByRole("textbox", { name: p.limit }));
+  await userEvent.type(screen.getByRole("textbox", { name: p.limit }), "100{Enter}");
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ offset: 250, limit: 100 })),
+  );
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("251–350 of 900 rows"));
+  act(() => grid!.onPageKey!("next"));
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ offset: 350, limit: 100 })),
+  );
+  await waitFor(() => expect(screen.getByTestId("footer-range")).toHaveTextContent("351–450"));
+  act(() => grid!.onPageKey!("previous"));
+  await waitFor(() =>
+    expect(ipc.tablePage).toHaveBeenLastCalledWith("w1", expect.objectContaining({ offset: 250, limit: 100 })),
+  );
 });

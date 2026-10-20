@@ -22,7 +22,7 @@ use crate::value::CellValue;
 use catalog::{Catalog, DbRoutine};
 use dml::ApplyOutcome;
 use meta::TableInfo;
-use query::{Filter, Statement};
+use query::{Filter, FilterCombine, Statement};
 use tls::SslConfig;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -154,9 +154,12 @@ pub struct PageRequest {
     pub limit: u32,
     pub offset: u64,
     pub sort: Option<(String, SortDir)>,
-    /// Joined by AND. Absent from older frontends: no filter.
+    /// Absent from older frontends: no filter.
     #[serde(default)]
     pub filters: Vec<Filter>,
+    /// How `filters` are joined. Absent from older frontends: AND.
+    #[serde(default)]
+    pub combine: FilterCombine,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]

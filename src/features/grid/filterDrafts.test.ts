@@ -66,7 +66,30 @@ test("filters → drafts → filters round-trips, raw and any column included", 
   const drafts = draftsFromFilters(filters);
   expect(drafts.map((d) => d.column)).toEqual(["status", ANY_COLUMN, "id", "total", "notes", RAW_SQL]);
   expect(drafts[2].list).toBe("1, 'a, b'");
-  expect(filtersFromDrafts(drafts)).toEqual({ filters, errors: {} });
+  const r = filtersFromDrafts(drafts);
+  expect(r.filters).toEqual(filters);
+  expect(r.errors).toEqual({});
+  expect(r.byRow[drafts[5].id]).toEqual([filters[5]]);
+});
+
+test("raw_sql_mode_uses_quick_syntax: a Raw SQL row in the quick syntax gives bound filters", () => {
+  const raw = (text: string) => ({ ...withColumn(newDraft(["status"]), RAW_SQL), values: [text] });
+  const one = raw("status contains 'pa'");
+  const two = raw("status = 'paid' AND total > 5");
+  const sql = raw("total > 2 * cost");
+  const columns = ["status", "total", "cost"];
+  const and = filtersFromDrafts([one, two, sql], { columns, combine: "and" });
+  expect(and.byRow[one.id]).toEqual([{ column: "status", op: "contains", values: ["pa"] }]);
+  expect(and.byRow[two.id]).toEqual([
+    { column: "status", op: "eq", values: ["paid"] },
+    { column: "total", op: "gt", values: ["5"] },
+  ]);
+  expect(and.byRow[sql.id]).toEqual([{ column: null, op: "raw", values: ["total > 2 * cost"] }]);
+  expect(and.filters).toHaveLength(4);
+  // Under OR a row of several conditions stays one SQL condition.
+  const or = filtersFromDrafts([one, two], { columns, combine: "or" });
+  expect(or.byRow[two.id]).toEqual([{ column: null, op: "raw", values: ["status = 'paid' AND total > 5"] }]);
+  expect(or.filters).toHaveLength(2);
 });
 
 test("invalid drafts give per-row errors and no filters", () => {

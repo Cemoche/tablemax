@@ -11,8 +11,12 @@ import { strings } from "./strings";
  * - `editor`: the SQL editor, which lives inside a query tab: its keymap fires first and
  *   the query tab's window listener then sees the same keydown, so it conflicts with
  *   `queryTab` as well as with itself and `global`.
+ * - `filterBar`: the filter bar of a table tab, while the focus is in it (Task 6). It
+ *   handles its keys itself and stops them there, so inside the bar they win over the
+ *   table tab's (Mod+I adds a filter row there, a table row elsewhere, spec §5.3): it
+ *   conflicts only with itself and `global`.
  */
-export type ShortcutScope = "global" | "queryTab" | "tableTab" | "editor";
+export type ShortcutScope = "global" | "queryTab" | "tableTab" | "editor" | "filterBar";
 
 /**
  * The actions that have a shortcut. The ids are also listed, in this order, in
@@ -51,8 +55,9 @@ const SPECS = {
   // and Space in the grid (a fixed key of DataGrid: the grammar needs a modifier). Ctrl+I
   // is the spec's add row key (Task 6).
   "grid.rowDetails": { scope: "tableTab", defaultShortcut: "Ctrl+Space" },
-  "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1" },
-  "grid.viewStructure": { scope: "tableTab", defaultShortcut: "Alt+2" },
+  // Spec §5.3: Ctrl+Alt+[ / ] (TablePlus ⌃⌘[ / ]), Alt+1 / Alt+2 kept.
+  "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1", alternates: ["Mod+Alt+["] },
+  "grid.viewStructure": { scope: "tableTab", defaultShortcut: "Alt+2", alternates: ["Mod+Alt+]"] },
   "font.increase": { scope: "global", defaultShortcut: "Mod+=" },
   "font.decrease": { scope: "global", defaultShortcut: "Mod+-" },
   "database.open": { scope: "global", defaultShortcut: "Mod+K" },
@@ -82,6 +87,20 @@ const SPECS = {
   "grid.copyCells": { scope: "tableTab", defaultShortcut: "Mod+Shift+C" },
   "grid.duplicateRows": { scope: "tableTab", defaultShortcut: "Mod+D" },
   "grid.deleteRows": { scope: "tableTab", defaultShortcut: "Mod+Backspace" },
+  // Task 6, the bottom bar (spec §5.3). + Row, Filters and Columns act in the table tab
+  // but not in a text field; the page keys only while the grid has the focus (DataGrid
+  // matches them, so Mod+← / Mod+→ keep their word moves in fields).
+  "grid.addRow": { scope: "tableTab", defaultShortcut: "Mod+I" },
+  "grid.filters": { scope: "tableTab", defaultShortcut: "Mod+F" },
+  "grid.columns": { scope: "tableTab", defaultShortcut: "Mod+Alt+F" },
+  "grid.previousPage": { scope: "tableTab", defaultShortcut: "Mod+ArrowLeft" },
+  "grid.nextPage": { scope: "tableTab", defaultShortcut: "Mod+ArrowRight" },
+  // The filter bar (FilterBar matches them while the focus is in it).
+  "filters.toggle": { scope: "filterBar", defaultShortcut: "Mod+B" },
+  "filters.add": { scope: "filterBar", defaultShortcut: "Mod+I" },
+  "filters.remove": { scope: "filterBar", defaultShortcut: "Mod+Shift+I" },
+  "filters.applyAll": { scope: "filterBar", defaultShortcut: "Mod+Enter" },
+  "filters.applyAllOr": { scope: "filterBar", defaultShortcut: "Mod+Shift+Enter" },
 } as const satisfies Record<keyof typeof strings.keymap, Spec>;
 
 export type KeymapActionId = keyof typeof SPECS;
@@ -187,6 +206,7 @@ export function alternateShortcuts(id: KeymapActionId, keymap: Record<string, st
 /** Two scopes can be active for the same keydown (see `ShortcutScope`). */
 function scopesOverlap(a: ShortcutScope, b: ShortcutScope): boolean {
   if (a === b || a === "global" || b === "global") return true;
+  // `filterBar` overlaps nothing else: it shadows the table tab inside the bar.
   return (a === "editor" && b === "queryTab") || (a === "queryTab" && b === "editor");
 }
 

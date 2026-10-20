@@ -873,7 +873,14 @@ export const useWorkspaces = create<WorkspacesState>((set, get) => {
 // foreign key navigation (its grid view and trail) here, a pending edit below. The page
 // size the grid latches into the view when it mounts (Plan 5 settings) is not a user change.
 const userView = (v: GridView | undefined) =>
-  JSON.stringify([v?.page ?? 0, v?.sort ?? null, v?.filters ?? []]);
+  JSON.stringify([
+    v?.page ?? 0,
+    v?.sort ?? null,
+    v?.filters ?? [],
+    v?.combine ?? "and",
+    v?.limit ?? null,
+    v?.startOffset ?? 0,
+  ]);
 useGridViews.subscribe((state, prev) => {
   for (const tabId of Object.keys(state.views)) {
     const navigated = state.trails[tabId] !== prev.trails[tabId];

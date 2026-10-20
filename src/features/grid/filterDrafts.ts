@@ -1,11 +1,11 @@
-import { ANY_OPS, ARITY } from "../../lib/quickFilter";
+import { ANY_OPS, ARITY, readRawCondition } from "../../lib/quickFilter";
 import { strings } from "../../lib/strings";
-import type { Dialect, Filter, FilterOp } from "../../lib/types";
+import type { Dialect, Filter, FilterCombine, FilterOp } from "../../lib/types";
 import { formatValueList, splitValueList } from "../../lib/valueList";
 
 /** The "Any column" choice of a builder row (column names are free text, hence symbols). */
 export const ANY_COLUMN: unique symbol = Symbol("anyColumn");
-/** The "Raw SQL" choice: the row is the user's own SQL condition. */
+/** The "Raw SQL" choice: the row is the quick syntax or the user's own SQL condition. */
 export const RAW_SQL: unique symbol = Symbol("rawSql");
 
 export type DraftColumn = string | typeof ANY_COLUMN | typeof RAW_SQL;
@@ -87,28 +87,42 @@ export function draftsFromFilters(filters: Filter[]): FilterDraft[] {
   });
 }
 
-/** The rows as filters, or a message per invalid row id (then no filters at all). */
-export function filtersFromDrafts(drafts: FilterDraft[]): {
+/**
+ * The rows as filters (all of them, and per row id: a Raw SQL row may give several), or a
+ * message per invalid row id (then no filters at all). A Raw SQL row reads the quick syntax
+ * against `columns` (`readRawCondition`, which depends on `combine`); without columns
+ * it is always SQL.
+ */
+export function filtersFromDrafts(
+  drafts: FilterDraft[],
+  opts: { columns?: string[]; combine?: FilterCombine } = {},
+): {
   filters: Filter[];
+  byRow: Record<string, Filter[]>;
   errors: Record<string, string>;
 } {
-  const filters: Filter[] = [];
+  const byRow: Record<string, Filter[]> = {};
   const errors: Record<string, string> = {};
   for (const d of drafts) {
     if (d.column === RAW_SQL) {
       const sql = d.values[0] ?? "";
       if (sql.trim() === "") errors[d.id] = strings.filters.rawEmpty;
-      else filters.push({ column: null, op: "raw", values: [sql] });
+      else {
+        const r = readRawCondition(sql, opts.columns ?? [], opts.combine);
+        if (r.kind === "error") errors[d.id] = r.message;
+        else byRow[d.id] = r.filters;
+      }
       continue;
     }
     const column = d.column === ANY_COLUMN ? null : d.column;
     if (arityOf(d.op) === "list") {
       const r = splitValueList(d.list);
       if (r.error !== null) errors[d.id] = r.error;
-      else filters.push({ column, op: d.op, values: r.values });
+      else byRow[d.id] = [{ column, op: d.op, values: r.values }];
     } else {
-      filters.push({ column, op: d.op, values: [...d.values] });
+      byRow[d.id] = [{ column, op: d.op, values: [...d.values] }];
     }
   }
-  return Object.keys(errors).length > 0 ? { filters: [], errors } : { filters, errors };
+  if (Object.keys(errors).length > 0) return { filters: [], byRow: {}, errors };
+  return { filters: drafts.flatMap((d) => byRow[d.id] ?? []), byRow, errors };
 }

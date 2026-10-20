@@ -46,6 +46,8 @@
   --rownum: #8A8A8A;
   --bottom: #F3F3F3;
   --btn: #FFFFFF;
+  /* An applied filter row: --accent at 15 % over --side (its text stays --text). */
+  --filter-applied: #D0E3F6;
   --accent: #007AFF;
   --cell-focus: #FF4245;
   --inserted: #DAEBC2;
@@ -133,6 +135,7 @@
     --rownum: #8A8A8A;
     --bottom: #242424;
     --btn: #343434;
+    --filter-applied: #232D3F;
     --accent: #3A7BF6;
     --cell-focus: #FF4245;
     --inserted: #558C3A;
@@ -198,6 +201,7 @@
   --rownum: #8A8A8A;
   --bottom: #242424;
   --btn: #343434;
+  --filter-applied: #232D3F;
   --accent: #3A7BF6;
   --cell-focus: #FF4245;
   --inserted: #558C3A;
