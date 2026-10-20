@@ -242,10 +242,13 @@ function App() {
             <ConnectionForm
               key={form.seq}
               connection={form.connection}
+              active={!showWorkspace}
               onDirtyChange={(dirty) => {
                 formDirty.current = dirty;
               }}
               onSaved={(cfg) => {
+                // Clean at once: open() reads the flag right after a Connect's save.
+                formDirty.current = false;
                 setSelectedId(cfg.id);
                 setForm((f) => f && { ...f, connection: cfg });
               }}

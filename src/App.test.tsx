@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import App from "./App";
@@ -385,6 +385,32 @@ describe("unsaved edits in the connection form are never dropped silently", () =
     expect(nameField()).toHaveValue("");
   });
 
+  test("a Test prompt arriving behind a workspace leaves the shortcuts working and shows on return", async () => {
+    vi.mocked(ipc.sessionLoad).mockResolvedValue(JSON.stringify(session));
+    let failTest: (e: unknown) => void = () => {};
+    vi.mocked(ipc.connectionTest).mockReturnValueOnce(new Promise((_, reject) => (failTest = reject)));
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("tab", { name: "users" });
+    await user.click(screen.getByRole("button", { name: strings.connectionsColumn.connections }));
+    await editRow(user, "Dev PG");
+    await user.type(nameField(), " 2");
+    await user.click(screen.getByRole("button", { name: "Test" }));
+    // Off to the workspace while Test runs; then the host key prompt comes in.
+    vi.mocked(ipc.workspaceOpen).mockRejectedValueOnce({ kind: "connection", message: "connection refused" });
+    await user.click(screen.getByRole("button", { name: "Prod PG" }));
+    await screen.findByRole("tab", { name: "users" });
+    await act(async () => failTest({ kind: "hostKeyUnknown", message: "SHA256:abc", host: "bastion:22" }));
+    expect(document.querySelector('[aria-modal="true"]')).toBeNull();
+    // Shortcuts still act: Ctrl+Shift+K asks about the form's edits.
+    await user.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
+    await user.click(within(discardDialog() as HTMLElement).getByRole("button", { name: strings.connections.discardCancel }));
+    // Back on the connections screen, the prompt is there.
+    await user.click(screen.getByRole("button", { name: strings.connectionsColumn.connections }));
+    expect(screen.getByRole("dialog", { name: strings.ssh.unknownHostTitle })).toBeInTheDocument();
+    expect(nameField()).toHaveValue("Dev PG 2");
+  });
+
   test("the pill's Edit: at once when clean, after Discard when the open form has edits", async () => {
     vi.mocked(ipc.sessionLoad).mockResolvedValue(JSON.stringify(session));
     const user = userEvent.setup();
@@ -405,6 +431,9 @@ describe("unsaved edits in the connection form are never dropped silently", () =
     vi.mocked(ipc.workspaceOpen).mockRejectedValueOnce({ kind: "connection", message: "connection refused" });
     await user.click(screen.getByRole("button", { name: "Prod PG" }));
     await screen.findByRole("tab", { name: "users" });
+    // Really hidden behind the workspace: out of the accessibility tree and the tab order.
+    expect(nameField().closest("main")).toHaveAttribute("hidden");
+    expect(screen.queryByRole("textbox", { name: strings.form.name })).toBeNull();
     await pillEdit();
     await user.click(within(discardDialog() as HTMLElement).getByRole("button", { name: strings.connections.discardCancel }));
     // Cancel: still in the workspace; the edits wait on the connections screen.

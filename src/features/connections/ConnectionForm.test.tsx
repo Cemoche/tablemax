@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
@@ -751,4 +751,59 @@ test("the header's back button returns to the list", async () => {
   render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />);
   await userEvent.click(screen.getByRole("button", { name: strings.connections.back }));
   expect(onClose).toHaveBeenCalled();
+});
+
+describe("the form follows its connection's changes in the store (#88)", () => {
+  const safeSelect = () => screen.getByLabelText(strings.safety.sectionLabel) as HTMLSelectElement;
+  const storeSafeMode = (safeMode: ConnectionConfig["safeMode"]) =>
+    act(() => useConnections.setState({ items: [{ ...saved, safeMode }] }));
+
+  test("a clean form takes the stored settings and stays clean", () => {
+    const onDirty = vi.fn();
+    useConnections.setState({ items: [saved] });
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} onDirtyChange={onDirty} />);
+    storeSafeMode("confirmAll");
+    expect(safeSelect().value).toBe("confirmAll");
+    expect(onDirty).toHaveBeenLastCalledWith(false);
+  });
+
+  test("an edited form keeps its edits over the new stored settings; Save keeps both", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.connectionSave).mockImplementation(async (c) => c);
+    useConnections.setState({ items: [saved] });
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} />);
+    await user.type(screen.getByLabelText("Name"), " 2");
+    // The toolbar's safe mode menu saves the connection while the form waits behind a workspace.
+    storeSafeMode("confirmAll");
+    expect(safeSelect().value).toBe("confirmAll");
+    expect(screen.getByLabelText("Name")).toHaveValue("Local PG 2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(ipc.connectionSave).toHaveBeenCalledTimes(1));
+    expect(lastSaved()[0]).toMatchObject({ name: "Local PG 2", safeMode: "confirmAll" });
+  });
+});
+
+test("a typed SSH secret alone makes the form dirty", async () => {
+  const user = userEvent.setup();
+  const onDirty = vi.fn();
+  const withSsh: ConnectionConfig = {
+    ...saved,
+    ssh: { host: "bastion", port: null, user: null, auth: "password", keyFile: null, secretMode: "keyring" },
+  };
+  render(<ConnectionForm connection={withSsh} onConnect={vi.fn()} onDirtyChange={onDirty} />);
+  expect(onDirty).toHaveBeenLastCalledWith(false);
+  await user.type(screen.getByLabelText("SSH password"), "tunnel-pass");
+  expect(onDirty).toHaveBeenLastCalledWith(true);
+});
+
+test("an inactive form (behind a workspace) shows none of its dialogs until it is active again", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.connectionTest).mockRejectedValueOnce({ kind: "hostKeyUnknown", message: FP, host: "bastion:22" });
+  const { rerender } = render(<ConnectionForm connection={saved} onConnect={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Test" }));
+  await screen.findByRole("dialog", { name: strings.ssh.unknownHostTitle });
+  rerender(<ConnectionForm connection={saved} onConnect={vi.fn()} active={false} />);
+  expect(document.querySelector('[aria-modal="true"]')).toBeNull();
+  rerender(<ConnectionForm connection={saved} onConnect={vi.fn()} active />);
+  expect(screen.getByRole("dialog", { name: strings.ssh.unknownHostTitle })).toBeInTheDocument();
 });

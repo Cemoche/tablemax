@@ -166,3 +166,21 @@ function canonical(v: unknown): string {
 
 /** Do two drafts hold the same settings (key order and null / absent fields aside)? */
 export const sameDraft = (a: ConnectionConfig, b: ConnectionConfig): boolean => canonical(a) === canonical(b);
+
+/**
+ * `draft` moved onto `stored`, the connection as saved now (changed behind the form, the
+ * toolbar's safe mode say): each field the user left as it was in `baseline` takes the
+ * stored value, each field they edited keeps their value.
+ */
+export function rebaseDraft(
+  draft: ConnectionConfig,
+  baseline: ConnectionConfig,
+  stored: ConnectionConfig,
+): ConnectionConfig {
+  const out: Record<string, unknown> = { ...stored };
+  const keys = new Set([...Object.keys(draft), ...Object.keys(baseline), ...Object.keys(stored)]);
+  const d = draft as unknown as Record<string, unknown>;
+  const b = baseline as unknown as Record<string, unknown>;
+  for (const k of keys) if (canonical(d[k]) !== canonical(b[k])) out[k] = d[k];
+  return out as unknown as ConnectionConfig;
+}

@@ -1,9 +1,12 @@
 import { useEffect, useRef } from "react";
 import { isMac } from "./platform";
 
-/** True while a modal dialog (any element with `aria-modal="true"`) is open. */
+/**
+ * True while a modal dialog (an element with `aria-modal="true"`) is open on screen: one
+ * inside a `hidden` subtree (the connection form kept behind a workspace) does not count.
+ */
 export function isModalOpen(): boolean {
-  return document.querySelector('[aria-modal="true"]') !== null;
+  return [...document.querySelectorAll('[aria-modal="true"]')].some((el) => el.closest("[hidden]") === null);
 }
 
 const NAMED_CODES: Record<string, string> = {

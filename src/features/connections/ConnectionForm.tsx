@@ -23,6 +23,7 @@ import {
   forBackend,
   normalize,
   errorText,
+  rebaseDraft,
   sameDraft,
   sslModePicked,
   withSslMode,
@@ -59,6 +60,11 @@ interface Props {
    * saved), or a password or SSH secret is typed. The app asks before dropping them.
    */
   onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * False while the form is kept, hidden, behind a workspace: its dialogs (URL import,
+   * Delete, the Test prompts) wait until it is on screen again. Default true.
+   */
+  active?: boolean;
 }
 
 type Notice = { tone: "ok" | "error"; text: string } | null;
@@ -76,7 +82,15 @@ const TAGS = ["local", "dev", "staging", "prod"] as const;
  * backend (keyring) on Save / Connect / Test only. On mount the focus goes to Name for a
  * saved connection, to Driver for a new one.
  */
-export function ConnectionForm({ connection, onConnect, onSaved, onDeleted, onClose, onDirtyChange }: Props) {
+export function ConnectionForm({
+  connection,
+  onConnect,
+  onSaved,
+  onDeleted,
+  onClose,
+  onDirtyChange,
+  active = true,
+}: Props) {
   const [cfg, setCfg] = useState<ConnectionConfig>(normalize(connection ?? blankConnection()));
   /** What the draft is compared with to tell unsaved edits: as loaded, or as last saved. */
   const [baseline, setBaseline] = useState<ConnectionConfig>(cfg);
@@ -110,6 +124,20 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted, onCl
 
   useEffect(() => firstField.current?.focus(), []);
 
+  // The connection may change in the store behind the form (the toolbar's safe mode menu
+  // while the form waits behind a workspace): a clean draft takes the stored settings, an
+  // edited one keeps its edits over them. Saving must never revert such a change.
+  const storedCfg = useConnections((s) => (cfg.id ? s.items.find((c) => c.id === cfg.id) : undefined));
+  useEffect(() => {
+    if (!storedCfg) return;
+    const next = normalize(storedCfg);
+    if (sameDraft(next, baseline)) return;
+    setCfg((c) => (sameDraft(c, baseline) ? next : rebaseDraft(c, baseline, next)));
+    setBaseline(next);
+    // Only a change of the stored connection; baseline and draft are read as they are now.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedCfg]);
+
   const dirty = !sameDraft(cfg, baseline) || password !== "" || sshSecret !== "";
   const dirtyChange = useRef(onDirtyChange);
   dirtyChange.current = onDirtyChange;
@@ -127,7 +155,8 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted, onCl
     ssh && ssh.auth !== "agent" && ssh.secretMode === "keyring" && sshSecret !== "" ? sshSecret : null;
   const isExisting = cfg.id !== "";
 
-  const stored = connection?.id ? connection.ssh : null;
+  /** The saved SSH settings (to tell a stored secret), as saved now. */
+  const stored = storedCfg ? storedCfg.ssh : connection?.id ? connection.ssh : null;
   const outgoing = () => forBackend({ ...cfg, group: cfg.group?.trim() || null }, stored, typedSsh);
 
   const groups = [...new Set(items.map((c) => c.group?.trim()).filter((g): g is string => !!g))].sort(
@@ -473,8 +502,8 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted, onCl
           </button>
         </div>
       </form>
-      {urlDialog && <UrlImportDialog onCancel={() => setUrlDialog(false)} onResult={onUrlResult} />}
-      {confirmDelete && (
+      {active && urlDialog && <UrlImportDialog onCancel={() => setUrlDialog(false)} onResult={onUrlResult} />}
+      {active && confirmDelete && (
         <ConfirmDialog
           title={strings.connections.deleteTitle(cfg.name)}
           message={strings.connections.deleteMessage}
@@ -487,7 +516,7 @@ export function ConnectionForm({ connection, onConnect, onSaved, onDeleted, onCl
           }}
         />
       )}
-      <ConnectPrompt flow={testFlow} connectionName={testFlow.context?.name || strings.form.newTitle} />
+      {active && <ConnectPrompt flow={testFlow} connectionName={testFlow.context?.name || strings.form.newTitle} />}
     </>
   );
 }

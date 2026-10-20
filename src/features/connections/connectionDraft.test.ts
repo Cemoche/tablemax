@@ -5,6 +5,7 @@ import {
   connectionSubtitle,
   forBackend,
   normalize,
+  rebaseDraft,
   sameDraft,
   sslModePicked,
   withSslMode,
@@ -122,4 +123,13 @@ test("sameDraft ignores key order and null / absent fields, not a changed value"
   expect(sameDraft(a, { ...a, name: "x" })).toBe(false);
   expect(sameDraft(a, { ...a, ssl: { ...a.ssl, caFile: "/ca.pem" } })).toBe(false);
   expect(sameDraft(a, { ...a, safeMode: "off" })).toBe(false);
+});
+
+test("rebaseDraft: untouched fields take the stored value, edited ones stay", () => {
+  const baseline = cfg(null, { id: "x", name: "Shop", host: "a", safeMode: null });
+  const draft = { ...baseline, host: "b" };
+  const stored = { ...baseline, safeMode: "confirmAll" as const, name: "Shop (renamed)" };
+  expect(rebaseDraft(draft, baseline, stored)).toEqual({ ...stored, host: "b" });
+  // An edit that puts back the stored value is kept as is.
+  expect(rebaseDraft({ ...baseline, safeMode: "off" }, baseline, stored).safeMode).toBe("off");
 });
