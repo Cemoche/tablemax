@@ -6,7 +6,8 @@ import { useConnections } from "./connections";
 import { useGridViews } from "./gridViews";
 import { usePendingChanges } from "./pendingChanges";
 import { useQueryRuns } from "./queryRuns";
-import { type Workspace, capabilitiesOf, useWorkspaces } from "./workspaces";
+import { useChrome } from "./chrome";
+import { type Workspace, canNavigate, capabilitiesOf, useWorkspaces } from "./workspaces";
 
 vi.mock("../lib/ipc");
 
@@ -762,4 +763,150 @@ test("before its first connect a document workspace has the document capabilitie
     documents: true,
     databaseSwitch: false,
   });
+});
+
+// ---- Task 4: capsule tab bar (navigation history, rename, close others, positional moves) ----
+
+const ids = () => ws().tabs.map((t) => t.id);
+const active = () => ws().activeTabId;
+
+test("back_forward_navigation: back and forward walk the tabs visited, like a browser", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openQueryTab(id);
+  s.openQueryTab(id);
+  s.openQueryTab(id);
+  const [a, b, c] = ids();
+  s.activateTab(id, a);
+  expect(canNavigate(ws(), -1)).toBe(true);
+  expect(canNavigate(ws(), 1)).toBe(false);
+  expect(s.navigate(id, -1)).toBe(true);
+  expect(active()).toBe(c);
+  s.navigate(id, -1);
+  expect(active()).toBe(b);
+  expect(canNavigate(ws(), 1)).toBe(true);
+  s.navigate(id, 1);
+  expect(active()).toBe(c);
+  s.navigate(id, 1);
+  expect(active()).toBe(a);
+  expect(s.navigate(id, 1)).toBe(false);
+  expect(active()).toBe(a);
+  // A visit after going back drops the forward entries.
+  s.navigate(id, -1);
+  s.activateTab(id, b);
+  expect(canNavigate(ws(), 1)).toBe(false);
+  s.navigate(id, -1);
+  expect(active()).toBe(c);
+  // Navigation keeps the most-recent order (Ctrl+Tab) up to date.
+  expect(ws().mru[0]).toBe(c);
+});
+
+test("back skips closed tabs and the tab already shown", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openQueryTab(id);
+  s.openQueryTab(id);
+  s.openQueryTab(id);
+  const [a, b, c] = ids();
+  s.activateTab(id, b);
+  s.closeTab(id, b);
+  // Closing b showed c (most recent); back from there goes to a, not b nor c again.
+  expect(active()).toBe(c);
+  s.navigate(id, -1);
+  expect(active()).toBe(a);
+  expect(ws().nav?.entries.some((e) => e.tabId === b)).toBe(false);
+});
+
+test("back reopens the table a replaced preview tab showed", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users, { preview: true });
+  s.openTableTab(id, orders, { preview: true });
+  expect(ws().tabs).toHaveLength(1);
+  s.navigate(id, -1);
+  expect(ws().tabs).toHaveLength(1);
+  expect(ws().tabs[0]).toMatchObject({ kind: "table", object: users, preview: true });
+  expect(active()).toBe(ws().tabs[0].id);
+  s.navigate(id, 1);
+  expect(ws().tabs[0]).toMatchObject({ object: orders, preview: true });
+  expect(s.navigate(id, 1)).toBe(false);
+});
+
+test("rename_in_place: a tab takes a trimmed new name; an empty one is refused", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openQueryTab(id);
+  s.openTableTab(id, users);
+  const [q, t] = ids();
+  expect(s.renameTab(id, q, "  Monthly report ")).toBe(true);
+  expect(ws().tabs[0].title).toBe("Monthly report");
+  expect(s.renameTab(id, t, "People")).toBe(true);
+  expect(ws().tabs[1]).toMatchObject({ title: "People", object: users });
+  expect(s.renameTab(id, q, "   ")).toBe(false);
+  expect(ws().tabs[0].title).toBe("Monthly report");
+});
+
+test("close_others: closes every other tab at once", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openQueryTab(id);
+  s.openQueryTab(id);
+  s.openTableTab(id, users);
+  const [, b] = ids();
+  s.closeOtherTabs(id, b);
+  expect(ids()).toEqual([b]);
+  expect(active()).toBe(b);
+});
+
+test("close_others asks once before discarding pending changes, and closes nothing on cancel", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users);
+  s.openTableTab(id, orders);
+  s.openQueryTab(id);
+  const [u, o, q] = ids();
+  usePendingChanges.getState().addInsert(u, users);
+  usePendingChanges.getState().addInsert(o, orders);
+  usePendingChanges.getState().addInsert(o, orders);
+  s.closeOtherTabs(id, q);
+  expect(useWorkspaces.getState().closeRequest).toEqual({ wsId: id, tabId: null, count: 3, tabs: 2, tabIds: [u, o] });
+  useWorkspaces.getState().cancelClose();
+  expect(ids()).toEqual([u, o, q]);
+  s.closeOtherTabs(id, q);
+  await useWorkspaces.getState().confirmClose();
+  expect(ids()).toEqual([q]);
+  expect(usePendingChanges.getState().count(u)).toBe(0);
+  // The workspace itself stays open.
+  expect(ipc.workspaceClose).not.toHaveBeenCalled();
+});
+
+test("cycleTab moves in tab bar order and wraps; activateTabAt picks the n-th tab", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openQueryTab(id);
+  s.openQueryTab(id);
+  s.openQueryTab(id);
+  const [a, b, c] = ids();
+  s.activateTab(id, a);
+  s.cycleTab(id, 1);
+  expect(active()).toBe(b);
+  s.cycleTab(id, -1);
+  s.cycleTab(id, -1);
+  expect(active()).toBe(c);
+  s.cycleTab(id, 1);
+  expect(active()).toBe(a);
+  s.activateTabAt(id, 2);
+  expect(active()).toBe(c);
+  s.activateTabAt(id, 8);
+  expect(active()).toBe(c);
+});
+
+test("closing a table tab forgets its Data / Structure view", async () => {
+  const id = await open();
+  const s = useWorkspaces.getState();
+  s.openTableTab(id, users);
+  const [t] = ids();
+  useChrome.getState().setTableView(t, "structure");
+  s.closeTab(id, t);
+  expect(useChrome.getState().tableViews[t]).toBeUndefined();
 });

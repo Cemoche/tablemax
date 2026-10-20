@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import { strings } from "../../lib/strings";
 import type { Filter, ObjectRef, RowKey } from "../../lib/types";
+import { useChrome } from "../../stores/chrome";
 import { type GridView, useGridViews } from "../../stores/gridViews";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
+import { useNavigationShortcuts } from "../workspace/navigation";
 import { Breadcrumb } from "./Breadcrumb";
 
 vi.mock("../../lib/ipc");
@@ -20,6 +22,7 @@ const linesView: GridView = { page: 0, sort: null, filters: [eq("order_id", "7")
 
 beforeEach(() => {
   useSettings.setState({ settings: DEFAULT_SETTINGS });
+  useChrome.setState({ tableViews: {} });
   usePendingChanges.setState({
     tabs: {},
     blocked: {},
@@ -62,10 +65,14 @@ beforeEach(() => {
   });
 });
 
-/** The breadcrumb of tab t1, following the tab's object and view like the table tab does. */
+/**
+ * The breadcrumb of tab t1, following the tab's object and view like the table tab does,
+ * with the workspace's Back / Forward keys (Alt+← goes back along the trail first).
+ */
 function Harness() {
   const tab = useWorkspaces((s) => s.workspaces[0].tabs[0]);
   const view = useGridViews((s) => s.views.t1);
+  useNavigationShortcuts("w1", true);
   if (tab.kind !== "table") return null;
   return <Breadcrumb workspaceId="w1" tabId="t1" object={tab.object} filters={view?.filters ?? []} />;
 }
@@ -96,7 +103,7 @@ test("the trail's tooltip names the effective Back shortcut", () => {
   const nav = () => screen.getByRole("navigation", { name: strings.grid.trail.label });
   expect(nav()).toHaveAttribute("title", strings.grid.trail.back("Alt+←"));
   unmount();
-  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "grid.back": "Alt+Backspace" } } });
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "nav.back": "Alt+Backspace" } } });
   render(<Harness />);
   expect(nav()).toHaveAttribute("title", strings.grid.trail.back("Alt+Backspace"));
 });
@@ -110,7 +117,7 @@ test("Alt+← goes back one step", async () => {
 });
 
 test("a custom Back combination goes back and Alt+← no longer does", async () => {
-  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "grid.back": "Alt+Backspace" } } });
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "nav.back": "Alt+Backspace" } } });
   render(<Harness />);
   await userEvent.keyboard("{Alt>}{ArrowLeft}{/Alt}");
   expect(tab()).toMatchObject({ object: customers });
@@ -130,14 +137,23 @@ test("Alt+← in a text field moves the caret, it does not go back", async () =>
   expect(tab()).toMatchObject({ object: customers });
 });
 
-test("with an empty trail Alt+← is left to the page (not prevented)", () => {
+test("with an empty trail Alt+← leaves the table alone (nothing earlier in the history)", () => {
   useGridViews.setState({ trails: {} });
   render(<Harness />);
-  const e = new KeyboardEvent("keydown", { code: "ArrowLeft", key: "ArrowLeft", altKey: true, cancelable: true });
   act(() => {
-    window.dispatchEvent(e);
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowLeft", key: "ArrowLeft", altKey: true, cancelable: true }));
   });
-  expect(e.defaultPrevented).toBe(false);
+  expect(tab()).toMatchObject({ object: customers });
+});
+
+test("Alt+← on the structure view goes back in the tab history, not along the trail", () => {
+  useChrome.setState({ tableViews: { t1: "structure" } });
+  render(<Harness />);
+  act(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowLeft", key: "ArrowLeft", altKey: true, cancelable: true }));
+  });
+  expect(tab()).toMatchObject({ object: customers });
+  expect(useGridViews.getState().getTrail("t1")).toHaveLength(2);
 });
 
 test("a held Alt+← goes back once; its repeats are prevented", () => {

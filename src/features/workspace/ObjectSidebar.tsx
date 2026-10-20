@@ -220,7 +220,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
         run: () => {
           openTableTab(id, ref);
           const ws = useWorkspaces.getState().workspaces.find((w) => w.id === id);
-          if (ws?.activeTabId) useChrome.getState().requestTableView(ws.activeTabId, "structure");
+          if (ws?.activeTabId) useChrome.getState().setTableView(ws.activeTabId, "structure");
         },
       },
       copyName,

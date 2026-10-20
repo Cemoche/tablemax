@@ -72,7 +72,6 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "grid.rowDetails",
     "grid.viewData",
     "grid.viewStructure",
-    "grid.back",
     "font.increase",
     "font.decrease",
     "database.open",
@@ -82,6 +81,17 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "workspace.next",
     "sidebar.toggle",
     "sidebar.search",
+    "nav.back",
+    "nav.forward",
+    "tab.goto1",
+    "tab.goto2",
+    "tab.goto3",
+    "tab.goto4",
+    "tab.goto5",
+    "tab.goto6",
+    "tab.goto7",
+    "tab.goto8",
+    "tab.goto9",
 ];
 /// At most this many keymap entries are kept (defensive: one per known id fits well below).
 pub const KEYMAP_MAX_ENTRIES: usize = 64;

@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
 import { tableInfo } from "../../test/tableInfo";
 import type { DataGridProps } from "./DataGrid";
+import { useNavigationShortcuts } from "../workspace/navigation";
 import { TableDataTab } from "./TableDataTab";
 
 vi.mock("../../lib/ipc");
@@ -78,7 +79,7 @@ beforeEach(() => {
     epoch: {},
   });
   useSettings.setState({ settings: DEFAULT_SETTINGS });
-  useChrome.setState({ rowDetails: {}, reloads: {}, previews: {}, paletteRequest: null });
+  useChrome.setState({ rowDetails: {}, reloads: {}, previews: {}, paletteRequest: null, tableViews: {} });
   vi.mocked(ipc.tableInfo).mockResolvedValue(tableInfo());
   vi.mocked(ipc.changesPreview).mockResolvedValue([]);
 });
@@ -581,8 +582,10 @@ function setTab() {
     activeWorkspaceId: "w1",
   });
 }
+/** The store's tab t1, with the workspace's Back / Forward keys (Alt+← follows the trail). */
 function StoreTab() {
   const tab = useWorkspaces((s) => s.workspaces[0].tabs[0]);
+  useNavigationShortcuts("w1", true);
   if (tab.kind !== "table") return null;
   return <TableDataTab workspaceId="w1" tabId="t1" object={tab.object} dialect="postgres" />;
 }
@@ -1377,4 +1380,20 @@ test("the toolbar's Reload and row details buttons act on the tab", async () => 
   // Closed again when the tab goes away (as before: the panel starts closed).
   unmount();
   expect(useChrome.getState().rowDetails.t1).toBeFalsy();
+});
+
+test("a tab keeps Structure when it is shown again (a workspace or tab switch unmounts it)", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  const first = render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await screen.findByTestId("grid");
+  await userEvent.click(screen.getByRole("tab", { name: strings.grid.view.structure }));
+  first.unmount();
+  // Another tab of the same kind shows its own view (Data by default).
+  const other = render(<TableDataTab workspaceId="w1" tabId="t2" object={obj} dialect="postgres" />);
+  expect(screen.getByRole("tab", { name: strings.grid.view.data })).toHaveAttribute("aria-selected", "true");
+  other.unmount();
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByTestId("structure")).toBeVisible();
 });

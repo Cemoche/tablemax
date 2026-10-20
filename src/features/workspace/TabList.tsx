@@ -1,9 +1,10 @@
+import { ChevronDown } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { tabKindLabel, tabSchema } from "./tabInfo";
 
-/** "▾" button at the end of the tab bar: a filterable list of every tab. */
+/** The ⌄ button at the end of the tab bar: a filterable list of every tab. */
 export function TabList({ workspace }: { workspace: Workspace }) {
   const activateTab = useWorkspaces((s) => s.activateTab);
   const [open, setOpen] = useState(false);
@@ -67,12 +68,12 @@ export function TabList({ workspace }: { workspace: Workspace }) {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => (open ? close() : setOpen(true))}
-        className="h-full px-3 hover:bg-surface-2"
+        className="flex size-7 items-center justify-center rounded-md text-icon outline-none hover:bg-tab focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
       >
-        {strings.workspace.tabListIcon}
+        <ChevronDown aria-hidden="true" size={16} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-40 w-72 rounded-md border border-border bg-surface shadow-lg">
+        <div className="absolute right-0 top-full z-40 mt-1 w-72 rounded-lg border border-pill-border bg-pill text-text shadow-lg">
           <input
             type="search"
             aria-label={strings.workspace.tabListFilter}
@@ -86,10 +87,10 @@ export function TabList({ workspace }: { workspace: Workspace }) {
             onKeyDown={onKeyDown}
             aria-controls={listId}
             aria-activedescendant={shown[hi] ? `${listId}-${shown[hi].id}` : undefined}
-            className="w-full rounded-t-md border-b border-border bg-bg px-2 py-1"
+            className="w-full rounded-t-lg border-b border-pill-border bg-search px-2 py-1 text-text"
           />
           {shown.length === 0 ? (
-            <p className="p-2 text-muted">{strings.workspace.tabListEmpty}</p>
+            <p className="p-2 text-text-2">{strings.workspace.tabListEmpty}</p>
           ) : (
             <ul
               id={listId}
@@ -108,13 +109,13 @@ export function TabList({ workspace }: { workspace: Workspace }) {
                   onKeyDown={onKeyDown}
                   onMouseMove={() => setHi(i)}
                   className={`flex cursor-pointer items-center justify-between gap-2 px-3 py-1 ${
-                    i === hi ? "bg-surface-2" : ""
+                    i === hi ? "bg-accent text-accent-contrast" : ""
                   }`}
                 >
                   <span className={`truncate ${t.kind === "table" && t.preview ? "italic" : ""}`}>
                     {t.title}
                   </span>
-                  <span className="shrink-0 text-xs text-muted">
+                  <span className={`shrink-0 text-xs ${i === hi ? "" : "text-text-2"}`}>
                     {tabKindLabel(t)}
                     {tabSchema(t) && ` · ${tabSchema(t)}`}
                   </span>

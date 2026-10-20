@@ -128,3 +128,18 @@ test("the status pill text is readable on every connection color and in every st
     }
   }
 });
+
+test("tab text is readable on the capsules in both themes (ruling R3: surfaces unchanged)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = values(selector);
+    const ratio = (fg: string, bg: string) => contrastRatio(v[fg], v[bg]);
+    // Inactive capsules: --tab-text on --tab. The active capsule (--tab-sel) shows --text,
+    // and its database badge inherits it.
+    expect(ratio("--tab-text", "--tab"), `${selector} tab-text on tab`).toBeGreaterThanOrEqual(4.5);
+    expect(ratio("--text", "--tab-sel"), `${selector} text on tab-sel`).toBeGreaterThanOrEqual(4.5);
+    expect(ratio("--text", "--tab"), `${selector} text on tab (hover)`).toBeGreaterThanOrEqual(4.5);
+  }
+  // The light §5.1 surfaces stay as they were.
+  expect(values(LIGHT)["--tab"]).toBe("#DCDCDC");
+  expect(values(LIGHT)["--tab-sel"]).toBe("#FFFFFF");
+});

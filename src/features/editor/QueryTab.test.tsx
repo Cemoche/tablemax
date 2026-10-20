@@ -692,3 +692,14 @@ test("the Save button names the effective shortcut; History and Saved queries le
   expect(screen.queryByRole("complementary", { name: strings.history.label })).toBeNull();
   expect(screen.queryByRole("region", { name: strings.savedQueries.label })).toBeNull();
 });
+
+test("Ctrl+[ / Ctrl+] in the editor are left to the tab shortcuts: they do not indent", async () => {
+  editorMode.real = true;
+  await setup("select 1");
+  const view = editorView();
+  press(view, { key: "]", code: "BracketRight", keyCode: 221, ctrlKey: true });
+  expect(view.state.doc.toString()).toBe("select 1");
+  act(() => view.dispatch({ changes: { from: 0, insert: "  " } }));
+  press(view, { key: "[", code: "BracketLeft", keyCode: 219, ctrlKey: true });
+  expect(view.state.doc.toString()).toBe("  select 1");
+});

@@ -391,3 +391,30 @@ test("a query tab keeps the database its session was opened on through the snaps
   await restoreSession();
   expect(state().workspaces[0].tabs[0]).toMatchObject({ kind: "query", database: "old", sqlSessionId: null });
 });
+
+// ---- Task 4: a renamed table tab ----
+
+test("a renamed table tab keeps its name through the snapshot (optional field)", async () => {
+  const users = { schema: "public", name: "users" };
+  const w = workspace({
+    tabs: [
+      { id: "t1", kind: "table", object: users, title: "People", preview: false },
+      { id: "t2", kind: "table", object: { schema: "public", name: "orders" }, title: "orders", preview: true },
+    ],
+    activeTabId: "t1",
+    mru: ["t1", "t2"],
+  });
+  const s = snapshot({ workspaces: [w], activeWorkspaceId: "w1" });
+  expect(s.workspaces[0].tabs).toEqual([
+    { kind: "table", object: users, preview: false, title: "People" },
+    // Not renamed: the shape of earlier versions.
+    { kind: "table", object: { schema: "public", name: "orders" }, preview: true },
+  ]);
+  expect(parseSnapshot(JSON.stringify(s))).toEqual(s);
+  const bad = JSON.parse(JSON.stringify(s));
+  bad.workspaces[0].tabs[0].title = 3;
+  expect(parseSnapshot(JSON.stringify(bad))).toBeNull();
+  vi.mocked(ipc.sessionLoad).mockResolvedValue(JSON.stringify(s));
+  await restoreSession();
+  expect(state().workspaces[0].tabs.map((t) => t.title)).toEqual(["People", "orders"]);
+});

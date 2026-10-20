@@ -174,7 +174,7 @@ function TableDataView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} shortcut={active} />
+      <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} />
       <FilterBar dialect={dialect} columns={columns} filters={t.filters} onApply={t.setFilters} />
       {t.error && (
         <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger">

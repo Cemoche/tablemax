@@ -16,7 +16,8 @@ import { useConnections } from "./connections";
 import { type Tab, type Workspace, useWorkspaces } from "./workspaces";
 
 export type SessionTab =
-  | { kind: "table"; object: ObjectRef; preview: boolean }
+  /** `title` (optional, Task 4): the name the user gave the tab, when not the table's. */
+  | { kind: "table"; object: ObjectRef; preview: boolean; title?: string }
   /**
    * `savedName` (optional, Plan 4 Task 8): the saved query the tab is linked to.
    * `database` (optional, Plan 4 review): the database its SQL session was opened on.
@@ -61,7 +62,12 @@ export function snapshot(state: {
       tabs: w.tabs.map(
         (t): SessionTab =>
           t.kind === "table"
-            ? { kind: "table", object: { schema: t.object.schema, name: t.object.name }, preview: t.preview }
+            ? {
+                kind: "table",
+                object: { schema: t.object.schema, name: t.object.name },
+                preview: t.preview,
+                ...(t.title !== t.object.name ? { title: t.title } : {}),
+              }
             : {
                 kind: "query",
                 title: t.title,
@@ -93,7 +99,13 @@ function parseTab(v: unknown): SessionTab | null {
     const o = v.object;
     if (!isObj(o) || !isStrOrNull(o.schema) || typeof o.name !== "string") return null;
     if (typeof v.preview !== "boolean") return null;
-    return { kind: "table", object: { schema: o.schema, name: o.name }, preview: v.preview };
+    if (v.title !== undefined && typeof v.title !== "string") return null;
+    return {
+      kind: "table",
+      object: { schema: o.schema, name: o.name },
+      preview: v.preview,
+      ...(typeof v.title === "string" ? { title: v.title } : {}),
+    };
   }
   if (v.kind === "query") {
     if (typeof v.title !== "string" || typeof v.sql !== "string") return null;
@@ -166,7 +178,13 @@ function restoredWorkspaces(snap: SessionSnapshot): { workspaces: Workspace[]; a
     const tabs = sw.tabs.map(
       (t): Tab =>
         t.kind === "table"
-          ? { id: crypto.randomUUID(), kind: "table", object: t.object, title: t.object.name, preview: t.preview }
+          ? {
+              id: crypto.randomUUID(),
+              kind: "table",
+              object: t.object,
+              title: t.title?.trim() ? t.title : t.object.name,
+              preview: t.preview,
+            }
           : {
               id: crypto.randomUUID(),
               kind: "query",

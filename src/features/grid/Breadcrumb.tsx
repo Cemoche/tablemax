@@ -1,11 +1,11 @@
 import { Fragment } from "react";
-import { useAction, useEffectiveShortcut } from "../../lib/keymap";
+import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { formatQuickFilter } from "../../lib/quickFilter";
 import { strings } from "../../lib/strings";
 import type { Filter, ObjectRef } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
-import { back, backTo } from "./tableNavigation";
+import { backTo } from "./tableNavigation";
 
 interface Props {
   workspaceId: string;
@@ -13,26 +13,17 @@ interface Props {
   /** What the tab shows now (the last item). */
   object: ObjectRef;
   filters: Filter[];
-  /** Alt+← goes back only while the data view is shown (default true). */
-  shortcut?: boolean;
 }
 
 /**
  * The foreign keys followed in a table tab, `orders › customers (id = 42)`: an earlier item
- * goes back to that table exactly as it was; `grid.back` (Alt+←) goes back one step (not
- * while typing in a field, where it moves the caret on macOS). Nothing is shown with an
- * empty trail.
+ * goes back to that table exactly as it was; the workspace's Back (`nav.back`, Alt+←, see
+ * features/workspace/navigation) goes back one step first. Nothing is shown with an empty
+ * trail.
  */
-export function Breadcrumb({ workspaceId, tabId, object, filters, shortcut = true }: Props) {
+export function Breadcrumb({ workspaceId, tabId, object, filters }: Props) {
   const trail = useGridViews((s) => s.trails[tabId]) ?? [];
-  const backShortcut = useEffectiveShortcut("grid.back");
-
-  // Capture: the grid handles arrow keys itself. Without a trail the keys are left alone.
-  useAction("grid.back", () => back(workspaceId, tabId), {
-    capture: true,
-    skipInEditable: true,
-    enabled: shortcut && trail.length > 0,
-  });
+  const backShortcut = useEffectiveShortcut("nav.back");
 
   if (trail.length === 0) return null;
   const crumb = (o: ObjectRef, f: Filter[]) => strings.grid.trail.crumb(o.name, formatQuickFilter(f));

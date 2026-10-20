@@ -18,6 +18,7 @@
   --color-sel: var(--sel);
   --color-tab: var(--tab);
   --color-tab-sel: var(--tab-sel);
+  --color-tab-text: var(--tab-text);
   --color-grid-head: var(--grid-head);
   --color-head-text: var(--head-text);
   --color-row-a: var(--row-a);

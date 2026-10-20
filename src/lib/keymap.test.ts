@@ -7,6 +7,7 @@ import {
   KEYMAP_ACTIONS,
   type KeymapActionId,
   conflictAnywhere,
+  alternateShortcuts,
   conflictFor,
   effectiveShortcut,
   effectiveShortcuts,
@@ -44,7 +45,6 @@ test("the defaults are the combinations the code binds today", () => {
     "grid.rowDetails": "Mod+I",
     "grid.viewData": "Alt+1",
     "grid.viewStructure": "Alt+2",
-    "grid.back": "Alt+ArrowLeft",
     "font.increase": "Mod+=",
     "font.decrease": "Mod+-",
     "database.open": "Mod+K",
@@ -54,6 +54,17 @@ test("the defaults are the combinations the code binds today", () => {
     "workspace.next": "Mod+Shift+]",
     "sidebar.toggle": "Mod+0",
     "sidebar.search": "Mod+Shift+F",
+    "nav.back": "Alt+ArrowLeft",
+    "nav.forward": "Alt+ArrowRight",
+    "tab.goto1": "Mod+1",
+    "tab.goto2": "Mod+2",
+    "tab.goto3": "Mod+3",
+    "tab.goto4": "Mod+4",
+    "tab.goto5": "Mod+5",
+    "tab.goto6": "Mod+6",
+    "tab.goto7": "Mod+7",
+    "tab.goto8": "Mod+8",
+    "tab.goto9": "Mod+9",
   });
   const scope = (id: KeymapActionId) => KEYMAP_ACTIONS.find((a) => a.id === id)?.scope;
   expect(scope("query.new")).toBe("global");
@@ -62,7 +73,12 @@ test("the defaults are the combinations the code binds today", () => {
   expect(scope("history.toggle")).toBe("global");
   expect(scope("editor.format")).toBe("editor");
   expect(scope("grid.commit")).toBe("tableTab");
-  expect(scope("grid.back")).toBe("tableTab");
+  // Task 4: Alt+← / Alt+→ walk the workspace's history (and first the foreign key trail of a
+  // table tab, which `grid.back` did alone before).
+  expect(scope("nav.back")).toBe("global");
+  expect(scope("nav.forward")).toBe("global");
+  expect(scope("tab.goto1")).toBe("global");
+  expect(isKeymapActionId("grid.back")).toBe(false);
   expect(scope("font.increase")).toBe("global");
   expect(scope("font.decrease")).toBe("global");
   expect(scope("database.open")).toBe("global");
@@ -94,6 +110,18 @@ test("workspace_shortcuts_cycle: the workspace actions also answer to Mod+Shift+
   // An alternate is taken like a default: nothing else may use it.
   expect(conflictFor("query.new", "Mod+Shift+PageUp", {}, false)).toBe("workspace.previous");
   expect(conflictFor("query.new", "Mod+Shift+PageUp", { "workspace.previous": "Alt+P" }, false)).toBeNull();
+});
+
+test("ctrl_brackets_and_pageup_cycle_tabs: the tab actions also answer to Mod+[ / ] and Mod+PageUp / PageDown", () => {
+  expect(effectiveShortcuts("tab.previous", {})).toEqual(["Ctrl+Shift+Tab", "Mod+[", "Mod+PageUp"]);
+  expect(effectiveShortcuts("tab.next", {})).toEqual(["Ctrl+Tab", "Mod+]", "Mod+PageDown"]);
+  expect(alternateShortcuts("tab.next", {})).toEqual(["Mod+]", "Mod+PageDown"]);
+  // A custom combination replaces the alternates as well.
+  expect(alternateShortcuts("tab.next", { "tab.next": "Alt+N" })).toEqual([]);
+  expect(alternateShortcuts("tab.next", { "tab.next": "nonsense" })).toEqual(["Mod+]", "Mod+PageDown"]);
+  // Without Shift, Mod+[ is not the previous workspace (Mod+Shift+[).
+  expect(conflictFor("workspace.previous", "Mod+Shift+[", {}, false)).toBeNull();
+  expect(conflictFor("query.new", "Mod+[", {}, false)).toBe("tab.previous");
 });
 
 test("useAction binds every effective combination of an action", () => {

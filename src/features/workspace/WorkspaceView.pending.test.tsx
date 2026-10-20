@@ -9,6 +9,13 @@ import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { CloseConfirm } from "./CloseConfirm";
 import { WorkspaceView } from "./WorkspaceView";
 
+/** A capsule's close button (mouse only, hidden from assistive tech). */
+const closeButtonOf = (tabName: string) =>
+  screen
+    .getByRole("tab", { name: tabName })
+    .closest("[data-tab-id]")
+    ?.querySelector<HTMLButtonElement>('button[aria-hidden="true"]') as HTMLButtonElement;
+
 vi.mock("../../lib/ipc");
 vi.mock("./ObjectSidebar", () => ({ ObjectSidebar: () => <div /> }));
 vi.mock("../grid/TableDataTab", () => ({ TableDataTab: () => <div data-testid="table-tab" /> }));
@@ -108,12 +115,12 @@ test("closing a tab with pending changes asks to discard them", async () => {
   usePendingChanges.getState().addInsert("t1", object);
   usePendingChanges.getState().addInsert("t1", object);
   render(<View />);
-  await userEvent.click(screen.getByRole("button", { name: strings.workspace.closeTab("users") }));
+  await userEvent.click(closeButtonOf("users"));
   const dialog = await screen.findByRole("dialog", { name: strings.grid.discardTitle });
   expect(dialog).toHaveTextContent(strings.grid.discardConfirm(2));
   await userEvent.click(screen.getByRole("button", { name: strings.grid.discardCancel }));
   expect(current().tabs).toHaveLength(2);
-  await userEvent.click(screen.getByRole("button", { name: strings.workspace.closeTab("users") }));
+  await userEvent.click(closeButtonOf("users"));
   await userEvent.click(await screen.findByRole("button", { name: strings.grid.discardOk }));
   expect(current().tabs.map((t) => t.id)).toEqual(["q1"]);
   expect(usePendingChanges.getState().count("t1")).toBe(0);
@@ -146,7 +153,7 @@ test("while a commit runs the tab's close button waits (Committing…)", async (
   usePendingChanges.getState().addInsert("t1", object);
   usePendingChanges.setState({ committing: { t1: true } });
   render(<View />);
-  const close = screen.getByRole("button", { name: strings.workspace.closeTab("users") });
+  const close = closeButtonOf("users");
   expect(close).toBeDisabled();
   expect(close).toHaveAttribute("title", strings.grid.closeWhileCommitting);
   await userEvent.keyboard("{Control>}w{/Control}");
