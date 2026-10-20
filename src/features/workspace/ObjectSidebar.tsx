@@ -21,7 +21,7 @@ import { useChrome, useOnRequest } from "../../stores/chrome";
 import { useSettings } from "../../stores/settings";
 import { useSidebar } from "../../stores/sidebar";
 import { type Workspace, capabilitiesOf, sqlDialect, useWorkspaces } from "../../stores/workspaces";
-import { ContextMenu, type MenuAnchor, type MenuItem } from "../sidebar/ContextMenu";
+import { ContextMenu, type MenuAnchor, type MenuItem, restoreFocusOnClose } from "../sidebar/ContextMenu";
 import { ObjectIcon } from "../sidebar/ObjectIcon";
 import { SidebarSearch, nameMatches } from "../sidebar/SidebarSearch";
 import { copyText } from "../sidebar/sqlActions";
@@ -62,7 +62,10 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
   const [query, setQuery] = useState("");
   const [reload, setReload] = useState(0);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  /** The open menu, and the row it came from (the focus goes back there on close). */
+  /**
+   * The open menu, and the row it came from by key (its index as a fallback): the focus
+   * goes back to that row on close, even if the rows moved meanwhile.
+   */
   const [menu, setMenu] = useState<{ entry: Entry; anchor: MenuAnchor; row: number } | null>(null);
   /** The row last clicked; until another tab is shown, it wins over the active tab's object. */
   const [selected, setSelected] = useState<string | null>(null);
@@ -272,9 +275,10 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
           label={S.menuLabel}
           anchor={menu.anchor}
           items={menuItems(menu.entry)}
-          onClose={() => {
+          onClose={(reason) => {
             setMenu(null);
-            tree.current?.focusRow(menu.row);
+            const { entry, row } = menu;
+            restoreFocusOnClose(reason, () => tree.current?.focusKey(entryKey(entry), row));
           }}
         />
       )}
@@ -284,8 +288,11 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
 
 /** What the Items tab asks of its tree. */
 export interface TreeApi {
-  /** Focuses row `n`, scrolled into view (rendered first if needed). */
-  focusRow: (n: number) => void;
+  /**
+   * Focuses the row with key `key` (an `entryKey`), else row `fallback` (clamped), scrolled
+   * into view (rendered first if needed).
+   */
+  focusKey: (key: string, fallback: number) => void;
 }
 
 interface TreeProps {
@@ -343,8 +350,11 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(FALLBACK_VIEWPORT);
-  /** The row that last had the focus; the Tab stop. */
-  const [focused, setFocused] = useState<number | null>(null);
+  /**
+   * The row that last had the focus (the Tab stop), by key so a search, a collapse or a
+   * refresh keeps it on the same row; its index then, for when the key is gone.
+   */
+  const [focused, setFocused] = useState<{ key: string; index: number } | null>(null);
   /** A row to focus once it is rendered (keys past the rendered ones). */
   const pendingFocus = useRef<number | null>(null);
   const meta = useMemo(() => rowMeta(rows), [rows]);
@@ -359,9 +369,20 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
     return () => ro.disconnect();
   }, []);
 
-  const selectedIndex = rows.findIndex((r) => r.type !== "section" && entryKey(r) === selectedKey);
+  const indexOfKey = (key: string) => rows.findIndex((r) => rowKey(r) === key);
+  const clampRow = (n: number) => Math.max(0, Math.min(rows.length - 1, n));
+  const selectedIndex = selectedKey === null ? -1 : indexOfKey(selectedKey);
+  const focusedIndex = focused ? indexOfKey(focused.key) : -1;
   const tabStop =
-    rows.length === 0 ? -1 : Math.min(rows.length - 1, focused ?? (selectedIndex >= 0 ? selectedIndex : 0));
+    rows.length === 0
+      ? -1
+      : focusedIndex >= 0
+        ? focusedIndex
+        : focused
+          ? clampRow(focused.index)
+          : selectedIndex >= 0
+            ? selectedIndex
+            : 0;
 
   const first = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
   const last = Math.min(rows.length, Math.ceil((scrollTop + viewport) / rowHeight) + OVERSCAN);
@@ -384,8 +405,8 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
   const focusRow = (wanted: number) => {
     const el = scroller.current;
     if (!el || rows.length === 0) return;
-    const n = Math.max(0, Math.min(rows.length - 1, wanted));
-    setFocused(n);
+    const n = clampRow(wanted);
+    setFocused({ key: rowKey(rows[n]), index: n });
     const top = n * rowHeight;
     if (top < el.scrollTop) el.scrollTop = top;
     else if (top + rowHeight > el.scrollTop + viewport) el.scrollTop = top + rowHeight - viewport;
@@ -398,7 +419,18 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
   };
   const focusRef = useRef(focusRow);
   focusRef.current = focusRow;
-  useImperativeHandle(apiRef, () => ({ focusRow: (n) => focusRef.current(n) }), []);
+  const keyIndexRef = useRef(indexOfKey);
+  keyIndexRef.current = indexOfKey;
+  useImperativeHandle(
+    apiRef,
+    () => ({
+      focusKey: (key, fallback) => {
+        const n = keyIndexRef.current(key);
+        focusRef.current(n >= 0 ? n : fallback);
+      },
+    }),
+    [],
+  );
 
   const menuAt = (row: Entry, index: number, el: HTMLElement) => {
     const r = el.getBoundingClientRect();
@@ -467,7 +499,7 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
       "aria-setsize": m.setSize,
       "aria-posinset": m.posInSet,
       tabIndex: index === tabStop ? 0 : -1,
-      onFocus: () => setFocused(index),
+      onFocus: () => setFocused({ key: rowKey(row), index }),
       style: { top: index * rowHeight, height: rowHeight },
     } as const;
     if (row.type === "section") {

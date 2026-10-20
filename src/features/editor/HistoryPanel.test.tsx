@@ -210,7 +210,29 @@ test("the menu gives the focus back to its entry on Escape or a press outside", 
   await openMenu(/select 5/);
   fireEvent.mouseDown(document.body);
   expect(screen.queryByRole("menu")).toBeNull();
-  expect(screen.getByRole("button", { name: /select 5/ })).toHaveFocus();
+  await waitFor(() => expect(screen.getByRole("button", { name: /select 5/ })).toHaveFocus());
+});
+
+test("a press outside on something that takes the focus leaves the focus there", async () => {
+  vi.mocked(ipc.historyList).mockResolvedValue([entry({ sql: "select 5" })]);
+  render(
+    <>
+      <HistoryPanel workspace={workspace} />
+      <input
+        aria-label="editor stand-in"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.currentTarget.focus();
+        }}
+      />
+    </>,
+  );
+  await openMenu(/select 5/);
+  const editor = screen.getByRole("textbox", { name: "editor stand-in" });
+  fireEvent.mouseDown(editor);
+  expect(screen.queryByRole("menu")).toBeNull();
+  await act(() => new Promise((r) => setTimeout(r, 20)));
+  expect(editor).toHaveFocus();
 });
 
 test("Copy without a clipboard reports the failure", async () => {

@@ -4,7 +4,7 @@ import { strings } from "../../lib/strings";
 import type { HistoryEntry } from "../../lib/types";
 import { useChrome } from "../../stores/chrome";
 import type { Workspace } from "../../stores/workspaces";
-import { ContextMenu, type MenuAnchor, keyboardMenuAnchor } from "../sidebar/ContextMenu";
+import { ContextMenu, type MenuAnchor, keyboardMenuAnchor, restoreFocusOnClose } from "../sidebar/ContextMenu";
 import { SidebarSearch } from "../sidebar/SidebarSearch";
 import { copyText, insertSql, openSqlTab, runSqlInNewTab } from "../sidebar/sqlActions";
 import { ConfirmDialog } from "./Dialogs";
@@ -155,9 +155,12 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
           label={H.menuLabel}
           anchor={menu.anchor}
           items={menuItems(menu.entry)}
-          onClose={() => {
+          onClose={(reason) => {
             setMenu(null);
-            if (menu.trigger.isConnected) menu.trigger.focus();
+            const { trigger } = menu;
+            restoreFocusOnClose(reason, () => {
+              if (trigger.isConnected) trigger.focus();
+            });
           }}
         />
       )}

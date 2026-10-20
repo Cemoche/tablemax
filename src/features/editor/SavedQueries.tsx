@@ -5,7 +5,7 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import { useSavedQueries } from "../../stores/savedQueries";
 import { type Workspace } from "../../stores/workspaces";
-import { ContextMenu, type MenuAnchor, keyboardMenuAnchor } from "../sidebar/ContextMenu";
+import { ContextMenu, type MenuAnchor, keyboardMenuAnchor, restoreFocusOnClose } from "../sidebar/ContextMenu";
 import { SidebarSearch } from "../sidebar/SidebarSearch";
 import { copyText, insertSql, runActiveTab } from "../sidebar/sqlActions";
 import { ConfirmDialog, NameDialog } from "./Dialogs";
@@ -147,9 +147,12 @@ export function SavedQueries({ workspace }: { workspace: Workspace }) {
           label={S.menuLabel}
           anchor={menu.anchor}
           items={menuItems(menu.name)}
-          onClose={() => {
+          onClose={(reason) => {
             setMenu(null);
-            if (menu.trigger.isConnected) menu.trigger.focus();
+            const { trigger } = menu;
+            restoreFocusOnClose(reason, () => {
+              if (trigger.isConnected) trigger.focus();
+            });
           }}
         />
       )}

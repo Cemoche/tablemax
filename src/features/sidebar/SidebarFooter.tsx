@@ -4,7 +4,7 @@ import { strings } from "../../lib/strings";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome } from "../../stores/chrome";
 import { type Workspace, capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
-import { ContextMenu, type MenuAnchor } from "./ContextMenu";
+import { ContextMenu, type MenuAnchor, restoreFocusOnClose } from "./ContextMenu";
 
 const S = strings.sidebar;
 
@@ -83,9 +83,9 @@ export function SidebarFooter({ workspace }: { workspace: Workspace }) {
             ...(sqlEditor ? [{ label: S.newQuery, run: newQuery }] : []),
             { label: S.refresh, run: () => refreshSidebar(workspace) },
           ]}
-          onClose={() => {
+          onClose={(reason) => {
             setMenu(null);
-            more.current?.focus();
+            restoreFocusOnClose(reason, () => more.current?.focus());
           }}
         />
       )}

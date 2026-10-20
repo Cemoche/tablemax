@@ -12,6 +12,27 @@ export type MenuItem = MenuEntry | { heading: string };
 
 const isEntry = (i: MenuItem): i is MenuEntry => "run" in i;
 
+/** Why a menu closed. */
+export type MenuCloseReason = "escape" | "item" | "tab" | "outside";
+
+/**
+ * Gives the focus back to the menu's trigger: after Escape or an item; after a press
+ * outside only if nothing took the focus (the SQL editor and the grid focus themselves on
+ * mousedown, before the menu's document listener runs; a plain field takes it after the
+ * event), checked once the press is over. Tab lets the focus move on.
+ */
+export function restoreFocusOnClose(reason: MenuCloseReason, restore: () => void): void {
+  if (reason === "escape" || reason === "item") {
+    restore();
+    return;
+  }
+  if (reason !== "outside") return;
+  setTimeout(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body) restore();
+  }, 0);
+}
+
 /** Where a menu opens: the pointer, or under the focused row for the keyboard. */
 export interface MenuAnchor {
   x: number;
@@ -39,7 +60,7 @@ export function ContextMenu({
   label: string;
   anchor: MenuAnchor;
   items: MenuItem[];
-  onClose: () => void;
+  onClose: (reason: MenuCloseReason) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState(anchor);
@@ -60,10 +81,10 @@ export function ContextMenu({
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") closeRef.current();
+      if (e.key === "Escape") closeRef.current("escape");
     };
     const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) closeRef.current();
+      if (!ref.current?.contains(e.target as Node)) closeRef.current("outside");
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onDown);
@@ -80,7 +101,7 @@ export function ContextMenu({
     else if (e.key === "ArrowUp") els[(i - 1 + els.length) % els.length]?.focus();
     else if (e.key === "Home") els[0]?.focus();
     else if (e.key === "End") els[els.length - 1]?.focus();
-    else if (e.key === "Tab") onClose();
+    else if (e.key === "Tab") onClose("tab");
     else return;
     e.preventDefault();
   };
@@ -102,7 +123,7 @@ export function ContextMenu({
             role="menuitem"
             aria-label={item.ariaLabel}
             onClick={() => {
-              onClose();
+              onClose("item");
               item.run();
             }}
             className={`mx-1 rounded-md py-1 text-left outline-none hover:bg-accent hover:text-accent-contrast focus-visible:bg-accent focus-visible:text-accent-contrast ${item.indent ? "pr-3 pl-6" : "px-3"}`}

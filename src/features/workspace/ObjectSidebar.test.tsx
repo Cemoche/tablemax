@@ -168,11 +168,49 @@ test("the menu: Escape closes it and gives the focus back to its row, arrows mov
   await userEvent.keyboard("{Escape}");
   expect(screen.queryByRole("menu")).toBeNull();
   expect(screen.getByRole("treeitem", { name: "orders" })).toHaveFocus();
-  // A press outside closes it too, the focus goes back the same way.
+  // A press outside on nothing focusable closes it too, the focus goes back the same way.
   await openMenu(/Accounts/);
   fireEvent.mouseDown(document.body);
   expect(screen.queryByRole("menu")).toBeNull();
-  expect(screen.getByRole("treeitem", { name: "Accounts" })).toHaveFocus();
+  await waitFor(() => expect(screen.getByRole("treeitem", { name: "Accounts" })).toHaveFocus());
+});
+
+/** Stands for the SQL editor or the grid: they focus themselves on mousedown (preventDefault). */
+const SelfFocusing = () => (
+  <input
+    aria-label="editor stand-in"
+    onMouseDown={(e) => {
+      e.preventDefault();
+      e.currentTarget.focus();
+    }}
+  />
+);
+
+test("a press outside on something that takes the focus leaves the focus there", async () => {
+  render(
+    <>
+      <ObjectSidebar workspace={workspace} />
+      <SelfFocusing />
+    </>,
+  );
+  await openMenu(/orders/);
+  const editor = screen.getByRole("textbox", { name: "editor stand-in" });
+  fireEvent.mouseDown(editor);
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(editor).toHaveFocus();
+  await act(() => new Promise((r) => setTimeout(r, 20)));
+  expect(editor).toHaveFocus();
+});
+
+test("the focus goes back to the same object after the rows moved under the open menu", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  await openMenu(/active_users/);
+  // The rows shift while the menu is open (Accounts and orders go away).
+  fireEvent.change(screen.getByRole("searchbox", { name: S.searchLabel }), { target: { value: "user" } });
+  expect(names()).toEqual(["users", "active_users"]);
+  await userEvent.keyboard("{Escape}");
+  expect(item("active_users")).toHaveFocus();
+  expect(item("active_users").tabIndex).toBe(0);
 });
 
 test("Shift+F10 opens the menu of the focused row", async () => {
@@ -404,6 +442,26 @@ test("the tree is a single Tab stop (roving tabindex)", async () => {
   expect(T()).not.toContainElement(document.activeElement as HTMLElement);
   await userEvent.tab({ shift: true });
   expect(item("users")).toHaveFocus();
+});
+
+test("the Tab stop stays rendered once, at its place, when it is scrolled out of view", async () => {
+  vi.mocked(ipc.objectsList).mockResolvedValue(
+    Array.from({ length: 5000 }, (_, i) => ({ schema: "public", name: `t${String(i).padStart(4, "0")}`, kind: "table" as const })),
+  );
+  vi.mocked(ipc.routinesList).mockResolvedValue([]);
+  render(<ObjectSidebar workspace={workspace} />);
+  const first = await screen.findByRole("treeitem", { name: "t0000" });
+  first.focus();
+  const scroller = T();
+  scroller.scrollTop = 5001 * 24;
+  fireEvent.scroll(scroller);
+  expect(await screen.findByRole("treeitem", { name: "t4999" })).toBeInTheDocument();
+  const copies = within(scroller).getAllByRole("treeitem", { name: "t0000" });
+  expect(copies).toHaveLength(1);
+  expect(copies[0].tabIndex).toBe(0);
+  // t0000 is the second row (after the Tables header).
+  expect(copies[0].style.top).toBe("24px");
+  expect(names().length).toBeLessThan(100);
 });
 
 test("arrow keys, Home and End move between the rows", async () => {

@@ -296,3 +296,21 @@ test("Copy without a clipboard reports the failure", async () => {
   await userEvent.click(within(await openMenu("users")).getByRole("menuitem", { name: Q.copy }));
   expect(await screen.findByRole("alert")).toHaveTextContent(S.actionFailed(strings.sidebar.clipboardUnavailable));
 });
+
+test("a press outside: on nothing focusable the focus goes back, on a focusable element it stays there", async () => {
+  await setupPanel({}, [sq("users")]);
+  await openMenu("users");
+  fireEvent.mouseDown(document.body);
+  await waitFor(() => expect(screen.getByRole("button", { name: S.open("users") })).toHaveFocus());
+  // The SQL editor stand-in focuses itself on mousedown.
+  const editor = screen.getByRole("textbox", { name: "SQL editor" });
+  editor.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    editor.focus();
+  });
+  await openMenu("users");
+  fireEvent.mouseDown(editor);
+  expect(screen.queryByRole("menu")).toBeNull();
+  await act(() => new Promise((r) => setTimeout(r, 20)));
+  expect(editor).toHaveFocus();
+});
