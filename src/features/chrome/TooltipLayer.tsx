@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { TIP_ATTR, TIP_KEY_ATTR } from "../../lib/tooltip";
+import { TIP_ATTR, TIP_KEY_ATTR, TIP_OVERFLOW_ATTR } from "../../lib/tooltip";
 
 /** Hover time before a tooltip shows. */
 export const TOOLTIP_DELAY_MS = 300;
@@ -24,6 +24,13 @@ interface Shown {
 
 function anchorOf(target: EventTarget | null): HTMLElement | null {
   return target instanceof Element ? target.closest<HTMLElement>(`[${TIP_ATTR}]`) : null;
+}
+
+/** Is `el`, or an element inside it, cut (its content wider or taller than its box)? */
+function isCut(el: HTMLElement): boolean {
+  const cut = (e: Element) =>
+    e instanceof HTMLElement && (e.scrollWidth > e.clientWidth || e.scrollHeight > e.clientHeight);
+  return cut(el) || [...el.querySelectorAll("*")].some(cut);
 }
 
 function reducedMotion(): boolean {
@@ -80,7 +87,6 @@ export function TooltipLayer() {
     const hide = (warm: boolean) => {
       cancel();
       if (!current) return;
-      removeDescribedBy(current, id);
       current = null;
       fromFocus = false;
       if (warm) warmUntil = Date.now() + TOOLTIP_WARM_MS;
@@ -90,10 +96,10 @@ export function TooltipLayer() {
       cancel();
       const label = anchor.getAttribute(TIP_ATTR);
       if (!label) return;
-      if (current && current !== anchor) removeDescribedBy(current, id);
+      // A name's tooltip: only while it is cut.
+      if (anchor.hasAttribute(TIP_OVERFLOW_ATTR) && !isCut(anchor)) return;
       current = anchor;
       fromFocus = focus;
-      addDescribedBy(anchor, id);
       setShown({ anchor, label, shortcut: anchor.getAttribute(TIP_KEY_ATTR) || null, instant });
     };
 
@@ -129,6 +135,9 @@ export function TooltipLayer() {
         return;
       }
       navKey = NAV_KEYS.has(e.key);
+      // Only for the focus move this key makes now: an arrow that moves nothing (a caret, a
+      // list end) must not make a later programmatic focus look like a keyboard one.
+      if (navKey) setTimeout(() => (navKey = false), 0);
       if (!MODIFIERS.has(e.key)) hide(false);
     };
     const onFocusIn = (e: FocusEvent) => {
@@ -164,7 +173,6 @@ export function TooltipLayer() {
     window.addEventListener("blur", onAway);
     return () => {
       cancel();
-      if (current) removeDescribedBy(current, id);
       doc.removeEventListener("pointerover", onOver, true);
       doc.removeEventListener("mouseover", onOver, true);
       doc.removeEventListener("pointerout", onOut, true);
@@ -179,16 +187,13 @@ export function TooltipLayer() {
       window.removeEventListener("resize", onAway);
       window.removeEventListener("blur", onAway);
     };
-  }, [id]);
+  }, []);
 
   // Follows its control: a new label (a busy state), or gone with it.
   useEffect(() => {
     if (!shown) return;
     const { anchor } = shown;
-    const drop = () => {
-      removeDescribedBy(anchor, id);
-      setShown((s) => (s?.anchor === anchor ? null : s));
-    };
+    const drop = () => setShown((s) => (s?.anchor === anchor ? null : s));
     const attrs = new MutationObserver(() => {
       const label = anchor.getAttribute(TIP_ATTR);
       if (!label) return drop();
@@ -204,7 +209,15 @@ export function TooltipLayer() {
       attrs.disconnect();
       tree.disconnect();
     };
-  }, [shown, id]);
+  }, [shown]);
+
+  // Described by the tooltip once its node exists, until it goes.
+  const anchor = shown?.anchor ?? null;
+  useLayoutEffect(() => {
+    if (!anchor) return;
+    addDescribedBy(anchor, id);
+    return () => removeDescribedBy(anchor, id);
+  }, [anchor, id]);
 
   // Placement, before paint: below, else above; inside the window horizontally.
   useLayoutEffect(() => {

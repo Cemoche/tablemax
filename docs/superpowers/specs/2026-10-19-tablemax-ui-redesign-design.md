@@ -103,7 +103,9 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > [‹ | ⚙ | ›]. Barre de filtres : chaque ligne `[✓] [colonne] [opérateur] [valeur…] [Apply]
 > [−] [+]` ; une ligne de pied `[⚙] [Export] [SQL]`, les raccourcis (tirés du keymap
 > effectif), `[Clear] [Apply All ⌄]`, AND / OR dans le menu ⌄ ; `SQL` montre le WHERE de la
-> page avec ses paramètres (commande `filters_preview_sql`, jamais les valeurs) ; `Export`
+> page (commande `filters_preview_sql`) avec les valeurs écrites en littéraux du dialecte, avec
+> un bouton Copy — amendement 2026-10-20 (#109) : affichage seulement, ce texte n'est jamais
+> exécuté, la page lie toujours ses valeurs en paramètres ; `Export`
 > désactivé (pas d'export) ; Ctrl+↑ / Ctrl+↓ entre les lignes, Alt+C / Alt+O (⌘← / ⌘→ sur
 > macOS) vers la colonne / l'opérateur ; Échap masque la barre (les lignes tapées restent).
 > Le bandeau Commit / Discard au-dessus de la grille disparaît : la barre d'outils montre le

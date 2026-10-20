@@ -9,14 +9,26 @@
  */
 export const TIP_ATTR = "data-tooltip";
 export const TIP_KEY_ATTR = "data-tooltip-key";
+/** Show only when the element (or its text inside) is actually cut. */
+export const TIP_OVERFLOW_ATTR = "data-tooltip-overflow";
 
 export interface TipProps {
   "data-tooltip"?: string;
   "data-tooltip-key"?: string;
+  "data-tooltip-overflow"?: string;
 }
 
 /** The props that give an element a tooltip; nothing for an empty label. */
 export function tip(label: string | null | undefined, shortcut?: string | null): TipProps {
   if (!label) return {};
   return shortcut ? { [TIP_ATTR]: label, [TIP_KEY_ATTR]: shortcut } : { [TIP_ATTR]: label };
+}
+
+/**
+ * The tooltip of a name that may be cut (ellipsis or line clamp): it shows only while the
+ * text does not fit, to read it whole.
+ */
+export function tipIfCut(label: string | null | undefined): TipProps {
+  if (!label) return {};
+  return { [TIP_ATTR]: label, [TIP_OVERFLOW_ATTR]: "" };
 }

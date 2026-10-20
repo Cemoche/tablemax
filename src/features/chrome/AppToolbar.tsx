@@ -138,6 +138,7 @@ function WorkspaceTools({
     return table !== null && owner !== undefined && owner !== table.id;
   });
   const countId = useId();
+  const reasonId = useId();
   const editorOpen = usePendingChanges((s) => (table ? s.editorOpen[table.id] === true : false));
   const rowDetails = useChrome((s) => s.rowDetails[tableId] === true);
 
@@ -232,11 +233,18 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.commit}
-          aria-describedby={count > 0 ? countId : undefined}
+          aria-describedby={
+            [count > 0 ? countId : "", otherCommitting ? reasonId : ""].filter(Boolean).join(" ") || undefined
+          }
           {...(otherCommitting ? tip(strings.grid.otherTabCommitting) : commitHint)}
-          disabled={count === 0 || busy || outcomeUnknown || editorOpen || otherCommitting}
-          onClick={() => table && void usePendingChanges.getState().commit(table.id, workspace.id, table.object)}
-          className={`${iconButton} relative`}
+          // Waiting on another tab is a reason to read: focusable, does nothing (review #109).
+          aria-disabled={otherCommitting || undefined}
+          disabled={!otherCommitting && (count === 0 || busy || outcomeUnknown || editorOpen)}
+          onClick={() => {
+            if (otherCommitting || !table) return;
+            void usePendingChanges.getState().commit(table.id, workspace.id, table.object);
+          }}
+          className={`${iconButton} relative aria-disabled:text-icon-dim aria-disabled:hover:bg-transparent`}
         >
           <ListChecks aria-hidden {...ICON} />
           {count > 0 && (
@@ -252,6 +260,11 @@ function WorkspaceTools({
         {count > 0 && (
           <span id={countId} hidden>
             {strings.grid.pendingCount(count)}
+          </span>
+        )}
+        {otherCommitting && (
+          <span id={reasonId} hidden>
+            {strings.grid.otherTabCommitting}
           </span>
         )}
       </Group>

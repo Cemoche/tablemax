@@ -168,10 +168,11 @@ pub fn where_preview(
 }
 
 /// `p` as a SQL literal of `d`, as the engine would read it (display only, never executed):
-/// text between single quotes with quotes doubled; backslashes doubled on MySQL (escapes
-/// under its default sql_mode) and, on PostgreSQL, an `E''` literal when the text has one
-/// (so the reading does not depend on standard_conforming_strings); bytes as `X'…'`
-/// (PostgreSQL: the `\x…` bytea text).
+/// text between single quotes with quotes doubled; backslashes doubled on MySQL, which
+/// assumes its default sql_mode (under `NO_BACKSLASH_ESCAPES` a backslash is a plain
+/// character and the copied text would hold two); on PostgreSQL an `E''` literal when the
+/// text has a backslash (so the reading does not depend on standard_conforming_strings);
+/// bytes as `X'…'` (PostgreSQL: the `\x…` bytea text).
 pub(super) fn display_literal(d: Dialect, p: &SqlParam) -> String {
     match p {
         SqlParam::Text(s) => {
@@ -348,6 +349,10 @@ impl Builder {
     /// A value compared with (or written to) a column whose type without modifier is
     /// `base_type`.
     pub(super) fn typed(&mut self, v: &str, base_type: &str) -> String {
+        if self.display && self.d == Dialect::Postgres {
+            let lit = self.bind(v);
+            return pg_display_typed(v, base_type, lit);
+        }
         let p = self.bind(v);
         match self.d {
             Dialect::Postgres => format!("CAST({p}::text AS {base_type})"),
@@ -540,6 +545,37 @@ impl Builder {
             return Ok(format!("({empty})"));
         }
         Ok(format!("({})", parts.join(join)))
+    }
+}
+
+/// How the preview shows `v` compared with a PostgreSQL column of type `base_type`, `lit`
+/// being its text literal: as one would write it by hand rather than the page's
+/// `CAST($n::text AS type)`. Text types: the literal; integers and numeric: the bare number
+/// when `v` is one; booleans: TRUE / FALSE; anything else, floats included (a bare 0.1 is a
+/// numeric): `'lit'::type`. The page itself still binds text and casts it.
+fn pg_display_typed(v: &str, base_type: &str, lit: String) -> String {
+    let t = base_type.trim().to_ascii_lowercase();
+    match t.as_str() {
+        "text" | "varchar" | "character varying" | "bpchar" | "char" | "character" | "name"
+        | "citext" => lit,
+        "smallint" | "integer" | "bigint" | "int2" | "int4" | "int8" | "numeric" | "decimal"
+            if is_plain_number(v) =>
+        {
+            v.to_string()
+        }
+        "boolean" | "bool" if v.eq_ignore_ascii_case("true") => "TRUE".into(),
+        "boolean" | "bool" if v.eq_ignore_ascii_case("false") => "FALSE".into(),
+        _ => format!("{lit}::{base_type}"),
+    }
+}
+
+/// `^-?\d+(\.\d+)?$`
+fn is_plain_number(v: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let v = v.strip_prefix('-').unwrap_or(v);
+    match v.split_once('.') {
+        Some((int, frac)) => digits(int) && digits(frac),
+        None => digits(v),
     }
 }
 
@@ -1235,7 +1271,8 @@ mod tests {
     #[test]
     fn where_preview_display_inlines_values_on_postgres() {
         let info = pg_info();
-        // Typed comparisons keep the page's cast around a text literal; quotes are doubled.
+        // Readable, not the page's casts (review #109): numbers bare, text a plain literal
+        // with its quotes doubled.
         assert_eq!(
             shown(
                 Dialect::Postgres,
@@ -1248,10 +1285,10 @@ mod tests {
                     f("note", FilterOp::IsNull, &[]),
                 ]
             ),
-            "WHERE \"id\" = CAST('42'::text AS integer) \
-             AND \"note\" <> CAST('it''s'::text AS text) \
-             AND \"amount\" BETWEEN CAST('1'::text AS numeric) AND CAST('9.5'::text AS numeric) \
-             AND \"id\" IN (CAST('1'::text AS integer), CAST('2'::text AS integer)) \
+            "WHERE \"id\" = 42 \
+             AND \"note\" <> 'it''s' \
+             AND \"amount\" BETWEEN 1 AND 9.5 \
+             AND \"id\" IN (1, 2) \
              AND \"note\" IS NULL"
         );
         // Contains reads as the pattern the page builds ('%' || value || '%'), its own
@@ -1281,9 +1318,9 @@ mod tests {
                     f("note", FilterOp::Eq, &["$2"]),
                 ]
             ),
-            "WHERE \"note\" = CAST('$1 or ?'::text AS text) \
-             AND \"data\" = CAST(E'\\\\xdead'::text AS bytea) \
-             AND \"note\" = CAST('$2'::text AS text)"
+            "WHERE \"note\" = '$1 or ?' \
+             AND \"data\" = E'\\\\xdead'::bytea \
+             AND \"note\" = '$2'"
         );
     }
 
@@ -1350,9 +1387,9 @@ mod tests {
         );
         assert_eq!(
             shown(Dialect::Postgres, &pg_info(), filters.clone()),
-            "WHERE \"id\" = CAST('1'::text AS integer) \
+            "WHERE \"id\" = 1 \
              AND (\nnote ? 'k' OR note = '?' -- it's $1\n) \
-             AND \"note\" = CAST('after'::text AS text)"
+             AND \"note\" = 'after'"
         );
         // The executed page is unchanged: placeholders, the values bound in order.
         let page = build_page(Dialect::MySql, &my_info(), &req_with(filters.clone())).unwrap();
@@ -1376,13 +1413,106 @@ mod tests {
         assert_eq!(page.params, texts(&["1", "after"]));
     }
 
+    /// The PostgreSQL display of `value` compared with a column of type `ty`.
+    fn pg_shown(ty: &str, value: &str) -> String {
+        let info = info_with("public", vec![column("c", ty)]);
+        shown(
+            Dialect::Postgres,
+            &info,
+            vec![f("c", FilterOp::Eq, &[value])],
+        )
+    }
+
+    #[test]
+    fn where_preview_display_reads_like_postgres_sql() {
+        // Text types: the plain literal (E'' kept when a backslash needs it).
+        for ty in [
+            "text",
+            "character varying(20)",
+            "varchar",
+            "character(3)",
+            "bpchar",
+            "char",
+            "name",
+            "citext",
+        ] {
+            assert_eq!(pg_shown(ty, "it's"), "WHERE \"c\" = 'it''s'", "{ty}");
+        }
+        assert_eq!(pg_shown("text", "a\\b"), "WHERE \"c\" = E'a\\\\b'");
+        // Integers and numeric: a bare number when the value is one, else a typed literal.
+        for ty in [
+            "smallint",
+            "integer",
+            "bigint",
+            "int2",
+            "int4",
+            "int8",
+            "numeric(12,2)",
+            "decimal",
+        ] {
+            assert_eq!(pg_shown(ty, "-42"), "WHERE \"c\" = -42", "{ty}");
+            assert_eq!(pg_shown(ty, "3.25"), "WHERE \"c\" = 3.25", "{ty}");
+        }
+        let base = |ty: &str| ty.split('(').next().unwrap().to_string();
+        for (ty, v) in [
+            ("integer", "1e3"),
+            ("bigint", "12abc"),
+            ("numeric", "1."),
+            ("integer", " 1"),
+        ] {
+            assert_eq!(
+                pg_shown(ty, v),
+                format!("WHERE \"c\" = '{v}'::{}", base(ty)),
+                "{ty} {v}"
+            );
+        }
+        // Floating point: never bare (a bare 0.1 is numeric, not the float compared).
+        assert_eq!(pg_shown("real", "0.1"), "WHERE \"c\" = '0.1'::real");
+        assert_eq!(
+            pg_shown("double precision", "2"),
+            "WHERE \"c\" = '2'::double precision"
+        );
+        // Booleans: TRUE / FALSE for true / false in any case, else a typed literal.
+        assert_eq!(pg_shown("boolean", "true"), "WHERE \"c\" = TRUE");
+        assert_eq!(pg_shown("boolean", "FaLsE"), "WHERE \"c\" = FALSE");
+        assert_eq!(pg_shown("boolean", "yes"), "WHERE \"c\" = 'yes'::boolean");
+        // Any other type: 'literal'::type.
+        assert_eq!(
+            pg_shown("date", "2024-01-31"),
+            "WHERE \"c\" = '2024-01-31'::date"
+        );
+        assert_eq!(
+            pg_shown("jsonb", "{\"k\": \"v's\"}"),
+            "WHERE \"c\" = '{\"k\": \"v''s\"}'::jsonb"
+        );
+        assert_eq!(pg_shown("uuid", "x"), "WHERE \"c\" = 'x'::uuid");
+        // The executed page keeps its casts and binds the value.
+        let info = info_with("public", vec![column("c", "boolean")]);
+        let page = build_page(
+            Dialect::Postgres,
+            &info,
+            &req_with(vec![f("c", FilterOp::Eq, &["true"])]),
+        )
+        .unwrap();
+        assert!(
+            page.sql
+                .contains("WHERE \"c\" = CAST($1::text AS boolean) ORDER"),
+            "{}",
+            page.sql
+        );
+        assert_eq!(page.params, texts(&["true"]));
+    }
+
     #[test]
     fn display_literals_per_dialect() {
         let t = |s: &str| SqlParam::Text(s.into());
         assert_eq!(display_literal(Dialect::Sqlite, &t("a'b\\c")), "'a''b\\c'");
         assert_eq!(display_literal(Dialect::MySql, &t("a'b\\c")), "'a''b\\\\c'");
         assert_eq!(display_literal(Dialect::Postgres, &t("a'b")), "'a''b'");
-        assert_eq!(display_literal(Dialect::Postgres, &t("a'b\\c")), "E'a''b\\\\c'");
+        assert_eq!(
+            display_literal(Dialect::Postgres, &t("a'b\\c")),
+            "E'a''b\\\\c'"
+        );
         let b = SqlParam::Bytes(vec![0x00, 0xff]);
         assert_eq!(display_literal(Dialect::Postgres, &b), "E'\\\\x00ff'");
         assert_eq!(display_literal(Dialect::MySql, &b), "X'00ff'");

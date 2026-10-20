@@ -51,7 +51,15 @@ test("pointer_cursor: disabled controls do not", () => {
   }
 });
 
-test("tooltip_motion: a short entry animation, none under reduced motion", () => {
-  expect(css).toMatch(/\.tm-tooltip\[data-animate="true"\]\[data-placement="bottom"\]\s*\{\s*animation:[^;]*120ms/);
-  expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.tm-tooltip\s*\{\s*animation: none/);
+test("tooltip_motion: the entry animation only applies under prefers-reduced-motion: no-preference", () => {
+  // Every animation rule sits inside the no-preference block: under reduce, no rule applies
+  // (a later override would lose to the more specific animation selectors, review #109).
+  const block = css.match(/@media \(prefers-reduced-motion: no-preference\)\s*\{([\s\S]*)\}\s*$/);
+  expect(block).not.toBeNull();
+  const inside = block![1];
+  expect(inside).toMatch(/\.tm-tooltip\[data-animate="true"\]\[data-placement="bottom"\]\s*\{\s*animation:[^;]*120ms/);
+  expect(inside).toMatch(/\.tm-tooltip\[data-animate="true"\]\[data-placement="top"\]\s*\{\s*animation:[^;]*120ms/);
+  const outside = css.replace(block![0], "");
+  expect(outside).not.toMatch(/animation\s*:/);
+  expect(css).not.toMatch(/prefers-reduced-motion: reduce/);
 });

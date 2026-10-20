@@ -3,7 +3,7 @@ import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState
 import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
-import { tip } from "../../lib/tooltip";
+import { tip, tipIfCut } from "../../lib/tooltip";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Tab, type Workspace, capabilitiesOf, isQueryModified, useWorkspaces } from "../../stores/workspaces";
 import {
@@ -214,9 +214,12 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     aria-hidden="true"
                     aria-label={S.closeTab(t.title)}
                     {...tip(busy ? strings.grid.closeWhileCommitting : S.closeTab(t.title))}
-                    disabled={busy}
-                    onClick={() => closeTab(id, t.id)}
-                    className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon disabled:opacity-40 ${
+                    // Still hovered for its reason while a commit runs; does nothing (review #109).
+                    aria-disabled={busy || undefined}
+                    onClick={() => {
+                      if (!busy) closeTab(id, t.id);
+                    }}
+                    className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon aria-disabled:opacity-40 ${
                       active
                         ? // A lone tab spans the bar, its × on hover only (as the reference, #103).
                           `${tabs.length > 1 ? "opacity-100" : "opacity-0 group-hover:opacity-100"} hover:bg-tab`
@@ -232,7 +235,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     aria-selected={active}
                     tabIndex={active ? 0 : -1}
                     aria-keyshortcuts="Delete F2 Shift+F10"
-                    {...tip(t.title)}
+                    {...tipIfCut(t.title)}
                     onClick={() => activateTab(id, t.id)}
                     onDoubleClick={() => pinTab(id, t.id)}
                     onKeyDown={(e) => onTabKeyDown(e, t)}

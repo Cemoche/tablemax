@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { tip } from "../../lib/tooltip";
+import { tip, tipIfCut } from "../../lib/tooltip";
 import { TOOLTIP_DELAY_MS, TOOLTIP_WARM_MS, TooltipLayer } from "./TooltipLayer";
 
 beforeEach(() => {
@@ -219,8 +219,75 @@ test("tooltip_live: follows a label change, and goes with its control", async ()
   expect(tooltip()).toBeNull();
 });
 
+test("tooltip_arrow_without_focus_move: a later programmatic focus shows nothing (review #109)", () => {
+  const { filters, plain } = setup();
+  act(() => plain.focus());
+  // An arrow that moves nothing (a caret in a field, a list end).
+  fireEvent.keyDown(plain, { key: "ArrowDown" });
+  wait(0);
+  act(() => filters.focus());
+  expect(tooltip()).toBeNull();
+});
+
+test("tooltip_describedby_after_mount: the id points at an existing node when it is set (review #109)", () => {
+  const { filters } = setup();
+  const set = HTMLElement.prototype.setAttribute;
+  const seen: boolean[] = [];
+  vi.spyOn(HTMLElement.prototype, "setAttribute").mockImplementation(function (this: HTMLElement, name, value) {
+    if (name === "aria-describedby") seen.push(value.split(" ").every((id) => document.getElementById(id) !== null));
+    return set.call(this, name, value);
+  });
+  fireEvent.mouseOver(filters);
+  wait(TOOLTIP_DELAY_MS);
+  expect(screen.getByRole("tooltip")).toBeInTheDocument();
+  expect(seen).toEqual([true]);
+  expect(filters).toHaveAccessibleDescription("Show or hide the filters Ctrl+F");
+});
+
+function overflowing(el: HTMLElement, scroll: number, client: number) {
+  Object.defineProperty(el, "scrollWidth", { configurable: true, value: scroll });
+  Object.defineProperty(el, "clientWidth", { configurable: true, value: client });
+}
+
+test("tooltip_overflow: a truncated-text tooltip shows only when the text is cut (review #109)", () => {
+  render(
+    <>
+      <TooltipLayer />
+      <div role="treeitem" aria-label="short" {...tipIfCut("short")}>
+        <span>short</span>
+      </div>
+      <div role="treeitem" aria-label="a very long name" {...tipIfCut("a very long name")}>
+        <span className="truncate">a very long name</span>
+      </div>
+    </>,
+  );
+  const short = screen.getByRole("treeitem", { name: "short" });
+  const long = screen.getByRole("treeitem", { name: "a very long name" });
+  overflowing(short.firstElementChild as HTMLElement, 40, 40);
+  overflowing(long.firstElementChild as HTMLElement, 300, 120);
+  fireEvent.mouseOver(short);
+  wait(TOOLTIP_DELAY_MS * 2);
+  expect(tooltip()).toBeNull();
+  expect(short).not.toHaveAttribute("aria-describedby");
+  fireEvent.mouseOut(short, { relatedTarget: long });
+  fireEvent.mouseOver(long);
+  wait(TOOLTIP_DELAY_MS);
+  expect(screen.getByRole("tooltip")).toHaveTextContent("a very long name");
+  // Two lines cut short (line-clamp) count as cut too.
+  fireEvent.mouseOut(long, { relatedTarget: document.body });
+  overflowing(long.firstElementChild as HTMLElement, 120, 120);
+  Object.defineProperty(long.firstElementChild, "scrollHeight", { configurable: true, value: 60 });
+  Object.defineProperty(long.firstElementChild, "clientHeight", { configurable: true, value: 30 });
+  wait(TOOLTIP_WARM_MS + 1);
+  fireEvent.mouseOver(long);
+  wait(TOOLTIP_DELAY_MS);
+  expect(screen.getByRole("tooltip")).toBeInTheDocument();
+});
+
 test("tip(): nothing without a label", () => {
   expect(tip("")).toEqual({});
   expect(tip(undefined, "Ctrl+F")).toEqual({});
   expect(tip("a", "")).toEqual({ "data-tooltip": "a" });
+  expect(tipIfCut("a")).toEqual({ "data-tooltip": "a", "data-tooltip-overflow": "" });
+  expect(tipIfCut("")).toEqual({});
 });

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
@@ -123,6 +123,7 @@ test("a long name is shown on two lines at most, with the full name in the toolt
   renderColumn();
   const tile = screen.getByRole("button", { name: long });
   expect(tile).toHaveAttribute("data-tooltip", long);
+  expect(tile).toHaveAttribute("data-tooltip-overflow");
   expect(within(tile).getByText(long)).toHaveClass("line-clamp-2");
 });
 
@@ -165,7 +166,7 @@ test("closing a workspace whose backend close fails leaves no unhandled rejectio
   expect(useWorkspaces.getState().workspaces.map((w) => w.id)).toEqual(["w2", "w3"]);
 });
 
-test("a workspace with a running commit cannot be closed yet", () => {
+test("a workspace with a running commit cannot be closed yet", async () => {
   const w = ws("w1", "Local PG", {
     tabs: [{ id: "t1", kind: "table", object: { schema: null, name: "x" }, title: "x", preview: false }],
   });
@@ -173,6 +174,15 @@ test("a workspace with a running commit cannot be closed yet", () => {
   usePendingChanges.setState({ committing: { t1: true } });
   renderColumn();
   const close = screen.getByRole("button", { name: C.close("Local PG") });
-  expect(close).toBeDisabled();
+  // Focusable, says why (review #109), does nothing.
+  expect(close).not.toBeDisabled();
+  expect(close).toHaveAttribute("aria-disabled", "true");
   expect(close).toHaveAttribute("data-tooltip", strings.grid.closeWhileCommitting);
+  expect(close).toHaveAccessibleDescription(strings.grid.closeWhileCommitting);
+  await userEvent.click(close);
+  act(() => close.focus());
+  await userEvent.keyboard("{Enter}");
+  await userEvent.keyboard(" ");
+  expect(ipc.workspaceClose).not.toHaveBeenCalled();
+  expect(useWorkspaces.getState().workspaces.map((x) => x.id)).toEqual(["w1"]);
 });

@@ -334,7 +334,9 @@ export function QueryTab({ workspace, tab }: Props) {
         <span className="ml-auto flex min-w-0 items-center gap-1 text-sm">
           {linkedName && (
             <span className="truncate text-muted" {...tip(strings.savedQueries.linked(linkedName))}>
-              {linkedName}
+              <span aria-hidden="true">{linkedName}</span>
+              {/* The tooltip's wording for assistive tech, always there (review #109). */}
+              <span className="sr-only">{strings.savedQueries.linked(linkedName)}</span>
             </span>
           )}
           {modified && (
@@ -356,12 +358,10 @@ export function QueryTab({ workspace, tab }: Props) {
         >
           {strings.savedQueries.save}
         </button>
-        <label
-          className="flex shrink-0 items-center gap-1 text-sm"
-          {...tip(strings.query.autoLimitHint(autoLimitRows))}
-        >
+        <label className="flex shrink-0 items-center gap-1 text-sm">
           <input
             type="checkbox"
+            {...tip(strings.query.autoLimitHint(autoLimitRows))}
             checked={autoLimit}
             onChange={(e) => useAutoLimit.getState().setAutoLimit(tabId, e.target.checked)}
           />

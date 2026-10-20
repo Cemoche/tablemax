@@ -135,6 +135,7 @@ test("long_names_truncate: a long name is cut with an ellipsis and shown whole i
   setup([{ id: "t", kind: "table", object: { schema: "public", name: LONG }, title: LONG, preview: false }]);
   const t = tab(LONG);
   expect(t).toHaveAttribute("data-tooltip", LONG);
+  expect(t).toHaveAttribute("data-tooltip-overflow");
   expect(within(t).getByText(LONG)).toHaveClass("truncate");
   expect(t.closest("[data-tab-id]")).toHaveClass("min-w-0");
 });
