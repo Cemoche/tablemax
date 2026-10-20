@@ -26,11 +26,11 @@ connect). **Demo · MariaDB 11** is tagged `prod`.
 
 ## The tour
 
-1. **SSH tunnel + verified TLS, with a host key prompt.** Click **+** (New connection).
+1. **SSH tunnel + verified TLS, with a host key prompt.** Click **+** (New connection, `Ctrl+N`).
    Name `Postgres via SSH`, driver PostgreSQL, Host `pg16`, Port `5432`, User `postgres`,
-   Database `tablemax_demo`, Password storage **Ask each time**. Under **SSL / TLS**, pick
+   Database `tablemax_demo`, Password storage **Ask each time**. As **SSL mode**, pick
    **Verify CA and host name** and set the CA certificate to `.test-secrets/tls/ca.pem` with
-   **Browse…** (the folder is in the repository). Tick **SSH tunnel**: SSH host `127.0.0.1`,
+   **CA…** (the folder is in the repository). Tick **Over SSH**: SSH host `127.0.0.1`,
    SSH port `2222`, SSH user `tunnel`, authentication **Password**, password `tunnel-pass`.
    Click **Connect**. The **Unknown SSH host** dialog shows the server's fingerprint: click
    **Trust and connect**, then type the database password `tablemax`. TableMax saves the key in
@@ -66,8 +66,8 @@ connect). **Demo · MariaDB 11** is tagged `prod`.
    opens the history (click to insert, double-click to replace).
 10. **Session restore.** Close TableMax and start it again: workspaces and tabs come back,
     disconnected until you click **Reconnect** or select a tab.
-11. **Import from TablePlus.** On the connection list, open **New…** → **Import TablePlus
-    export…**, choose `src-tauri/tests/fixtures/tableplus/all-with-passwords.tableplusconnection`,
+11. **Import from TablePlus.** On the connections screen, click **Import connections…** on the
+    left, choose `src-tauri/tests/fixtures/tableplus/all-with-passwords.tableplusconnection`,
     enter the export password `fixture-pass`, review the list (duplicates and SSH hosts are
     flagged) and click **Import *N* connections**.
 
