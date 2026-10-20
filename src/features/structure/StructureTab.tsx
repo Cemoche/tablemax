@@ -15,7 +15,7 @@ import { Empty, badge, td, th } from "./tableStyles";
 
 const s = strings.structure;
 
-// The indexes have their own view in the table tab (IndexView, #103), as in TablePlus.
+// The indexes have their own view in the table tab (IndexView, #103), as in the reference.
 type Section = "columns" | "foreignKeys" | "ddl";
 const SECTIONS: Section[] = ["columns", "foreignKeys", "ddl"];
 
