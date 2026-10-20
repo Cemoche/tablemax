@@ -2,8 +2,8 @@ import { type CompletionSource, autocompletion } from "@codemirror/autocomplete"
 import { defaultKeymap, isolateHistory, toggleComment, toggleLineComment } from "@codemirror/commands";
 import { HighlightStyle, LanguageSupport, syntaxHighlighting } from "@codemirror/language";
 import { MySQL, PostgreSQL, SQLite } from "@codemirror/lang-sql";
-import { EditorSelection as CmSelection, Prec } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorSelection as CmSelection, Prec, RangeSetBuilder, type Text } from "@codemirror/state";
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, keymap } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import CodeMirror from "@uiw/react-codemirror";
 import { type CSSProperties, useEffect, useMemo, useRef } from "react";
@@ -12,7 +12,7 @@ import { isModalOpen, matchCombination, matchShortcut } from "../../lib/shortcut
 import { strings } from "../../lib/strings";
 import { useResolvedDark } from "../../lib/theme";
 import { registerEditorCommands } from "./editorCommands";
-import { delimiterAt } from "./splitStatements";
+import { type Statement, delimiterAt, splitStatements, statementAt } from "./splitStatements";
 import type { Dialect } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
 import { isValidFontFamily } from "../settings/bounds";
@@ -143,14 +143,16 @@ export const editorThemeSpec = {
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
   "&.cm-focused": { outline: "none" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
-    { backgroundColor: "color-mix(in srgb, var(--accent) 30%, transparent)" },
+    { backgroundColor: "var(--sql-selection)" },
+  // The statement Run Current would run (spec §5.1 "requête courante"), while nothing is
+  // selected: a line background, so it never hides a selection.
+  ".cm-currentStatement": { backgroundColor: "var(--sql-current)" },
   ".cm-gutters": {
     backgroundColor: "var(--surface-2)",
     color: "var(--text-muted)",
     border: "none",
     borderRight: "1px solid var(--border)",
   },
-  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--text) 5%, transparent)" },
   ".cm-activeLineGutter": { backgroundColor: "var(--surface)", color: "var(--text)" },
   ".cm-tooltip": {
     backgroundColor: "var(--surface-2)",
@@ -178,16 +180,60 @@ export function editorFontStyle(fontFamily: string, fontSize?: number): CSSPrope
   return { height: "100%", ...vars } as CSSProperties;
 }
 
-export const highlight = syntaxHighlighting(
-  HighlightStyle.define([
-    { tag: [t.keyword, t.operatorKeyword, t.modifier], color: "var(--accent)", fontWeight: "600" },
-    { tag: [t.string, t.special(t.string)], color: "var(--success)" },
-    { tag: [t.number, t.bool, t.null], color: "var(--warning)" },
-    { tag: [t.lineComment, t.blockComment], color: "var(--text-muted)", fontStyle: "italic" },
-    { tag: [t.typeName, t.standard(t.name)], color: "var(--env-staging)" },
-    { tag: [t.operator, t.punctuation], color: "var(--text-muted)" },
-  ]),
-);
+/**
+ * SQL colours of spec §5.1, by role, from the --sql-* tokens (dark / light in tokens.css):
+ * keywords (types, booleans and NULL too), functions (the dialect's builtins), numbers,
+ * strings, comments. Quoted identifiers are names: plain text, not strings.
+ */
+export const sqlHighlightStyle = HighlightStyle.define([
+  { tag: [t.keyword, t.operatorKeyword, t.modifier, t.typeName, t.bool, t.null], color: "var(--sql-keyword)" },
+  { tag: [t.standard(t.name), t.function(t.variableName)], color: "var(--sql-function)" },
+  { tag: t.number, color: "var(--sql-number)" },
+  { tag: t.string, color: "var(--sql-string)" },
+  { tag: t.special(t.string), color: "var(--text)" },
+  { tag: [t.lineComment, t.blockComment], color: "var(--sql-comment)" },
+]);
+
+export const highlight = syntaxHighlighting(sqlHighlightStyle);
+
+/** Longer texts get no current-statement highlight: it splits the whole text on each edit. */
+const CURRENT_STATEMENT_MAX = 200_000;
+const currentStatementLine = Decoration.line({ class: "cm-currentStatement" });
+
+/**
+ * Highlights the lines of the statement Run Current would run (`statementAt` of the
+ * cursor, as QueryTab's run): nothing while a selection is made (the selection runs).
+ */
+export function currentStatementHighlight(dialect: Dialect) {
+  let split: { doc: Text; stmts: Statement[] } | null = null;
+  const build = (view: EditorView): DecorationSet => {
+    const { state } = view;
+    const sel = state.selection.main;
+    if (!sel.empty || state.doc.length > CURRENT_STATEMENT_MAX) return Decoration.none;
+    if (split?.doc !== state.doc) split = { doc: state.doc, stmts: splitStatements(state.doc.toString(), dialect) };
+    const stmt = statementAt(split.stmts, sel.head);
+    if (!stmt) return Decoration.none;
+    const builder = new RangeSetBuilder<Decoration>();
+    const last = state.doc.lineAt(stmt.to).number;
+    for (let n = state.doc.lineAt(stmt.from).number; n <= last; n++) {
+      const line = state.doc.line(n);
+      builder.add(line.from, line.from, currentStatementLine);
+    }
+    return builder.finish();
+  };
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) {
+        this.decorations = build(view);
+      }
+      update(u: ViewUpdate) {
+        if (u.docChanged || u.selectionSet) this.decorations = build(u.view);
+      }
+    },
+    { decorations: (v) => v.decorations },
+  );
+}
 
 export function SqlEditor({
   value,
@@ -257,6 +303,7 @@ export function SqlEditor({
       }),
       buildEditorTheme(dark),
       highlight,
+      currentStatementHighlight(dialect),
       EditorView.lineWrapping,
       Prec.highest(
         keymap.of([
@@ -298,7 +345,8 @@ export function SqlEditor({
       aria-label={strings.query.editorLabel}
       theme="none"
       extensions={extensions}
-      basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true, autocompletion: false, defaultKeymap: false }}
+      // No active-line band: the current statement is highlighted instead (§5.1).
+      basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: false, autocompletion: false, defaultKeymap: false }}
       onChange={onChange}
       onCreateEditor={(view) => {
         viewRef.current = view;
