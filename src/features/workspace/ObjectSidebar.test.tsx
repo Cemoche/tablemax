@@ -417,7 +417,8 @@ test("the tree has tree semantics: levels, expanded sections, set sizes and posi
   expect(item(S.routines)).toHaveAttribute("aria-posinset", "3");
   const orders = item("orders");
   expect(orders).toHaveAttribute("aria-level", "2");
-  expect(orders).not.toHaveAttribute("aria-expanded");
+  // Tables and views expand to their columns (#104), closed at first.
+  expect(orders).toHaveAttribute("aria-expanded", "false");
   // Accounts, users, orders: the third of three tables.
   expect(orders).toHaveAttribute("aria-setsize", "3");
   expect(orders).toHaveAttribute("aria-posinset", "3");
@@ -536,4 +537,119 @@ test("Copy name without a clipboard reports the failure", async () => {
   render(<ObjectSidebar workspace={workspace} />);
   await userEvent.click(within(await openMenu(/orders/)).getByRole("menuitem", { name: M.copyName }));
   expect(await screen.findByRole("alert")).toHaveTextContent(S.copyFailed(S.clipboardUnavailable));
+});
+
+// ---- #104: expandable tables and views, plain section headers, colored icons ----
+
+const col = (name: string, typeName: string) => ({
+  name,
+  typeName,
+  baseType: typeName,
+  nullable: true,
+  default: null,
+  autoIncrement: false,
+  generated: false,
+});
+const info = (name: string, columns: ReturnType<typeof col>[]) =>
+  ({ object: { schema: "public", name }, kind: "table", columns, primaryKey: [], indexes: [], foreignKeys: [], rowKey: null, hasRowid: false }) as never;
+const chevronOf = (row: HTMLElement) => row.querySelector("[data-chevron]") as HTMLElement;
+
+test("tree_expand_lazy_load: a table expands to its columns, loaded once and cached (#104)", async () => {
+  vi.mocked(ipc.tableInfo).mockResolvedValue(info("orders", [col("id", "integer"), col("total", "numeric(10,2)")]));
+  render(<ObjectSidebar workspace={workspace} />);
+  const orders = await screen.findByRole("treeitem", { name: "orders" });
+  // Nothing is loaded before the row is opened.
+  expect(ipc.tableInfo).not.toHaveBeenCalled();
+  await userEvent.click(chevronOf(orders));
+  expect(item("orders")).toHaveAttribute("aria-expanded", "true");
+  const id = await screen.findByRole("treeitem", { name: "id" });
+  expect(id).toHaveAttribute("aria-level", "3");
+  expect(id).toHaveAttribute("aria-setsize", "2");
+  expect(id).toHaveTextContent("integer");
+  expect(item("total")).toHaveAttribute("aria-posinset", "2");
+  expect(ipc.tableInfo).toHaveBeenCalledWith("w1", { schema: "public", name: "orders" }, false);
+  // The chevron toggles the row; it does not open a tab.
+  expect(useWorkspaces.getState().workspaces[0].tabs).toHaveLength(0);
+  // Closed and opened again: from the cache.
+  await userEvent.click(chevronOf(item("orders")));
+  expect(screen.queryByRole("treeitem", { name: "id" })).toBeNull();
+  await userEvent.click(chevronOf(item("orders")));
+  expect(await screen.findByRole("treeitem", { name: "id" })).toBeInTheDocument();
+  expect(ipc.tableInfo).toHaveBeenCalledTimes(1);
+});
+
+test("a view expands too; loading and errors show as rows under it (#104)", async () => {
+  let fail: (e: unknown) => void = () => {};
+  vi.mocked(ipc.tableInfo).mockReturnValue(new Promise((_, reject) => (fail = reject)));
+  render(<ObjectSidebar workspace={workspace} />);
+  const view = await screen.findByRole("treeitem", { name: "active_users" });
+  await userEvent.click(chevronOf(view));
+  expect(await screen.findByRole("treeitem", { name: S.columnsLoading })).toHaveAttribute("aria-level", "3");
+  await act(async () => fail({ kind: "query", message: "permission denied" }));
+  expect(await screen.findByRole("treeitem", { name: S.columnsFailed("permission denied") })).toBeInTheDocument();
+  expect(screen.queryByRole("treeitem", { name: S.columnsLoading })).toBeNull();
+});
+
+test("tree_keyboard: Right opens a table then enters its columns, Left goes back and closes (#104)", async () => {
+  vi.mocked(ipc.tableInfo).mockResolvedValue(info("orders", [col("id", "integer")]));
+  render(<ObjectSidebar workspace={workspace} />);
+  const orders = await screen.findByRole("treeitem", { name: "orders" });
+  orders.focus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(item("orders")).toHaveAttribute("aria-expanded", "true");
+  expect(item("orders")).toHaveFocus();
+  await screen.findByRole("treeitem", { name: "id" });
+  await userEvent.keyboard("{ArrowRight}");
+  expect(item("id")).toHaveFocus();
+  // Left on a column: its table; Left on an open table: close it; Left again: the section.
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(item("orders")).toHaveFocus();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(item("orders")).toHaveAttribute("aria-expanded", "false");
+  expect(item("orders")).toHaveFocus();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(item(S.tables)).toHaveFocus();
+  // Enter on a table still opens it.
+  item("orders").focus();
+  await userEvent.keyboard("{Enter}");
+  expect(useWorkspaces.getState().workspaces[0].tabs).toEqual([expect.objectContaining({ title: "orders" })]);
+});
+
+test("Refresh forgets the loaded columns and reloads the open ones from the database (#104)", async () => {
+  vi.mocked(ipc.tableInfo).mockResolvedValue(info("orders", [col("id", "integer")]));
+  render(<ObjectSidebar workspace={workspace} />);
+  await userEvent.click(chevronOf(await screen.findByRole("treeitem", { name: "orders" })));
+  await screen.findByRole("treeitem", { name: "id" });
+  vi.mocked(ipc.tableInfo).mockResolvedValue(info("orders", [col("id", "integer"), col("added", "text")]));
+  act(() => useChrome.getState().requestReload("w1"));
+  expect(await screen.findByRole("treeitem", { name: "added" })).toBeInTheDocument();
+  expect(ipc.tableInfo).toHaveBeenLastCalledWith("w1", { schema: "public", name: "orders" }, true);
+});
+
+test("tree_section_headers: plain rows with a chevron, no bold small caps, no counts (#104)", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  await screen.findByRole("treeitem", { name: "orders" });
+  for (const name of [S.tables, S.views, S.routines]) {
+    const header = item(name);
+    expect(header.textContent).toBe(name);
+    expect(header.className).not.toMatch(/font-semibold|font-bold|text-xs|uppercase|small-caps/);
+    expect(header.querySelector("svg")).not.toBeNull();
+  }
+  expect(S.routines).toBe("Functions");
+});
+
+test("Functions shows only when the engine returns functions (#104)", async () => {
+  vi.mocked(ipc.routinesList).mockResolvedValue([]);
+  render(<ObjectSidebar workspace={workspace} />);
+  await screen.findByRole("treeitem", { name: "orders" });
+  await waitFor(() => expect(ipc.routinesList).toHaveBeenCalled());
+  expect(screen.queryByRole("treeitem", { name: S.routines })).toBeNull();
+});
+
+test("tree_icons_colors: tables blue, views purple (#104)", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  const orders = await screen.findByRole("treeitem", { name: "orders" });
+  expect(within(orders).getByRole("img", { name: S.kinds.table })).toHaveClass("text-icon-table");
+  const view = item("active_users");
+  expect(within(view).getByRole("img", { name: S.kinds.view })).toHaveClass("text-icon-view");
 });

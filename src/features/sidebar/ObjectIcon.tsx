@@ -1,26 +1,15 @@
+import { Table, View } from "lucide-react";
 import type { ReactNode } from "react";
 import { strings } from "../../lib/strings";
 
 export const OBJECT_ICON_KINDS = ["table", "view", "materializedView", "function", "procedure"] as const;
 export type ObjectIconKind = (typeof OBJECT_ICON_KINDS)[number];
 
-/** Our own 16 px drawings, thin monochrome strokes like the lucide icons around them. */
-const DRAWINGS: Record<ObjectIconKind, ReactNode> = {
-  // A grid: header row and a first column.
-  table: (
-    <>
-      <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
-      <path d="M2.5 6.5h11M6.5 6.5V13" />
-    </>
-  ),
-  // A window with an eye-like lens: a stored query read like a table.
-  view: (
-    <>
-      <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
-      <path d="M2.5 6.5h11" />
-      <circle cx="8" cy="9.75" r="1.6" />
-    </>
-  ),
+/** Tables and views are lucide icons (#104): a grid and a framed eye. */
+const LUCIDE = { table: Table, view: View } as const;
+
+/** Our own 16 px drawings for the rest, thin monochrome strokes like the lucide icons. */
+const DRAWINGS: Record<Exclude<ObjectIconKind, keyof typeof LUCIDE>, ReactNode> = {
   // The view's window, with rows kept on disk.
   materializedView: (
     <>
@@ -39,17 +28,30 @@ const DRAWINGS: Record<ObjectIconKind, ReactNode> = {
   ),
 };
 
-/** Tables and views in the accent color, routines dimmer (tokens only). */
+/** Tables blue, views purple (#104), routines dimmer (tokens only, 3:1 in tokens.test.ts). */
 const COLOR: Record<ObjectIconKind, string> = {
-  table: "text-accent",
-  view: "text-accent",
-  materializedView: "text-accent",
+  table: "text-icon-table",
+  view: "text-icon-view",
+  materializedView: "text-icon-view",
   function: "text-text-2",
   procedure: "text-text-2",
 };
 
 /** The icon of a sidebar object, named for screen readers. */
 export function ObjectIcon({ kind, className = "" }: { kind: ObjectIconKind; className?: string }) {
+  if (kind === "table" || kind === "view") {
+    const Icon = LUCIDE[kind];
+    return (
+      <Icon
+        role="img"
+        aria-label={strings.sidebar.kinds[kind]}
+        data-kind={kind}
+        size="1em"
+        strokeWidth={1.8}
+        className={`shrink-0 ${COLOR[kind]} ${className}`}
+      />
+    );
+  }
   return (
     <svg
       role="img"

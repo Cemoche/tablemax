@@ -288,7 +288,10 @@ export const strings = {
     },
     tables: "Tables",
     views: "Views",
-    routines: "Routines",
+    routines: "Functions",
+    /** Under a table or view opened in the tree (#104). */
+    columnsLoading: "Loading columns…",
+    columnsFailed: (message: string) => `Could not load columns: ${message}`,
     resize: "Resize the sidebar",
     newQuery: "New SQL query",
     more: "More actions",
