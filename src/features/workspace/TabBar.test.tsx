@@ -362,7 +362,9 @@ test("lone_tab: a single tab spans the bar and shows its close button on hover o
   expect(close).toHaveClass("opacity-0", "group-hover:opacity-100");
   expect(close).not.toHaveClass("opacity-100");
   // Also while the tab has the keyboard focus (#104).
-  expect(close).toHaveClass("group-focus-within:opacity-100");
+  // Keyboard focus only: a mouse click on the tab does not count.
+  expect(close).toHaveClass("group-has-[:focus-visible]:opacity-100");
+  expect(close.className).not.toContain("group-focus-within");
   // Its label is centred across the bar.
   expect(tab("Query 1")).toHaveClass("justify-center");
   // With another tab the active one shows it at once.

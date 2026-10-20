@@ -90,8 +90,9 @@ function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
 
 /**
  * The column of open connections on the far left (spec §2.3, 80 px): the Connections
- * button, a tile per open workspace and, at the bottom, the settings (#104). Ctrl+Shift+[ / ] (and Ctrl+Shift+PageUp /
- * PageDown) go to the previous / next workspace, wrapping around.
+ * button, a tile per open workspace and, at the bottom, the settings (#104).
+ * Ctrl+Shift+[ / ] (and Ctrl+Shift+PageUp / PageDown) go to the previous / next
+ * workspace, wrapping around.
  */
 export function OpenConnectionsColumn({ connectionsActive, onShowConnections, onSelectWorkspace }: Props) {
   const workspaces = useWorkspaces((s) => s.workspaces);

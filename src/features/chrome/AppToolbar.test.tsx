@@ -109,7 +109,7 @@ test("toolbar_groups_in_spec_order", () => {
     t.safeMode(strings.safety.bannerModeConfirmWrites),
     t.database,
     t.sql,
-    `${strings.statusPill.tags.prod}PostgreSQL 16.4 : Shop : shop : public.orders`,
+    `${strings.statusPill.tags.prod}${strings.statusPill.tagSeparator}PostgreSQL 16.4 : Shop : shop : public.orders`,
     t.reload,
     t.openAnything,
     t.rowDetails,

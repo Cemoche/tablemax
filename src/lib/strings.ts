@@ -923,6 +923,8 @@ export const strings = {
     separator: " : ",
     /** The connection's tag, at the start of the pill. */
     tags: { local: "LOCAL", dev: "DEV", staging: "STAGING", prod: "PROD" },
+    /** Between the tag and the text in the pill's accessible name. */
+    tagSeparator: " | ",
     /** Said when the connection goes through an SSH tunnel. */
     ssh: "SSH",
     connecting: (name: string) => `Connecting to ${name}…`,

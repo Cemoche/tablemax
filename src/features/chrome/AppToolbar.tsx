@@ -61,8 +61,8 @@ interface Props {
  * [sidebar · connection] [Discard · Preview · Commit] [safe mode · database · SQL]
  * status pill [reload · command palette (Open anything)] [row details] and the window
  * buttons. TableMax has no metrics view and no console panel yet, so their buttons are not
- * shown (#104). A press on
- * its empty space moves the window; a double press maximizes or restores it.
+ * shown (#104). A press on its empty space moves the window; a double press maximizes or
+ * restores it.
  */
 export function AppToolbar({ workspace, connectError = null, onEditConnection }: Props) {
   const systemTitleBar = useSettings((s) => s.systemTitleBar);

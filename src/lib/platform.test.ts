@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { KEYMAP_ACTIONS } from "./keymap";
-import { currentPlatform, formatShortcut, isMac, isModKey } from "./platform";
+import { currentPlatform, formatShortcut, isMac, isModKey, isWindows } from "./platform";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -86,4 +86,18 @@ test("ariaShortcut names the keys for aria-keyshortcuts", async () => {
   expect(ariaShortcut("Mod+Backspace", true)).toBe("Meta+Backspace");
   expect(ariaShortcut("Ctrl+Space", true)).toBe("Control+Space");
   expect(ariaShortcut("Alt+Enter", false)).toBe("Alt+Enter");
+});
+
+test("Windows detection: navigator.platform, userAgentData and the user agent (#104)", () => {
+  expect(isWindows("Win32", "")).toBe(true);
+  // userAgentData.platform says "Windows".
+  expect(isWindows("Windows", "")).toBe(true);
+  // No platform: the user agent decides.
+  expect(isWindows("", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe(true);
+  expect(isWindows("Linux x86_64", "Mozilla/5.0 (X11; Linux x86_64)")).toBe(false);
+  expect(isWindows("MacIntel", "")).toBe(false);
+  expect(isWindows("", "")).toBe(false);
+  vi.stubGlobal("navigator", { platform: "", userAgentData: { platform: "Windows" }, userAgent: "" });
+  expect(isWindows()).toBe(true);
+  vi.unstubAllGlobals();
 });

@@ -223,8 +223,8 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon aria-disabled:opacity-40 ${
                       active
                         ? // A lone tab spans the bar, its × on hover or focus only (#103, #104).
-                          `${tabs.length > 1 ? "opacity-100" : "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"} hover:bg-tab`
-                        : "opacity-0 hover:bg-tab-sel group-focus-within:opacity-100 group-hover:opacity-100"
+                          `${tabs.length > 1 ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100"} hover:bg-tab`
+                        : "opacity-0 hover:bg-tab-sel group-hover:opacity-100 group-has-[:focus-visible]:opacity-100"
                     }`}
                   >
                     <X aria-hidden="true" size={12} />

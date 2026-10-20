@@ -99,6 +99,7 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
           : state === "error"
             ? s.error(workspace.name)
             : s.disconnected(workspace.name);
+  const tagLabel = s.tags[envTag] ?? s.tags.local;
   const look = state === "connected" ? tintClass(color) : STATE_CLASS[state].pill;
 
   return (
@@ -108,6 +109,9 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
       <button
         ref={trigger}
         type="button"
+        // "LOCAL | PostgreSQL …": the badge and the text read apart (an explicit name, since
+        // name computation trims the spaces a visually hidden separator would carry).
+        aria-label={`${tagLabel}${s.tagSeparator}${text}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         {...(state === "error" && connectError ? tip(s.errorTitle(text, connectError)) : tipIfCut(text))}
@@ -116,9 +120,9 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
       >
         <span
           data-pill-tag=""
-          className={`shrink-0 rounded-sm px-1.5 font-sans text-xs font-bold tracking-wide ${TAG_CLASS[envTag] ?? TAG_CLASS.local}`}
+          className={`shrink-0 rounded-sm border border-current px-1.5 font-sans text-xs font-bold tracking-wide ${TAG_CLASS[envTag] ?? TAG_CLASS.local}`}
         >
-          {s.tags[envTag] ?? s.tags.local}
+          {tagLabel}
         </span>
         {state !== "connected" && <span aria-hidden className={`size-2 shrink-0 rounded-full ${STATE_CLASS[state].dot}`} />}
         <span data-pill-text="" className="min-w-0 truncate">
