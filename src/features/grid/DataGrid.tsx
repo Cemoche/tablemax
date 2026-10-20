@@ -121,7 +121,8 @@ export interface DataGridProps {
 
 const EMPTY_SELECTION: GridSelection = { columns: CompactSelection.empty(), rows: CompactSelection.empty() };
 
-// Key codes for Glide's hotkey syntax (`alt+_13`): our specs name keys by KeyboardEvent.code.
+// Key codes for Glide's hotkey syntax (`alt+_13`), which compares `keyCode`: a letter's
+// keyCode is the letter the layout types (like our matching), the other keys' their position.
 const KEY_CODES: Record<string, number> = {
   Enter: 13,
   Tab: 9,

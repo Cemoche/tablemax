@@ -260,7 +260,7 @@ export function SqlEditor({
       Prec.highest(
         keymap.of([
           {
-            // Matched on e.code (layout independent), like the app shortcuts.
+            // Matched like the app shortcuts (matchShortcut: letters as the layout types them).
             any: (view, e) => {
               if (isModalOpen()) return false;
               const k = keysRef.current;
