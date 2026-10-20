@@ -384,6 +384,34 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 > Amendement 2026-10-20 (#102) : hors macOS Ctrl+Alt est AltGr ; Colonnes = Alt+F et Data /
 > Structure = Alt+1 / Alt+2 seulement ; macOS garde ⌘⌥F et ⌘⌥[ / ⌘⌥]. Pas de Ctrl+Alt par défaut.
 
+> Amendement 2026-10-21 (#90) : chaque ligne du tableau a son action dans le registre, avec
+> son défaut et sa portée (vérifié par `src/lib/shortcutParity.test.ts`, qui recopie ce
+> tableau) ; « grille » = la portée `tableTab`. Nouvelles actions : `grid.discard`
+> (Ctrl+Shift+Backspace, pas dans un champ texte), `grid.preview` (Ctrl+Shift+P), comme
+> leurs boutons de la barre d'outils ; `tab.reload` (Alt+R hors macOS, ⌥⌘R sur macOS :
+> recharge la page de l'onglet de table seul) ; `workspace.reconnect` (Ctrl+Shift+R :
+> reconnecte le workspace affiché s'il est déconnecté, rien sinon — l'app ne sait pas
+> couper puis rouvrir une connexion ouverte) ; `editor.complete` (Ctrl+Space, remplace le
+> Ctrl-Space de CodeMirror, réassignable). Beautify répond aussi à Ctrl+Shift+F dans
+> l'éditeur. Taille de police : aussi Ctrl+Shift+= (« Ctrl++ ») et + / − du pavé numérique
+> (`NumpadAdd` / `NumpadSubtract` entrent dans la grammaire, des deux côtés) ; le « - »
+> AZERTY (touche `Digit6`) reste Ctrl+6 = onglet 6 par position, c'est #105. Nouveau
+> workspace ⌘N = `connection.new` (#88). Touches fixes de la grille, non réassignables (la
+> grammaire veut un modificateur) : Space (détail), Enter (Quick Look), Delete.
+> **Priorité** : quand le focus est dans une région de portée (l'éditeur SQL, la barre de
+> filtres : attribut `data-shortcut-scope`), ses actions gagnent sur celles de toute autre
+> portée pour les mêmes touches, globales comprises ; hors de la région elles n'agissent
+> pas. Ctrl+Shift+F met donc en forme dans l'éditeur et cherche dans la barre latérale
+> ailleurs ; une touche de l'onglet de table réassignée sur une touche de la barre de
+> filtres ne passe plus avant elle (écouteur en phase de capture). La grille gagne déjà en
+> arrêtant ses touches dans son propre keydown. Dans les réglages, une paire déclarée
+> (`shadows` : `editor.format` / `sidebar.search`) n'est pas un conflit ; tout autre
+> partage de touches entre portées qui se recouvrent reste refusé. Réglages : chaque action
+> montre toutes ses combinaisons (défaut et alternatives) ; une réassignation enregistrée
+> qu'une autre action utilise aussi (un défaut ajouté depuis) est signalée sur sa ligne,
+> jamais réécrite. Open Anything : objets (tables, onglets, connexions) par défaut, actions
+> quand la saisie commence par `>`, lignes de 40 px, entrée « Show connections » (#119).
+
 Règle : un raccourci n'existe que dans son contexte (grille, éditeur, barre de filtres) quand
 TablePlus le réutilise (⌘I, ⌘F, ⌘←) ; tous restent réassignables (registre existant) ; un
 conflit avec un raccourci courant du bureau GNOME (Ctrl+Alt+flèches) est évité.
