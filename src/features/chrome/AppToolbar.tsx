@@ -1,4 +1,4 @@
-import { CircleX, Database, Eye, ListChecks, PanelLeft, PanelRight, Plug, RotateCw, Search } from "lucide-react";
+import { CircleX, Database, Eye, ListChecks, PanelLeft, PanelRight, Plug, RotateCw, Search, Settings } from "lucide-react";
 import { type MouseEvent, type ReactNode, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
@@ -83,7 +83,18 @@ export function AppToolbar({ workspace, connectError = null, onEditConnection }:
       {workspace ? (
         <WorkspaceTools workspace={workspace} connectError={connectError} onEditConnection={onEditConnection} />
       ) : (
-        <span className="flex-1 text-center font-semibold text-text-2">{strings.appName}</span>
+        <>
+          <button
+            type="button"
+            aria-label={strings.settings.open}
+            title={strings.settings.open}
+            onClick={() => useChrome.getState().requestSettings()}
+            className={`${iconButton} shrink-0`}
+          >
+            <Settings aria-hidden {...ICON} />
+          </button>
+          <span className="flex-1 text-center font-semibold text-text-2">{strings.appName}</span>
+        </>
       )}
       {!systemTitleBar && <WindowControls />}
     </header>
@@ -123,6 +134,7 @@ function WorkspaceTools({
   const [connectionOpen, setConnectionOpen] = useState(false);
   const connectionButton = useRef<HTMLButtonElement>(null);
 
+  const sidebarHint = useHint(t.sidebar, "sidebar.toggle");
   const commitHint = useHint(t.commit, "grid.commit");
   const databaseHint = useHint(t.database, "database.open");
   const sqlHint = useHint(t.sql, "editor.open");
@@ -138,7 +150,7 @@ function WorkspaceTools({
         <button
           type="button"
           aria-label={t.sidebar}
-          title={t.sidebar}
+          title={sidebarHint}
           aria-pressed={connected && sidebarVisible}
           disabled={!connected}
           onClick={toggleSidebar}

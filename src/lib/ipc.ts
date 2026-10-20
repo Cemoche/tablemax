@@ -191,6 +191,10 @@ export const appVersion = () => invoke<string>("app_version");
 export const historyList = (connectionId: string, search: string | null, limit: number) =>
   invoke<HistoryEntry[]>("history_list", { connectionId, search, limit });
 
+/** Deletes one history entry of the connection (sidebar History, Delete). */
+export const historyDelete = (connectionId: string, id: number) =>
+  invoke<void>("history_delete", { connectionId, id });
+
 export const historyClear = (connectionId: string) =>
   invoke<void>("history_clear", { connectionId });
 

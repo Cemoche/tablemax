@@ -76,7 +76,7 @@ function CommitConfirmDialog({
 
 export function TableDataTab(props: Props) {
   // Kept across foreign key navigation (the panel shows the referenced row once selected).
-  const { view, setView } = useTableView();
+  const { view, setView } = useTableView(props.tabId);
   // Shortcuts of the data view (Mod+I, Alt+←) only act while it is shown.
   const detail = useRowDetail(props.tabId, view === "data");
   // The structure loads when first asked for; then both views stay mounted (hidden) so

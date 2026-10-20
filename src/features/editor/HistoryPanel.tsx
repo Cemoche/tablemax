@@ -1,14 +1,19 @@
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { HistoryEntry } from "../../lib/types";
+import { useChrome } from "../../stores/chrome";
+import type { Workspace } from "../../stores/workspaces";
+import { ContextMenu, type MenuAnchor, keyboardMenuAnchor, restoreFocusOnClose } from "../sidebar/ContextMenu";
+import { SidebarSearch } from "../sidebar/SidebarSearch";
+import { copyText, insertSql, openSqlTab, runSqlInNewTab } from "../sidebar/sqlActions";
 import { ConfirmDialog } from "./Dialogs";
 
 /** Entries per request (the backend keeps up to 1,000 per connection). */
 export const HISTORY_LIMIT = 200;
 const SEARCH_DEBOUNCE_MS = 250;
-/** A click waits this long to tell a single click (insert) from a double-click (replace). */
-const CLICK_DELAY_MS = 250;
+
+const M = strings.sqlMenu;
 
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["year", 365 * 86_400_000],
@@ -28,31 +33,24 @@ export function relativeTime(at: number, now: number): string {
   return strings.history.relative(0, "second");
 }
 
-interface Props {
-  connectionId: string;
-  /** Shown in the "Clear history" confirmation. */
-  connectionName: string;
-  /** Changes when a run finished: the backend recorded new entries. */
-  refreshKey?: number;
-  /** Click: insert the SQL at the editor cursor. */
-  onInsert: (sql: string) => void;
-  /** Double-click: replace the editor content. */
-  onReplace: (sql: string) => void;
-  onClose?: () => void;
-}
-
 /**
- * The connection's query history (right side of the SQL tab). The SQL text may hold
- * sensitive values: it is only displayed, never logged, and "Clear history" removes it.
+ * The sidebar's History tab: the connection's query history. A click opens the entry in a
+ * new SQL tab; the context menu runs, copies, inserts it in the SQL tab on screen or
+ * deletes it. The SQL text may hold sensitive values: it is only displayed, never logged,
+ * and "Clear history" removes it.
  */
-export function HistoryPanel({ connectionId, connectionName, refreshKey = 0, onInsert, onReplace, onClose }: Props) {
+export function HistoryPanel({ workspace }: { workspace: Workspace }) {
+  const { connectionId, id: wsId } = workspace;
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [reload, setReload] = useState(0);
-  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The open menu and its entry's button (the focus goes back there on close). */
+  const [menu, setMenu] = useState<{ entry: HistoryEntry; anchor: MenuAnchor; trigger: HTMLElement } | null>(null);
+  // A run of this connection ended (any tab, any workspace): the backend recorded it.
+  const bumps = useChrome((s) => s.historyBumps[connectionId] ?? 0);
 
   useEffect(() => {
     const t = setTimeout(() => setQuery(search.trim()), SEARCH_DEBOUNCE_MS);
@@ -74,31 +72,7 @@ export function HistoryPanel({ connectionId, connectionName, refreshKey = 0, onI
     return () => {
       live = false;
     };
-  }, [connectionId, query, refreshKey, reload]);
-
-  useEffect(
-    () => () => {
-      if (clickTimer.current) clearTimeout(clickTimer.current);
-    },
-    [],
-  );
-
-  const onItemClick = (e: MouseEvent, sql: string) => {
-    if (clickTimer.current) clearTimeout(clickTimer.current);
-    clickTimer.current = null;
-    if (e.detail === 0) return onInsert(sql); // keyboard
-    if (e.detail === 1) {
-      clickTimer.current = setTimeout(() => {
-        clickTimer.current = null;
-        onInsert(sql);
-      }, CLICK_DELAY_MS);
-    }
-  };
-  const onItemDoubleClick = (sql: string) => {
-    if (clickTimer.current) clearTimeout(clickTimer.current);
-    clickTimer.current = null;
-    onReplace(sql);
-  };
+  }, [connectionId, query, bumps, reload]);
 
   const clear = async () => {
     setConfirmClear(false);
@@ -110,48 +84,51 @@ export function HistoryPanel({ connectionId, connectionName, refreshKey = 0, onI
     }
   };
 
+  const remove = async (entry: HistoryEntry) => {
+    try {
+      await ipc.historyDelete(connectionId, entry.id);
+      setReload((n) => n + 1);
+    } catch {
+      setError(strings.history.deleteFailed);
+    }
+  };
+
+  const menuItems = (entry: HistoryEntry) => [
+    { label: M.run, run: () => runSqlInNewTab(wsId, entry.sql) },
+    { label: M.copy, run: () => void copyText(entry.sql).catch(() => setError(strings.history.copyFailed)) },
+    { label: M.insert, run: () => insertSql(wsId, entry.sql) },
+    { label: M.delete, run: () => void remove(entry) },
+  ];
+
   const now = Date.now();
   const H = strings.history;
   return (
-    <aside aria-label={H.label} className="flex w-72 shrink-0 flex-col border-l border-border bg-surface">
-      <div className="flex items-center gap-1 border-b border-border px-2 py-1">
-        <input
-          type="search"
-          aria-label={H.search}
-          placeholder={H.searchPlaceholder}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 py-0.5 text-sm"
-        />
-        {onClose && (
-          <button
-            type="button"
-            aria-label={H.close}
-            title={H.close}
-            onClick={onClose}
-            className="rounded-sm px-1.5 hover:bg-surface-2"
-          >
-            {H.closeIcon}
-          </button>
-        )}
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {error && <p className="p-2 text-sm text-danger">{error}</p>}
-        {entries === null && !error && <p className="p-2 text-sm text-muted">{H.loading}</p>}
-        {entries?.length === 0 && <p className="p-2 text-sm text-muted">{query ? H.noMatch : H.empty}</p>}
+    <section aria-label={H.label} className="flex min-h-0 flex-1 flex-col">
+      <SidebarSearch label={H.search} placeholder={H.searchPlaceholder} value={search} onChange={setSearch} />
+      <div className="min-h-0 flex-1 overflow-y-auto px-1.5">
+        {error && <p className="px-1.5 py-1 text-danger">{error}</p>}
+        {entries === null && !error && <p className="px-1.5 py-1 text-text-2">{H.loading}</p>}
+        {entries?.length === 0 && <p className="px-1.5 py-1 text-text-2">{query ? H.noMatch : H.empty}</p>}
         {entries && entries.length > 0 && (
           <ul>
             {entries.map((h) => (
-              <li key={h.id} className="border-b border-border">
+              <li key={h.id}>
                 <button
                   type="button"
                   title={H.itemHint}
-                  onClick={(e) => onItemClick(e, h.sql)}
-                  onDoubleClick={() => onItemDoubleClick(h.sql)}
-                  className="block w-full px-2 py-1 text-left hover:bg-surface-2"
+                  onClick={() => openSqlTab(wsId, h.sql)}
+                  onContextMenu={(e: MouseEvent<HTMLButtonElement>) => {
+                    e.preventDefault();
+                    setMenu({ entry: h, anchor: { x: e.clientX, y: e.clientY }, trigger: e.currentTarget });
+                  }}
+                  onKeyDown={(e) => {
+                    const anchor = keyboardMenuAnchor(e);
+                    if (anchor) setMenu({ entry: h, anchor, trigger: e.currentTarget });
+                  }}
+                  className="block w-full rounded-md px-1.5 py-1 text-left outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
                 >
-                  <span className="line-clamp-3 font-mono text-sm break-all whitespace-pre-wrap">{h.sql}</span>
-                  <span className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted">
+                  <span className="line-clamp-2 font-mono text-sm break-all whitespace-pre-wrap text-text">{h.sql}</span>
+                  <span className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-text-2">
                     <span>{relativeTime(h.executedAt, now)}</span>
                     {h.elapsedMs !== null && <span>{H.duration(h.elapsedMs)}</span>}
                     {h.rows !== null && <span>{H.rows(h.rows)}</span>}
@@ -163,20 +140,34 @@ export function HistoryPanel({ connectionId, connectionName, refreshKey = 0, onI
           </ul>
         )}
       </div>
-      <div className="border-t border-border px-2 py-1">
+      <div className="px-2.5 py-1.5">
         <button
           type="button"
           onClick={() => setConfirmClear(true)}
           disabled={!entries || entries.length === 0}
-          className="rounded-sm border border-border px-2 py-0.5 text-sm text-danger hover:bg-surface-2 disabled:opacity-40"
+          className="rounded-md border border-pill-border bg-btn px-2 py-0.5 text-sm text-danger outline-none hover:bg-seg-sel disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-accent"
         >
           {H.clear}
         </button>
       </div>
+      {menu && (
+        <ContextMenu
+          label={H.menuLabel}
+          anchor={menu.anchor}
+          items={menuItems(menu.entry)}
+          onClose={(reason) => {
+            setMenu(null);
+            const { trigger } = menu;
+            restoreFocusOnClose(reason, () => {
+              if (trigger.isConnected) trigger.focus();
+            });
+          }}
+        />
+      )}
       {confirmClear && (
         <ConfirmDialog
           title={H.clearTitle}
-          body={H.clearBody(connectionName)}
+          body={H.clearBody(workspace.name)}
           confirm={H.clearConfirm}
           cancel={H.cancel}
           danger
@@ -184,6 +175,6 @@ export function HistoryPanel({ connectionId, connectionName, refreshKey = 0, onI
           onCancel={() => setConfirmClear(false)}
         />
       )}
-    </aside>
+    </section>
   );
 }

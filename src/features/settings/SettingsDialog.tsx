@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { DEFAULT_KEYMAP, KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, effectiveShortcut, isValidShortcut, sameCombination } from "../../lib/keymap";
+import { DEFAULT_KEYMAP, KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, effectiveShortcut, effectiveShortcuts, isValidShortcut, sameCombination } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import { useRestoreFocus } from "../../lib/useRestoreFocus";
 import type { Settings, ThemeSetting } from "../../lib/types";
@@ -139,6 +139,7 @@ const KEY_CODES: Record<string, string> = {
 };
 const NAMED_CODES = new Set([
   "Enter", "Tab", "Escape", "Space", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "PageUp", "PageDown",
 ]);
 const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)$/;
 
@@ -214,11 +215,15 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
     return () => document.removeEventListener("keydown", onKey, true);
   }, [recording, id, update]);
 
-  // Same rule as recording: the default comes back only if no other action uses it now.
+  // Same rule as recording: the defaults (with the alternates) come back only if no other
+  // action uses one of them now.
   const reset = () => {
     const next = { ...keymap };
     delete next[id];
-    const other = conflictAnywhere(id, DEFAULT_KEYMAP[id], next);
+    const other =
+      effectiveShortcuts(id, {})
+        .map((spec) => conflictAnywhere(id, spec, next))
+        .find((o) => o !== null) ?? null;
     if (other !== null) {
       setError(strings.settings.shortcutConflict(strings.keymap[other]));
       return;

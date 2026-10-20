@@ -5,10 +5,11 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { SavedQuery } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
-import { useQueryPanels } from "../../stores/queryPanels";
+import { useChrome } from "../../stores/chrome";
 import { useSavedQueries } from "../../stores/savedQueries";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "./QueryTab";
+import { SavedQueries } from "./SavedQueries";
 
 vi.mock("../../lib/ipc");
 vi.mock("./SqlEditor", async (importOriginal) => {
@@ -66,7 +67,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   useCatalog.setState({ catalogs: {}, errors: {}, loading: {} });
   useSavedQueries.setState({ lists: {} });
-  useQueryPanels.setState({ history: {}, savedOpen: true });
+  useChrome.setState({ runRequests: {}, editorInserts: {} });
   vi.mocked(ipc.catalogGet).mockResolvedValue({ schema: "public", tables: [] });
   vi.mocked(ipc.savedQueryWrite).mockResolvedValue(undefined);
   vi.mocked(ipc.savedQueryRename).mockResolvedValue(undefined);
@@ -74,8 +75,34 @@ beforeEach(() => {
   vi.mocked(ipc.historyList).mockResolvedValue([]);
 });
 
+/** The sidebar's Queries tab next to the active SQL tab (as WorkspaceView shows them). */
+const setupPanel = async (tab: Partial<QueryTabT> = {}, saved: SavedQuery[] = []) => {
+  const r = await setup(tab, saved);
+  const ws = () => useWorkspaces.getState().workspaces[0];
+  r.rerender(<></>);
+  const Both = () => {
+    const w = useWorkspaces((s) => s.workspaces[0]);
+    const active = w.tabs.find((x) => x.id === w.activeTabId);
+    return (
+      <>
+        <SavedQueries workspace={w} />
+        {active?.kind === "query" && <QueryTab key={active.id} workspace={w} tab={active} />}
+      </>
+    );
+  };
+  r.rerender(<Both />);
+  await act(async () => {});
+  return { ...r, ws };
+};
+
+const openMenu = async (name: string) => {
+  fireEvent.contextMenu(await screen.findByRole("button", { name: S.open(name) }));
+  return screen.findByRole("menu", { name: S.menuLabel });
+};
+const Q = strings.sqlMenu;
+
 test("the panel lists the connection's saved queries", async () => {
-  await setup({}, [sq("daily report"), sq("users")]);
+  await setupPanel({}, [sq("daily report"), sq("users")]);
   expect(ipc.savedQueriesList).toHaveBeenCalledWith("c1");
   const panel = screen.getByRole("region", { name: S.label });
   expect(within(panel).getByRole("button", { name: S.open("daily report") })).toBeInTheDocument();
@@ -83,7 +110,7 @@ test("the panel lists the connection's saved queries", async () => {
 });
 
 test("Mod+S on an unlinked tab asks for a name, then saves and renames the tab", async () => {
-  await setup({ sql: "select 42" });
+  await setupPanel({ sql: "select 42" });
   pressModS();
   const dialog = screen.getByRole("dialog", { name: S.saveTitle });
   expect(dialog).toHaveAttribute("aria-modal", "true");
@@ -165,9 +192,9 @@ test("a linked tab shows the modified dot until it is saved again", async () => 
   await waitFor(() => expect(screen.queryByLabelText(S.modified)).toBeNull());
 });
 
-test("rename updates the file and the linked tab", async () => {
-  await setup({ title: "old", savedName: "old", savedSql: "select 1" }, [sq("old")]);
-  await userEvent.click(screen.getByRole("button", { name: S.rename("old") }));
+test("rename (from the menu) updates the file and the linked tab", async () => {
+  await setupPanel({ title: "old", savedName: "old", savedSql: "select 1" }, [sq("old")]);
+  await userEvent.click(within(await openMenu("old")).getByRole("menuitem", { name: Q.rename }));
   const dialog = screen.getByRole("dialog", { name: S.renameTitle });
   const input = within(dialog).getByRole("textbox", { name: S.nameLabel });
   expect(input).toHaveValue("old");
@@ -180,9 +207,9 @@ test("rename updates the file and the linked tab", async () => {
   expect(await screen.findByRole("button", { name: S.open("new") })).toBeInTheDocument();
 });
 
-test("delete asks for confirmation and unlinks the tab", async () => {
-  await setup({ title: "gone", savedName: "gone", savedSql: "select 1" }, [sq("gone")]);
-  await userEvent.click(screen.getByRole("button", { name: S.delete("gone") }));
+test("delete (from the menu) asks for confirmation and unlinks the tab", async () => {
+  await setupPanel({ title: "gone", savedName: "gone", savedSql: "select 1" }, [sq("gone")]);
+  await userEvent.click(within(await openMenu("gone")).getByRole("menuitem", { name: Q.delete }));
   const confirm = screen.getByRole("alertdialog", { name: S.deleteTitle });
   expect(confirm).toHaveAttribute("aria-modal", "true");
   vi.mocked(ipc.savedQueriesList).mockResolvedValue([]);
@@ -192,8 +219,8 @@ test("delete asks for confirmation and unlinks the tab", async () => {
   expect(tab0().title).toBe("gone");
 });
 
-test("open loads the query in a new linked tab, or activates the tab already linked", async () => {
-  await setup({}, [sq("users")]);
+test("query_click_opens_sql_tab: a click opens the query in a new linked tab, or activates the tab already linked", async () => {
+  await setupPanel({}, [sq("users")]);
   vi.mocked(ipc.savedQueryRead).mockResolvedValue("select * from users");
   await userEvent.click(screen.getByRole("button", { name: S.open("users") }));
   await waitFor(() => expect(useWorkspaces.getState().workspaces[0].tabs).toHaveLength(2));
@@ -209,20 +236,81 @@ test("open loads the query in a new linked tab, or activates the tab already lin
   expect(ipc.savedQueryRead).toHaveBeenCalledTimes(1);
 });
 
-test("the saved queries panel collapses", async () => {
-  await setup({}, [sq("users")]);
-  await userEvent.click(screen.getByRole("button", { name: S.toggle }));
-  expect(screen.queryByRole("region", { name: S.label })).toBeNull();
-  await userEvent.click(screen.getByRole("button", { name: S.toggle }));
-  expect(screen.getByRole("region", { name: S.label })).toBeInTheDocument();
+test("the menu: Run opens the query and runs it, Copy copies its text", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  await setupPanel({}, [sq("users")]);
+  vi.mocked(ipc.savedQueryRead).mockResolvedValue("select * from users");
+  const menu = await openMenu("users");
+  expect(within(menu).getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+    Q.run,
+    Q.copy,
+    Q.insert,
+    Q.rename,
+    Q.delete,
+  ]);
+  await userEvent.click(within(menu).getByRole("menuitem", { name: Q.copy }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith("select * from users"));
+
+  vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s1");
+  vi.mocked(ipc.sqlExecute).mockResolvedValue(undefined);
+  await userEvent.click(within(await openMenu("users")).getByRole("menuitem", { name: Q.run }));
+  await waitFor(() => expect(useWorkspaces.getState().workspaces[0].tabs).toHaveLength(2));
+  const opened = useWorkspaces.getState().workspaces[0].tabs[1] as QueryTabT;
+  expect(opened).toMatchObject({ savedName: "users", sql: "select * from users" });
+  // The new tab runs it once (the request is consumed).
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select * from users"]);
+  expect(useChrome.getState().runRequests[opened.id]).toBeUndefined();
 });
 
-test("Mod+Shift+H toggles the history panel of the query tab", async () => {
-  await setup();
-  expect(screen.queryByRole("complementary", { name: strings.history.label })).toBeNull();
-  fireEvent.keyDown(window, { code: "KeyH", key: "H", ctrlKey: true, shiftKey: true });
-  expect(await screen.findByRole("complementary", { name: strings.history.label })).toBeInTheDocument();
-  await waitFor(() => expect(ipc.historyList).toHaveBeenCalledWith("c1", null, 200));
-  fireEvent.keyDown(window, { code: "KeyH", key: "H", ctrlKey: true, shiftKey: true });
-  expect(screen.queryByRole("complementary", { name: strings.history.label })).toBeNull();
+test("the menu: Insert into SQL editor inserts in the active SQL tab", async () => {
+  await setupPanel({ sql: "" }, [sq("users")]);
+  vi.mocked(ipc.savedQueryRead).mockResolvedValue("select 7");
+  await userEvent.click(within(await openMenu("users")).getByRole("menuitem", { name: Q.insert }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "SQL editor" })).toHaveValue("select 7"));
+  expect(useWorkspaces.getState().workspaces[0].tabs).toHaveLength(1);
+});
+
+test("the search box filters the saved queries", async () => {
+  await setupPanel({}, [sq("daily report"), sq("users")]);
+  await userEvent.type(screen.getByRole("searchbox", { name: S.search }), "DAILY");
+  expect(screen.getByRole("button", { name: S.open("daily report") })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: S.open("users") })).toBeNull();
+  await userEvent.type(screen.getByRole("searchbox", { name: S.search }), "zzz");
+  expect(screen.getByText(S.noMatch)).toBeInTheDocument();
+});
+
+test("the menu gives the focus back to its query on Escape", async () => {
+  await setupPanel({}, [sq("users")]);
+  await openMenu("users");
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("button", { name: S.open("users") })).toHaveFocus();
+});
+
+test("Copy without a clipboard reports the failure", async () => {
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+  await setupPanel({}, [sq("users")]);
+  vi.mocked(ipc.savedQueryRead).mockResolvedValue("select 1");
+  await userEvent.click(within(await openMenu("users")).getByRole("menuitem", { name: Q.copy }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(S.actionFailed(strings.sidebar.clipboardUnavailable));
+});
+
+test("a press outside: on nothing focusable the focus goes back, on a focusable element it stays there", async () => {
+  await setupPanel({}, [sq("users")]);
+  await openMenu("users");
+  fireEvent.mouseDown(document.body);
+  await waitFor(() => expect(screen.getByRole("button", { name: S.open("users") })).toHaveFocus());
+  // The SQL editor stand-in focuses itself on mousedown.
+  const editor = screen.getByRole("textbox", { name: "SQL editor" });
+  editor.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    editor.focus();
+  });
+  await openMenu("users");
+  fireEvent.mouseDown(editor);
+  expect(screen.queryByRole("menu")).toBeNull();
+  await act(() => new Promise((r) => setTimeout(r, 20)));
+  expect(editor).toHaveFocus();
 });

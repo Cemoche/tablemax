@@ -1,8 +1,9 @@
-import { type RefObject, useState } from "react";
+import { type RefObject, useEffect, useState } from "react";
 import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import type { ShortcutOptions } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
+import { useChrome } from "../../stores/chrome";
 
 export type TableView = "data" | "structure";
 
@@ -15,10 +16,16 @@ const VIEW_KEYS: ShortcutOptions = { capture: true, stopPropagation: true, skipI
  * Which view of a table tab is shown. `grid.viewData` (Alt+1) shows the rows,
  * `grid.viewStructure` (Alt+2) the structure (Option on macOS, matched by physical key since
  * Option+digit types a character there); not while typing in a field or with a modal open.
- * Only the active tab is mounted, so the shortcut acts on it.
+ * Only the active tab is mounted, so the shortcut acts on it. A view asked for by the
+ * sidebar ("Open structure") is taken at mount, or at once when the tab is already shown.
  */
-export function useTableView() {
-  const [view, setView] = useState<TableView>("data");
+export function useTableView(tabId: string) {
+  const [view, setView] = useState<TableView>(() => useChrome.getState().tableViews[tabId] ?? "data");
+  const requested = useChrome((s) => s.tableViews[tabId]);
+  useEffect(() => {
+    const v = useChrome.getState().takeTableView(tabId);
+    if (v) setView(v);
+  }, [requested, tabId]);
   useAction("grid.viewData", () => setView("data"), VIEW_KEYS);
   useAction("grid.viewStructure", () => setView("structure"), VIEW_KEYS);
   return { view, setView };

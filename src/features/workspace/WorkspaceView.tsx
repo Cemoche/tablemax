@@ -5,7 +5,7 @@ import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Tab, type Workspace, capabilitiesOf, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 import { QueryTab } from "../editor/QueryTab";
 import { TableDataTab } from "../grid/TableDataTab";
-import { ObjectSidebar } from "./ObjectSidebar";
+import { Sidebar, useSidebarShortcuts } from "../sidebar/Sidebar";
 import { TabBar } from "./TabBar";
 import { TabSwitcher } from "./TabSwitcher";
 
@@ -65,6 +65,7 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   // reach the backend with it.
   const connected = workspace.status === "connected";
 
+  useSidebarShortcuts(id, connected);
   useAction("query.new", () => {
     if (sqlEditor) openQueryTab(id);
   });
@@ -87,7 +88,7 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 flex-1">
-        {connected && sidebarVisible && <ObjectSidebar workspace={workspace} />}
+        {connected && sidebarVisible && <Sidebar workspace={workspace} />}
         <div className="flex min-w-0 flex-1 flex-col">
           <TabBar workspace={workspace} />
           {workspace.notice && (

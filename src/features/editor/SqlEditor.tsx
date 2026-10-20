@@ -41,9 +41,10 @@ interface Props {
   onView?: (view: EditorView | null) => void;
 }
 
-// Mod-Enter (insertBlankLine) and Mod-/ (toggleComment) are editor.run / editor.comment's
-// keys: dropped, so a rebound action leaves its old keys inert.
-const CM_DEFAULT_KEYMAP = defaultKeymap.filter((b) => b.key !== "Mod-Enter" && b.key !== "Mod-/");
+// Mod-Enter (insertBlankLine), Mod-/ (toggleComment) and Mod-i (selectParentSyntax) are
+// editor.run / editor.comment / editor.format's keys: dropped, so a rebound action leaves
+// its old keys inert.
+const CM_DEFAULT_KEYMAP = defaultKeymap.filter((b) => !["Mod-Enter", "Mod-/", "Mod-i"].includes(b.key ?? ""));
 
 export const DIALECTS = { postgres: PostgreSQL, mySql: MySQL, sqlite: SQLite } as const;
 const FORMAT_LANGUAGE = { postgres: "postgresql", mySql: "mysql", sqlite: "sqlite" } as const;
@@ -111,18 +112,6 @@ export function insertAtCursor(view: EditorView, text: string): void {
   view.dispatch({
     changes: { from: sel.from, to: sel.to, insert: text },
     selection: CmSelection.cursor(sel.from + text.length),
-    annotations: isolateHistory.of("full"),
-    userEvent: "input.paste",
-    scrollIntoView: true,
-  });
-  view.focus();
-}
-
-/** Replaces the whole content with `text` in ONE undoable transaction. */
-export function replaceDocument(view: EditorView, text: string): void {
-  view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: text },
-    selection: CmSelection.cursor(text.length),
     annotations: isolateHistory.of("full"),
     userEvent: "input.paste",
     scrollIntoView: true,

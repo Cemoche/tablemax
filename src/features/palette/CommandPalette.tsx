@@ -218,7 +218,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowWorksp
         >
           <span>{t.name}</span>
           <span className="text-sm opacity-70">
-            {t.kind === "view" ? strings.sidebar.view : strings.sidebar.table}
+            {t.kind === "view" ? strings.sidebar.kinds.view : strings.sidebar.kinds.table}
           </span>
         </Command.Item>
       ))}

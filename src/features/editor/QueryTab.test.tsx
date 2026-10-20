@@ -8,6 +8,7 @@ import { strings } from "../../lib/strings";
 import type { ConnectionConfig, Dialect, ExecEvent } from "../../lib/types";
 import { useAutoLimit } from "../../stores/autoLimit";
 import { useCatalog } from "../../stores/catalog";
+import { useChrome } from "../../stores/chrome";
 import { useConnections } from "../../stores/connections";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
@@ -95,6 +96,7 @@ beforeEach(() => {
   useCatalog.setState({ catalogs: {}, errors: {}, loading: {} });
   useAutoLimit.setState({ override: {} });
   useSettings.setState({ settings: DEFAULT_SETTINGS });
+  useChrome.setState({ runRequests: {}, editorInserts: {}, historyBumps: {} });
   vi.mocked(ipc.catalogGet).mockResolvedValue({ schema: "public", tables: [] });
   vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s1");
   vi.mocked(ipc.sqlCancel).mockResolvedValue(undefined);
@@ -536,13 +538,13 @@ const press = (view: EditorView, init: KeyboardEventInit & { keyCode: number }) 
     fireEvent.keyDown(view.contentDOM, init);
   });
 
-test("Mod+Shift+F formats the selection in one undoable transaction", async () => {
+test("Mod+I (Beautify) formats the selection in one undoable transaction", async () => {
   editorMode.real = true;
   const sql = "select a,b from t; select c from u";
   await setup(sql);
   const view = editorView();
   act(() => view.dispatch({ selection: { anchor: 0, head: "select a,b from t".length } }));
-  press(view, { key: "F", code: "KeyF", keyCode: 70, ctrlKey: true, shiftKey: true });
+  press(view, { key: "i", code: "KeyI", keyCode: 73, ctrlKey: true });
   await waitFor(() => expect(view.state.doc.toString()).toBe("SELECT\n  a,\n  b\nFROM\n  t; select c from u"));
   expect(view.state.selection.main).toMatchObject({ from: 0, to: "SELECT\n  a,\n  b\nFROM\n  t".length });
 
@@ -623,28 +625,48 @@ test("Mod+/ toggles a line comment with a space after --", async () => {
   expect(view.state.doc.toString()).toBe("select 1");
 });
 
-test("history: click inserts at the cursor, double-click replaces, one undo each (real editor)", async () => {
+test("an insert request from the sidebar goes in at the cursor, one undo step (real editor)", async () => {
   editorMode.real = true;
-  vi.mocked(ipc.historyList).mockResolvedValue([
-    { id: 1, connectionId: "c1", sql: "select 42", executedAt: Date.now(), elapsedMs: 1, rows: 1, error: null },
-  ]);
   await setup("select 1;\n");
   const view = editorView();
   act(() => view.dispatch({ selection: { anchor: 10 } }));
-  await userEvent.click(screen.getByRole("button", { name: strings.history.toggle }));
-  const item = await screen.findByRole("button", { name: /select 42/ });
-  fireEvent.click(item, { detail: 0 }); // keyboard activation inserts at once
-  expect(view.state.doc.toString()).toBe("select 1;\nselect 42");
-  await userEvent.dblClick(item);
-  expect(view.state.doc.toString()).toBe("select 42");
-  act(() => {
-    undo(view);
-  });
-  expect(view.state.doc.toString()).toBe("select 1;\nselect 42");
+  act(() => useChrome.getState().requestInsert("t1", "select 42"));
+  await waitFor(() => expect(view.state.doc.toString()).toBe("select 1;\nselect 42"));
+  expect(useChrome.getState().editorInserts.t1).toBeUndefined();
   act(() => {
     undo(view);
   });
   expect(view.state.doc.toString()).toBe("select 1;\n");
+});
+
+test("a run request runs the whole tab once, even when it was made before the tab mounted", async () => {
+  useChrome.getState().requestRun("t1");
+  const r = await setup("select 1; select 2");
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(ipc.sqlExecute).mock.calls[0][1]).toEqual(["select 1", "select 2"]);
+  expect(useChrome.getState().runRequests.t1).toBeUndefined();
+  // Back to the tab later: nothing runs again.
+  r.unmount();
+  await setup("select 1; select 2");
+  await act(async () => {});
+  expect(ipc.sqlExecute).toHaveBeenCalledTimes(1);
+});
+
+test("a finished run tells the sidebar's History of its connection to reload", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  await setup("select 1");
+  await userEvent.click(screen.getByRole("button", { name: "Run all" }));
+  await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalled());
+  act(() => {
+    emit({ event: "batchFinished", data: { cancelled: false } });
+    resolveExec();
+  });
+  await waitFor(() => expect(useChrome.getState().historyBumps.c1).toBe(1));
+  await act(() => vi.advanceTimersByTimeAsync(600));
+  expect(useChrome.getState().historyBumps.c1).toBe(2);
 });
 
 test("a run with a DELIMITER block sends the procedure whole, without the DELIMITER lines", async () => {
@@ -657,9 +679,9 @@ test("a run with a DELIMITER block sends the procedure whole, without the DELIMI
   ]);
 });
 
-test("the Save and History buttons name the effective shortcuts", async () => {
+test("the Save button names the effective shortcut; History and Saved queries left for the sidebar", async () => {
   useSettings.setState({
-    settings: { ...DEFAULT_SETTINGS, keymap: { "query.save": "Mod+Shift+S", "history.toggle": "Alt+H" } },
+    settings: { ...DEFAULT_SETTINGS, keymap: { "query.save": "Mod+Shift+S" } },
   });
   onTestFinished(() => useSettings.setState({ settings: DEFAULT_SETTINGS }));
   await setup();
@@ -667,8 +689,6 @@ test("the Save and History buttons name the effective shortcuts", async () => {
     "title",
     strings.savedQueries.saveHint("Ctrl+Shift+S"),
   );
-  expect(screen.getByRole("button", { name: strings.history.toggle })).toHaveAttribute(
-    "title",
-    strings.history.toggleHint("Alt+H"),
-  );
+  expect(screen.queryByRole("complementary", { name: strings.history.label })).toBeNull();
+  expect(screen.queryByRole("region", { name: strings.savedQueries.label })).toBeNull();
 });

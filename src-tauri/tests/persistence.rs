@@ -124,6 +124,26 @@ fn history_search_and_order() {
 }
 
 #[test]
+fn history_delete_removes_one_entry_of_its_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open_store(&dir);
+    history::record(&store, entry("c1", "select 1", 10)).unwrap();
+    history::record(&store, entry("c1", "select 2", 20)).unwrap();
+    history::record(&store, entry("c2", "select 3", 30)).unwrap();
+    let c1 = history::list(&store, "c1", None, 10).unwrap();
+    let c2 = history::list(&store, "c2", None, 10).unwrap();
+    // An id of another connection is left alone.
+    history::delete(&store, "c1", c2[0].id).unwrap();
+    assert_eq!(history::list(&store, "c2", None, 10).unwrap().len(), 1);
+    history::delete(&store, "c1", c1[0].id).unwrap();
+    let left = history::list(&store, "c1", None, 10).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].sql, "select 1");
+    // Deleting an entry already gone is not an error.
+    history::delete(&store, "c1", c1[0].id).unwrap();
+}
+
+#[test]
 fn session_too_large() {
     let dir = tempfile::tempdir().unwrap();
     let store = open_store(&dir);

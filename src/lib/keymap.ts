@@ -1,5 +1,5 @@
 import { useSettings } from "../stores/settings";
-import { type KeymapActionId, effectiveShortcut } from "./keymapRegistry";
+import { type KeymapActionId, effectiveShortcut, effectiveShortcuts } from "./keymapRegistry";
 import { type ShortcutOptions, useShortcut } from "./shortcuts";
 
 // The registry and grammar live in the leaf module ./keymapRegistry (the settings store and
@@ -12,9 +12,12 @@ export function useEffectiveShortcut(id: KeymapActionId): string {
 }
 
 /**
- * Binds action `id` to its effective combination (`useShortcut` with the spec the keymap
- * gives it): a combination changed in the settings takes effect at once, the old one stops.
+ * Binds action `id` to its effective combinations (`useShortcut` with the specs the keymap
+ * gives it: the default and its alternates, or the custom one): a combination changed in
+ * the settings takes effect at once, the old ones stop.
  */
 export function useAction(id: KeymapActionId, handler: (e: KeyboardEvent) => void, opts?: ShortcutOptions): void {
-  useShortcut(useEffectiveShortcut(id), handler, opts);
+  // Joined so the hook sees a stable value (a new array each render would rebind).
+  const specs = useSettings((s) => effectiveShortcuts(id, s.settings.keymap).join("\n"));
+  useShortcut(specs.split("\n"), handler, opts);
 }

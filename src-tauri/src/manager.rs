@@ -1817,6 +1817,11 @@ impl SessionManager {
         blocking(move || history::list(&st, &id, search.as_deref(), limit)).await
     }
 
+    pub async fn history_delete(&self, connection_id: &str, id: i64) -> AppResult<()> {
+        let (st, conn) = (self.store.clone(), connection_id.to_string());
+        blocking(move || history::delete(&st, &conn, id)).await
+    }
+
     pub async fn history_clear(&self, connection_id: &str) -> AppResult<()> {
         let (st, id) = (self.store.clone(), connection_id.to_string());
         blocking(move || history::clear(&st, &id)).await

@@ -4,21 +4,9 @@ import type { ConnectionConfig } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
 import type { Workspace } from "../../stores/workspaces";
 import { ConnectionPopover, engineLabel } from "./ConnectionPopover";
+import { swatchClass } from "./swatch";
 
 const s = strings.statusPill;
-
-/**
- * The connection color and its text color (≥ 4.5:1, tokens.test.ts). Tailwind needs the
- * literal class names. Unknown ids fall back to the gray swatch.
- */
-const SWATCH: Record<string, string> = {
-  "swatch-1": "bg-swatch-1 text-swatch-1-text",
-  "swatch-2": "bg-swatch-2 text-swatch-2-text",
-  "swatch-3": "bg-swatch-3 text-swatch-3-text",
-  "swatch-4": "bg-swatch-4 text-swatch-4-text",
-  "swatch-5": "bg-swatch-5 text-swatch-5-text",
-  "swatch-6": "bg-swatch-6 text-swatch-6-text",
-};
 
 type PillState = "connected" | "connecting" | "reconnecting" | "error" | "disconnected";
 
@@ -96,7 +84,7 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
             ? s.error(workspace.name)
             : s.disconnected(workspace.name);
   const look =
-    state === "connected" ? (SWATCH[color] ?? SWATCH["swatch-4"]) : STATE_CLASS[state].pill;
+    state === "connected" ? swatchClass(color) : STATE_CLASS[state].pill;
 
   return (
     // The wrapper takes the free space; the pill is capped and centred so the space on its

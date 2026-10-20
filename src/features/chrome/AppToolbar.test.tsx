@@ -352,9 +352,27 @@ test("a looser saved mode stays enforced until the next open, and the menu says 
   expect(screen.getByRole("button", { name: t.safeMode(strings.safety.bannerModeConfirmWrites) })).toHaveFocus();
 });
 
-test("the connections screen shows only the title and the window buttons", () => {
+test("the connections screen shows only the settings, the title and the window buttons", () => {
   render(<AppToolbar workspace={null} onEditConnection={vi.fn()} />);
   const header = screen.getByRole("banner");
   expect(within(header).getByText(strings.appName)).toBeInTheDocument();
-  expect(buttonNames(header)).toEqual([strings.window.minimize, strings.window.maximize, strings.window.close]);
+  expect(buttonNames(header)).toEqual([
+    strings.settings.open,
+    strings.window.minimize,
+    strings.window.maximize,
+    strings.window.close,
+  ]);
+});
+
+test("the sidebar button names Ctrl+0", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  setup();
+  expect(screen.getByRole("button", { name: t.sidebar })).toHaveAttribute("title", t.hint(t.sidebar, "Ctrl+0"));
+});
+
+test("on the connections screen a gear button opens the settings", async () => {
+  useChrome.setState({ settingsRequest: 0 });
+  render(<AppToolbar workspace={null} onEditConnection={vi.fn()} />);
+  await userEvent.click(screen.getByRole("button", { name: strings.settings.open }));
+  expect(useChrome.getState().settingsRequest).toBe(1);
 });

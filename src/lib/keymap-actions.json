@@ -20,5 +20,9 @@
   "font.decrease",
   "database.open",
   "editor.open",
-  "workspace.reload"
+  "workspace.reload",
+  "workspace.previous",
+  "workspace.next",
+  "sidebar.toggle",
+  "sidebar.search"
 ]

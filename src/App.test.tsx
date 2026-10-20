@@ -183,7 +183,7 @@ test("a connect error is shown in the disconnected workspace", async () => {
   expect(reconnect()).toBeInTheDocument();
 });
 
-test("selecting a disconnected workspace in the switcher connects it", async () => {
+test("selecting a disconnected workspace in the connections column connects it", async () => {
   const user = userEvent.setup();
   render(<App />);
   await screen.findByRole("tab", { name: "users" });
@@ -197,7 +197,7 @@ test("closing a never-connected workspace does not call the backend", async () =
   const user = userEvent.setup();
   render(<App />);
   await screen.findByRole("tab", { name: "users" });
-  await user.click(screen.getByRole("button", { name: strings.workspace.closeWorkspace("Prod PG") }));
+  await user.click(screen.getByRole("button", { name: strings.connectionsColumn.close("Prod PG") }));
   expect(useWorkspaces.getState().workspaces).toEqual([]);
   expect(ipc.workspaceClose).not.toHaveBeenCalled();
   expect(ipc.workspaceOpen).not.toHaveBeenCalled();
@@ -209,7 +209,7 @@ test("corrupt_session_is_ignored at startup: empty start, the file is not overwr
     vi.mocked(ipc.sessionLoad).mockResolvedValue("{\"version\":1,\"workspaces\":");
     render(<App />);
     expect(await screen.findByText("Prod PG")).toBeInTheDocument();
-    expect(screen.queryByRole("navigation", { name: strings.workspace.switcherLabel })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: strings.connectionsColumn.label })).toBeNull();
     await vi.advanceTimersByTimeAsync(5000);
     expect(useWorkspaces.getState().workspaces).toEqual([]);
     expect(screen.queryByRole("tab")).toBeNull();
@@ -230,7 +230,7 @@ test("a restored connection reopened from the connection list shows why it faile
   const user = userEvent.setup();
   render(<App />);
   await screen.findByRole("tab", { name: "users" });
-  await user.click(screen.getByRole("button", { name: strings.workspace.back }));
+  await user.click(screen.getByRole("button", { name: strings.connectionsColumn.connections }));
   vi.mocked(ipc.workspaceOpen).mockRejectedValueOnce({ kind: "connection", message: "connection refused" });
   await user.dblClick(listRow("Prod PG"));
   expect(await screen.findByText("connection refused")).toBeInTheDocument();
@@ -241,7 +241,7 @@ test("a changed SSH host key on a restored connection opened from the list is sh
   const user = userEvent.setup();
   render(<App />);
   await screen.findByRole("tab", { name: "users" });
-  await user.click(screen.getByRole("button", { name: strings.workspace.back }));
+  await user.click(screen.getByRole("button", { name: strings.connectionsColumn.connections }));
   vi.mocked(ipc.workspaceOpen).mockRejectedValueOnce({
     kind: "hostKeyChanged",
     message: "SHA256:evil",

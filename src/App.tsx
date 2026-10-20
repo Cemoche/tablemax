@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
 import { useFontShortcuts } from "./features/settings/useFontShortcuts";
 import { useAction } from "./lib/keymap";
-import { strings } from "./lib/strings";
 import { ConnectPrompt } from "./features/connections/ConnectPrompt";
 import { ConnectionForm } from "./features/connections/ConnectionForm";
 import { ImportDialog } from "./features/connections/ImportDialog";
@@ -15,7 +14,8 @@ import { AppToolbar } from "./features/chrome/AppToolbar";
 import { ResizeHandles } from "./features/chrome/ResizeHandles";
 import { CommandPalette } from "./features/palette/CommandPalette";
 import { useWindowTitle } from "./features/workspace/useWindowTitle";
-import { WorkspaceSwitcher } from "./features/workspace/WorkspaceSwitcher";
+import { OpenConnectionsColumn } from "./features/chrome/OpenConnectionsColumn";
+import { useChrome, useOnRequest } from "./stores/chrome";
 import { CloseConfirm } from "./features/workspace/CloseConfirm";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import type { ConnectionConfig } from "./lib/types";
@@ -65,6 +65,11 @@ function App() {
 
   // Mod+, opens the settings (a modifier combo, so it is fine while typing; not over a modal).
   useAction("settings.open", () => setSettingsOpen(true));
+  // The gears of the toolbar (connections screen) and of the sidebar footer.
+  useOnRequest(
+    useChrome((s) => s.settingsRequest),
+    () => setSettingsOpen(true),
+  );
   useFontShortcuts();
 
   // Connections first (a restored workspace takes its name and color from its
@@ -133,30 +138,17 @@ function App() {
           setView("connections");
         }}
       />
-      <div className="flex items-stretch border-b border-border bg-surface">
-        <div className="min-w-0 flex-1">
-          {workspaces.length > 0 && (
-            <WorkspaceSwitcher
-              connectionsActive={!showWorkspace}
-              onShowConnections={() => setView("connections")}
-              onSelectWorkspace={(id) => {
-                setActiveWorkspace(id);
-                setView("workspace");
-              }}
-            />
-          )}
-        </div>
-        <button
-          type="button"
-          aria-label={strings.settings.open}
-          title={strings.settings.open}
-          onClick={() => setSettingsOpen(true)}
-          className="shrink-0 px-3 py-1.5 hover:bg-surface-2"
-        >
-          <span aria-hidden>⚙</span>
-        </button>
-      </div>
       <div className="flex min-h-0 flex-1">
+        {workspaces.length > 0 && (
+          <OpenConnectionsColumn
+            connectionsActive={!showWorkspace}
+            onShowConnections={() => setView("connections")}
+            onSelectWorkspace={(id) => {
+              setActiveWorkspace(id);
+              setView("workspace");
+            }}
+          />
+        )}
         {showWorkspace ? (
           <main className="min-w-0 flex-1">
             <WorkspaceView

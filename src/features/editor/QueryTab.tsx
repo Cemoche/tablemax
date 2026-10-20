@@ -8,7 +8,7 @@ import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import { autoLimitTexts, useAutoLimit, useAutoLimitOn } from "../../stores/autoLimit";
 import { useCatalog } from "../../stores/catalog";
-import { useQueryPanels } from "../../stores/queryPanels";
+import { useChrome } from "../../stores/chrome";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
 import { useLiveEnv } from "../workspace/useLiveEnv";
 import { useQueryRuns } from "../../stores/queryRuns";
@@ -17,10 +17,8 @@ import { useSettings } from "../../stores/settings";
 import { type Tab, type Workspace, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 import { buildCompletionSource } from "./completion";
 import { ConfirmDialog, NameDialog } from "./Dialogs";
-import { HistoryPanel } from "./HistoryPanel";
 import { ResultsPanel } from "./ResultsPanel";
-import { SavedQueries } from "./SavedQueries";
-import { type EditorSelection, type RunMode, SqlEditor, insertAtCursor, replaceDocument } from "./SqlEditor";
+import { type EditorSelection, type RunMode, SqlEditor, insertAtCursor } from "./SqlEditor";
 import { type Statement, delimiterAt, splitStatements, statementAt } from "./splitStatements";
 
 const SAVE_DEBOUNCE_MS = 300;
@@ -80,26 +78,24 @@ export function QueryTab({ workspace, tab }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const connectionId = workspace.connectionId;
-  const historyOpen = useQueryPanels((s) => !!s.history[tabId]);
-  const savedOpen = useQueryPanels((s) => s.savedOpen);
   // Name dialog of a first save (error: the backend's refusal); replace confirmation.
   const [saveDialog, setSaveDialog] = useState<{ error: string | null } | null>(null);
   const [replaceName, setReplaceName] = useState<string | null>(null);
   const linkedName = tab.savedName ?? null;
   const modified = !!linkedName && typeof tab.savedSql === "string" && tab.savedSql !== text;
 
-  // The history panel reloads when a run ends (and once more when the backend's write
+  // The sidebar's History reloads when a run ends (and once more when the backend's write
   // of the batch has surely landed).
-  const [historyKey, setHistoryKey] = useState(0);
   const wasRunning = useRef(running);
   useEffect(() => {
     const ended = wasRunning.current && !running;
     wasRunning.current = running;
     if (!ended) return;
-    setHistoryKey((k) => k + 1);
-    const t = setTimeout(() => setHistoryKey((k) => k + 1), HISTORY_SETTLE_MS);
+    const bump = () => useChrome.getState().bumpHistory(connectionId);
+    bump();
+    const t = setTimeout(bump, HISTORY_SETTLE_MS);
     return () => clearTimeout(t);
-  }, [running]);
+  }, [running, connectionId]);
 
   // Completion catalog of the current schema (loaded once per schema by the store); other
   // schemas already in the store are offered as `schema.table`.
@@ -238,7 +234,7 @@ export function QueryTab({ workspace, tab }: Props) {
   const runModeRef = useRef(runMode);
   runModeRef.current = runMode;
 
-  // ---- History: insert / replace in the editor (one undo step each). ----
+  // ---- Sidebar requests: insert at the cursor (one undo step), run the whole tab. ----
   const insertSql = (sql: string) => {
     const view = viewRef.current;
     if (view) return insertAtCursor(view, sql);
@@ -246,11 +242,19 @@ export function QueryTab({ workspace, tab }: Props) {
     const cur = textRef.current;
     onChange(cur.slice(0, from) + sql + cur.slice(to));
   };
-  const replaceSql = (sql: string) => {
-    const view = viewRef.current;
-    if (view) return replaceDocument(view, sql);
-    onChange(sql);
-  };
+  const insertRef = useRef(insertSql);
+  insertRef.current = insertSql;
+  // Taken from the store (not the rendered value), so a request is consumed once, also
+  // when the tab mounts after it (a tab just opened) or effects run twice (StrictMode).
+  const insertRequest = useChrome((s) => s.editorInserts[tabId]);
+  useEffect(() => {
+    const sql = useChrome.getState().takeInsert(tabId);
+    if (sql !== null) insertRef.current(sql);
+  }, [insertRequest, tabId]);
+  const runRequest = useChrome((s) => s.runRequests[tabId]);
+  useEffect(() => {
+    if (useChrome.getState().takeRun(tabId)) runModeRef.current("all");
+  }, [runRequest, tabId]);
 
   // ---- Saved queries: Mod+S saves (asks for a name the first time). ----
   const saveAs = async (name: string, confirmed = false) => {
@@ -300,9 +304,7 @@ export function QueryTab({ workspace, tab }: Props) {
 
   // Mounted only for the active SQL tab: in a table tab Mod+S stays the grid's commit.
   useAction("query.save", () => void save());
-  useAction("history.toggle", () => useQueryPanels.getState().toggleHistory(tabId));
   const saveShortcut = useEffectiveShortcut("query.save");
-  const historyShortcut = useEffectiveShortcut("history.toggle");
 
   const cancel = () => {
     const sid = currentSessionId(wsId, tabId);
@@ -312,14 +314,6 @@ export function QueryTab({ workspace, tab }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-1">
-        <button
-          type="button"
-          className={btn}
-          aria-pressed={savedOpen}
-          onClick={() => useQueryPanels.getState().toggleSaved()}
-        >
-          {strings.savedQueries.toggle}
-        </button>
         <button type="button" className={btn} onClick={() => runMode("current")} disabled={running}>
           {strings.query.run}
         </button>
@@ -361,15 +355,6 @@ export function QueryTab({ workspace, tab }: Props) {
         >
           {strings.savedQueries.save}
         </button>
-        <button
-          type="button"
-          className={btn}
-          aria-pressed={historyOpen}
-          title={strings.history.toggleHint(formatShortcut(historyShortcut))}
-          onClick={() => useQueryPanels.getState().toggleHistory(tabId)}
-        >
-          {strings.history.toggle}
-        </button>
         <label
           className="flex shrink-0 items-center gap-1 text-sm"
           title={strings.query.autoLimitHint(autoLimitRows)}
@@ -383,7 +368,6 @@ export function QueryTab({ workspace, tab }: Props) {
         </label>
       </div>
       <div className="flex min-h-0 flex-1">
-        {savedOpen && <SavedQueries workspace={workspace} />}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 basis-1/2">
             <SqlEditor
@@ -406,16 +390,6 @@ export function QueryTab({ workspace, tab }: Props) {
             <ResultsPanel run={run} />
           </div>
         </div>
-        {historyOpen && (
-          <HistoryPanel
-            connectionId={connectionId}
-            connectionName={workspace.name}
-            refreshKey={historyKey}
-            onInsert={insertSql}
-            onReplace={replaceSql}
-            onClose={() => useQueryPanels.getState().setHistory(tabId, false)}
-          />
-        )}
       </div>
       {saveDialog && (
         <NameDialog
