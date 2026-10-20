@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { CellValue } from "./types";
-import { toCsv, toInsert, toJson, toTsv } from "./copyFormats";
+import { toCsv, toInsert, toJson, toMarkdown, toTsv } from "./copyFormats";
 
 const T = (v: string): CellValue => ({ t: "text", v });
 const N: CellValue = { t: "null" };
@@ -203,5 +203,59 @@ describe("toInsert", () => {
   });
   test("empty rows give an empty string", () => {
     expect(toInsert("postgres", { schema: null, name: "t" }, cols, [])).toBe("");
+  });
+});
+
+describe("copy rows without a header", () => {
+  test("TSV and CSV can leave the header row out", () => {
+    const rows: CellValue[][] = [[{ t: "int", v: 1 }, T("a,b")], [{ t: "int", v: 2 }, N]];
+    expect(toTsv(cols, rows, { header: false })).toBe("1\ta,b\n2\t");
+    expect(toCsv(cols, rows, { header: false })).toBe('1,"a,b"\r\n2,');
+    expect(toCsv(cols, [], { header: false })).toBe("");
+    // The header stays the default.
+    expect(toCsv(cols, rows)).toBe('id,name\r\n1,"a,b"\r\n2,');
+  });
+});
+
+describe("toMarkdown", () => {
+  test("a header, a separator line and one line per row; pipes escaped, newlines as <br>", () => {
+    expect(
+      toMarkdown(["id", "a|b"], [
+        [{ t: "int", v: 1 }, T("x|y")],
+        [{ t: "int", v: 2 }, T("l1\nl2")],
+        [{ t: "int", v: 3 }, N],
+        [{ t: "int", v: 4 }, T("")],
+      ]),
+    ).toBe(
+      "| id | a\\|b |\n| --- | --- |\n| 1 | x\\|y |\n| 2 | l1<br>l2 |\n| 3 | NULL |\n| 4 |  |",
+    );
+  });
+  test("no columns give an empty string", () => {
+    expect(toMarkdown([], [])).toBe("");
+  });
+  test("a backslash is escaped before a pipe (fix 9)", () => {
+    // x\|y must not end as x\\|y, where the pipe would split the cell.
+    expect(toMarkdown(["a"], [[T("x\\|y")], [T("a\\b")]])).toBe("| a |\n| --- |\n| x\\\\\\|y |\n| a\\\\b |");
+  });
+});
+
+describe("INSERT quoting per engine (Copy rows as INSERT)", () => {
+  const obj = { schema: "public", name: 'we"ird`t' };
+  const row: CellValue[] = [T("O'Brien \\ x"), { t: "bool", v: false }, N];
+  const names = ["na\"me", "fl`ag", "n"];
+  test("PostgreSQL: double-quoted identifiers, E'' for a backslash", () => {
+    expect(toInsert("postgres", obj, names, [row])).toBe(
+      'INSERT INTO "public"."we""ird`t" ("na""me", "fl`ag", "n") VALUES (E\'O\'\'Brien \\\\ x\', FALSE, NULL);',
+    );
+  });
+  test("MySQL / MariaDB: backticks doubled, backslash doubled", () => {
+    expect(toInsert("mySql", obj, names, [row])).toBe(
+      "INSERT INTO `public`.`we\"ird``t` (`na\"me`, `fl``ag`, `n`) VALUES ('O''Brien \\\\ x', FALSE, NULL);",
+    );
+  });
+  test("SQLite: double quotes, no escapes, booleans as 0/1", () => {
+    expect(toInsert("sqlite", { schema: "main", name: "t" }, names, [row])).toBe(
+      'INSERT INTO "main"."t" ("na""me", "fl`ag", "n") VALUES (\'O\'\'Brien \\ x\', 0, NULL);',
+    );
   });
 });

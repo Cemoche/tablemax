@@ -5,43 +5,54 @@ export interface CellContent {
   kind: "text" | "number" | "boolean" | "null";
   display: string;
   copyText: string;
+  /** NULL, EMPTY or DEFAULT: drawn as a dim, smaller placeholder, not as a value. */
+  placeholder: boolean;
 }
 
 const oneLine = (s: string) => s.replace(/\s*[\r\n]+\s*/g, " ");
 
-/** Pure mapping from a wire cell to what the grid shows and what Ctrl+C copies. */
-export function cellContent(v: CellValue): CellContent {
+const value = (kind: CellContent["kind"], display: string, copyText: string): CellContent => ({
+  kind,
+  display,
+  copyText,
+  placeholder: false,
+});
+
+/**
+ * Pure mapping from a wire cell (or "default", the DEFAULT of a new row) to what the grid
+ * shows and what Ctrl+C copies.
+ */
+export function cellContent(v: CellValue | "default"): CellContent {
+  if (v === "default") return { kind: "null", display: strings.grid.defaultText, copyText: "", placeholder: true };
   switch (v.t) {
     case "null":
-      return { kind: "null", display: strings.grid.nullText, copyText: "" };
+      return { kind: "null", display: strings.grid.nullText, copyText: "", placeholder: true };
     case "bool":
-      return { kind: "boolean", display: String(v.v), copyText: String(v.v) };
+      return value("boolean", String(v.v), String(v.v));
     case "int":
     case "float":
-      return { kind: "number", display: String(v.v), copyText: String(v.v) };
+      return value("number", String(v.v), String(v.v));
     case "bigInt":
     case "decimal":
-      return { kind: "number", display: v.v, copyText: v.v };
+      return value("number", v.v, v.v);
     case "text":
-      return {
-        kind: "text",
-        display: v.v === "" ? strings.grid.emptyText : oneLine(v.v),
-        copyText: v.v,
-      };
+      return v.v === ""
+        ? { kind: "text", display: strings.grid.emptyText, copyText: "", placeholder: true }
+        : value("text", oneLine(v.v), v.v);
     case "longText":
-      return { kind: "text", display: oneLine(v.v.preview) + "…", copyText: v.v.preview };
+      return value("text", oneLine(v.v.preview) + "…", v.v.preview);
     case "bytes": {
       const s = strings.grid.binary(v.v.len, v.v.hexPreview);
-      return { kind: "text", display: s, copyText: s };
+      return value("text", s, s);
     }
     case "json": {
       const compact = v.v
         .split(/\r?\n/)
         .map((l) => l.trim())
         .join(" ");
-      return { kind: "text", display: compact, copyText: v.v };
+      return value("text", compact, v.v);
     }
     case "temporal":
-      return { kind: "text", display: v.v, copyText: v.v };
+      return value("text", v.v, v.v);
   }
 }

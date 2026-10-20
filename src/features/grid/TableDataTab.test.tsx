@@ -66,7 +66,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   grid = null;
   structureMounts = 0;
-  useGridViews.setState({ views: {}, trails: {} });
+  useGridViews.setState({ views: {}, trails: {}, layouts: {} });
   usePendingChanges.setState({
     tabs: {},
     blocked: {},
@@ -438,9 +438,9 @@ test("Row details shows the selected row, follows it and edits it through the st
     key: key(1),
     set: [["note", { t: "text", v: "note 1!" }]],
   });
-  await userEvent.keyboard("{Control>}i{/Control}");
+  await userEvent.keyboard("{Control>} {/Control}");
   expect(screen.queryByRole("complementary", { name: strings.grid.rowDetails })).toBeNull();
-  await userEvent.keyboard("{Control>}i{/Control}");
+  await userEvent.keyboard("{Control>} {/Control}");
   expect(screen.getByRole("complementary", { name: strings.grid.rowDetails })).toBeInTheDocument();
 });
 
@@ -679,7 +679,7 @@ function stubClipboard() {
   return clip;
 }
 
-test("Copy as CSV / SQL INSERT copies the displayed selection, without new rows", async () => {
+test("Copy rows as CSV + header / SQL INSERT copies whole rows as displayed, without new rows", async () => {
   const clip = stubClipboard();
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
   vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
@@ -690,19 +690,28 @@ test("Copy as CSV / SQL INSERT copies the displayed selection, without new rows"
   act(() => grid!.editing!.onEdit(2, 3, "it's edited"));
   const block = { rows: [0, 1, 2], cols: [2, 3] };
   act(() => grid!.editing!.onContextMenu(1, 3, 5, 5, block));
-  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.csv }));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.csvHeader }));
   await waitFor(() =>
-    expect(clip.text).toBe("line,note\r\n0,note 0\r\n1,it's edited"),
+    expect(clip.text).toBe(
+      "id,order_id,line,note,total,data\r\n100,42,0,note 0,1.50,\r\n101,42,1,it's edited,1.50,",
+    ),
   );
   expect(screen.getByText(strings.grid.copySkippedInserts(1))).toBeInTheDocument();
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5, block));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.csv }));
+  await waitFor(() => expect(clip.text).toBe("100,42,0,note 0,1.50,\r\n101,42,1,it's edited,1.50,"));
   act(() => grid!.editing!.onContextMenu(1, 3, 5, 5, block));
   await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.insert }));
   await waitFor(() =>
     expect(clip.text).toBe(
-      `INSERT INTO "public"."order_lines" ("line", "note") VALUES (0, 'note 0');\n` +
-        `INSERT INTO "public"."order_lines" ("line", "note") VALUES (1, 'it''s edited');`,
+      `INSERT INTO "public"."order_lines" ("id", "order_id", "line", "note", "total", "data") VALUES (100, 42, 0, 'note 0', '1.50', NULL);\n` +
+        `INSERT INTO "public"."order_lines" ("id", "order_id", "line", "note", "total", "data") VALUES (101, 42, 1, 'it''s edited', '1.50', NULL);`,
     ),
   );
+  // Copy selected cells: only the selected cells, tab-separated, no header.
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5, block));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.copyCells }));
+  await waitFor(() => expect(clip.text).toBe("0\tnote 0\n1\tit's edited"));
 });
 
 test("Copy as JSON of a clicked cell outside the selection; a clipboard error shows inline", async () => {
@@ -714,7 +723,9 @@ test("Copy as JSON of a clicked cell outside the selection; a clipboard error sh
   act(() => grid!.editing!.onContextMenu(1, 4, 5, 5, { rows: [0], cols: [0] }));
   await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.copyAs.json }));
   await waitFor(() =>
-    expect(clip.text).toBe('[\n  {\n    "total": "1.50"\n  }\n]'),
+    expect(clip.text).toBe(
+      '[\n  {\n    "id": 101,\n    "order_id": 42,\n    "line": 1,\n    "note": "note 1",\n    "total": "1.50",\n    "data": null\n  }\n]',
+    ),
   );
   clip.writeText.mockRejectedValue(new Error("denied"));
   act(() => grid!.editing!.onContextMenu(1, 4, 5, 5));
@@ -909,7 +920,7 @@ test("a held Alt+1 / Alt+2: the repeats never reach the grid (no type-to-edit) a
   expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
 });
 
-test("Mod+I toggles row details on the physical I key, strictly Ctrl off macOS", async () => {
+test("space_toggles_row_detail: Ctrl+Space toggles the row details on the physical Space key; Space in the grid too", async () => {
   const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   onTestFinished(() => spy.mockRestore());
   vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
@@ -921,11 +932,16 @@ test("Mod+I toggles row details on the physical I key, strictly Ctrl off macOS",
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
     });
-  press({ code: "KeyI", key: "i", metaKey: true });
+  press({ code: "Space", key: " ", metaKey: true });
   expect(details).toHaveAttribute("aria-pressed", "false");
-  // Another layout: the physical I key types another character.
-  press({ code: "KeyI", key: "ı", ctrlKey: true });
+  press({ code: "Space", key: " ", ctrlKey: true });
   expect(details).toHaveAttribute("aria-pressed", "true");
+  // Ctrl+I is now the add row key of the spec (Task 6), not the row details.
+  press({ code: "KeyI", key: "i", ctrlKey: true });
+  expect(details).toHaveAttribute("aria-pressed", "true");
+  // Space, from the grid (which has the focus then).
+  act(() => grid!.onToggleDetails!());
+  expect(details).toHaveAttribute("aria-pressed", "false");
 });
 
 test("custom view and row details combinations work and the defaults no longer do", async () => {
@@ -941,7 +957,7 @@ test("custom view and row details combinations work and the defaults no longer d
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   await screen.findByTestId("grid");
   const details = screen.getByRole("button", { name: strings.grid.rowDetails });
-  await user.keyboard("{Control>}i{/Control}");
+  await user.keyboard("{Control>} {/Control}");
   expect(details).toHaveAttribute("aria-pressed", "false");
   await user.keyboard("{Control>}{Shift>}i{/Shift}{/Control}");
   expect(details).toHaveAttribute("aria-pressed", "true");
@@ -1103,7 +1119,7 @@ test("a commit that lost its connection never claims nothing was written; reload
   expect(pending().count("t1")).toBe(1);
 });
 
-test("with the structure shown, Alt+← and Ctrl+I leave the hidden data view alone", async () => {
+test("with the structure shown, Alt+← and Ctrl+Space leave the hidden data view alone", async () => {
   const user = userEvent.setup();
   setTab();
   vi.mocked(ipc.tableInfo).mockResolvedValue(fkInfo());
@@ -1115,13 +1131,13 @@ test("with the structure shown, Alt+← and Ctrl+I leave the hidden data view al
   await waitFor(() => expect(theTab()).toMatchObject({ object: ordersRef }));
   const details = screen.getByRole("button", { name: strings.grid.rowDetails });
   await user.click(screen.getByRole("tab", { name: strings.grid.view.structure }));
-  await user.keyboard("{Control>}i{/Control}");
+  await user.keyboard("{Control>} {/Control}");
   await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
   expect(details).toHaveAttribute("aria-pressed", "false");
   expect(theTab()).toMatchObject({ object: ordersRef });
   // Back on the data view both work again.
   await user.click(screen.getByRole("tab", { name: strings.grid.view.data }));
-  await user.keyboard("{Control>}i{/Control}");
+  await user.keyboard("{Control>} {/Control}");
   expect(details).toHaveAttribute("aria-pressed", "true");
   await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
   await waitFor(() => expect(theTab()).toMatchObject({ object: obj }));
@@ -1396,4 +1412,196 @@ test("a tab keeps Structure when it is shown again (a workspace or tab switch un
   render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
   expect(screen.getByRole("tab", { name: strings.grid.view.structure })).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByTestId("structure")).toBeVisible();
+});
+
+test("cell_menu_items: Quick Look, Set value, copies, quick filters and the row actions", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5));
+  const names = () => screen.getAllByRole("menuitem").map((i) => i.getAttribute("aria-label") ?? i.textContent);
+  expect(names()).toEqual([
+    strings.grid.menu.quickLook,
+    strings.grid.menu.setNull,
+    strings.grid.menu.setEmpty,
+    strings.grid.menu.copyRows,
+    strings.grid.copyAs.tsv,
+    strings.grid.copyAs.csv,
+    strings.grid.copyAs.csvHeader,
+    strings.grid.copyAs.json,
+    strings.grid.copyAs.markdown,
+    strings.grid.copyAs.insert,
+    strings.grid.menu.copyCells,
+    strings.grid.menu.filterIsNull("note"),
+    strings.grid.menu.filterEquals("note", "note 1"),
+    strings.grid.menu.addRow,
+    strings.grid.menu.duplicateRow,
+    strings.grid.menu.deleteRow,
+  ]);
+  expect(screen.getByText(strings.grid.menu.setValue)).toBeInTheDocument();
+  expect(screen.getByText(strings.grid.menu.copyRowsAs)).toBeInTheDocument();
+  expect(screen.getByText(strings.grid.menu.quickFilter)).toBeInTheDocument();
+  // The row number's menu: no cell entries.
+  await userEvent.keyboard("{Escape}");
+  act(() => grid!.editing!.onContextMenu(1, null, 5, 5));
+  expect(names()).not.toContain(strings.grid.menu.quickLook);
+  expect(names()).not.toContain(strings.grid.menu.setNull);
+  expect(names()).toContain(strings.grid.menu.deleteRow);
+});
+
+test("Set value and Delete act on every selected row, through the pending changes", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5, { rows: [0, 1], cols: [3] }));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.setEmpty }));
+  expect(pending().toChanges("t1")).toEqual([
+    { kind: "update", key: key(0), set: [["note", { t: "text", v: "" }]] },
+    { kind: "update", key: key(1), set: [["note", { t: "text", v: "" }]] },
+  ]);
+  act(() => grid!.editing!.onContextMenu(2, null, 5, 5, { rows: [1, 2], cols: [0, 1, 2, 3, 4, 5] }));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.deleteRows(2) }));
+  expect(pending().toChanges("t1").filter((c) => c.kind === "delete")).toEqual([
+    { kind: "delete", key: key(1) },
+    { kind: "delete", key: key(2) },
+  ]);
+  // Every selected row is deleted: the entry restores them.
+  act(() => grid!.editing!.onContextMenu(2, null, 5, 5, { rows: [1, 2], cols: [0, 1, 2, 3, 4, 5] }));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.restoreRows(2) }));
+  expect(pending().toChanges("t1").filter((c) => c.kind === "delete")).toEqual([]);
+});
+
+test("grid keys: Delete and Ctrl+D act on the selected rows; Ctrl+Shift+C copies the selected cells", async () => {
+  const clip = stubClipboard();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.onRowsAction!("delete", [0, 2]));
+  expect(pending().toChanges("t1")).toEqual([
+    { kind: "delete", key: key(0) },
+    { kind: "delete", key: key(2) },
+  ]);
+  act(() => grid!.onRowsAction!("duplicate", [1]));
+  await waitFor(() => expect(pending().toChanges("t1").filter((c) => c.kind === "insert")).toHaveLength(1));
+  // The new row is display row 0 now: line 1 is row 2.
+  act(() => grid!.onCopyCells!({ rows: [2], cols: [2, 3] }));
+  await waitFor(() => expect(clip.text).toBe("1\tnote 1"));
+});
+
+test("Quick filter = value and IS NULL narrow the rows on the clicked column", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.filterEquals("note", "note 1") }));
+  expect(useGridViews.getState().getView("t1").filters).toEqual([{ column: "note", op: "eq", values: ["note 1"] }]);
+  await waitFor(() => expect(grid?.editing?.model.cell(0, 5).value).toEqual({ t: "null" }));
+  act(() => grid!.editing!.onContextMenu(0, 5, 5, 5));
+  // NULL has no "= value" entry.
+  expect(screen.queryByRole("menuitem", { name: strings.grid.menu.filterEquals("data", "") })).toBeNull();
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.filterIsNull("data") }));
+  expect(useGridViews.getState().getView("t1").filters).toEqual([
+    { column: "note", op: "eq", values: ["note 1"] },
+    { column: "data", op: "isNull", values: [] },
+  ]);
+});
+
+test("Quick Look shows the whole value of a truncated cell, then gives the focus back", async () => {
+  const data = lines(1);
+  data.rows[0][3] = { t: "longText", v: { preview: "abc", len: 20000 } };
+  vi.mocked(ipc.tablePage).mockResolvedValue(data);
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 1 });
+  vi.mocked(ipc.cellValue).mockResolvedValue({ t: "json", v: '{"k":[1,2]}' });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(0, 3).editable).toBe(true));
+  act(() => grid!.onQuickLook!(0, 3));
+  const dialog = await screen.findByRole("dialog", { name: strings.grid.quickLook.title("note") });
+  await waitFor(() => expect(dialog).toHaveTextContent('"k": ['));
+  expect(ipc.cellValue).toHaveBeenCalledWith("w1", obj, key(0), "note");
+  await userEvent.click(screen.getByRole("button", { name: strings.grid.quickLook.close }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("the grid's header menu filters on a column and sorts in one direction", async () => {
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing).toBeDefined());
+  act(() => grid!.onSortTo!("note", "desc"));
+  expect(useGridViews.getState().getView("t1").sort).toEqual(["note", "desc"]);
+  act(() => grid!.onSortTo!("note", null));
+  expect(useGridViews.getState().getView("t1").sort).toBeNull();
+  act(() => grid!.onFilterColumn!("note"));
+  const field = screen.getByRole("textbox", { name: strings.filters.quickLabel });
+  expect(field).toHaveFocus();
+  expect(field).toHaveValue("note = ");
+  // Each table keeps its own column layout.
+  expect(grid!.layoutKey).toBeTruthy();
+});
+
+test("with a column hidden, the row number menu of 3 selected rows acts on the 3 rows (fix 2)", async () => {
+  const clip = stubClipboard();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => useGridViews.getState().setLayout(grid!.layoutKey!, { hidden: ["data"] }));
+  // What the grid reports for 3 rows selected by their numbers: the 5 shown columns.
+  const block = { rows: [0, 1, 2], cols: [0, 1, 2, 3, 4], wholeRows: true };
+  act(() => grid!.editing!.onContextMenu(1, null, 5, 5, block));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.copyRows }));
+  await waitFor(() =>
+    expect(clip.text).toBe("100\t42\t0\tnote 0\t1.50\n101\t42\t1\tnote 1\t1.50\n102\t42\t2\tnote 2\t1.50"),
+  );
+  act(() => grid!.editing!.onContextMenu(1, null, 5, 5, block));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.deleteRows(3) }));
+  expect(pending().toChanges("t1")).toEqual([0, 1, 2].map((l) => ({ kind: "delete", key: key(l) })));
+});
+
+test("no '= value' quick filter on a PostgreSQL json column (json has no =); jsonb keeps it (fix 5)", async () => {
+  const withType = (baseType: string) =>
+    tableInfo({
+      columns: tableInfo().columns.map((c) => (c.name === "note" ? { ...c, typeName: baseType, baseType } : c)),
+    });
+  vi.mocked(ipc.tableInfo).mockResolvedValue(withType("json"));
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  const view = render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.info).not.toBeNull());
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5));
+  expect(screen.getByRole("menuitem", { name: strings.grid.menu.filterIsNull("note") })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: strings.grid.menu.filterEquals("note", "note 1") })).toBeNull();
+  view.unmount();
+  vi.mocked(ipc.tableInfo).mockResolvedValue(withType("jsonb"));
+  render(<TableDataTab workspaceId="w1" tabId="t2" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.info?.columns[3].baseType).toBe("jsonb"));
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5));
+  expect(screen.getByRole("menuitem", { name: strings.grid.menu.filterEquals("note", "note 1") })).toBeInTheDocument();
+});
+
+test("duplicating several rows inserts them in row order, even when one must load a value first (fix 8)", async () => {
+  const data = lines(2);
+  data.rows[0][3] = { t: "longText", v: { preview: "abc", len: 20000 } };
+  vi.mocked(ipc.tablePage).mockResolvedValue(data);
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  let resolve: (v: CellValue) => void = () => {};
+  vi.mocked(ipc.cellValue).mockReturnValue(new Promise<CellValue>((r) => (resolve = r)));
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.onRowsAction!("duplicate", [0, 1]));
+  // Row 1 waits for row 0, whose value is still loading.
+  expect(pending().count("t1")).toBe(0);
+  await act(async () => resolve({ t: "text", v: "full text" }));
+  await waitFor(() => expect(pending().count("t1")).toBe(2));
+  const lines_ = pending()
+    .toChanges("t1")
+    .map((c) => (c.kind === "insert" ? c.values.find(([n]) => n === "line")?.[1] : null));
+  expect(lines_).toEqual([
+    { t: "text", v: "0" },
+    { t: "text", v: "1" },
+  ]);
 });

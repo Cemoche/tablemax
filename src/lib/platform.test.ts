@@ -79,3 +79,11 @@ test("arrow keys read as arrows", () => {
   expect(formatShortcut("Shift+ArrowDown", false)).toBe("Shift+↓");
   expect(formatShortcut("Mod+Backspace", false)).toBe("Ctrl+Backspace");
 });
+
+test("ariaShortcut names the keys for aria-keyshortcuts", async () => {
+  const { ariaShortcut } = await import("./platform");
+  expect(ariaShortcut("Mod+Shift+C", false)).toBe("Control+Shift+C");
+  expect(ariaShortcut("Mod+Backspace", true)).toBe("Meta+Backspace");
+  expect(ariaShortcut("Ctrl+Space", true)).toBe("Control+Space");
+  expect(ariaShortcut("Alt+Enter", false)).toBe("Alt+Enter");
+});

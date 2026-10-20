@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
-import { toCsv, toInsert, toJson, toTsv } from "../../lib/copyFormats";
+import { toCsv, toInsert, toJson, toMarkdown, toTsv } from "../../lib/copyFormats";
+import { effectiveShortcut } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
+import { useSettings } from "../../stores/settings";
 import type { CellValue, Dialect, ObjectRef } from "../../lib/types";
 import type { GridModel } from "./editModel";
 import { isTruncated } from "./editing";
 import type { MenuItem } from "./GridContextMenu";
 import type { CellBlock } from "./gridSelection";
 
-export type CopyFormat = "tsv" | "csv" | "json" | "insert";
-const FORMATS: readonly CopyFormat[] = ["tsv", "csv", "json", "insert"];
+/** The "Copy rows as" formats (Copy rows is TSV without a header, like Copy selected cells). */
+export type CopyFormat = "tsv" | "csv" | "csvHeader" | "json" | "markdown" | "insert";
+const FORMATS: readonly CopyFormat[] = ["tsv", "csv", "csvHeader", "json", "markdown", "insert"];
 /** How long a copy notice stays (it can also be dismissed). */
 export const NOTICE_MS = 6000;
 
@@ -40,9 +43,37 @@ export function blockValues(
   return { columns: cols.map((c) => model.columns[c]), rows, skipped };
 }
 
-/** The grid menu's "Copy as …" entries, and what the last copy has to say (inline, for NOTICE_MS). */
+/** Text of `rows` in `format` (rows as the grid shows them; INSERT for `object` in `dialect`). */
+function formatRows(
+  format: CopyFormat,
+  dialect: Dialect,
+  object: ObjectRef,
+  columns: string[],
+  rows: CellValue[][],
+): string {
+  switch (format) {
+    case "tsv":
+      return toTsv(columns, rows, { header: false });
+    case "csv":
+      return toCsv(columns, rows, { header: false });
+    case "csvHeader":
+      return toCsv(columns, rows);
+    case "json":
+      return toJson(columns, rows);
+    case "markdown":
+      return toMarkdown(columns, rows);
+    case "insert":
+      return toInsert(dialect, object, columns, rows);
+  }
+}
+
+/**
+ * The grid menu's copy entries (Copy rows, Copy rows as …, Copy selected cells), Copy
+ * selected cells for its key, and what the last copy has to say (inline, for NOTICE_MS).
+ */
 export function useSelectionCopy(model: GridModel | null, dialect: Dialect, object: ObjectRef) {
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null);
+  const copyCellsKey = useSettings((s) => effectiveShortcut("grid.copyCells", s.settings.keymap));
 
   useEffect(() => {
     if (!notice) return;
@@ -50,17 +81,7 @@ export function useSelectionCopy(model: GridModel | null, dialect: Dialect, obje
     return () => clearTimeout(timer);
   }, [notice]);
 
-  const copy = (format: CopyFormat, columns: string[], rows: CellValue[][], skipped: number) => {
-    const text =
-      format === "tsv"
-        ? toTsv(columns, rows)
-        : format === "csv"
-          ? toCsv(columns, rows)
-          : format === "json"
-            ? toJson(columns, rows)
-            : toInsert(dialect, object, columns, rows);
-    // TSV/CSV/JSON copy a truncated value's preview (INSERT skips its row, with a comment).
-    const truncated = format === "insert" ? 0 : rows.flat().filter(isTruncated).length;
+  const write = (text: string, truncated: number, skipped: number) => {
     const notes = [
       ...(truncated > 0 ? [strings.grid.copyTruncated(truncated)] : []),
       ...(skipped > 0 ? [strings.grid.copySkippedInserts(skipped)] : []),
@@ -76,15 +97,46 @@ export function useSelectionCopy(model: GridModel | null, dialect: Dialect, obje
       );
   };
 
-  const menuItems = (block: CellBlock): MenuItem[] => {
-    if (!model) return [];
+  const copy = (format: CopyFormat, block: CellBlock) => {
+    if (!model) return;
     const { columns, rows, skipped } = blockValues(model, block);
-    return FORMATS.map((f) => ({
-      label: strings.grid.copyAs[f],
-      disabled: rows.length === 0,
-      onSelect: () => copy(f, columns, rows, skipped),
-    }));
+    // A display copy writes a truncated value's preview (INSERT skips its row, with a comment).
+    const truncated = format === "insert" ? 0 : rows.flat().filter(isTruncated).length;
+    write(formatRows(format, dialect, object, columns, rows), truncated, skipped);
   };
 
-  return { notice, menuItems, dismiss: () => setNotice(null) };
+  /** Copy selected cells (grid.copyCells): the block's cells, tab-separated, no header. */
+  const copyCells = (block: CellBlock) => {
+    if (!model) return;
+    const { columns, rows, skipped } = blockValues(model, block);
+    write(toTsv(columns, rows, { header: false }), rows.flat().filter(isTruncated).length, skipped);
+  };
+
+  /** `block`: the selected cells; `shownCols`: the columns the grid shows, in order (whole rows). */
+  const menuItems = (block: CellBlock, shownCols: number[]): MenuItem[] => {
+    if (!model) return [];
+    const rowsBlock: CellBlock = { rows: block.rows, cols: shownCols };
+    const none = blockValues(model, rowsBlock).rows.length === 0;
+    return [
+      { label: strings.grid.menu.copyRows, disabled: none, onSelect: () => copy("tsv", rowsBlock) },
+      { heading: strings.grid.menu.copyRowsAs },
+      ...FORMATS.map(
+        (f): MenuItem => ({
+          label: strings.grid.copyAsText[f],
+          ariaLabel: strings.grid.copyAs[f],
+          indent: true,
+          disabled: none,
+          onSelect: () => copy(f, rowsBlock),
+        }),
+      ),
+      {
+        label: strings.grid.menu.copyCells,
+        disabled: blockValues(model, block).rows.length === 0,
+        shortcut: copyCellsKey,
+        onSelect: () => copyCells(block),
+      },
+    ];
+  };
+
+  return { notice, menuItems, copyCells, dismiss: () => setNotice(null) };
 }

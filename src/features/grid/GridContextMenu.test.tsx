@@ -49,3 +49,31 @@ test("joinMenuGroups puts one separator between non-empty groups", () => {
   expect(joinMenuGroups([[], [a], [], [b, a]])).toEqual([a, "separator", b, a]);
   expect(joinMenuGroups([[], []])).toEqual([]);
 });
+
+test("headings group items; arrows move between items, Escape closes", async () => {
+  const onClose = vi.fn();
+  const csv = vi.fn();
+  render(
+    <GridContextMenu
+      x={10}
+      y={20}
+      label="Cell actions"
+      items={[
+        { label: "Quick Look", onSelect: vi.fn() },
+        { heading: "Copy rows as" },
+        { label: "TSV", ariaLabel: "Copy rows as TSV", onSelect: vi.fn(), indent: true },
+        { label: "CSV", ariaLabel: "Copy rows as CSV", onSelect: csv, indent: true },
+      ]}
+      onClose={onClose}
+    />,
+  );
+  expect(screen.getByText("Copy rows as")).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Quick Look" })).toHaveFocus();
+  await userEvent.keyboard("{ArrowDown}{ArrowDown}");
+  expect(screen.getByRole("menuitem", { name: "Copy rows as CSV" })).toHaveFocus();
+  await userEvent.keyboard("{ArrowDown}");
+  expect(screen.getByRole("menuitem", { name: "Quick Look" })).toHaveFocus();
+  await userEvent.keyboard("{End}{Enter}");
+  expect(csv).toHaveBeenCalledOnce();
+  expect(onClose).toHaveBeenCalledWith("item");
+});

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
-import type { AppError, Filter, ObjectRef, ResultSet, RowCount } from "../../lib/types";
+import type { AppError, Filter, ObjectRef, ResultSet, RowCount, SortDir } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
 import { guardPending, usePendingChanges } from "../../stores/pendingChanges";
 
@@ -128,6 +128,14 @@ export function usePagedTable(
     },
     [tabId, setView],
   );
+  /** The header menu's sort: `col` one way, or no sort (null). */
+  const setSortTo = useCallback(
+    (col: string, dir: SortDir | null) => {
+      if (!guardPending(tabId)) return;
+      setView(tabId, { sort: dir === null ? null : [col, dir], page: 0 });
+    },
+    [tabId, setView],
+  );
   /** False (nothing changes) while changes are pending. */
   const setFilters = useCallback(
     (next: Filter[]) => {
@@ -161,6 +169,7 @@ export function usePagedTable(
     rowCount,
     sort,
     setSort,
+    setSortTo,
     filters,
     setFilters,
     nextPage,

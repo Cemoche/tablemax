@@ -262,6 +262,9 @@ const quote = (s: string, q: string) => `${q}${s.split(q).join(q + q)}${q}`;
 const fmtColumn = (c: string | null): string =>
   c === null ? "any" : SIMPLE_WORD.test(c) && !RESERVED.has(c.toLowerCase()) ? c : quote(c, '"');
 
+/** A column as the quick filter writes it (quoted when it must be): `note`, `"order"`. */
+export const quickFilterColumn = (c: string): string => fmtColumn(c);
+
 const fmtValue = (v: string): string =>
   NUMBER.test(v) || (SIMPLE_WORD.test(v) && !RESERVED.has(v.toLowerCase())) ? v : quote(v, "'");
 

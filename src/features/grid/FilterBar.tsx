@@ -1,5 +1,10 @@
-import { type KeyboardEvent, useState } from "react";
-import { formatQuickFilter, isQuickFilterRepresentable, parseQuickFilter } from "../../lib/quickFilter";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  formatQuickFilter,
+  isQuickFilterRepresentable,
+  parseQuickFilter,
+  quickFilterColumn,
+} from "../../lib/quickFilter";
 import { strings } from "../../lib/strings";
 import type { Dialect, Filter } from "../../lib/types";
 import { FilterBuilder } from "./FilterBuilder";
@@ -11,6 +16,11 @@ interface Props {
   filters: Filter[];
   /** False when the filters were not applied (changes pending): what was typed stays. */
   onApply: (filters: Filter[]) => boolean;
+  /**
+   * "Filter with column" (grid header menu): each new `seq` starts a condition on `column`
+   * in the field (`column = `) and focuses it.
+   */
+  start?: { column: string; seq: number } | null;
 }
 
 const btn =
@@ -20,7 +30,8 @@ const btn =
  * The quick filter field (Enter applies, Escape cancels, errors under the field) and the
  * "Filters (N)" button that opens the builder. Both follow the applied filters.
  */
-export function FilterBar({ dialect, columns, filters, onApply }: Props) {
+export function FilterBar({ dialect, columns, filters, onApply, start = null }: Props) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const applied = formatQuickFilter(filters);
   const appliedKey = JSON.stringify(filters);
   const [seen, setSeen] = useState(appliedKey);
@@ -32,6 +43,19 @@ export function FilterBar({ dialect, columns, filters, onApply }: Props) {
     setText(applied);
     setError(null);
   }
+
+  const startSeq = start?.seq;
+  useEffect(() => {
+    if (!start) return;
+    const text = `${quickFilterColumn(start.column)} = `;
+    setText(text);
+    setError(null);
+    const el = inputRef.current;
+    el?.focus();
+    el?.setSelectionRange(text.length, text.length);
+    // Only a new request starts a condition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startSeq]);
 
   const applyQuick = () => {
     // Unchanged text (maybe an unparseable raw condition) changes nothing.
@@ -56,6 +80,7 @@ export function FilterBar({ dialect, columns, filters, onApply }: Props) {
     <div className="border-b border-border">
       <div className="flex items-center gap-2 bg-surface px-3 py-1 text-sm">
         <input
+          ref={inputRef}
           aria-label={strings.filters.quickLabel}
           placeholder={strings.filters.quickPlaceholder}
           spellCheck={false}

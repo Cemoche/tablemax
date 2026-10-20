@@ -6,9 +6,18 @@ test("NULL and empty string are displayed differently", () => {
   const n = cellContent({ t: "null" });
   const e = cellContent({ t: "text", v: "" });
   expect(n).toMatchObject({ kind: "null", display: "NULL" });
-  expect(e.display).toBe('""');
+  expect(e.display).toBe("EMPTY");
   expect(e.copyText).toBe("");
   expect(n.display).not.toBe(e.display);
+});
+
+test("placeholders_uppercase_dim: NULL, EMPTY and DEFAULT are upper-case placeholders, values are not", () => {
+  expect(cellContent({ t: "null" })).toMatchObject({ display: "NULL", placeholder: true });
+  expect(cellContent({ t: "text", v: "" })).toMatchObject({ display: "EMPTY", placeholder: true, kind: "text" });
+  expect(cellContent("default")).toMatchObject({ display: "DEFAULT", placeholder: true, copyText: "" });
+  // The text "NULL" typed in a cell is a value, drawn like any other.
+  expect(cellContent({ t: "text", v: "NULL" })).toMatchObject({ display: "NULL", placeholder: false });
+  expect(cellContent({ t: "int", v: 0 }).placeholder).toBe(false);
 });
 
 test("bigInt and decimal keep exact digits", () => {

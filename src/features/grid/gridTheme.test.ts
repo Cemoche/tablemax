@@ -1,6 +1,9 @@
+/// <reference types="node" />
+import { readFileSync } from "node:fs";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { buildEditThemes, buildGridTheme, useGridTheme } from "./gridTheme";
+import { contrastRatio } from "../../lib/contrast";
+import { buildEditThemes, buildGridTheme, buildRowThemes, headerFont, useGridTheme } from "./gridTheme";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -12,19 +15,28 @@ test("empty tokens fall back to usable values", () => {
   expect(t.fontFamily).toBeTruthy();
 });
 
+const vars: Record<string, string> = {
+  "--row-a": "#111",
+  "--row-b": "#1b1",
+  "--grid-head": "#222",
+  "--head-text": "#333",
+  "--cell-text": "#444",
+  "--text-2": "#555",
+  "--placeholder": "#666",
+  "--grid-sep": "#777",
+  "--accent": "#888",
+  "--row-selected-text": "#999",
+  "--cell-focus": "#f42",
+  "--rownum": "#8a8",
+  "--sel": "#464",
+  "--font-mono": '"JetBrains Mono", ui-monospace, monospace',
+  "--font-ui": "system-ui, sans-serif",
+  "--text-md": "13px",
+};
+const read = (n: string) => vars[n] ?? "";
+
 test("reads the grid tokens", () => {
-  const vars: Record<string, string> = {
-    "--row-a": "#111",
-    "--grid-head": "#222",
-    "--head-text": "#333",
-    "--cell-text": "#444",
-    "--text-2": "#555",
-    "--placeholder": "#666",
-    "--grid-sep": "#777",
-    "--accent": "#888",
-    "--row-selected-text": "#999",
-  };
-  const t = buildGridTheme((n) => vars[n] ?? "");
+  const t = buildGridTheme(read);
   expect(t).toMatchObject({
     bgCell: "#111",
     bgHeader: "#222",
@@ -34,15 +46,37 @@ test("reads the grid tokens", () => {
     textLight: "#666",
     borderColor: "#777",
     horizontalBorderColor: "#777",
-    accentColor: "#888",
+    // The active cell's border.
+    accentColor: "#f42",
     accentFg: "#999",
+    linkColor: "#888",
   });
 });
 
-test("NULL cells use the placeholder token", () => {
-  const read = (n: string) => (n === "--placeholder" ? "#8d8d8d" : "");
-  const { result } = renderHook(() => useGridTheme(read));
-  expect(result.current.muted).toEqual({ textDark: "#8d8d8d" });
+test("data in the mono font at the data font size, headers in the interface font (medium)", () => {
+  const t = buildGridTheme(read, 15);
+  expect(t.fontFamily).toBe('"JetBrains Mono", ui-monospace, monospace');
+  expect(t.baseFontStyle).toBe("15px");
+  expect(t.headerFontStyle).toBe("500 13px");
+  expect(headerFont(read)).toBe("500 13px system-ui, sans-serif");
+});
+
+test("zebra_rows: odd rows use --row-b, selected rows --accent with white text", () => {
+  const r = buildRowThemes(read);
+  expect(r.odd).toEqual({ bgCell: "#1b1" });
+  expect(r.selected).toMatchObject({
+    bgCell: "#888",
+    textDark: "#999",
+    textLight: "#999",
+    accentLight: "#888",
+  });
+  // Row numbers use --rownum.
+  expect(r.rowNumber).toMatchObject({ textLight: "#8a8" });
+});
+
+test("placeholders_uppercase_dim: NULL / EMPTY / DEFAULT use --placeholder, 1.5 px under the data size", () => {
+  const { result } = renderHook(() => useGridTheme(read, 13));
+  expect(result.current.muted).toEqual({ textDark: "#666", baseFontStyle: "11.5px" });
 });
 
 test("theme is rebuilt on a color-scheme media change and listener is removed", () => {
@@ -95,4 +129,55 @@ test("theme is rebuilt when data-theme changes while the OS stays light", async 
   });
   await waitFor(() => expect(result.current.theme.bgCell).toBe("#000"));
   delete document.documentElement.dataset.theme;
+});
+
+test("the grid draws with the fallback mono font until JetBrains Mono is loaded, then redraws with it", async () => {
+  let resolve: () => void = () => {};
+  const load = vi.fn(() => new Promise<void>((r) => (resolve = r)));
+  const fonts = { check: vi.fn(() => false), load };
+  Object.defineProperty(document, "fonts", { value: fonts, configurable: true });
+  try {
+    const { result } = renderHook(() => useGridTheme(read, 13));
+    expect(result.current.theme.fontFamily).toBe("ui-monospace, monospace");
+    expect(load).toHaveBeenCalledWith('13px "JetBrains Mono", ui-monospace, monospace');
+    const before = result.current.theme;
+    await act(async () => resolve());
+    // A new theme object: Glide redraws every cell, its text metrics keyed by the new font.
+    expect(result.current.theme).not.toBe(before);
+    expect(result.current.theme.fontFamily).toBe('"JetBrains Mono", ui-monospace, monospace');
+  } finally {
+    delete (document as { fonts?: unknown }).fonts;
+  }
+});
+
+/** The custom properties of the first `selector {` block of tokens.css (read from disk). */
+function tokenBlock(selector: string): Record<string, string> {
+  const css = readFileSync("src/styles/tokens.css", "utf8");
+  const start = css.indexOf(`${selector} {`);
+  const out: Record<string, string> = {};
+  for (const m of css.slice(start, css.indexOf("}", start)).matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) {
+    out[m[1]] = m[2].trim();
+  }
+  return out;
+}
+
+test("an edited cell on a selected row keeps --modified and readable text, in both themes (fix 1)", () => {
+  const light = tokenBlock(":root");
+  const dark = { ...light, ...tokenBlock(':root[data-theme="dark"]') };
+  for (const [name, vars] of [["light", light], ["dark", dark]] as const) {
+    const t = buildEditThemes((n) => vars[n] ?? "").editedOnAccent;
+    expect(t.bgCell, name).toBe(vars["--modified"]);
+    expect(contrastRatio(t.textDark!, t.bgCell!), name).toBeGreaterThanOrEqual(4.5);
+    // Glide fills a selected cell (a row selected by its number, the active cell's range)
+    // with the theme's opaque accentLight over bgCell: it must stay --modified, under the
+    // same readable text, or the edit would show as #262626 on the accent (3.8:1).
+    expect(t.accentLight, name).toBe(t.bgCell);
+    expect(contrastRatio(t.textDark!, t.accentLight!), name).toBeGreaterThanOrEqual(4.5);
+    // Links and placeholders on it use the same colour.
+    expect(t.linkColor, name).toBe(t.textDark);
+    expect(t.textLight, name).toBe(t.textDark);
+  }
+  // Tokens that cannot be compared (missing or not hex) fall back to --cell-text.
+  expect(buildEditThemes((n) => (n === "--modified" ? "rgb(1 2 3)" : n === "--cell-text" ? "#111" : "")).editedOnAccent)
+    .toMatchObject({ bgCell: "rgb(1 2 3)", textDark: "#111" });
 });

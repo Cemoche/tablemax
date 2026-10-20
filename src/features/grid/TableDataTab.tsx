@@ -1,9 +1,11 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
+import * as ipc from "../../lib/ipc";
 import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
-import type { Dialect, ObjectRef } from "../../lib/types";
+import type { Dialect, Filter, ObjectRef, SortDir } from "../../lib/types";
 import { useChrome, useOnRequest } from "../../stores/chrome";
+import { useGridViews } from "../../stores/gridViews";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
@@ -11,10 +13,14 @@ import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
 import { StructureTab } from "../structure/StructureTab";
 import { type LiveEnvSource, useLiveEnv } from "../workspace/useLiveEnv";
 import { Breadcrumb } from "./Breadcrumb";
+import { cellContent } from "./cellContent";
+import { reconcileLayout } from "./columnLayout";
 import { DataGrid, type GridEditing } from "./DataGrid";
+import { isTruncated } from "./editing";
 import { FilterBar } from "./FilterBar";
-import { GridContextMenu, joinMenuGroups } from "./GridContextMenu";
+import { GridContextMenu, type MenuItem, joinMenuGroups } from "./GridContextMenu";
 import { PendingChangesPanel } from "./PendingChangesPanel";
+import { QuickLook } from "./QuickLook";
 import { RowDetailPanel } from "./RowDetailPanel";
 import { formatRowCount, usePagedTable } from "./usePagedTable";
 import { useFkLinks } from "./useFkLinks";
@@ -77,7 +83,7 @@ function CommitConfirmDialog({
 export function TableDataTab(props: Props) {
   // Kept across foreign key navigation (the panel shows the referenced row once selected).
   const { view, setView } = useTableView(props.tabId);
-  // Shortcuts of the data view (Mod+I, Alt+←) only act while it is shown.
+  // Shortcuts of the data view (Ctrl+Space, Alt+←) only act while it is shown.
   const detail = useRowDetail(props.tabId, view === "data");
   // The structure loads when first asked for; then both views stay mounted (hidden) so
   // switching keeps the page, the pending changes and the structure's section.
@@ -152,6 +158,60 @@ function TableDataView({
     },
   };
   const target = e.menuTarget;
+  // Column layout of this table, kept for the session (see DataGrid); the menu's whole-row
+  // copies follow the columns as shown.
+  const connectionId = useWorkspaces((st) => st.workspaces.find((w) => w.id === workspaceId)?.connectionId);
+  const database = useWorkspaces((st) => st.workspaces.find((w) => w.id === workspaceId)?.database ?? null);
+  const layoutKey = JSON.stringify([connectionId ?? workspaceId, database, object.schema, object.name]);
+  const storedLayout = useGridViews((st) => st.layouts[layoutKey]);
+  const [quickLook, setQuickLook] = useState<{ row: number; col: number } | null>(null);
+  const [filterStart, setFilterStart] = useState<{ column: string; seq: number } | null>(null);
+  const modelCols = e.model?.columns ?? [];
+  const shownCols = (() => {
+    const l = reconcileLayout(storedLayout, modelCols);
+    return l.order.filter((n) => !l.hidden.includes(n)).map((n) => modelCols.indexOf(n));
+  })();
+  /** Narrows the rows with one more filter (the same one twice is kept once). */
+  const addFilter = (f: Filter) => {
+    const key = JSON.stringify(f);
+    t.setFilters([...t.filters.filter((x) => JSON.stringify(x) !== key), f]);
+  };
+  const quickFilterItems = (row: number, col: number): MenuItem[] => {
+    const name = e.model?.columns[col];
+    const cell = e.model?.cell(row, col);
+    if (name === undefined || !cell) return [];
+    const items: MenuItem[] = [
+      { heading: strings.grid.menu.quickFilter },
+      {
+        label: strings.grid.menu.filterIsNullText,
+        ariaLabel: strings.grid.menu.filterIsNull(name),
+        indent: true,
+        onSelect: () => addFilter({ column: name, op: "isNull", values: [] }),
+      },
+    ];
+    const v = cell.value;
+    // PostgreSQL `json` has no = operator (jsonb has): the filter would fail.
+    const baseType = e.info?.columns.find((c) => c.name === name)?.baseType.trim().toLowerCase();
+    const noEquals = dialect === "postgres" && baseType === "json";
+    // "= value" for a whole, loaded value (not NULL, DEFAULT, binary or a truncated preview).
+    if (v !== "default" && v.t !== "null" && v.t !== "bytes" && !isTruncated(v) && !cell.edited && !noEquals) {
+      const text = cellContent(v).copyText;
+      const shown = text.length > 40 ? text.slice(0, 40) + strings.grid.menuValueEllipsis : text;
+      items.push({
+        label: strings.grid.menu.filterEqualsText(shown),
+        ariaLabel: strings.grid.menu.filterEquals(name, shown),
+        indent: true,
+        onSelect: () => addFilter({ column: name, op: "eq", values: [text] }),
+      });
+    }
+    return items;
+  };
+  const quickLookItems = (row: number, col: number): MenuItem[] => [
+    { label: strings.grid.menu.quickLook, shortcut: "Enter", onSelect: () => setQuickLook({ row, col }) },
+  ];
+  /** The record and column of the open Quick Look, read now (it may have moved or gone). */
+  const quickCell = quickLook && e.model ? e.model.cell(quickLook.row, quickLook.col) : null;
+  const quickKey = quickLook ? e.model?.rowKeyAt(quickLook.row) : null;
   // Once the commit confirmation closed (Cancel, or Run and its commit settled) and the tab
   // is unlocked, the focus comes back to Commit; to + Row when Commit is disabled (nothing
   // left pending after a successful commit).
@@ -169,13 +229,30 @@ function TableDataView({
     (commitBtn && !commitBtn.disabled ? commitBtn : addRowRef.current)?.focus();
   }, [active, e.confirm, e.locked, refocusCommit, toggleRef]);
   const menuItems = target
-    ? joinMenuGroups([links.menuItems(target.row, target.col), e.menuItems, copy.menuItems(target.block)])
+    ? joinMenuGroups(
+        target.col === null
+          ? [links.menuItems(target.row, target.col), copy.menuItems(target.block, shownCols), e.rowItems]
+          : [
+              [...e.reasonItems, ...quickLookItems(target.row, target.col)],
+              links.menuItems(target.row, target.col),
+              e.setValueItems,
+              copy.menuItems(target.block, shownCols),
+              quickFilterItems(target.row, target.col),
+              e.rowItems,
+            ],
+      )
     : [];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} />
-      <FilterBar dialect={dialect} columns={columns} filters={t.filters} onApply={t.setFilters} />
+      <FilterBar
+        dialect={dialect}
+        columns={columns}
+        filters={t.filters}
+        onApply={t.setFilters}
+        start={filterStart}
+      />
       {t.error && (
         <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger">
           <div className="min-w-0 flex-1">
@@ -271,7 +348,19 @@ function TableDataView({
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1">
             {t.result && (
-              <DataGrid data={t.result} sort={t.sort} onSort={t.setSort} editing={editing} />
+              <DataGrid
+                data={t.result}
+                sort={t.sort}
+                onSort={t.setSort}
+                editing={editing}
+                layoutKey={layoutKey}
+                onSortTo={(column: string, dir: SortDir | null) => t.setSortTo(column, dir)}
+                onFilterColumn={(column) => setFilterStart((f) => ({ column, seq: (f?.seq ?? 0) + 1 }))}
+                onToggleDetails={detail.toggle}
+                onQuickLook={(row, col) => setQuickLook({ row, col })}
+                onRowsAction={e.rowsAction}
+                onCopyCells={copy.copyCells}
+              />
             )}
           </div>
           {e.editable && <PendingChangesPanel workspaceId={workspaceId} tabId={tabId} object={object} />}
@@ -299,6 +388,18 @@ function TableDataView({
           label={strings.grid.menuLabel}
           items={menuItems}
           onClose={e.closeMenu}
+        />
+      )}
+      {quickLook && quickCell && (
+        <QuickLook
+          column={e.model?.columns[quickLook.col] ?? ""}
+          value={quickCell.value}
+          load={
+            quickCell.truncated && quickKey
+              ? () => ipc.cellValue(workspaceId, object, quickKey, e.model!.columns[quickLook.col])
+              : undefined
+          }
+          onClose={() => setQuickLook(null)}
         />
       )}
       <div className="flex items-center gap-3 border-t border-border bg-surface px-3 py-1 text-sm">

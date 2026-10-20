@@ -92,6 +92,10 @@ pub const KEYMAP_ACTION_IDS: &[&str] = &[
     "tab.goto7",
     "tab.goto8",
     "tab.goto9",
+    "grid.setValue",
+    "grid.copyCells",
+    "grid.duplicateRows",
+    "grid.deleteRows",
 ];
 /// At most this many keymap entries are kept (defensive: one per known id fits well below).
 pub const KEYMAP_MAX_ENTRIES: usize = 64;
