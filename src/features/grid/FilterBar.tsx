@@ -6,7 +6,7 @@ import { ariaShortcut, formatShortcut } from "../../lib/platform";
 import { readRawCondition } from "../../lib/quickFilter";
 import { matchCombination } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
-import type { Dialect, Filter, FilterCombine, FilterOp } from "../../lib/types";
+import type { Dialect, Filter, FilterCombine, FilterOp, WherePreview } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
 import {
   ANY_COLUMN,
@@ -39,7 +39,7 @@ interface Props {
   /** False while the bar is hidden (it stays mounted): its SQL preview and menus close. */
   open?: boolean;
   /** The WHERE clause these filters give, with placeholders (the SQL button); absent: no SQL button. */
-  previewSql?: (filters: Filter[], combine: FilterCombine) => Promise<string>;
+  previewSql?: (filters: Filter[], combine: FilterCombine) => Promise<WherePreview>;
   /** Each new value above 0 puts the focus on the first row (the bar was opened from the keyboard or its button). */
   focusSeq: number;
   /** "Filter with column" (grid header menu): each new `seq` starts a row on `column` and focuses its value. */
@@ -368,7 +368,7 @@ export function FilterBar({
     if (Object.keys(r.errors).length > 0) return setSql({ status: "error", message: f.sqlRowErrors });
     setSql({ status: "loading" });
     previewSql?.(r.filters, mode).then(
-      (text) => run === sqlRun.current && setSql({ status: "ready", sql: text }),
+      (w) => run === sqlRun.current && setSql({ status: "ready", sql: w.display }),
       (err) => run === sqlRun.current && setSql({ status: "error", message: f.sqlFailed(toAppError(err).message) }),
     );
   };

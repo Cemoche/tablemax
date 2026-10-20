@@ -40,7 +40,8 @@ use crate::driver::dml::{
 };
 use crate::driver::meta::TableInfo;
 use crate::driver::query::{
-    Filter, FilterCombine, Statement, build_filtered_count, build_page, read_count, where_preview,
+    Filter, FilterCombine, Statement, WherePreview, build_filtered_count, build_page, read_count,
+    where_preview,
 };
 use crate::driver::{
     self, AnySession, Canceller, Capabilities, ConnectParams, Dialect, DriverKind, ObjectRef,
@@ -1434,8 +1435,8 @@ impl SessionManager {
     }
 
     /// The WHERE clause the grid's page uses for `filters` joined by `combine`, with its
-    /// placeholders and without the values ([`where_preview`]): the filter bar's read-only
-    /// SQL preview. Reads at most the table metadata (on a cache miss) and the browse
+    /// placeholders, and the same clause with the values written in for display only
+    /// ([`where_preview`]): the filter bar's read-only SQL preview. Reads at most the table metadata (on a cache miss) and the browse
     /// session's dialect; never values, never a query on the rows.
     pub async fn filters_preview_sql(
         &self,
@@ -1443,7 +1444,7 @@ impl SessionManager {
         obj: &ObjectRef,
         filters: &[Filter],
         combine: FilterCombine,
-    ) -> AppResult<String> {
+    ) -> AppResult<WherePreview> {
         let info = self.table_info(workspace_id, obj).await?;
         let dialect = self
             .on_browse(workspace_id, |b| async move { Ok(b.dialect()) })
@@ -2947,23 +2948,27 @@ mod tests {
             filter(Some("name"), FilterOp::Eq, &["a-secret"]),
             filter(Some("name"), FilterOp::Contains, &["b-secret"]),
         ];
-        let sql = fx
+        let w = fx
             .mgr
             .filters_preview_sql(&ws, &items, &a_or_b, FilterCombine::Or)
             .await
             .unwrap();
         assert_eq!(
-            sql,
+            w.sql,
             r#"WHERE ("name" = ?) OR ("name" LIKE '%' || ? || '%' ESCAPE '!')"#
         );
-        assert!(!sql.contains("secret"));
+        assert!(!w.sql.contains("secret"));
+        // For display only: the values written as SQLite literals.
         assert_eq!(
-            fx.mgr
-                .filters_preview_sql(&ws, &items, &[], FilterCombine::And)
-                .await
-                .unwrap(),
-            ""
+            w.display,
+            r#"WHERE ("name" = 'a-secret') OR ("name" LIKE '%b-secret%' ESCAPE '!')"#
         );
+        let none = fx
+            .mgr
+            .filters_preview_sql(&ws, &items, &[], FilterCombine::And)
+            .await
+            .unwrap();
+        assert_eq!((none.sql.as_str(), none.display.as_str()), ("", ""));
         let bad = vec![filter(Some("nope"), FilterOp::Eq, &["1"])];
         assert_eq!(
             fx.mgr

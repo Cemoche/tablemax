@@ -558,7 +558,7 @@ export const strings = {
     sqlPreviewLabel: "SQL of the conditions",
     sqlLoading: "Building the SQL…",
     sqlNone: "No condition: every row is shown.",
-    sqlParams: "Values are sent apart as parameters ($1, ?): they are never written into the SQL.",
+    sqlParams: "Values are written in for reading. The query itself sends them apart as parameters.",
     sqlFailed: (message: string) => `Could not build the SQL: ${message}`,
     sqlRowErrors: "Fix the conditions marked in red first.",
     sqlCopy: "Copy",

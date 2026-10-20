@@ -23,6 +23,7 @@ import type {
   RowKey,
   Settings,
   TableInfo,
+  WherePreview,
   WorkspaceInfo,
   HistoryEntry,
   SavedQuery,
@@ -106,14 +107,15 @@ export const tableCount = (
 
 /**
  * The WHERE clause the grid's page uses for these filters (`WHERE …`, or "" without
- * filters), with its placeholders and never the values: the filter bar's SQL preview.
+ * filters): `sql` with its placeholders, `display` with the values written in for reading
+ * only (the filter bar's SQL preview). Neither is ever run.
  */
 export const filtersPreviewSql = (
   workspaceId: string,
   object: ObjectRef,
   filters: Filter[],
   combine: FilterCombine = "and",
-) => invoke<string>("filters_preview_sql", { workspaceId, object, filters, combine });
+) => invoke<WherePreview>("filters_preview_sql", { workspaceId, object, filters, combine });
 
 /** Cached per workspace; `refresh` re-reads it from the database. */
 export const tableInfo = (workspaceId: string, object: ObjectRef, refresh: boolean) =>

@@ -11,7 +11,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::driver::catalog::{Catalog, DbRoutine};
 use crate::driver::dml::{ApplyOutcome, RowChange, RowKey};
 use crate::driver::meta::TableInfo;
-use crate::driver::query::{Filter, FilterCombine};
+use crate::driver::query::{Filter, FilterCombine, WherePreview};
 use crate::driver::{DbObject, ObjectRef, PageRequest, ResultSet, RowCount};
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::history::HistoryEntry;
@@ -248,8 +248,9 @@ pub async fn table_count(
         .await
 }
 
-/// The WHERE clause the grid's filters give, with placeholders and without the values: the
-/// filter bar's read-only SQL preview. `combine` may be omitted (AND).
+/// The WHERE clause the grid's filters give, with placeholders (`sql`) and, for display
+/// only, with the values written as literals (`display`): the filter bar's read-only SQL
+/// preview. Nothing of it is executed. `combine` may be omitted (AND).
 #[tauri::command]
 pub async fn filters_preview_sql(
     state: State<'_, SessionManager>,
@@ -257,7 +258,7 @@ pub async fn filters_preview_sql(
     object: ObjectRef,
     filters: Vec<Filter>,
     combine: Option<FilterCombine>,
-) -> AppResult<String> {
+) -> AppResult<WherePreview> {
     state
         .filters_preview_sql(
             &workspace_id,

@@ -247,6 +247,16 @@ export interface Filter {
 /** driver/query.rs FilterCombine: how the filters of a page are joined. */
 export type FilterCombine = "and" | "or";
 
+/**
+ * driver/query.rs WherePreview (filters_preview_sql): the page's WHERE clause with its
+ * placeholders (`sql`), and the same clause with the values written as literals of the
+ * dialect (`display`), for reading and copying only: never sent to the database.
+ */
+export interface WherePreview {
+  sql: string;
+  display: string;
+}
+
 export interface PageRequest {
   object: ObjectRef;
   limit: number;

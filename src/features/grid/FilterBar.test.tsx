@@ -3,20 +3,21 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
-import type { Dialect, Filter, FilterCombine } from "../../lib/types";
+import type { Dialect, Filter, FilterCombine, WherePreview } from "../../lib/types";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { FilterBar } from "./FilterBar";
 
 const cols = ["status", "total", "id", "notes"];
 const f = strings.filters;
+const none: WherePreview = { sql: "", display: "" };
 let onApply: ReturnType<typeof vi.fn<(filters: Filter[], combine: FilterCombine) => boolean>>;
 let onClose: ReturnType<typeof vi.fn<() => void>>;
-let previewSql: ReturnType<typeof vi.fn<(filters: Filter[], combine: FilterCombine) => Promise<string>>>;
+let previewSql: ReturnType<typeof vi.fn<(filters: Filter[], combine: FilterCombine) => Promise<WherePreview>>>;
 
 beforeEach(() => {
   onApply = vi.fn<(filters: Filter[], combine: FilterCombine) => boolean>(() => true);
   onClose = vi.fn<() => void>();
-  previewSql = vi.fn<(filters: Filter[], combine: FilterCombine) => Promise<string>>(async () => "");
+  previewSql = vi.fn<(filters: Filter[], combine: FilterCombine) => Promise<WherePreview>>(async () => none);
   useSettings.setState({ settings: DEFAULT_SETTINGS });
   const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   onTestFinished(() => spy.mockRestore());
@@ -524,15 +525,20 @@ test("export_is_disabled_with_a_tooltip: focusable, says why, does nothing", asy
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
-test("sql_preview: SQL shows the WHERE of the checked rows with placeholders, read-only; Escape returns to SQL", async () => {
+test("sql_preview: SQL shows the WHERE of the checked rows with the values written in, read-only; Escape returns to SQL", async () => {
   await twoRows();
-  previewSql.mockResolvedValue('WHERE "status" = $1 AND "total" > CAST($2::text AS numeric)');
+  previewSql.mockResolvedValue({
+    sql: 'WHERE "status" = $1 AND "total" > CAST($2::text AS numeric)',
+    display: `WHERE "status" = 'it''s paid' AND "total" > CAST('5'::text AS numeric)`,
+  });
   const sql = screen.getByRole("button", { name: f.sql });
   expect(sql).toHaveAttribute("aria-haspopup", "dialog");
   await userEvent.click(sql);
   const dialog = await screen.findByRole("dialog", { name: f.sqlPreviewLabel });
   expect(previewSql).toHaveBeenLastCalledWith([eq("status", "paid"), { column: "total", op: "gt", values: ["5"] }], "and");
-  const code = await within(dialog).findByText('WHERE "status" = $1 AND "total" > CAST($2::text AS numeric)');
+  // The display text (#109): the values as literals, not the placeholders.
+  const code = await within(dialog).findByText(`WHERE "status" = 'it''s paid' AND "total" > CAST('5'::text AS numeric)`);
+  expect(within(dialog).queryByText(/\$1/)).toBeNull();
   // Read-only, reachable by keyboard, with the note on values.
   expect(code.tagName).toBe("PRE");
   expect(code).toHaveFocus();
@@ -545,10 +551,26 @@ test("sql_preview: SQL shows the WHERE of the checked rows with placeholders, re
   // Unchecked rows are left out; with nothing left, no clause.
   await userEvent.click(check(1));
   await userEvent.click(check(2));
-  previewSql.mockResolvedValue("");
+  previewSql.mockResolvedValue(none);
   await userEvent.click(sql);
   expect(previewSql).toHaveBeenLastCalledWith([], "and");
   expect(await within(screen.getByRole("dialog")).findByText(f.sqlNone)).toBeInTheDocument();
+});
+
+test("sql_preview copy: Copy puts the text shown (values written in) on the clipboard", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  setup({ filters: [eq("id", "1")] });
+  previewSql.mockResolvedValue({ sql: 'WHERE "id" = $1', display: `WHERE "id" = '1'` });
+  await user.click(screen.getByRole("button", { name: f.sql }));
+  const dialog = await screen.findByRole("dialog");
+  await within(dialog).findByText(`WHERE "id" = '1'`);
+  await user.click(within(dialog).getByRole("button", { name: f.sqlCopy }));
+  expect(writeText).toHaveBeenCalledWith(`WHERE "id" = '1'`);
+  expect(await within(dialog).findByText(f.sqlCopied)).toBeInTheDocument();
+  writeText.mockRejectedValue(new Error("denied"));
+  await user.click(within(dialog).getByRole("button", { name: f.sqlCopy }));
+  expect(await within(dialog).findByText(f.sqlCopyFailed)).toBeInTheDocument();
 });
 
 test("sql_preview errors: a backend refusal, or rows to fix first (nothing asked)", async () => {
@@ -645,7 +667,7 @@ test("a refused Apply All keeps the join it had: the ⌄, the preview and Clear 
 });
 
 test("hiding the bar closes its SQL preview and menus: they do not come back when it reopens (review #103)", async () => {
-  previewSql.mockResolvedValue('WHERE "id" = $1');
+  previewSql.mockResolvedValue({ sql: 'WHERE "id" = $1', display: `WHERE "id" = '1'` });
   const { rerender } = setup({ filters: [eq("id", "1")] });
   await userEvent.click(screen.getByRole("button", { name: f.sql }));
   expect(await screen.findByRole("dialog")).toBeInTheDocument();

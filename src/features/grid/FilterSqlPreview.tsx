@@ -6,12 +6,14 @@ const f = strings.filters;
 
 export type SqlPreviewState =
   | { status: "loading" }
+  /** `sql`: the display text (values written in), never run. */
   | { status: "ready"; sql: string }
   | { status: "error"; message: string };
 
 /**
- * The filter bar's SQL preview: the WHERE clause the page would use, read-only, with its
- * placeholders (the values are never in it). Not modal: Escape, Close or a press outside
+ * The filter bar's SQL preview: the WHERE clause the page would use, read-only, with the
+ * values written in as literals for reading and copying (#109). The page itself still sends
+ * them apart as parameters: this text is never run. Not modal: Escape, Close or a press outside
  * close it; Escape and Close give the focus back to the SQL button. The clause gets the
  * focus once it is there, so it is read out and can be selected from the keyboard.
  */
