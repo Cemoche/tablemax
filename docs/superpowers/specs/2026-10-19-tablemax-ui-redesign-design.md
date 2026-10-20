@@ -164,6 +164,44 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
   Cert… / Key… ; encadré « Over SSH » ; en bas Import from URL… / Test / Save / Connect.
   Libellés alignés à droite (colonne 104 px).
 
+> Amendement 2026-10-21 (#88) : écran des connexions = volet d'accueil à gauche (260 px,
+> `--side` : icône de l'app `assets/icon/tablemax.svg`, nom, version, **Create connection…**
+> et **Import connections…** ; pas d'**Open SQLite file…**, l'app n'a pas de sélecteur de
+> fichier SQLite — une SQLite se crée dans le formulaire avec son chemin) et la liste à
+> droite. Le formulaire s'ouvre à la place de la liste (bouton ← pour revenir), par `+` /
+> `Ctrl+N`, Create connection…, le menu d'une ligne (Connect, Edit… ; clic droit,
+> Shift+F10) ou Edit de la pastille ; un clic sur une ligne la sélectionne, Entrée ou un
+> double-clic connecte. Groupes : boutons de divulgation (`aria-expanded`) au-dessus d'une
+> listbox par groupe, lignes triées par nom, un seul arrêt Tab pour toutes les lignes,
+> flèches / Home / End à travers les groupes ouverts. Recherche : nom, groupe, hôte, base,
+> chemin. Nouvelles actions du keymap : `connection.open` (Ctrl+Shift+K, global : la liste,
+> recherche focalisée), `connection.new` (Ctrl+N, global), `connections.search` (Ctrl+F,
+> nouvelle portée `connectionList`, qui ne recouvre que `global`, comme `filterBar`).
+> Nouveaux tokens, identiques dans les deux thèmes : tuiles des moteurs `--driver-pg`
+> #2F5D8C, `--driver-my` #00758F, `--driver-ma` #8C4A2F, `--driver-sl` #4F6B2E,
+> `--driver-other` #5E5E5E (moteur sans tuile propre, monogramme = deux premières lettres),
+> monogrammes `--driver-*-text` #FFFFFF (≥ 5,3:1). Les points de couleur de la liste et les
+> pastilles du formulaire utilisent `--swatch-N-icon` (≥ 3:1 sur `--content` dans les deux
+> thèmes) et non plus `--swatch-N`, presque invisible en clair. Badge du tag = celui de la
+> pastille de statut (`--tag-*`). Ligne sélectionnée `--sel` (sous-titre en `--text`,
+> `--text-2` y tombe sous 4,5:1), survol `--row-b` (`--side` se confond avec `--content` en sombre). Formulaire : ordre moteur ; nom + groupe ;
+> couleur (6 boutons radio) + tag ; safe mode ; hôte + port ; utilisateur ; mot de passe +
+> stockage ; base ; mode SSL + CA… / Cert… / Key… (un fichier choisi a sa ligne avec son
+> chemin et Clear) ; encadré « Over SSH » ; Import from URL… (remplit le formulaire ouvert,
+> la connexion garde nom, couleur, tag, groupe et safe mode) / Test / Save / Connect ; Copy
+> URL et Delete passent en icônes dans l'en-tête. Pas d'« Other options » (aucune option
+> avancée à y mettre). Le libellé « Environment » devient « Tag ».
+> Relecture (#88) : des modifications non enregistrées du formulaire (brouillon différent
+> de la connexion chargée ou enregistrée, ou mot de passe / secret SSH tapé) ne se perdent
+> jamais en silence : ←, Ctrl+Shift+K, Ctrl+N, New connection de la palette et Edit de la
+> pastille sur une autre connexion demandent « Discard changes to this connection? »
+> (Discard / Cancel, même boîte que « Discard pending changes? ») ; derrière un workspace
+> le formulaire reste monté, caché, avec ses modifications. Delete demande « Delete <nom> ? »
+> (la connexion et ses secrets du trousseau, sans retour). Focus : à l'ouverture sur Name
+> (connexion existante) ou Driver (nouvelle) ; à la fermeture sur la ligne sélectionnée,
+> sinon la recherche. Ctrl+Shift+K ne supprime plus de ligne dans l'éditeur SQL
+> (`Shift-Mod-k` retiré du keymap de CodeMirror, §5.5).
+
 ### 2.5 Éditeur SQL
 - Barre de 36 px sous l'onglet : « No limit ⌄ » (LIMIT automatique), « Beautify », « Run Current
   ⌄ » ; résultats avec onglets Data / Message, mêmes règles de grille que les tables.
@@ -256,7 +294,8 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > `--icon-view` #8A3FD1 / #B58CFF (≥ 3:1 sur `--side`, `--seg-sel`, `--sel`). Dans les deux
 > thèmes : `--window-close` #C42B1C, `--window-close-text` #FFFFFF (5,7:1), utilisés
 > seulement par les boutons de fenêtre Windows. Les couleurs de connexion `--swatch-N`
-> (points de la liste et du formulaire) ne changent pas.
+> (points de la liste et du formulaire) ne changent pas (remplacé par l'amendement #88 :
+> points et pastilles en `--swatch-N-icon`).
 
 Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E7D32, nombres
 #B57AFF / #1D00FF, chaînes #CA6E6E / #E04978, commentaires #009B31, requête courante #30363F /

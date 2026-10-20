@@ -114,3 +114,73 @@ export function errorText(err: AppError): string {
   if (isSshPassphraseRequired(err)) return strings.form.sshPassphraseRequired;
   return err.message;
 }
+
+/**
+ * The subtitle of a connection row: `tag : host:port : database` (no database part when
+ * there is none), `tag : path` for SQLite.
+ */
+export function connectionSubtitle(c: ConnectionConfig): string {
+  const tag = strings.env[c.envTag] ?? c.envTag;
+  const sep = strings.connections.subtitleSeparator;
+  const where =
+    c.kind === "sqlite"
+      ? [c.sqlitePath]
+      : [`${c.host}:${c.port}`, c.database];
+  return [tag, ...where.filter((p): p is string => !!p)].join(sep);
+}
+
+/**
+ * The form's draft after Import from URL…: the URL's fields over `c`. The connection keeps
+ * who it is (id, name, colour, tag, group, safe mode); a draft without a name takes the
+ * database (the file name for SQLite, else the host).
+ */
+export function withUrlImport(c: ConnectionConfig, imported: Partial<ConnectionConfig>): ConnectionConfig {
+  const next: ConnectionConfig = {
+    ...c,
+    ...imported,
+    id: c.id,
+    name: c.name,
+    color: c.color,
+    envTag: c.envTag,
+    group: c.group,
+    safeMode: c.safeMode,
+  };
+  if (next.name.trim()) return next;
+  const name = next.kind === "sqlite" ? (next.sqlitePath?.split("/").pop() ?? "") : (next.database ?? next.host);
+  return { ...next, name };
+}
+
+/** A canonical text of a draft: keys sorted, an absent field the same as null. */
+function canonical(v: unknown): string {
+  if (v === undefined || v === null) return "null";
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const keys = Object.keys(o)
+      .filter((k) => o[k] !== undefined && o[k] !== null)
+      .sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v);
+}
+
+/** Do two drafts hold the same settings (key order and null / absent fields aside)? */
+export const sameDraft = (a: ConnectionConfig, b: ConnectionConfig): boolean => canonical(a) === canonical(b);
+
+/**
+ * `draft` moved onto `stored`, the connection as saved now (changed behind the form, the
+ * toolbar's safe mode say): each field the user left as it was in `baseline` takes the
+ * stored value, each field they edited keeps their value.
+ */
+export function rebaseDraft(
+  draft: ConnectionConfig,
+  baseline: ConnectionConfig,
+  stored: ConnectionConfig,
+): ConnectionConfig {
+  const out: Record<string, unknown> = { ...stored };
+  const keys = new Set([...Object.keys(draft), ...Object.keys(baseline), ...Object.keys(stored)]);
+  const d = draft as unknown as Record<string, unknown>;
+  const b = baseline as unknown as Record<string, unknown>;
+  for (const k of keys) if (canonical(d[k]) !== canonical(b[k])) out[k] = d[k];
+  return out as unknown as ConnectionConfig;
+}

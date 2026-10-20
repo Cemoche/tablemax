@@ -251,9 +251,9 @@ test("recording a combination saves it and the label updates", async () => {
   setup();
   await userEvent.click(changeButton(paletteLabel));
   expect(screen.getByText(strings.settings.recording)).toBeInTheDocument();
-  await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
-  expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K" } });
-  expect(shortcutOf(paletteLabel)).toBe("Ctrl+Shift+K");
+  await userEvent.keyboard("{Control>}{Shift>}y{/Shift}{/Control}");
+  expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+Y" } });
+  expect(shortcutOf(paletteLabel)).toBe("Ctrl+Shift+Y");
   expect(screen.queryByText(strings.settings.recording)).toBeNull();
 });
 
@@ -433,13 +433,13 @@ test("on macOS Meta records as Mod and Ctrl stays Ctrl", async () => {
   platform.mac = true;
   setup();
   await userEvent.click(changeButton(paletteLabel));
-  await userEvent.keyboard("{Meta>}{Shift>}k{/Shift}{/Meta}");
-  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K" } });
+  await userEvent.keyboard("{Meta>}{Shift>}y{/Shift}{/Meta}");
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+Y" } });
   await userEvent.click(changeButton(strings.keymap["tab.close"]));
   await userEvent.keyboard("{Control>}j{/Control}");
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({
     ...DEFAULT_SETTINGS,
-    keymap: { "palette.all": "Mod+Shift+K", "tab.close": "Ctrl+J" },
+    keymap: { "palette.all": "Mod+Shift+Y", "tab.close": "Ctrl+J" },
   });
 });
 

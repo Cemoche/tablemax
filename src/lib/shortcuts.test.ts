@@ -106,6 +106,14 @@ test("isModalOpen detects an aria-modal element", () => {
   expect(isModalOpen()).toBe(true);
 });
 
+test("isModalOpen ignores a modal inside a hidden subtree (a form kept behind a workspace, #88)", () => {
+  document.body.innerHTML = '<main hidden><div><div role="dialog" aria-modal="true"></div></div></main>';
+  expect(isModalOpen()).toBe(false);
+  document.body.insertAdjacentHTML("beforeend", '<div role="dialog" aria-modal="true"></div>');
+  expect(isModalOpen()).toBe(true);
+  document.body.innerHTML = "";
+});
+
 test("useShortcut fires on match, skips repeat and modals, and cleans up", () => {
   platform("Linux x86_64");
   const handler = vi.fn();

@@ -100,11 +100,11 @@ without any warranty. See [LICENSE](LICENSE) for the full text.
   `require` and `verify-full`, checked against the bundled Mozilla roots or the CA file
   (not the system store: a server signed by a company CA needs its CA file). Through an
   SSH tunnel only one host, without `mongodb+srv://`, `replicaSet` or `verify-full`.
-- **Groups**: connections can be filed under a group; groups fold in the sidebar.
-- **URLs**: "Copy URL" in the form (never includes the password) and "+ → New from URL…"
+- **Groups**: connections can be filed under a group; groups fold in the connection list.
+- **URLs**: "Copy URL" in the form (never includes the password) and "Import from URL…" in the form
   (`postgresql://`, `mysql://`, `mariadb://`, `sqlite://`; `sslmode`, `ssh`, `ssh-auth`
   parameters).
-- **Import TablePlus export…** (in the "+" menu): reads a `.tableplusconnection` file
+- **Import connections…** (on the connections screen): reads a `.tableplusconnection` file
   with its export password, lists its connections (duplicates of existing ones are
   unchecked) and imports the chosen ones. Exports do not carry SSH key paths, SSL
   settings or colors: set them afterwards in the connection form.

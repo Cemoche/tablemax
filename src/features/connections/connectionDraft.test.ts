@@ -1,6 +1,16 @@
 import { expect, test } from "vitest";
 import type { ConnectionConfig, SshSettings } from "../../lib/types";
-import { blankConnection, forBackend, normalize, sslModePicked, withSslMode } from "./connectionDraft";
+import {
+  blankConnection,
+  connectionSubtitle,
+  forBackend,
+  normalize,
+  rebaseDraft,
+  sameDraft,
+  sslModePicked,
+  withSslMode,
+  withUrlImport,
+} from "./connectionDraft";
 
 const ssh = (over: Partial<SshSettings> = {}): SshSettings => ({
   host: "bastion",
@@ -66,4 +76,60 @@ test("a loaded SSL mode counts as picked only when it is not the default", () =>
   expect(sslModePicked(cfg(null, { host: "localhost", ssl: ssl("verifyFull") }), false)).toBe(true);
   // A URL that stated its sslmode keeps it even when it is the default.
   expect(sslModePicked(cfg(null, { host: "localhost", ssl: ssl("prefer") }), true)).toBe(true);
+});
+
+test("connectionSubtitle: tag : host:port : database, the file path for SQLite", () => {
+  const pg = cfg(null, { envTag: "prod", host: "db.example.com", port: 5432, database: "shop" });
+  expect(connectionSubtitle(pg)).toBe("prod : db.example.com:5432 : shop");
+  expect(connectionSubtitle({ ...pg, database: null })).toBe("prod : db.example.com:5432");
+  const lite = cfg(null, { kind: "sqlite", host: "", port: 0, sqlitePath: "/data/a.db" });
+  expect(connectionSubtitle(lite)).toBe("local : /data/a.db");
+  expect(connectionSubtitle({ ...lite, sqlitePath: null })).toBe("local");
+});
+
+test("withUrlImport: the URL's fields over the draft; a nameless draft is named after the database", () => {
+  const blank = blankConnection();
+  const imported = withUrlImport(blank, { kind: "mySql", host: "db.example.com", port: 3306, database: "shop" });
+  expect(imported).toMatchObject({ kind: "mySql", host: "db.example.com", port: 3306, database: "shop", name: "shop" });
+  expect(withUrlImport(blank, { host: "h", database: null }).name).toBe("h");
+  expect(withUrlImport(blank, { kind: "sqlite", sqlitePath: "/data/a.db" }).name).toBe("a.db");
+  // A saved connection keeps who it is: id, name, colour, tag, group, safe mode.
+  const saved = cfg(null, {
+    id: "abc",
+    name: "Shop",
+    color: "swatch-3",
+    envTag: "prod",
+    group: "Work",
+    safeMode: "confirmAll",
+  });
+  expect(withUrlImport(saved, { host: "other", database: "x" })).toMatchObject({
+    id: "abc",
+    name: "Shop",
+    color: "swatch-3",
+    envTag: "prod",
+    group: "Work",
+    safeMode: "confirmAll",
+    host: "other",
+    database: "x",
+  });
+});
+
+test("sameDraft ignores key order and null / absent fields, not a changed value", () => {
+  const a = blankConnection();
+  expect("safeMode" in a).toBe(false);
+  expect(sameDraft(a, { ...a, safeMode: null })).toBe(true);
+  expect(sameDraft(a, { ...a, safeMode: undefined })).toBe(true);
+  expect(sameDraft(a, { ...a, ssl: { keyFile: null, certFile: null, caFile: null, mode: a.ssl.mode } })).toBe(true);
+  expect(sameDraft(a, { ...a, name: "x" })).toBe(false);
+  expect(sameDraft(a, { ...a, ssl: { ...a.ssl, caFile: "/ca.pem" } })).toBe(false);
+  expect(sameDraft(a, { ...a, safeMode: "off" })).toBe(false);
+});
+
+test("rebaseDraft: untouched fields take the stored value, edited ones stay", () => {
+  const baseline = cfg(null, { id: "x", name: "Shop", host: "a", safeMode: null });
+  const draft = { ...baseline, host: "b" };
+  const stored = { ...baseline, safeMode: "confirmAll" as const, name: "Shop (renamed)" };
+  expect(rebaseDraft(draft, baseline, stored)).toEqual({ ...stored, host: "b" });
+  // An edit that puts back the stored value is kept as is.
+  expect(rebaseDraft({ ...baseline, safeMode: "off" }, baseline, stored).safeMode).toBe("off");
 });

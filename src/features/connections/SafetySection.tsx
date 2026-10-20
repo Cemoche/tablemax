@@ -1,6 +1,7 @@
 import { effectiveSafeMode, safeModeLabel } from "../../lib/safeMode";
 import { strings } from "../../lib/strings";
 import type { EnvTag, SafeMode } from "../../lib/types";
+import { fieldClass, labelClass, rowClass } from "./formStyles";
 
 interface Props {
   value: SafeMode | null | undefined;
@@ -8,16 +9,17 @@ interface Props {
   onChange: (mode: SafeMode | null) => void;
 }
 
-const field = "w-full rounded-sm border border-border bg-bg px-2 py-1";
-
-/** Safe-mode selector; "Default" (null) follows the environment tag and says what that means. */
+/** Safe-mode line; "Default" (null) follows the tag and says what that means. */
 export function SafetySection({ value, envTag, onChange }: Props) {
   const effective = effectiveSafeMode({ envTag, safeMode: null });
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-muted">{strings.safety.sectionLabel}</span>
+    <div data-form-row="" className={rowClass}>
+      <label htmlFor="cf-safe-mode" className={labelClass}>
+        {strings.safety.sectionLabel}
+      </label>
       <select
-        className={field}
+        id="cf-safe-mode"
+        className={fieldClass}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value === "" ? null : (e.target.value as SafeMode))}
       >
@@ -28,6 +30,6 @@ export function SafetySection({ value, envTag, onChange }: Props) {
           </option>
         ))}
       </select>
-    </label>
+    </div>
   );
 }

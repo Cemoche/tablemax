@@ -15,8 +15,11 @@ import { strings } from "./strings";
  *   handles its keys itself and stops them there, so inside the bar they win over the
  *   table tab's (Mod+I adds a filter row there, a table row elsewhere, spec §5.3): it
  *   conflicts only with itself and `global`.
+ * - `connectionList`: the connections screen (Task 8). No workspace view is on screen
+ *   then, so it shares combinations with the tab scopes (Mod+F searches the list there and
+ *   opens the filters of a table tab): it conflicts only with itself and `global`.
  */
-export type ShortcutScope = "global" | "queryTab" | "tableTab" | "editor" | "filterBar";
+export type ShortcutScope = "global" | "queryTab" | "tableTab" | "editor" | "filterBar" | "connectionList";
 
 /**
  * The actions that have a shortcut. The ids are also listed, in this order, in
@@ -119,6 +122,11 @@ const SPECS = {
   "filters.down": { scope: "filterBar", defaultShortcut: "Mod+ArrowDown" },
   "filters.column": { scope: "filterBar", defaultShortcut: "Alt+C", mac: { defaultShortcut: "Mod+ArrowLeft" } },
   "filters.operator": { scope: "filterBar", defaultShortcut: "Alt+O", mac: { defaultShortcut: "Mod+ArrowRight" } },
+  // Task 8 (spec §5.3 / §5.5): ⌘⇧K shows the connection list, ⌘N a new connection's form,
+  // from anywhere; ⌘F searches the list while it is on screen.
+  "connection.open": { scope: "global", defaultShortcut: "Mod+Shift+K" },
+  "connection.new": { scope: "global", defaultShortcut: "Mod+N" },
+  "connections.search": { scope: "connectionList", defaultShortcut: "Mod+F" },
 } as const satisfies Record<keyof typeof strings.keymap, Spec>;
 
 export type KeymapActionId = keyof typeof SPECS;
@@ -235,7 +243,8 @@ export function alternateShortcuts(id: KeymapActionId, keymap: Record<string, st
 /** Two scopes can be active for the same keydown (see `ShortcutScope`). */
 function scopesOverlap(a: ShortcutScope, b: ShortcutScope): boolean {
   if (a === b || a === "global" || b === "global") return true;
-  // `filterBar` overlaps nothing else: it shadows the table tab inside the bar.
+  // `filterBar` overlaps nothing else: it shadows the table tab inside the bar;
+  // `connectionList` neither: no tab is on screen with the connection list.
   return (a === "editor" && b === "queryTab") || (a === "queryTab" && b === "editor");
 }
 

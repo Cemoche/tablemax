@@ -217,3 +217,38 @@ test("an applied filter row's tint keeps its text readable in both themes (rulin
   // --text-2 would not be (light: 4.06:1): the row must not use it.
   expect(contrastRatio(values(LIGHT)["--text-2"], values(LIGHT)["--filter-applied"])).toBeLessThan(4.5);
 });
+
+test("driver tiles: each engine's monogram reads 4.5:1 on its tile, the same in both themes (#88)", () => {
+  const light = values(LIGHT);
+  const tiles = ["pg", "my", "ma", "sl", "other"];
+  for (const t of tiles) {
+    expect(light[`--driver-${t}`], t).toMatch(/^#[0-9A-F]{6}$/i);
+    expect(contrastRatio(light[`--driver-${t}-text`], light[`--driver-${t}`]), t).toBeGreaterThanOrEqual(4.5);
+  }
+  // One colour per engine; brand-like tiles do not change with the theme.
+  expect(new Set(tiles.map((t) => light[`--driver-${t}`])).size).toBe(tiles.length);
+  for (const selector of [DARK_MEDIA, DARK_FORCED]) {
+    for (const t of tiles) expect(values(selector)[`--driver-${t}`], `${selector} ${t}`).toBeUndefined();
+  }
+});
+
+test("connection colour dots (list, form swatches) stand out from the content (3:1) in both themes (#88)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = values(selector);
+    const content = v["--content"] ?? values(LIGHT)["--content"];
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      expect(contrastRatio(v[`--swatch-${n}-icon`], content), `${selector} swatch-${n}-icon`).toBeGreaterThanOrEqual(3);
+    }
+  }
+});
+
+test("connection list rows: the subtitle reads 4.5:1 at rest, hovered and selected, in both themes (#88)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    const ratio = (fg: string, bg: string) => contrastRatio(v[fg], v[bg]);
+    expect(ratio("--text-2", "--content"), `${selector} at rest`).toBeGreaterThanOrEqual(4.5);
+    expect(ratio("--text-2", "--row-b"), `${selector} hovered`).toBeGreaterThanOrEqual(4.5);
+    // Selected rows show the subtitle in --text (--text-2 is 3.9:1 on the light --sel).
+    expect(ratio("--text", "--sel"), `${selector} selected`).toBeGreaterThanOrEqual(4.5);
+  }
+});

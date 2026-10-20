@@ -3,7 +3,6 @@ export const strings = {
   tagline: "A free, fast database client",
   connections: {
     title: "Connections",
-    search: "Filter connections",
     searchLabel: "Search connections",
     empty: "No connections yet",
     noMatch: "No matching connection",
@@ -11,11 +10,29 @@ export const strings = {
     connect: "Connect",
     connecting: "Connecting…",
     loadFailed: "Could not load connections",
-    newMenu: "New…",
-    newFromUrl: "New from URL…",
-    importTablePlus: "Import TablePlus export…",
     ungrouped: "Ungrouped",
     groupToggle: (name: string) => `Toggle group ${name}`,
+    searchPlaceholder: "Search for connection…",
+    /** Between the parts of a row's subtitle: `tag : host:port : database`. */
+    subtitleSeparator: " : ",
+    edit: "Edit…",
+    menuLabel: "Connection actions",
+    welcomeLabel: "Welcome",
+    version: (v: string) => `Version ${v}`,
+    create: "Create connection…",
+    importConnections: "Import connections…",
+    importHint: "Import connections from a TablePlus export",
+    back: "Back to the connections",
+    discardTitle: "Discard changes to this connection?",
+    discardMessage: (name: string) =>
+      name ? `Your changes to ${name} are not saved.` : "This new connection is not saved.",
+    discardOk: "Discard",
+    discardCancel: "Cancel",
+    deleteTitle: (name: string) => `Delete ${name}?`,
+    deleteMessage:
+      "The connection and its passwords stored in the system keyring are removed. This cannot be undone.",
+    deleteOk: "Delete",
+    deleteCancel: "Cancel",
   },
   url: {
     invalid: "Not a valid connection URL",
@@ -26,12 +43,12 @@ export const strings = {
     sshPasswordIgnored: "ssh password in the URL was ignored",
     mongoTlsConflict: (option: string) => `tls=false conflicts with ${option}`,
     mongoRefused: (names: string[]) => `MongoDB options not supported: ${names.join(", ")}`,
-    dialogTitle: "New connection from URL",
+    dialogTitle: "Import from URL",
     label: "Connection URL",
     placeholder: "postgresql://user@host:5432/database",
     passwordNote: "The password in this URL will be pre-filled and is only saved when you save the connection.",
     warningsTitle: "Warnings",
-    open: "Open form",
+    open: "Import",
     cancel: "Cancel",
   },
   import: {
@@ -60,7 +77,7 @@ export const strings = {
     editTitle: "Edit connection",
     name: "Name",
     color: "Color",
-    env: "Environment",
+    env: "Tag",
     driver: "Driver",
     host: "Host",
     port: "Port",
@@ -87,6 +104,7 @@ export const strings = {
     urlCopied: "URL copied (without the password)",
     urlCopyFailed: "Could not copy the URL",
     colorLabel: (n: number) => `Color ${n}`,
+    importUrl: "Import from URL…",
   },
   env: { local: "local", dev: "dev", staging: "staging", prod: "prod" },
   safety: {
@@ -94,7 +112,7 @@ export const strings = {
     modeOff: "Off",
     modeConfirmWrites: "Confirm writes",
     modeConfirmAll: "Confirm all queries",
-    defaultOption: (effective: string) => `Default (by environment): ${effective}`,
+    defaultOption: (effective: string) => `Default (by tag): ${effective}`,
     bannerMode: (mode: string) => `Safe mode: ${mode}`,
     bannerModeOff: "off",
     bannerModeConfirmWrites: "confirm writes",
@@ -143,7 +161,6 @@ export const strings = {
     },
   },
   ssl: {
-    legend: "SSL / TLS",
     mode: "SSL mode",
     modes: {
       disable: "Disable",
@@ -153,6 +170,10 @@ export const strings = {
       verifyFull: "Verify CA and host name",
     },
     caFile: "CA certificate",
+    /** The SSL mode line's buttons for the CA, client certificate and client key files. */
+    caShort: "CA…",
+    certShort: "Cert…",
+    keyShort: "Key…",
     caPlaceholder: "System certificates",
     certFile: "Client certificate",
     keyFile: "Client key",
@@ -167,7 +188,13 @@ export const strings = {
       "The certificate of this host is not verified: traffic is encrypted, but anyone on the network path could pose as the server. Use a verify mode or an SSH tunnel.",
   },
   ssh: {
-    enable: "SSH tunnel",
+    enable: "Over SSH",
+    /** The Over SSH box. */
+    box: "SSH tunnel settings",
+    /** Visible label of the authentication line (its field is named by `auth`). */
+    authShort: "Auth",
+    /** Visible label of the key file line (its field is named by `keyFile`). */
+    keyFileShort: "Key file",
     host: "SSH host",
     hostPlaceholder: "alias or host name",
     port: "SSH port",
@@ -782,6 +809,9 @@ export const strings = {
     "filters.down": "Next condition (filter bar)",
     "filters.column": "Jump to the condition's column (filter bar)",
     "filters.operator": "Jump to the condition's operator (filter bar)",
+    "connection.open": "Show the connection list",
+    "connection.new": "New connection",
+    "connections.search": "Search the connection list (connections screen)",
   },
   session: {
     disconnected: "Disconnected",

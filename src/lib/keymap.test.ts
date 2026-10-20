@@ -85,6 +85,9 @@ test("the defaults are the combinations the code binds today", () => {
     "filters.down": "Mod+ArrowDown",
     "filters.column": "Alt+C",
     "filters.operator": "Alt+O",
+    "connection.open": "Mod+Shift+K",
+    "connection.new": "Mod+N",
+    "connections.search": "Mod+F",
   });
   const scope = (id: KeymapActionId) => KEYMAP_ACTIONS.find((a) => a.id === id)?.scope;
   expect(scope("query.new")).toBe("global");
@@ -129,6 +132,11 @@ test("the defaults are the combinations the code binds today", () => {
   expect(scope("workspace.next")).toBe("global");
   expect(scope("sidebar.toggle")).toBe("global");
   expect(scope("sidebar.search")).toBe("global");
+  // Task 8: the connection list from anywhere (§5.5), a new connection (§5.3 ⌘N); Ctrl+F
+  // searches the list on the connections screen only (the grid keeps its Filters key).
+  expect(scope("connection.open")).toBe("global");
+  expect(scope("connection.new")).toBe("global");
+  expect(scope("connections.search")).toBe("connectionList");
   for (const a of KEYMAP_ACTIONS) expect(a.label, a.id).not.toBe("");
 });
 
@@ -295,8 +303,15 @@ test("effectiveShortcut takes a valid override and falls back on unknown or inva
 
 test("isKeymapActionId knows the registry ids only", () => {
   expect(isKeymapActionId("editor.format")).toBe(true);
-  expect(isKeymapActionId("connection.new")).toBe(false);
+  expect(isKeymapActionId("connection.edit")).toBe(false);
   expect(isKeymapActionId("toString")).toBe(false);
+});
+
+test("the connection list's search shares Ctrl+F with the grid's filters, never with a global key", () => {
+  expect(conflictFor("connections.search", "Mod+F", {}, false)).toBeNull();
+  expect(conflictFor("grid.filters", "Mod+F", {}, false)).toBeNull();
+  expect(conflictFor("connections.search", "Mod+K", {}, false)).toBe("database.open");
+  expect(conflictFor("connection.new", "Mod+F", {}, false)).toBe("grid.filters");
 });
 
 test("a global combination conflicts with every scope", () => {
@@ -365,7 +380,7 @@ test("conflictAnywhere refuses a combination that conflicts on macOS or on Linux
   expect(conflictFor("grid.rowDetails", "Ctrl+K", {}, true)).toBeNull();
   expect(conflictAnywhere("grid.rowDetails", "Ctrl+K", {})).toBe("database.open");
   // Free on both platforms.
-  expect(conflictAnywhere("database.open", "Mod+Shift+K", {})).toBeNull();
+  expect(conflictAnywhere("database.open", "Mod+Shift+J", {})).toBeNull();
   expect(conflictAnywhere("database.open", "Mod+K", {})).toBeNull();
 });
 

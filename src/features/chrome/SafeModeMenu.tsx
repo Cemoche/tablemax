@@ -11,7 +11,7 @@ import { useLiveEnv } from "../workspace/useLiveEnv";
 import { ICON, iconButton } from "./toolbarStyles";
 
 const t = strings.toolbar;
-/** null = Default (by environment), as in the connection form. */
+/** null = Default (by tag), as in the connection form. */
 const LEVELS: (SafeMode | null)[] = [null, "off", "confirmWrites", "confirmAll"];
 
 /**

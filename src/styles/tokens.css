@@ -110,6 +110,18 @@
   --row-selected: var(--accent-strong);
   --row-selected-text: #FFFFFF;
   --accent-contrast: #FFFFFF;
+  /* Engine tiles of the connection list (#88): our own colours, one per engine, the same
+     in both themes; the monogram reads at least 4.5:1 on its tile. */
+  --driver-pg: #2F5D8C;
+  --driver-pg-text: #FFFFFF;
+  --driver-my: #00758F;
+  --driver-my-text: #FFFFFF;
+  --driver-ma: #8C4A2F;
+  --driver-ma-text: #FFFFFF;
+  --driver-sl: #4F6B2E;
+  --driver-sl-text: #FFFFFF;
+  --driver-other: #5E5E5E;
+  --driver-other-text: #FFFFFF;
   /* The Windows close button on hover (#104): red, white glyph (5.7:1). */
   --window-close: #C42B1C;
   --window-close-text: #FFFFFF;

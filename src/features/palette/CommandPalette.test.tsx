@@ -94,8 +94,10 @@ test("actions show their effective shortcut: a custom one replaces the default",
   expect(within(dialog).queryByText("Ctrl+T")).not.toBeInTheDocument();
   // An invalid entry falls back to the default.
   expect(within(item(strings.palette.action.closeTab)).getByText("Ctrl+W")).toBeInTheDocument();
-  // An action without a keymap id shows no shortcut.
-  expect(item(strings.palette.action.newConnection).querySelector("kbd")).toBeNull();
+  // New connection has a keymap id since Task 8 (Ctrl+N)…
+  expect(within(item(strings.palette.action.newConnection)).getByText("Ctrl+N")).toBeInTheDocument();
+  // …and an action without a keymap id shows no shortcut.
+  expect(item(strings.palette.action.reloadCatalog).querySelector("kbd")).toBeNull();
 });
 
 test("Escape closes and Mod+P toggles", async () => {

@@ -1,11 +1,11 @@
 import { useRef, useState } from "react";
 import { strings } from "../../lib/strings";
 import { tip, tipIfCut } from "../../lib/tooltip";
-import type { ConnectionConfig, EnvTag } from "../../lib/types";
+import type { ConnectionConfig } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
 import type { Workspace } from "../../stores/workspaces";
 import { ConnectionPopover, engineLabel } from "./ConnectionPopover";
-import { tintClass } from "./swatch";
+import { tagClass, tintClass } from "./swatch";
 
 const s = strings.statusPill;
 
@@ -23,14 +23,6 @@ const STATE_CLASS: Record<Exclude<PillState, "connected">, { pill: string; dot: 
 export function shortVersion(version: string | null | undefined): string {
   return (version ?? "").trim().split(/\s/)[0].split("-")[0];
 }
-
-/** The tag badge at the start of the pill: the tag's own badge colors (≥ 4.5:1, tokens.test.ts). */
-const TAG_CLASS: Record<EnvTag, string> = {
-  local: "bg-tag-local-bg text-tag-local-text",
-  dev: "bg-tag-dev-bg text-tag-dev-text",
-  staging: "bg-tag-staging-bg text-tag-staging-text",
-  prod: "bg-tag-prod-bg text-tag-prod-text",
-};
 
 /**
  * `<Engine> <version> : SSH : <connection name> : <database> : <schema>.<object>`, without
@@ -120,7 +112,7 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
       >
         <span
           data-pill-tag=""
-          className={`shrink-0 rounded-sm border border-current px-1.5 font-sans text-xs font-bold tracking-wide ${TAG_CLASS[envTag] ?? TAG_CLASS.local}`}
+          className={`shrink-0 rounded-sm border border-current px-1.5 font-sans text-xs font-bold tracking-wide ${tagClass(envTag)}`}
         >
           {tagLabel}
         </span>
