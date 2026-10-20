@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ColumnLayout } from "../features/grid/columnLayout";
+import type { ColumnLayout } from "../lib/columnLayout";
 import type { Filter, ObjectRef, SortDir } from "../lib/types";
 
 export interface GridView {
@@ -37,7 +37,6 @@ interface GridViewsState {
    * table's columns may have changed since.
    */
   layouts: Record<string, ColumnLayout>;
-  getLayout: (key: string) => ColumnLayout | undefined;
   setLayout: (key: string, patch: Partial<ColumnLayout>) => void;
   /** Forgets one part of a table's layout (Reset positions: the order). */
   resetLayout: (key: string, part: keyof ColumnLayout) => void;
@@ -69,7 +68,6 @@ export const useGridViews = create<GridViewsState>((set, get) => ({
       return { views: omit(s.views, tabId), trails: omit(s.trails, tabId) };
     }),
   layouts: {},
-  getLayout: (key) => (Object.prototype.hasOwnProperty.call(get().layouts, key) ? get().layouts[key] : undefined),
   setLayout: (key, patch) =>
     set((s) => ({
       layouts: { ...s.layouts, [key]: { ...(s.layouts[key] ?? EMPTY_LAYOUT), ...patch } },

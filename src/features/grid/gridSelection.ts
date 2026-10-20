@@ -34,6 +34,11 @@ export function withSelectedRow(s: GridSelection, row: number | null): GridSelec
 export interface CellBlock {
   rows: number[];
   cols: number[];
+  /**
+   * Whole rows selected by their numbers: `cols` are the columns shown, which may be fewer
+   * than the table's (hidden columns), and the block still stands for whole rows.
+   */
+  wholeRows?: boolean;
 }
 
 const span = (from: number, n: number) => Array.from({ length: n }, (_, i) => from + i);
@@ -43,7 +48,7 @@ const span = (from: number, n: number) => Array.from({ length: n }, (_, i) => fr
  * the current range (other ranges of a multi-range selection are ignored); null when empty.
  */
 export function selectionBlock(s: GridSelection, rowCount: number, colCount: number): CellBlock | null {
-  if (s.rows.length > 0) return { rows: s.rows.toArray(), cols: span(0, colCount) };
+  if (s.rows.length > 0) return { rows: s.rows.toArray(), cols: span(0, colCount), wholeRows: true };
   if (s.columns.length > 0) return { rows: span(0, rowCount), cols: s.columns.toArray() };
   const r = s.current?.range;
   return r ? { rows: span(r.y, r.height), cols: span(r.x, r.width) } : null;
@@ -54,7 +59,8 @@ export function selectionBlock(s: GridSelection, rowCount: number, colCount: num
  * on the row marker, `col` null, that row), else the cell alone or the whole row.
  */
 export function blockAt(block: CellBlock | null, row: number, col: number | null, colCount: number): CellBlock {
-  if (block && block.rows.includes(row) && (col === null ? block.cols.length === colCount : block.cols.includes(col))) {
+  const whole = (b: CellBlock) => b.wholeRows === true || b.cols.length === colCount;
+  if (block && block.rows.includes(row) && (col === null ? whole(block) : block.cols.includes(col))) {
     return block;
   }
   return { rows: [row], cols: col === null ? span(0, colCount) : [col] };

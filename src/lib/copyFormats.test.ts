@@ -233,6 +233,10 @@ describe("toMarkdown", () => {
   test("no columns give an empty string", () => {
     expect(toMarkdown([], [])).toBe("");
   });
+  test("a backslash is escaped before a pipe (fix 9)", () => {
+    // x\|y must not end as x\\|y, where the pipe would split the cell.
+    expect(toMarkdown(["a"], [[T("x\\|y")], [T("a\\b")]])).toBe("| a |\n| --- |\n| x\\\\\\|y |\n| a\\\\b |");
+  });
 });
 
 describe("INSERT quoting per engine (Copy rows as INSERT)", () => {

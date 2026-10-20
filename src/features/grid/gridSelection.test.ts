@@ -41,7 +41,7 @@ test("selectionBlock: a cell range, whole rows, whole columns, or nothing", () =
     current: { cell: [1, 2], range: { x: 1, y: 2, width: 2, height: 3 }, rangeStack: [] },
   };
   expect(selectionBlock(range, 10, 5)).toEqual({ rows: [2, 3, 4], cols: [1, 2] });
-  expect(selectionBlock(rows(4, 1), 10, 3)).toEqual({ rows: [1, 4], cols: [0, 1, 2] });
+  expect(selectionBlock(rows(4, 1), 10, 3)).toEqual({ rows: [1, 4], cols: [0, 1, 2], wholeRows: true });
   expect(selectionBlock({ ...empty, columns: CompactSelection.fromSingleSelection(2) }, 3, 5)).toEqual({
     rows: [0, 1, 2],
     cols: [2],
@@ -98,4 +98,12 @@ test("the highlighted rows are the selected rows and the rows of the current ran
     current: { cell: [0, 3], range: { x: 0, y: 3, width: 2, height: 2 }, rangeStack: [] },
   };
   expect([...highlightedRows(range)].sort()).toEqual([3, 4]);
+});
+
+test("blockAt keeps a whole-row block on a row number even when columns are hidden (fix 2)", () => {
+  const whole = { rows: [0, 1, 2], cols: [0, 2], wholeRows: true };
+  // Two shown columns out of five: still the whole rows.
+  expect(blockAt(whole, 1, null, 5)).toBe(whole);
+  expect(blockAt({ rows: [0, 1, 2], cols: [0, 2] }, 1, null, 5)).toEqual({ rows: [1], cols: [0, 1, 2, 3, 4] });
+  expect(selectionBlock(rows(1, 2), 4, 3)).toEqual({ rows: [1, 2], cols: [0, 1, 2], wholeRows: true });
 });

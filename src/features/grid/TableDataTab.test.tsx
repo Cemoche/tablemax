@@ -1542,3 +1542,66 @@ test("the grid's header menu filters on a column and sorts in one direction", as
   // Each table keeps its own column layout.
   expect(grid!.layoutKey).toBeTruthy();
 });
+
+test("with a column hidden, the row number menu of 3 selected rows acts on the 3 rows (fix 2)", async () => {
+  const clip = stubClipboard();
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(3));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 3 });
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => useGridViews.getState().setLayout(grid!.layoutKey!, { hidden: ["data"] }));
+  // What the grid reports for 3 rows selected by their numbers: the 5 shown columns.
+  const block = { rows: [0, 1, 2], cols: [0, 1, 2, 3, 4], wholeRows: true };
+  act(() => grid!.editing!.onContextMenu(1, null, 5, 5, block));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.copyRows }));
+  await waitFor(() =>
+    expect(clip.text).toBe("100\t42\t0\tnote 0\t1.50\n101\t42\t1\tnote 1\t1.50\n102\t42\t2\tnote 2\t1.50"),
+  );
+  act(() => grid!.editing!.onContextMenu(1, null, 5, 5, block));
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.grid.menu.deleteRows(3) }));
+  expect(pending().toChanges("t1")).toEqual([0, 1, 2].map((l) => ({ kind: "delete", key: key(l) })));
+});
+
+test("no '= value' quick filter on a PostgreSQL json column (json has no =); jsonb keeps it (fix 5)", async () => {
+  const withType = (baseType: string) =>
+    tableInfo({
+      columns: tableInfo().columns.map((c) => (c.name === "note" ? { ...c, typeName: baseType, baseType } : c)),
+    });
+  vi.mocked(ipc.tableInfo).mockResolvedValue(withType("json"));
+  vi.mocked(ipc.tablePage).mockResolvedValue(lines(2));
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  const view = render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.info).not.toBeNull());
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5));
+  expect(screen.getByRole("menuitem", { name: strings.grid.menu.filterIsNull("note") })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: strings.grid.menu.filterEquals("note", "note 1") })).toBeNull();
+  view.unmount();
+  vi.mocked(ipc.tableInfo).mockResolvedValue(withType("jsonb"));
+  render(<TableDataTab workspaceId="w1" tabId="t2" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.info?.columns[3].baseType).toBe("jsonb"));
+  act(() => grid!.editing!.onContextMenu(1, 3, 5, 5));
+  expect(screen.getByRole("menuitem", { name: strings.grid.menu.filterEquals("note", "note 1") })).toBeInTheDocument();
+});
+
+test("duplicating several rows inserts them in row order, even when one must load a value first (fix 8)", async () => {
+  const data = lines(2);
+  data.rows[0][3] = { t: "longText", v: { preview: "abc", len: 20000 } };
+  vi.mocked(ipc.tablePage).mockResolvedValue(data);
+  vi.mocked(ipc.tableCount).mockResolvedValue({ t: "exact", v: 2 });
+  let resolve: (v: CellValue) => void = () => {};
+  vi.mocked(ipc.cellValue).mockReturnValue(new Promise<CellValue>((r) => (resolve = r)));
+  render(<TableDataTab workspaceId="w1" tabId="t1" object={obj} dialect="postgres" />);
+  await waitFor(() => expect(grid?.editing?.model.cell(1, 3).editable).toBe(true));
+  act(() => grid!.onRowsAction!("duplicate", [0, 1]));
+  // Row 1 waits for row 0, whose value is still loading.
+  expect(pending().count("t1")).toBe(0);
+  await act(async () => resolve({ t: "text", v: "full text" }));
+  await waitFor(() => expect(pending().count("t1")).toBe(2));
+  const lines_ = pending()
+    .toChanges("t1")
+    .map((c) => (c.kind === "insert" ? c.values.find(([n]) => n === "line")?.[1] : null));
+  expect(lines_).toEqual([
+    { t: "text", v: "0" },
+    { t: "text", v: "1" },
+  ]);
+});

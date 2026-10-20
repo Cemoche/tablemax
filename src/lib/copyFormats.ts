@@ -71,8 +71,9 @@ export function toCsv(columns: string[], rows: CellValue[][], opts?: DelimitedOp
   return delimited(columns, rows, ",", "\r\n", /[,"\r\n]/, opts);
 }
 
-/** A Markdown table cell: `|` escaped, line breaks as `<br>`. */
-const mdCell = (s: string) => s.split("|").join("\\|").replace(/\r\n|\r|\n/g, "<br>");
+/** A Markdown table cell: `\` then `|` escaped (so `\|` cannot end as an unescaped pipe), line breaks as `<br>`. */
+const mdCell = (s: string) =>
+  s.split("\\").join("\\\\").split("|").join("\\|").replace(/\r\n|\r|\n/g, "<br>");
 
 /**
  * A GitHub-flavoured Markdown table: the header, a `---` line, one line per row. NULL is

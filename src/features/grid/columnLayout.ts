@@ -1,5 +1,8 @@
 // Column widths and order of a grid: auto-size on the page content, fit one column, move a
 // column, and read a stored layout back against the columns a table has now. Pure.
+import type { ColumnLayout } from "../../lib/columnLayout";
+
+export type { ColumnLayout };
 
 /** Bounds of an automatic width (spec §2.3); a width dragged by hand has wider ones. */
 export const COL_MIN = 60;
@@ -20,12 +23,6 @@ export interface ColumnMeasure {
   header: (s: string) => number;
 }
 
-/** What is stored per table (gridViews): user widths, column order and hidden columns. */
-export interface ColumnLayout {
-  widths: Record<string, number>;
-  order: string[];
-  hidden: string[];
-}
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 

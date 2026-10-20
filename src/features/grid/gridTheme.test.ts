@@ -1,5 +1,8 @@
+/// <reference types="node" />
+import { readFileSync } from "node:fs";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { contrastRatio } from "../../lib/contrast";
 import { buildEditThemes, buildGridTheme, buildRowThemes, headerFont, useGridTheme } from "./gridTheme";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -145,4 +148,31 @@ test("the grid draws with the fallback mono font until JetBrains Mono is loaded,
   } finally {
     delete (document as { fonts?: unknown }).fonts;
   }
+});
+
+/** The custom properties of the first `selector {` block of tokens.css (read from disk). */
+function tokenBlock(selector: string): Record<string, string> {
+  const css = readFileSync("src/styles/tokens.css", "utf8");
+  const start = css.indexOf(`${selector} {`);
+  const out: Record<string, string> = {};
+  for (const m of css.slice(start, css.indexOf("}", start)).matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) {
+    out[m[1]] = m[2].trim();
+  }
+  return out;
+}
+
+test("an edited cell on a selected row keeps --modified and readable text, in both themes (fix 1)", () => {
+  const light = tokenBlock(":root");
+  const dark = { ...light, ...tokenBlock(':root[data-theme="dark"]') };
+  for (const [name, vars] of [["light", light], ["dark", dark]] as const) {
+    const t = buildEditThemes((n) => vars[n] ?? "").editedOnAccent;
+    expect(t.bgCell, name).toBe(vars["--modified"]);
+    expect(contrastRatio(t.textDark!, t.bgCell!), name).toBeGreaterThanOrEqual(4.5);
+    // Links and placeholders on it use the same colour.
+    expect(t.linkColor, name).toBe(t.textDark);
+    expect(t.textLight, name).toBe(t.textDark);
+  }
+  // Tokens that cannot be compared (missing or not hex) fall back to --cell-text.
+  expect(buildEditThemes((n) => (n === "--modified" ? "rgb(1 2 3)" : n === "--cell-text" ? "#111" : "")).editedOnAccent)
+    .toMatchObject({ bgCell: "rgb(1 2 3)", textDark: "#111" });
 });

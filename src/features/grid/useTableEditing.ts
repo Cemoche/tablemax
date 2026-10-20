@@ -261,11 +261,23 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
 
   /** The grid keys on the selected rows: Delete / grid.deleteRows, grid.duplicateRows. */
   const rowsAction = (action: RowsAction, rows: number[]) => {
-    const { model } = latest.current;
+    const { model, result } = latest.current;
     if (!model || model.locked || !editable) return;
-    if (action === "delete") deleteRows(rows);
-    // Indexes of this render: the new rows show up once the store's change renders.
-    else for (const r of rows) void duplicate(r);
+    if (action === "delete") {
+      deleteRows(rows);
+      return;
+    }
+    // One after the other, in row order (a row whose values must load first would otherwise
+    // land after the next ones), each record found again by identity: new rows move the others.
+    const refs = result ? rows.map((r) => refOf(model, r, result)) : [];
+    void (async () => {
+      for (const ref of refs) {
+        const { model: m, result: page } = latest.current;
+        const row = rowOf(m, ref, page);
+        if (row === null || !live.current) return;
+        await duplicate(row);
+      }
+    })();
   };
 
   // Where the menu's record is now; the menu closes once it is gone, reloaded or locked.

@@ -76,6 +76,8 @@ const TOKENS: Record<string, string> = {
   "--cell-focus": "#ff4245",
   "--rownum": "#8a8a8a",
   "--placeholder": "#737373",
+  "--modified": "#ffe18e",
+  "--cell-text": "#262626",
 };
 beforeAll(() => {
   for (const [k, v] of Object.entries(TOKENS)) document.documentElement.style.setProperty(k, v);
@@ -105,7 +107,11 @@ const header = (over: Partial<HeaderClickedEventArgs> = {}) =>
   }) as unknown as HeaderClickedEventArgs;
 
 /** A key pressed in the grid (Glide's event); `cancel` stops Glide's own handling. */
-const press = (key: string, code: string, mods: Partial<Record<"ctrlKey" | "shiftKey" | "altKey" | "metaKey", boolean>> = {}) => {
+const press = (
+  key: string,
+  code: string,
+  mods: Partial<Record<"ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "repeat", boolean>> = {},
+) => {
   const ev = { key, code, repeat: false, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...mods };
   const args = {
     ...ev,
@@ -281,7 +287,7 @@ test("double_click_border_fits: a double click on a header border fits the colum
   // Glide reports the minimum width at the end of a press without a move: ignored.
   act(() => editor!.onColumnResizeEnd!(col, 50, 1, 50));
   expect(widthOf("note")).toBe(250);
-  expect(useGridViews.getState().getLayout("k")?.widths.note).toBe(250);
+  expect(useGridViews.getState().layouts.k?.widths.note).toBe(250);
   // Glide's own fit on a border double click comes outside a drag: the grid fits the page.
   act(() => editor!.onColumnResize!(editor!.columns[1], 77, 1, 77));
   expect(widthOf("note")).toBe(fitted);
@@ -415,7 +421,7 @@ test("grid keys act on the selected rows: Delete / Ctrl+Backspace delete, Ctrl+D
   press("d", "KeyD", { ctrlKey: true });
   expect(onRowsAction).toHaveBeenLastCalledWith("duplicate", [0, 1, 2]);
   press("C", "KeyC", { ctrlKey: true, shiftKey: true });
-  expect(onCopyCells).toHaveBeenCalledWith({ rows: [0, 1, 2], cols: [0, 1, 2] });
+  expect(onCopyCells).toHaveBeenCalledWith({ rows: [0, 1, 2], cols: [0, 1, 2], wholeRows: true });
   // A plain Backspace or letter is not a grid action.
   expect(press("Backspace", "Backspace").cancel).not.toHaveBeenCalled();
   expect(onRowsAction).toHaveBeenCalledTimes(3);
@@ -435,4 +441,77 @@ test("the ContextMenu key and Shift+F10 open the cell menu of the active cell", 
   expect(ed.onContextMenu).toHaveBeenLastCalledWith(1, 2, 0, 30, { rows: [1], cols: [2] });
   press("F10", "F10", { shiftKey: true });
   expect(ed.onContextMenu).toHaveBeenCalledTimes(2);
+});
+
+test("an edited cell on a selected row keeps its edit colour with readable text (fix 1)", () => {
+  const ed = editing();
+  const model = ed.model;
+  const edited = { ...model, cell: (r: number, c: number) => ({ ...model.cell(r, c), edited: c === 2 }) };
+  render(<Selecting ed={{ ...ed, model: edited }} />);
+  // Not selected: the edit colour alone.
+  expect(editor!.getCellContent([2, 1]).themeOverride).toEqual({ bgCell: "#ffe18e" });
+  act(() => editor!.onCellClicked!([-1, 1], click()));
+  // Selected (white text on the accent row): the edit keeps --modified, with the text that
+  // reads best on it (here --cell-text: white on #ffe18e is 1.3:1).
+  expect(editor!.getCellContent([2, 1]).themeOverride).toMatchObject({ bgCell: "#ffe18e", textDark: "#262626" });
+  expect(editor!.getCellContent([1, 1]).themeOverride).toBeUndefined();
+});
+
+test("a whole-row selection marks its block, so a hidden column does not shrink it to one row (fix 2)", () => {
+  const ed = editing();
+  render(<Selecting ed={ed} layoutKey="hide" />);
+  act(() => useGridViews.getState().setLayout("hide", { hidden: ["note"] }));
+  act(() => editor!.onCellClicked!([-1, 0], click()));
+  act(() => editor!.onCellClicked!([-1, 2], click({ shiftKey: true })));
+  act(() => editor!.onCellContextMenu!([-1, 1], click()));
+  expect(ed.onContextMenu).toHaveBeenLastCalledWith(1, null, 103, 54, { rows: [0, 1, 2], cols: [0, 1], wholeRows: true });
+});
+
+test("type-to-edit writes to the cell being typed in, not to the cell last opened (fix 3)", () => {
+  const ed = editing();
+  render(<Selecting ed={ed} />);
+  const at = (col: number, row: number): GridSelection => ({
+    columns: CompactSelection.empty(),
+    rows: CompactSelection.empty(),
+    current: { cell: [col, row], range: { x: col, y: row, width: 1, height: 1 }, rangeStack: [] },
+  });
+  // Double click on A (col 2, row 0) and edit it.
+  act(() => editor!.onGridSelectionChange!(at(2, 0)));
+  const first = openEditor([2, 0]);
+  act(() => editor!.onCellEdited!([2, 0], { ...editor!.getCellContent([2, 0]), data: "a" } as never));
+  expect(ed.onEdit).toHaveBeenLastCalledWith(0, 2, "a");
+  first.view.unmount();
+  // Click B (col 1, row 2) and type: Glide opens the editor without activating the cell.
+  act(() => editor!.onGridSelectionChange!(at(1, 2)));
+  const provided = editor!.provideEditor!(editor!.getCellContent([1, 2])) as {
+    editor: (p: Record<string, unknown>) => ReactNode;
+  };
+  const Editor = provided.editor;
+  render(
+    <Editor
+      value={editor!.getCellContent([1, 2])}
+      initialValue="x"
+      onChange={vi.fn()}
+      onFinishedEditing={vi.fn()}
+      isHighlighted={false}
+    />,
+  );
+  act(() => editor!.onCellEdited!([1, 2], { ...editor!.getCellContent([1, 2]), data: "x" } as never));
+  expect(ed.onEdit).toHaveBeenLastCalledWith(2, 1, "x");
+});
+
+test("held keys act once: the repeats of Enter, Space and Delete are swallowed (fix 4)", () => {
+  const onToggleDetails = vi.fn();
+  const onRowsAction = vi.fn();
+  const onQuickLook = vi.fn();
+  render(<Selecting ed={editing()} onToggleDetails={onToggleDetails} onRowsAction={onRowsAction} onQuickLook={onQuickLook} />);
+  act(() => editor!.onCellClicked!([-1, 1], click()));
+  for (const [key, code] of [[" ", "Space"], ["Delete", "Delete"], ["Enter", "Enter"], ["d", "KeyD"]] as const) {
+    const held = press(key, code, { repeat: true, ctrlKey: code === "KeyD" });
+    expect(held.cancel, code).toHaveBeenCalled();
+    expect(held.preventDefault, code).toHaveBeenCalled();
+  }
+  expect(onToggleDetails).not.toHaveBeenCalled();
+  expect(onRowsAction).not.toHaveBeenCalled();
+  expect(onQuickLook).not.toHaveBeenCalled();
 });

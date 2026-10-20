@@ -83,7 +83,7 @@ function CommitConfirmDialog({
 export function TableDataTab(props: Props) {
   // Kept across foreign key navigation (the panel shows the referenced row once selected).
   const { view, setView } = useTableView(props.tabId);
-  // Shortcuts of the data view (Mod+I, Alt+←) only act while it is shown.
+  // Shortcuts of the data view (Ctrl+Space, Alt+←) only act while it is shown.
   const detail = useRowDetail(props.tabId, view === "data");
   // The structure loads when first asked for; then both views stay mounted (hidden) so
   // switching keeps the page, the pending changes and the structure's section.
@@ -190,8 +190,11 @@ function TableDataView({
       },
     ];
     const v = cell.value;
+    // PostgreSQL `json` has no = operator (jsonb has): the filter would fail.
+    const baseType = e.info?.columns.find((c) => c.name === name)?.baseType.trim().toLowerCase();
+    const noEquals = dialect === "postgres" && baseType === "json";
     // "= value" for a whole, loaded value (not NULL, DEFAULT, binary or a truncated preview).
-    if (v !== "default" && v.t !== "null" && v.t !== "bytes" && !isTruncated(v) && !cell.edited) {
+    if (v !== "default" && v.t !== "null" && v.t !== "bytes" && !isTruncated(v) && !cell.edited && !noEquals) {
       const text = cellContent(v).copyText;
       const shown = text.length > 40 ? text.slice(0, 40) + strings.grid.menuValueEllipsis : text;
       items.push({

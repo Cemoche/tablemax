@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toTsv } from "../../lib/copyFormats";
 import { type KeymapActionId, effectiveShortcuts } from "../../lib/keymap";
 import { isModKey } from "../../lib/platform";
-import { matchShortcut } from "../../lib/shortcuts";
+import { matchCombination } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import type { CellValue, ResultSet, SortDir } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
@@ -206,7 +206,15 @@ function useColumnLayout(key: string | undefined, columns: string[]) {
     },
     [key],
   );
-  return { layout, update };
+  /** Forgets one part of the layout (Reset positions: the order). */
+  const reset = useCallback(
+    (part: keyof ColumnLayout) => {
+      if (key !== undefined) useGridViews.getState().resetLayout(key, part);
+      else setLocal((l) => l && { ...l, [part]: part === "widths" ? {} : [] });
+    },
+    [key],
+  );
+  return { layout, update, reset };
 }
 
 /** Thin adapter over Glide Data Grid (canvas; not testable in jsdom). */
@@ -231,7 +239,7 @@ export function DataGrid({
   keymapRef.current = keymap;
   const names = useMemo(() => data.columns.map((c) => c.name), [data.columns]);
   const keys = useMemo(() => columnKeys(names), [names]);
-  const { layout, update: updateLayout } = useColumnLayout(layoutKey, keys);
+  const { layout, update: updateLayout, reset: resetLayout } = useColumnLayout(layoutKey, keys);
   /** Data columns in display order (hidden ones left out). */
   const shownCols = useMemo(
     () => layout.order.filter((k) => !layout.hidden.includes(k)).map((k) => keys.indexOf(k)),
@@ -330,7 +338,14 @@ export function DataGrid({
         const cell = model.cell(row, col);
         const c: CellContent = cellContent(cell.value);
         const rowInserted = model.rows[row]?.kind === "insert";
-        const editedTheme = cell.edited && !rowInserted ? editThemes.edited : undefined;
+        // On a selected row the row's text is white: an edited cell keeps --modified with
+        // the text that reads on it (white on light --modified would be 1.3:1).
+        const editedTheme =
+          cell.edited && !rowInserted
+            ? highlighted.has(row)
+              ? editThemes.editedOnAccent
+              : editThemes.edited
+            : undefined;
         const theme: Partial<Theme> | undefined =
           c.placeholder || editedTheme
             ? { ...(c.placeholder ? placeholderTheme : {}), ...editedTheme }
@@ -416,7 +431,9 @@ export function DataGrid({
     (cell) => {
       const ed = editingRef.current;
       if (!ed || cell.kind !== GridCellKind.Text) return undefined;
-      const at = activated.current;
+      // The cell Glide opens its editor on: the current cell (typing opens it without an
+      // activation, so the cell last activated may be another one), else the activated one.
+      const at = selectionRef.current.current?.cell ?? activated.current;
       const col = at ? dataCol(at[0]) : 0;
       const Editor: ProvideEditorComponent<GridCell> = (p) => {
         const value = p.value as TextCell;
@@ -455,6 +472,8 @@ export function DataGrid({
   );
 
   const select = (s: GridSelection) => {
+    // Read at once by the editor and the keys (before the re-render).
+    selectionRef.current = s;
     setSelection(s);
     editingRef.current?.onSelect(selectedRowOf(s));
   };
@@ -463,7 +482,7 @@ export function DataGrid({
   const currentBlock = (): CellBlock | null => {
     const rowCount = model ? model.rows.length : data.rows.length;
     const b = selectionBlock(selectionRef.current, rowCount, shownRef.current.length);
-    return b && { rows: b.rows, cols: b.cols.map(dataCol) };
+    return b && { ...b, cols: b.cols.map(dataCol) };
   };
   /** The rows the row actions act on: selected rows, or the rows of the selected range. */
   const selectedRows = () => [...highlightedRows(selectionRef.current)].sort((a, b) => a - b);
@@ -476,26 +495,29 @@ export function DataGrid({
       .catch(() => {});
   };
 
+  // The keys of an action, auto-repeats included (a held key is swallowed, not repeated).
   const isAction = (id: KeymapActionId, e: GridKeyEventArgs) =>
     e.rawEvent !== undefined &&
     effectiveShortcuts(id, keymapRef.current).some((s) =>
-      matchShortcut(e.rawEvent as unknown as KeyboardEvent, s),
+      matchCombination(e.rawEvent as unknown as KeyboardEvent, s),
     );
 
   // Grid keys (only while the grid has the focus and no cell editor is open: Glide's keydown).
   const onKeyDown = (e: GridKeyEventArgs) => {
     const code = e.rawEvent?.code;
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+    /** A held key acts once: its repeats are taken from Glide and the page, and do nothing. */
+    const repeat = e.rawEvent?.repeat === true;
     const take = () => {
       e.cancel();
       e.preventDefault();
       e.stopPropagation();
+      return !repeat;
     };
     if (plain && code === "Enter") {
       const cur = selectionRef.current.current?.cell;
       const row = cur?.[1] ?? selectedRows()[0];
-      if (row === undefined) return;
-      take();
+      if (row === undefined || !take()) return;
       const col = dataCol(cur?.[0] ?? 0);
       if (onQuickLook) onQuickLook(row, col);
       else setQuickLook({ row, col });
@@ -506,8 +528,7 @@ export function DataGrid({
       // The cell menu from the keyboard, under the active cell (or the grid's corner for rows).
       const cur = selectionRef.current.current?.cell;
       const row = cur?.[1] ?? selectedRows()[0];
-      if (row === undefined) return;
-      take();
+      if (row === undefined || !take()) return;
       const area =
         e.bounds ?? (document.activeElement instanceof HTMLElement ? document.activeElement.getBoundingClientRect() : null);
       editingRef.current.onContextMenu(
@@ -520,23 +541,20 @@ export function DataGrid({
       return;
     }
     if (plain && code === "Space") {
-      if (!onToggleDetails) return;
-      take();
+      if (!onToggleDetails || !take()) return;
       onToggleDetails();
       return;
     }
     const remove = (plain && code === "Delete") || isAction("grid.deleteRows", e);
     if (onRowsAction && (remove || isAction("grid.duplicateRows", e))) {
       const rows = selectedRows();
-      if (rows.length === 0) return;
-      take();
+      if (rows.length === 0 || !take()) return;
       onRowsAction(remove ? "delete" : "duplicate", rows);
       return;
     }
     if (isAction("grid.copyCells", e)) {
       const block = currentBlock();
-      if (!block) return;
-      take();
+      if (!block || !take()) return;
       if (onCopyCells) onCopyCells(block);
       else copyCells(block);
     }
@@ -570,7 +588,7 @@ export function DataGrid({
         shownCols.length <= 1,
       ),
       item(strings.grid.headerMenu.fit, () => updateLayout({ widths: { ...layout.widths, [key]: fit(col) } })),
-      item(strings.grid.headerMenu.resetPositions, () => updateLayout({ order: [] })),
+      item(strings.grid.headerMenu.resetPositions, () => resetLayout("order")),
       item(strings.grid.headerMenu.showAll, () => updateLayout({ hidden: [] }), layout.hidden.length === 0),
     );
     if (sortable && onSortTo) {

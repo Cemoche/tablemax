@@ -1,5 +1,6 @@
 import type { Theme } from "@glideapps/glide-data-grid";
 import { useEffect, useMemo, useState } from "react";
+import { contrastRatio } from "../../lib/contrast";
 import { useSettings } from "../../stores/settings";
 
 export type ReadVar = (name: string) => string;
@@ -117,6 +118,11 @@ export function buildRowThemes(readVar: ReadVar = readCssVar): RowThemes {
 export interface EditThemes {
   /** A cell with a pending value. */
   edited: Partial<Theme>;
+  /**
+   * A cell with a pending value on a selected row: it keeps --modified (the edit stays
+   * visible) and drops the row's white text for the one that reads best on --modified.
+   */
+  editedOnAccent: Partial<Theme>;
   /** A row to insert. */
   inserted: Partial<Theme>;
   /** A row to delete (its text is also struck through by DataGrid). */
@@ -131,8 +137,22 @@ export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
     const v = readVar(token);
     return v ? { [key]: v } : {};
   };
+  const modified = readVar("--modified");
+  const cellText = readVar("--cell-text") || readVar("--text");
+  const onAccent = readVar("--row-selected-text");
+  /** The candidate with the higher contrast on --modified (--cell-text when they cannot be compared). */
+  const best = (() => {
+    if (!modified || !cellText) return cellText || onAccent;
+    try {
+      return onAccent && contrastRatio(onAccent, modified) > contrastRatio(cellText, modified) ? onAccent : cellText;
+    } catch {
+      return cellText;
+    }
+  })();
+  const text: Partial<Theme> = best ? { textDark: best, textMedium: best, textLight: best, linkColor: best } : {};
   return {
     edited: only("bgCell", "--modified"),
+    editedOnAccent: { ...only("bgCell", "--modified"), ...text },
     inserted: only("bgCell", "--inserted"),
     deleted: { ...only("bgCell", "--deleted"), ...only("textDark", "--text-2") },
     failed: only("textDark", "--danger"),
