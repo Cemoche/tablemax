@@ -11,23 +11,17 @@ import { useResolvedDark } from "../../lib/theme";
 import { useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
 import { DIALECTS, buildEditorTheme, editorFontStyle, highlight } from "../editor/SqlEditor";
+import { Empty, badge, td, th } from "./tableStyles";
 
 const s = strings.structure;
 
-type Section = "columns" | "indexes" | "foreignKeys" | "ddl";
-const SECTIONS: Section[] = ["columns", "indexes", "foreignKeys", "ddl"];
+// The indexes have their own view in the table tab (IndexView, #103), as in the reference.
+type Section = "columns" | "foreignKeys" | "ddl";
+const SECTIONS: Section[] = ["columns", "foreignKeys", "ddl"];
 
 type Loaded<T> = { data: T | null; error: AppError | null };
 
-const th = "border-b border-border px-2 py-1 text-left font-medium text-muted";
-const td = "border-b border-border px-2 py-1 align-top";
-const badge = "rounded-sm border border-border bg-surface-2 px-1 text-xs text-muted";
-
 const refName = (fk: ForeignKeyInfo) => (fk.refSchema ? `${fk.refSchema}.${fk.refTable}` : fk.refTable);
-
-function Empty({ text }: { text: string }) {
-  return <p className="p-3 text-muted">{text}</p>;
-}
 
 function ColumnsTable({ info }: { info: TableInfo }) {
   if (info.columns.length === 0) return <Empty text={s.noColumns} />;
@@ -72,38 +66,6 @@ function ColumnsTable({ info }: { info: TableInfo }) {
               </span>
             </td>
             <td className={td}>{c.comment ?? ""}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function IndexesTable({ info }: { info: TableInfo }) {
-  if (info.indexes.length === 0) return <Empty text={s.noIndexes} />;
-  return (
-    <table aria-label={s.tabs.indexes} className="w-full border-collapse">
-      <thead>
-        <tr>
-          {(["name", "columns", "kind", "definition"] as const).map((k) => (
-            <th key={k} scope="col" className={th}>
-              {s.indexHeaders[k]}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {info.indexes.map((i, n) => (
-          <tr key={`${i.name}#${n}`}>
-            <td className={td}>{i.name}</td>
-            <td className={td}>{i.columns.join(", ")}</td>
-            <td className={td}>
-              <span className="flex gap-1">
-                {i.primary && <span className={badge}>{s.primary}</span>}
-                {i.unique && <span className={badge}>{s.unique}</span>}
-              </span>
-            </td>
-            <td className={`${td} font-mono`}>{i.definition ?? ""}</td>
           </tr>
         ))}
       </tbody>
@@ -203,7 +165,7 @@ function DdlView({ ddl, dialect }: { ddl: string; dialect: Dialect }) {
   );
 }
 
-/** Read-only structure of a table: columns, indexes, foreign keys and DDL. */
+/** Read-only structure of a table: columns, foreign keys and DDL (indexes: IndexView). */
 export function StructureTab({
   workspaceId,
   object,
@@ -269,7 +231,6 @@ export function StructureTab({
     if (info.error) return <p role="alert" className="p-3 text-danger">{s.loadFailed(info.error.message)}</p>;
     if (!info.data) return null;
     if (section === "columns") return <ColumnsTable info={info.data} />;
-    if (section === "indexes") return <IndexesTable info={info.data} />;
     return <ForeignKeysTable info={info.data} workspaceId={workspaceId} />;
   };
 

@@ -109,18 +109,10 @@ test("Columns marks primary and foreign key columns and shows the details", asyn
   expect(note.getByText(s.yes)).toBeInTheDocument();
 });
 
-test("Indexes shows unique and primary indexes", async () => {
+test("the indexes are not a section of the structure: they have their own view (#103)", async () => {
   renderTab();
-  await userEvent.click(await tab(s.tabs.indexes));
-  const table = screen.getByRole("table", { name: s.tabs.indexes });
-  const pk = within(within(table).getByText("orders_pkey").closest("tr")!);
-  expect(pk.getByText(s.primary)).toBeInTheDocument();
-  expect(pk.getByText("CREATE UNIQUE INDEX orders_pkey ON orders (id)")).toBeInTheDocument();
-  const uq = within(within(table).getByText("orders_user_uq").closest("tr")!);
-  expect(uq.getByText(s.unique)).toBeInTheDocument();
-  expect(uq.getByText("user_id, note")).toBeInTheDocument();
-  const plain = within(within(table).getByText("orders_note_idx").closest("tr")!);
-  expect(plain.queryByText(s.unique)).toBeNull();
+  await screen.findByRole("table", { name: s.tabs.columns });
+  expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([s.tabs.columns, s.tabs.foreignKeys, s.tabs.ddl]);
 });
 
 test("Foreign keys show actions and the link opens the referenced table", async () => {
@@ -135,12 +127,10 @@ test("Foreign keys show actions and the link opens the referenced table", async 
   expect(tabs[0]).toMatchObject({ kind: "table", title: "users" });
 });
 
-test("empty indexes and foreign keys show a message", async () => {
+test("empty foreign keys show a message", async () => {
   vi.mocked(ipc.tableInfo).mockResolvedValue({ ...info, indexes: [], foreignKeys: [] });
   renderTab();
-  await userEvent.click(await tab(s.tabs.indexes));
-  expect(screen.getByText(s.noIndexes)).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("tab", { name: s.tabs.foreignKeys }));
+  await userEvent.click(await tab(s.tabs.foreignKeys));
   expect(screen.getByText(s.noForeignKeys)).toBeInTheDocument();
 });
 

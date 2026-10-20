@@ -215,7 +215,10 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     disabled={busy}
                     onClick={() => closeTab(id, t.id)}
                     className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon disabled:opacity-40 ${
-                      active ? "opacity-100 hover:bg-tab" : "opacity-0 hover:bg-tab-sel group-hover:opacity-100"
+                      active
+                        ? // A lone tab spans the bar, its × on hover only (as the reference, #103).
+                          `${tabs.length > 1 ? "opacity-100" : "opacity-0 group-hover:opacity-100"} hover:bg-tab`
+                        : "opacity-0 hover:bg-tab-sel group-hover:opacity-100"
                     }`}
                   >
                     <X aria-hidden="true" size={12} />

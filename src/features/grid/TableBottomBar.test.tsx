@@ -37,7 +37,7 @@ function data(over: Partial<BottomBarData> = {}): BottomBarData {
   };
 }
 
-const ids = { data: "p-data", structure: "p-structure" };
+const ids = { data: "p-data", structure: "p-structure", index: "p-index" };
 
 test("bottom_bar_layout: view switch, + Row, centered counter, Filters, Columns and pagination, in that order", () => {
   render(<TableBottomBar view="data" onView={vi.fn()} panelIds={ids} data={data()} />);
@@ -48,6 +48,7 @@ test("bottom_bar_layout: view switch, + Row, centered counter, Filters, Columns 
   expect(names).toEqual([
     g.view.data,
     g.view.structure,
+    g.view.index,
     g.addRow,
     strings.filters.button(0),
     g.columns,
@@ -69,6 +70,9 @@ test("bottom_bar_layout: view switch, + Row, centered counter, Filters, Columns 
   expect(screen.getByRole("button", { name: g.next })).toBeEnabled();
   expect(screen.getByRole("tab", { name: g.view.data })).toHaveAttribute("title", g.view.dataShortcut("Alt+1"));
   expect(screen.getByRole("tab", { name: g.view.data })).toHaveAttribute("aria-controls", ids.data);
+  expect(screen.getByRole("tab", { name: g.view.index })).toHaveAttribute("title", g.view.indexShortcut("Alt+3"));
+  expect(screen.getByRole("tab", { name: g.view.index })).toHaveAttribute("aria-keyshortcuts", "Alt+3");
+  expect(screen.getByRole("tab", { name: g.view.index })).toHaveAttribute("aria-controls", ids.index);
 });
 
 test("the Filters button says how many filters apply and whether the bar is open", () => {
@@ -85,17 +89,45 @@ test("the Filters button says how many filters apply and whether the bar is open
   expect(button).toHaveAttribute("aria-controls", "fb");
 });
 
+test("filters_button_accent: Filters has a search icon and is filled with the deeper accent while the bar is open", () => {
+  const { rerender } = render(<TableBottomBar view="data" onView={vi.fn()} panelIds={ids} data={data()} />);
+  const button = screen.getByRole("button", { name: strings.filters.button(0) });
+  expect(button.querySelector("svg.lucide-search")).not.toBeNull();
+  expect(button).toHaveAttribute("aria-expanded", "false");
+  // The fill applies through aria-expanded (white text on --accent-strong, 4.5:1, #103).
+  expect(button.className).toMatch(/aria-expanded:bg-accent-strong/);
+  expect(button.className).toMatch(/aria-expanded:text-accent-contrast/);
+  expect(button.className).not.toMatch(/aria-expanded:bg-seg-sel/);
+  rerender(
+    <TableBottomBar
+      view="data"
+      onView={vi.fn()}
+      panelIds={ids}
+      data={data({ filters: { open: true, count: 0, controls: "fb", onToggle: vi.fn(), ref: createRef() } })}
+    />,
+  );
+  expect(button).toHaveAttribute("aria-expanded", "true");
+});
+
 test("a read-only table has no + Row; the structure view shows only the view switch", () => {
   const { rerender } = render(
     <TableBottomBar view="data" onView={vi.fn()} panelIds={ids} data={data({ addRow: undefined })} />,
   );
   expect(screen.queryByRole("button", { name: g.addRow })).toBeNull();
   rerender(<TableBottomBar view="structure" onView={vi.fn()} panelIds={ids} data={null} />);
-  expect(screen.getAllByRole("tab")).toHaveLength(2);
+  expect(screen.getAllByRole("tab")).toHaveLength(3);
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-test("the view switch is one Tab stop; arrows, Home and End move between Data and Structure", async () => {
+test("the focus ring of the selected view stands out on its fill: a white ring inside it (review #103)", () => {
+  render(<TableBottomBar view="data" onView={vi.fn()} panelIds={ids} data={data()} />);
+  const tab = screen.getByRole("tab", { name: g.view.data });
+  expect(tab).toHaveClass("aria-selected:bg-accent-strong", "aria-selected:focus-visible:outline-accent-contrast");
+  // Unselected segments keep the accent ring on the button's own background.
+  expect(tab).toHaveClass("focus-visible:outline-accent");
+});
+
+test("the view switch is one Tab stop; arrows, Home and End move between Data, Structure and Index", async () => {
   const onView = vi.fn();
   const { rerender } = render(<TableBottomBar view="data" onView={onView} panelIds={ids} data={data()} />);
   const dataTab = screen.getByRole("tab", { name: g.view.data });
@@ -112,7 +144,12 @@ test("the view switch is one Tab stop; arrows, Home and End move between Data an
   rerender(<TableBottomBar view="data" onView={onView} panelIds={ids} data={data()} />);
   expect(dataTab).toHaveFocus();
   await userEvent.keyboard("{End}");
-  expect(onView).toHaveBeenLastCalledWith("structure");
+  expect(onView).toHaveBeenLastCalledWith("index");
+  rerender(<TableBottomBar view="index" onView={onView} panelIds={ids} data={null} />);
+  expect(screen.getByRole("tab", { name: g.view.index })).toHaveFocus();
+  // Right from the last view wraps to the first.
+  await userEvent.keyboard("{ArrowRight}");
+  expect(onView).toHaveBeenLastCalledWith("data");
 });
 
 test("buttons act: + Row, Filters, pages; the page popover goes to an offset; Columns opens its popover", async () => {

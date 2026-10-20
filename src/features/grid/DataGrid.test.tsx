@@ -19,6 +19,7 @@ import { tableInfo } from "../../test/tableInfo";
 import { COL_MAX, COL_MIN } from "./columnLayout";
 import { DataGrid, type DataGridProps, type GridEditing } from "./DataGrid";
 import { buildGridModel } from "./editModel";
+import { drawCenteredHeader } from "./headerLabels";
 
 // The canvas grid does not run in jsdom: capture the props DataGrid gives it.
 let editor: DataEditorProps | null = null;
@@ -74,8 +75,9 @@ const TOKENS: Record<string, string> = {
   "--accent": "#3a7bf6",
   "--row-selected-text": "#ffffff",
   "--cell-focus": "#ff4245",
-  "--rownum": "#8a8a8a",
-  "--rownum-selected": "#0062cc",
+  "--row-selected": "#0062cc",
+  "--grid-head": "#242424",
+  "--head-text": "#e9e9e9",
   "--placeholder": "#737373",
   "--modified": "#ffe18e",
   "--cell-text": "#262626",
@@ -228,9 +230,9 @@ test("row_number_click_selects_row: click, Shift+click and Ctrl+click on the row
   expect(rowsOf()).toEqual([0, 1, 2]);
   act(() => editor!.onCellClicked!([-1, 1], click({ ctrlKey: true })));
   expect(rowsOf()).toEqual([0, 2]);
-  // Selected rows are drawn on the accent, in white.
-  expect(editor!.getRowThemeOverride!(2)).toMatchObject({ bgCell: "#3a7bf6", textDark: "#ffffff" });
-  expect(editor!.getRowThemeOverride!(1)?.bgCell).not.toBe("#3a7bf6");
+  // Selected rows are drawn on --row-selected (the deeper accent), in white.
+  expect(editor!.getRowThemeOverride!(2)).toMatchObject({ bgCell: "#0062cc", textDark: "#ffffff" });
+  expect(editor!.getRowThemeOverride!(1)?.bgCell).not.toBe("#0062cc");
 });
 
 test("row numbers select rows in query results too", () => {
@@ -451,9 +453,9 @@ test("only a character meant as text starts a cell edit: never Alt+letter or Ctr
   expect(press("a", "KeyA", { ctrlKey: true }).cancel).not.toHaveBeenCalled();
 });
 
-test("row numbers: our marker renderer, right-aligned; a selected row's number on --rownum-selected (#102)", () => {
+test("row numbers: our marker renderer, right-aligned, header colours; a selected row's number on --row-selected (#103)", () => {
   render(<Selecting ed={editing()} />);
-  expect(editor!.rowMarkers).toMatchObject({ kind: "number", width: 46, theme: { textLight: "#8a8a8a" } });
+  expect(editor!.rowMarkers).toMatchObject({ kind: "number", width: 46 });
   const renderer = editor!.renderers!.find((r) => r.kind === InnerGridCellKind.Marker)!;
   expect(renderer).not.toBe(markerCellRenderer);
   const drawRow = (row: number) => {
@@ -473,7 +475,7 @@ test("row numbers: our marker renderer, right-aligned; a selected row's number o
       {
         ctx,
         rect: { x: 0, y: 0, width: 46, height: 26 },
-        theme: { textLight: "#8a8a8a", markerFontStyle: "11px" },
+        theme: { textLight: "#737373", markerFontStyle: "11px", bgCell: "#2a2a2a" },
         row,
         col: 0,
         cell,
@@ -482,10 +484,36 @@ test("row numbers: our marker renderer, right-aligned; a selected row's number o
     );
     return fills;
   };
-  expect(drawRow(1)).toEqual(["text #8a8a8a right"]);
+  // Every row, zebra or not: the header's background and text.
+  expect(drawRow(1)).toEqual(["rect #242424", "text #e9e9e9 right"]);
   act(() => editor!.onCellClicked!([-1, 1], click()));
   expect(drawRow(1)).toEqual(["rect #0062cc", "text #ffffff right"]);
-  expect(drawRow(0)).toEqual(["text #8a8a8a right"]);
+  expect(drawRow(0)).toEqual(["rect #242424", "text #e9e9e9 right"]);
+  // Selected rows are filled with --row-selected (not the accent: white reads 4.0:1 there).
+  expect(editor!.getRowThemeOverride!(1)).toMatchObject({ bgCell: "#0062cc", accentLight: "#0062cc", textDark: "#ffffff" });
+});
+
+test("selection_count: the grid reports how many rows are selected (row numbers or the active cell's rows)", () => {
+  const onSelectedRows = vi.fn();
+  render(<Selecting ed={editing()} onSelectedRows={onSelectedRows} />);
+  expect(onSelectedRows).toHaveBeenLastCalledWith(0);
+  act(() => editor!.onCellClicked!([-1, 1], click()));
+  expect(onSelectedRows).toHaveBeenLastCalledWith(1);
+  act(() => editor!.onCellClicked!([-1, 2], click({ shiftKey: true })));
+  expect(onSelectedRows).toHaveBeenLastCalledWith(2);
+  act(() =>
+    editor!.onGridSelectionChange!({
+      columns: CompactSelection.empty(),
+      rows: CompactSelection.empty(),
+      current: { cell: [2, 0], range: { x: 2, y: 0, width: 1, height: 1 }, rangeStack: [] },
+    }),
+  );
+  expect(onSelectedRows).toHaveBeenLastCalledWith(1);
+});
+
+test("centred_headers: the grid draws its column labels centred (drawHeader)", () => {
+  render(<DataGrid data={data} editing={editing()} />);
+  expect(editor!.drawHeader).toBe(drawCenteredHeader);
 });
 
 test("the ContextMenu key and Shift+F10 open the cell menu of the active cell", () => {

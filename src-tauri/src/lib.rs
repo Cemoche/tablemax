@@ -123,6 +123,7 @@ pub fn run() {
             commands::objects_list,
             commands::table_page,
             commands::table_count,
+            commands::filters_preview_sql,
             commands::table_info,
             commands::table_ddl,
             commands::changes_preview,

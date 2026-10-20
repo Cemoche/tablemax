@@ -1,7 +1,6 @@
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { useAction, useEffectiveShortcut } from "../../lib/keymap";
-import { formatShortcut } from "../../lib/platform";
+import { useAction } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import type { Dialect, Filter, FilterCombine, ObjectRef, SortDir } from "../../lib/types";
 import { useChrome, useOnRequest } from "../../stores/chrome";
@@ -10,6 +9,7 @@ import { usePendingChanges } from "../../stores/pendingChanges";
 import { useSettings } from "../../stores/settings";
 import { useWorkspaces } from "../../stores/workspaces";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
+import { IndexView } from "../structure/IndexView";
 import { StructureTab } from "../structure/StructureTab";
 import { type LiveEnvSource, useLiveEnv } from "../workspace/useLiveEnv";
 import { Breadcrumb } from "./Breadcrumb";
@@ -53,13 +53,20 @@ function CommitConfirmDialog({
 }: {
   workspaceId: string;
   tabId: string;
-  /** Run or Cancel was chosen (the dialog is gone). */
-  onClose: () => void;
+  /** Run or Cancel was chosen (the dialog is gone); `opener` had the focus when it opened. */
+  onClose: (opener: Element | null) => void;
 }) {
   const confirm = usePendingChanges((s) => s.confirming[tabId]);
   const workspace = useWorkspaces((s) => s.workspaces.find((w) => w.id === workspaceId));
   const env = useLiveEnv(workspace ?? NO_WORKSPACE);
-  if (!confirm) return null;
+  // What had the focus when the confirmation appeared (the toolbar's Commit, the grid…),
+  // read before the dialog's own autofocus moves it (as useRestoreFocus does).
+  const opener = useRef<Element | null>(null);
+  if (!confirm) {
+    opener.current = null;
+    return null;
+  }
+  opener.current ??= document.activeElement;
   const store = usePendingChanges.getState;
   return (
     <ConfirmRunDialog
@@ -69,11 +76,11 @@ function CommitConfirmDialog({
       statements={confirm.statements}
       flagged={confirm.flagged}
       onRun={() => {
-        onClose();
+        onClose(opener.current);
         void store().confirmCommit(tabId);
       }}
       onCancel={() => {
-        onClose();
+        onClose(opener.current);
         store().cancelConfirm(tabId);
       }}
     />
@@ -85,25 +92,48 @@ export function TableDataTab(props: Props) {
   const { view, setView } = useTableView(props.tabId);
   // Shortcuts of the data view (Ctrl+Space, Alt+←) only act while it is shown.
   const detail = useRowDetail(props.tabId, view === "data");
-  // The structure loads when first asked for; then both views stay mounted (hidden) so
-  // switching keeps the page, the pending changes and the structure's section.
-  const [structureSeen, setStructureSeen] = useState(false);
-  if (view === "structure" && !structureSeen) setStructureSeen(true);
-  /** The commit confirmation closed: Commit gets the focus back once the tab is unlocked. */
-  const refocusCommit = useRef(false);
+  // The structure and the indexes load when first asked for; then every view seen stays
+  // mounted (hidden) so switching keeps the page, the pending changes and the structure's section.
+  const [seen, setSeen] = useState({ structure: false, index: false });
+  if (view !== "data" && !seen[view]) setSeen((s) => ({ ...s, [view]: true }));
+  /**
+   * The commit confirmation closed: once the tab is unlocked the focus goes back to what
+   * opened it (the toolbar's Commit, the grid), else to + Row or the selected view tab.
+   */
+  const refocusCommit = useRef<{ opener: Element | null } | null>(null);
   const toggleRef = useRef<HTMLDivElement>(null);
   const id = useId();
-  const panelIds: Record<TableView, string> = { data: `${id}-data`, structure: `${id}-structure` };
-  const structure = structureSeen && (
-    <div
-      id={panelIds.structure}
-      role="tabpanel"
-      aria-label={strings.grid.view.structure}
-      hidden={view !== "structure"}
-      className="min-h-0 flex-1"
-    >
-      <StructureTab workspaceId={props.workspaceId} object={props.object} dialect={props.dialect} />
-    </div>
+  const allIds: Record<TableView, string> = { data: `${id}-data`, structure: `${id}-structure`, index: `${id}-index` };
+  const panelIds: Partial<Record<TableView, string>> = {
+    data: allIds.data,
+    ...(seen.structure ? { structure: allIds.structure } : {}),
+    ...(seen.index ? { index: allIds.index } : {}),
+  };
+  const otherViews = (
+    <>
+      {seen.structure && (
+        <div
+          id={allIds.structure}
+          role="tabpanel"
+          aria-label={strings.grid.view.structure}
+          hidden={view !== "structure"}
+          className="min-h-0 flex-1"
+        >
+          <StructureTab workspaceId={props.workspaceId} object={props.object} dialect={props.dialect} />
+        </div>
+      )}
+      {seen.index && (
+        <div
+          id={allIds.index}
+          role="tabpanel"
+          aria-label={strings.grid.view.index}
+          hidden={view !== "index"}
+          className="min-h-0 flex-1"
+        >
+          <IndexView workspaceId={props.workspaceId} object={props.object} />
+        </div>
+      )}
+    </>
   );
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -114,16 +144,16 @@ export function TableDataTab(props: Props) {
         detail={detail}
         view={view}
         onView={setView}
-        panelIds={structureSeen ? panelIds : { data: panelIds.data }}
-        structure={structure}
+        panelIds={panelIds}
+        otherViews={otherViews}
         refocusCommit={refocusCommit}
         toggleRef={toggleRef}
       />
       <CommitConfirmDialog
         workspaceId={props.workspaceId}
         tabId={props.tabId}
-        onClose={() => {
-          refocusCommit.current = true;
+        onClose={(opener) => {
+          refocusCommit.current = { opener };
         }}
       />
     </div>
@@ -139,7 +169,7 @@ function TableDataView({
   view,
   onView,
   panelIds,
-  structure,
+  otherViews,
   refocusCommit,
   toggleRef,
 }: Props & {
@@ -147,14 +177,13 @@ function TableDataView({
   view: TableView;
   onView: (v: TableView) => void;
   panelIds: Partial<Record<TableView, string>>;
-  /** The structure view (mounted once seen), shown above the bottom bar in place of the rows. */
-  structure: ReactNode;
-  refocusCommit: RefObject<boolean>;
+  /** The structure and index views (each mounted once seen), shown above the bottom bar in place of the rows. */
+  otherViews: ReactNode;
+  refocusCommit: RefObject<{ opener: Element | null } | null>;
   toggleRef: RefObject<HTMLDivElement | null>;
 }) {
   const active = view === "data";
   const pageSizeSetting = useSettings((s) => s.settings.pageSize);
-  const commitShortcut = useEffectiveShortcut("grid.commit");
   const t = usePagedTable(workspaceId, object, tabId, pageSizeSetting);
   // The toolbar's Reload (and Mod+R) reload this tab's page like its own Reload button.
   useOnRequest(useChrome((s) => s.reloads[tabId] ?? 0), t.reload);
@@ -180,6 +209,8 @@ function TableDataView({
   const layoutKey = JSON.stringify([connectionId ?? workspaceId, database, object.schema, object.name]);
   const storedLayout = useGridViews((st) => st.layouts[layoutKey]);
   const [quickLook, setQuickLook] = useState<{ row: number; col: number } | null>(null);
+  /** Rows selected in the grid: the bottom bar's centre says "1 of 415 rows selected". */
+  const [selectedRows, setSelectedRows] = useState(0);
   const [filterStart, setFilterStart] = useState<{ column: string; seq: number } | null>(null);
   const modelCols = e.model?.columns ?? [];
   const shownCols = (() => {
@@ -205,6 +236,8 @@ function TableDataView({
   const filtersButtonRef = useRef<HTMLButtonElement>(null);
   const filterBarRef = useRef<HTMLDivElement>(null);
   const [filtersOpen, setFiltersOpen] = useState(() => t.filters.length > 0);
+  const [barMounted, setBarMounted] = useState(filtersOpen);
+  if (filtersOpen && !barMounted) setBarMounted(true);
   /** Each new value puts the focus in the bar (opened from the keyboard or its button). */
   const [filterFocus, setFilterFocus] = useState(0);
   /** What had the focus when the bar was opened from the keyboard: it gets it back on close. */
@@ -294,20 +327,28 @@ function TableDataView({
   const quickCell = quickLook && e.model ? e.model.cell(quickLook.row, quickLook.col) : null;
   const quickKey = quickLook ? e.model?.rowKeyAt(quickLook.row) : null;
   // Once the commit confirmation closed (Cancel, or Run and its commit settled) and the tab
-  // is unlocked, the focus comes back to Commit; to + Row when Commit is disabled (nothing
-  // left pending after a successful commit).
-  const commitRef = useRef<HTMLButtonElement>(null);
+  // is unlocked, the focus goes back to what opened it when it can still take it (the
+  // toolbar's Commit is disabled after a successful commit); else to + Row, or the selected
+  // view tab while another view is shown.
   const addRowRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (!refocusCommit.current || e.confirm || e.locked) return;
-    refocusCommit.current = false;
-    if (!active) {
-      // The structure view is shown: Commit and + Row are hidden, the selected view tab is not.
-      toggleRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
+    const back = refocusCommit.current;
+    if (!back || e.confirm || e.locked) return;
+    refocusCommit.current = null;
+    const opener = back.opener;
+    if (
+      opener instanceof HTMLElement &&
+      opener !== document.body &&
+      opener.isConnected &&
+      !opener.closest("[hidden]") &&
+      !(opener as HTMLButtonElement).disabled
+    ) {
+      opener.focus();
       return;
     }
-    const commitBtn = commitRef.current;
-    (commitBtn && !commitBtn.disabled ? commitBtn : addRowRef.current)?.focus();
+    const tab = toggleRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!active) tab?.focus();
+    else (addRowRef.current ?? tab)?.focus();
   }, [active, e.confirm, e.locked, refocusCommit, toggleRef]);
   // + Row (Ctrl+I) as its button; not in a field (the filter bar takes Ctrl+I itself).
   useAction(
@@ -343,8 +384,9 @@ function TableDataView({
       >
         <div className="flex h-full min-h-0 flex-col">
           <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} combine={t.combine} />
-          {filtersOpen && (
-            <div ref={filterBarRef}>
+          {/* Kept once opened, hidden while closed: rows typed but not applied come back (#103). */}
+          {(filtersOpen || barMounted) && (
+            <div ref={filterBarRef} hidden={!filtersOpen}>
               <FilterBar
                 id={filterBarId}
                 dialect={dialect}
@@ -353,6 +395,10 @@ function TableDataView({
                 combine={t.combine}
                 onApply={(filters: Filter[], combine: FilterCombine) => t.setFilters(filters, combine)}
                 onClose={closeFilters}
+                open={filtersOpen}
+                previewSql={(filters: Filter[], combine: FilterCombine) =>
+                  ipc.filtersPreviewSql(workspaceId, object, filters, combine)
+                }
                 focusSeq={filterFocus}
                 start={filterStart}
               />
@@ -377,39 +423,10 @@ function TableDataView({
               {e.readOnly}
             </div>
           )}
-          {e.editable && (
-            <div className="flex items-center gap-3 border-b border-border bg-surface px-3 py-1 text-sm">
-              <button
-                ref={commitRef}
-                type="button"
-                className={btn}
-                onClick={e.commit}
-                disabled={e.count === 0 || e.locked || e.outcomeUnknown || e.otherCommitting}
-                title={e.otherCommitting ? strings.grid.otherTabCommitting : undefined}
-              >
-                {e.committing ? strings.grid.committing : strings.grid.commit(formatShortcut(commitShortcut))}
-              </button>
-              {e.committing ? (
-                <button
-                  type="button"
-                  className={btn}
-                  aria-label={strings.grid.cancelCommitLabel}
-                  onClick={e.cancelCommit}
-                >
-                  {strings.grid.cancelCommit}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className={btn}
-                  onClick={e.discard}
-                  disabled={e.count === 0 || e.locked}
-                >
-                  {strings.grid.discard}
-                </button>
-              )}
-              {e.count > 0 && <span>{strings.grid.pendingCount(e.count)}</span>}
-              {e.hint && <span className="ml-auto truncate text-muted">{e.hint}</span>}
+          {/* Commit / Discard / Cancel and the pending count are the toolbar's (#103). */}
+          {e.hint && (
+            <div role="status" className="truncate border-b border-border bg-surface px-3 py-1 text-sm text-muted">
+              {e.hint}
             </div>
           )}
           {e.failure && (
@@ -464,6 +481,7 @@ function TableDataView({
                     onQuickLook={(row, col) => setQuickLook({ row, col })}
                     onRowsAction={e.rowsAction}
                     onCopyCells={copy.copyCells}
+                    onSelectedRows={setSelectedRows}
                   />
                 )}
               </div>
@@ -508,7 +526,7 @@ function TableDataView({
           )}
         </div>
       </div>
-      {structure}
+      {otherViews}
       <TableBottomBar
         view={view}
         onView={onView}
@@ -518,13 +536,18 @@ function TableDataView({
           active
             ? {
                 addRow: e.editable ? { onClick: e.addRow, disabled: e.locked, ref: addRowRef } : undefined,
-                counter:
-                  rows === 0
+                counter: e.committing
+                  ? strings.grid.committing
+                  : rows === 0
                     ? t.loading && !t.result
                       ? strings.grid.loading
                       : strings.grid.footerEmpty
-                    : strings.grid.footerRange(from, from + rows - 1, formatRowCount(t.rowCount, t.filters.length > 0)),
-                busy: t.loading,
+                    : selectedRows > 0
+                      ? strings.grid.rowsSelected(selectedRows, e.model?.rows.length ?? rows)
+                      : t.offset === 0 && !t.hasNext && t.rowCount?.t === "exact"
+                        ? strings.grid.rowCount(rows)
+                        : strings.grid.footerRange(from, from + rows - 1, formatRowCount(t.rowCount, t.filters.length > 0)),
+                busy: t.loading || e.committing,
                 filters: {
                   open: filtersOpen,
                   count: t.filters.length,

@@ -31,17 +31,21 @@ export interface RowNumberStyle {
   selected: (row: number) => boolean;
   /** Font family of the numbers: the interface font, apart from the data's mono font. */
   family: string;
-  /** Cell fill of a selected row's number (`--rownum-selected`); empty: the row's own. */
+  /** Cell fill of every number (`--grid-head`); empty: the row's own. */
+  fill: string;
+  /** Number colour (`--head-text`); empty: `textLight`. */
+  text: string;
+  /** Cell fill of a selected row's number (`--row-selected`); empty: `fill`. */
   selectedFill: string;
-  /** Number colour on a selected row (`--row-selected-text`); empty: `textLight`. */
+  /** Number colour on a selected row (`--row-selected-text`); empty: `text`. */
   selectedText: string;
 }
 
 /**
- * Glide's row marker renderer with the numbers right-aligned in the interface font, in
- * `textLight` (`--rownum`) on the row's own background (zebra included), smaller than the
- * data (`markerFontStyle`). A selected row's number sits on `selectedFill`, a deeper accent
- * that keeps the white number readable. Other marker kinds draw as Glide does.
+ * Glide's row marker renderer with the numbers right-aligned in the interface font, smaller
+ * than the data (`markerFontStyle`), in the column header's colours on every row: no zebra,
+ * and an inserted or deleted row's tint never reaches its number (#103). A selected row's
+ * number is white on the selected rows' fill. Other marker kinds draw as Glide does.
  */
 export function rowNumberRenderer(style: () => RowNumberStyle): Renderer {
   const draw: Renderer["draw"] = (args, cell) => {
@@ -59,11 +63,12 @@ export function rowNumberRenderer(style: () => RowNumberStyle): Renderer {
     const selected = s.selected(row);
     const font = `${theme.markerFontStyle} ${s.family}`;
     ctx.save();
-    if (selected && s.selectedFill) {
-      ctx.fillStyle = s.selectedFill;
+    const fill = (selected && s.selectedFill) || s.fill;
+    if (fill) {
+      ctx.fillStyle = fill;
       ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
     }
-    ctx.fillStyle = selected && s.selectedText ? s.selectedText : theme.textLight;
+    ctx.fillStyle = (selected && s.selectedText) || s.text || theme.textLight;
     ctx.font = font;
     ctx.textAlign = "right";
     ctx.fillText(

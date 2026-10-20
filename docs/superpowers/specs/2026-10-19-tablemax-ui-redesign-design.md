@@ -95,6 +95,19 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
   opérateur, valeur, Apply, +, − ; à droite « Apply All » avec AND / OR. Elle remplace le
   constructeur de filtres et la barre de filtre rapide actuels (la syntaxe rapide devient le mode
   « Raw SQL »).
+
+> Amendement 2026-10-20 (#103) : barre du bas [Data | Structure | Index] (`Alt+3`, vue des
+> index à part, retirée des sections de Structure) · `+ Row` · au centre « 1 of 415 rows
+> selected », sinon « 415 rows » quand toute la table tient sur la page, sinon la plage ·
+> `Filters` (loupe, rempli de `--accent-strong` quand la barre est ouverte) · `Columns` ·
+> [‹ | ⚙ | ›]. Barre de filtres : chaque ligne `[✓] [colonne] [opérateur] [valeur…] [Apply]
+> [−] [+]` ; une ligne de pied `[⚙] [Export] [SQL]`, les raccourcis (tirés du keymap
+> effectif), `[Clear] [Apply All ⌄]`, AND / OR dans le menu ⌄ ; `SQL` montre le WHERE de la
+> page avec ses paramètres (commande `filters_preview_sql`, jamais les valeurs) ; `Export`
+> désactivé (pas d'export) ; Ctrl+↑ / Ctrl+↓ entre les lignes, Alt+C / Alt+O (⌘← / ⌘→ sur
+> macOS) vers la colonne / l'opérateur ; Échap masque la barre (les lignes tapées restent).
+> Le bandeau Commit / Discard au-dessus de la grille disparaît : la barre d'outils montre le
+> nombre de modifications, Cancel pendant le commit. Libellés d'en-tête centrés.
 - **Panneau de détail** à droite (280 px, `Ctrl+Space` comme TablePlus Linux / Windows, et `Space` comme sur Mac, dans la grille) : recherche « Search for field… », liste des
   champs avec leur type, édition sur place.
 
@@ -181,6 +194,15 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > Amendement 2026-10-20 (#102) : `--rownum` = #6E6E6E (clair) / #959595 (sombre) pour 4,5:1 sur
 > `--row-a` et `--row-b` ; nouveau `--rownum-selected` #0062CC / #2B63D9, fond du numéro d'une
 > ligne sélectionnée (blanc à 4,5:1, contre 4,0:1 sur `--accent`).
+
+> Amendement 2026-10-20 (#103) : nouveau `--accent-strong` #0062CC (clair) / #2B63D9 (sombre),
+> accent plus profond sous un texte blanc (5,8:1 / 5,4:1, contre 4,0:1 / 3,9:1 sur `--accent`) ;
+> `--row-selected` = `--accent-strong` (lignes sélectionnées), et les contrôles remplis de la
+> barre du bas (segment Data / Structure / Index actif, `Filters` ouvert) l'utilisent ;
+> `--accent` reste #007AFF / #3A7BF6. La colonne des numéros de ligne prend les couleurs de
+> l'en-tête (`--grid-head` / `--head-text`, 13,9:1 / 12,8:1) sur chaque ligne, sans zébrure
+> ni teinte d'insertion / suppression ; une ligne sélectionnée y garde `--row-selected` et du
+> blanc. `--rownum` et `--rownum-selected` (#102) disparaissent.
 
 Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E7D32, nombres
 #B57AFF / #1D00FF, chaînes #CA6E6E / #E04978, commentaires #009B31, requête courante #30363F /

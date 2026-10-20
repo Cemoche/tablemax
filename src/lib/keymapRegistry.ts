@@ -65,6 +65,9 @@ const SPECS = {
   // (Ctrl+Mod would be Ctrl+[ elsewhere): off macOS Ctrl+Alt is AltGr (#102).
   "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1", mac: { alternates: ["Mod+Alt+["] } },
   "grid.viewStructure": { scope: "tableTab", defaultShortcut: "Alt+2", mac: { alternates: ["Mod+Alt+]"] } },
+  // #103: the third view. [ / ] are a pair with no third key, so Alt+3 alone (Option+3 on
+  // macOS, matched by physical key like Alt+1 / Alt+2).
+  "grid.viewIndex": { scope: "tableTab", defaultShortcut: "Alt+3" },
   "font.increase": { scope: "global", defaultShortcut: "Mod+=" },
   "font.decrease": { scope: "global", defaultShortcut: "Mod+-" },
   "database.open": { scope: "global", defaultShortcut: "Mod+K" },
@@ -109,6 +112,13 @@ const SPECS = {
   "filters.remove": { scope: "filterBar", defaultShortcut: "Mod+Shift+I" },
   "filters.applyAll": { scope: "filterBar", defaultShortcut: "Mod+Enter" },
   "filters.applyAllOr": { scope: "filterBar", defaultShortcut: "Mod+Shift+Enter" },
+  // #103: Up / Down between the rows, and jumps to the row's column and operator pickers.
+  // macOS uses ⌘← / ⌘→ for the jumps; elsewhere Ctrl+← / Ctrl+→ stay word moves in the
+  // value field, so Alt+C / Alt+O (layout letters).
+  "filters.up": { scope: "filterBar", defaultShortcut: "Mod+ArrowUp" },
+  "filters.down": { scope: "filterBar", defaultShortcut: "Mod+ArrowDown" },
+  "filters.column": { scope: "filterBar", defaultShortcut: "Alt+C", mac: { defaultShortcut: "Mod+ArrowLeft" } },
+  "filters.operator": { scope: "filterBar", defaultShortcut: "Alt+O", mac: { defaultShortcut: "Mod+ArrowRight" } },
 } as const satisfies Record<keyof typeof strings.keymap, Spec>;
 
 export type KeymapActionId = keyof typeof SPECS;

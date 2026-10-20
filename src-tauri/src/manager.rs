@@ -40,7 +40,7 @@ use crate::driver::dml::{
 };
 use crate::driver::meta::TableInfo;
 use crate::driver::query::{
-    Filter, FilterCombine, Statement, build_filtered_count, build_page, read_count,
+    Filter, FilterCombine, Statement, build_filtered_count, build_page, read_count, where_preview,
 };
 use crate::driver::{
     self, AnySession, Canceller, Capabilities, ConnectParams, Dialect, DriverKind, ObjectRef,
@@ -1431,6 +1431,24 @@ impl SessionManager {
             }
         })
         .await
+    }
+
+    /// The WHERE clause the grid's page uses for `filters` joined by `combine`, with its
+    /// placeholders and without the values ([`where_preview`]): the filter bar's read-only
+    /// SQL preview. Reads at most the table metadata (on a cache miss) and the browse
+    /// session's dialect; never values, never a query on the rows.
+    pub async fn filters_preview_sql(
+        &self,
+        workspace_id: &str,
+        obj: &ObjectRef,
+        filters: &[Filter],
+        combine: FilterCombine,
+    ) -> AppResult<String> {
+        let info = self.table_info(workspace_id, obj).await?;
+        let dialect = self
+            .on_browse(workspace_id, |b| async move { Ok(b.dialect()) })
+            .await?;
+        where_preview(dialect, &info, filters, combine)
     }
 
     /// Opens a dedicated connection with the workspace's parameters, through its
@@ -2918,6 +2936,43 @@ mod tests {
             op,
             values: values.iter().map(|v| v.to_string()).collect(),
         }
+    }
+
+    #[tokio::test]
+    async fn filters_preview_sql_is_the_where_of_the_page() {
+        let fx = fixture();
+        let ws = sqlite_ws(&fx).await.workspace_id;
+        let items = obj(Some("main"), "items");
+        let a_or_b = vec![
+            filter(Some("name"), FilterOp::Eq, &["a-secret"]),
+            filter(Some("name"), FilterOp::Contains, &["b-secret"]),
+        ];
+        let sql = fx
+            .mgr
+            .filters_preview_sql(&ws, &items, &a_or_b, FilterCombine::Or)
+            .await
+            .unwrap();
+        assert_eq!(
+            sql,
+            r#"WHERE ("name" = ?) OR ("name" LIKE '%' || ? || '%' ESCAPE '!')"#
+        );
+        assert!(!sql.contains("secret"));
+        assert_eq!(
+            fx.mgr
+                .filters_preview_sql(&ws, &items, &[], FilterCombine::And)
+                .await
+                .unwrap(),
+            ""
+        );
+        let bad = vec![filter(Some("nope"), FilterOp::Eq, &["1"])];
+        assert_eq!(
+            fx.mgr
+                .filters_preview_sql(&ws, &items, &bad, FilterCombine::And)
+                .await
+                .unwrap_err()
+                .kind,
+            ErrorKind::Invalid
+        );
     }
 
     #[tokio::test]

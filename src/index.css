@@ -26,8 +26,6 @@
   --color-grid-sep: var(--grid-sep);
   --color-cell-text: var(--cell-text);
   --color-placeholder: var(--placeholder);
-  --color-rownum: var(--rownum);
-  --color-rownum-selected: var(--rownum-selected);
   --color-bottom: var(--bottom);
   --color-btn: var(--btn);
   --color-filter-applied: var(--filter-applied);
@@ -53,6 +51,7 @@
   --color-muted: var(--text-muted);
   --color-border: var(--border);
   --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
   --color-accent-contrast: var(--accent-contrast);
   --color-danger: var(--danger);
   --color-success: var(--success);

@@ -248,6 +248,26 @@ pub async fn table_count(
         .await
 }
 
+/// The WHERE clause the grid's filters give, with placeholders and without the values: the
+/// filter bar's read-only SQL preview. `combine` may be omitted (AND).
+#[tauri::command]
+pub async fn filters_preview_sql(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+    object: ObjectRef,
+    filters: Vec<Filter>,
+    combine: Option<FilterCombine>,
+) -> AppResult<String> {
+    state
+        .filters_preview_sql(
+            &workspace_id,
+            &object,
+            &filters,
+            combine.unwrap_or_default(),
+        )
+        .await
+}
+
 /// Cached per workspace; `refresh` re-reads it from the database.
 #[tauri::command]
 pub async fn table_info(

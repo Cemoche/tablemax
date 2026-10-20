@@ -15,6 +15,7 @@
   "grid.rowDetails",
   "grid.viewData",
   "grid.viewStructure",
+  "grid.viewIndex",
   "font.increase",
   "font.decrease",
   "database.open",
@@ -48,5 +49,9 @@
   "filters.add",
   "filters.remove",
   "filters.applyAll",
-  "filters.applyAllOr"
+  "filters.applyAllOr",
+  "filters.up",
+  "filters.down",
+  "filters.column",
+  "filters.operator"
 ]

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Columns3, ListFilter, Settings2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, Settings2 } from "lucide-react";
 import { type KeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { ariaShortcut, formatShortcut } from "../../lib/platform";
@@ -8,18 +8,18 @@ import { useChrome } from "../../stores/chrome";
 import { ColumnsPopover } from "./ColumnsPopover";
 import { PagePopover } from "./PagePopover";
 
-export type TableView = "data" | "structure";
+export type TableView = "data" | "structure" | "index";
 
-const VIEWS: TableView[] = ["data", "structure"];
+const VIEWS: TableView[] = ["data", "structure", "index"];
 
 // Capture + stop: the grid would take the digit as the start of a cell edit.
 const VIEW_KEYS: ShortcutOptions = { capture: true, stopPropagation: true, skipInEditable: true };
 
 /**
  * Which view of a table tab is shown. `grid.viewData` (Alt+1; also ⌘⌥[ on macOS) shows the
- * rows, `grid.viewStructure` (Alt+2; also ⌘⌥]) the structure (Option on macOS, matched by
- * physical key since Option+digit types a character there); not while typing in a field or
- * with a modal open. Only the active tab is mounted, so the shortcut acts on it. The view
+ * rows, `grid.viewStructure` (Alt+2; also ⌘⌥]) the structure, `grid.viewIndex` (Alt+3) the
+ * indexes (Option on macOS, matched by physical key since Option+digit types a character
+ * there); not while typing in a field or with a modal open. Only the active tab is mounted, so the shortcut acts on it. The view
  * lives in the chrome store, per tab: it survives the unmount of a tab or workspace switch,
  * and the sidebar's "Open structure" sets it.
  */
@@ -28,6 +28,7 @@ export function useTableView(tabId: string) {
   const setView = (v: TableView) => useChrome.getState().setTableView(tabId, v);
   useAction("grid.viewData", () => setView("data"), VIEW_KEYS);
   useAction("grid.viewStructure", () => setView("structure"), VIEW_KEYS);
+  useAction("grid.viewIndex", () => setView("index"), VIEW_KEYS);
   return { view, setView };
 }
 
@@ -84,10 +85,21 @@ interface Props {
 const control =
   "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:text-icon-dim disabled:hover:bg-btn aria-expanded:bg-seg-sel";
 const ICON = { size: 15, strokeWidth: 1.6, "aria-hidden": true } as const;
+/**
+ * Filters: filled with the deeper accent while its bar is open (white reads 4.5:1 on
+ * --accent-strong, not on --accent, #103).
+ */
+const filtersControl =
+  "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent aria-expanded:border-accent-strong aria-expanded:bg-accent-strong aria-expanded:text-accent-contrast aria-expanded:hover:bg-accent-strong";
+const VIEW_TEXT: Record<TableView, { label: string; hint: (shortcut: string) => string }> = {
+  data: { label: strings.grid.view.data, hint: strings.grid.view.dataShortcut },
+  structure: { label: strings.grid.view.structure, hint: strings.grid.view.structureShortcut },
+  index: { label: strings.grid.view.index, hint: strings.grid.view.indexShortcut },
+};
 
 /**
- * The bar under the grid (spec §2.3): [Data | Structure] · + Row · the row counter, centered ·
- * Filters · Columns · [‹ | offset and limit | ›].
+ * The bar under the grid (spec §2.3): [Data | Structure | Index] · + Row · centred, the
+ * selected rows' count or the row count · Filters · Columns · [‹ | offset and limit | ›].
  */
 export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props) {
   const v = strings.grid.view;
@@ -95,6 +107,7 @@ export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props)
   const shortcut = {
     data: useEffectiveShortcut("grid.viewData"),
     structure: useEffectiveShortcut("grid.viewStructure"),
+    index: useEffectiveShortcut("grid.viewIndex"),
     addRow: useEffectiveShortcut("grid.addRow"),
     filters: useEffectiveShortcut("grid.filters"),
     columns: useEffectiveShortcut("grid.columns"),
@@ -145,13 +158,15 @@ export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props)
               aria-selected={view === k}
               aria-controls={panelIds[k]}
               tabIndex={view === k ? 0 : -1}
-              title={(k === "data" ? v.dataShortcut : v.structureShortcut)(formatShortcut(shortcut[k]))}
+              title={VIEW_TEXT[k].hint(formatShortcut(shortcut[k]))}
               aria-keyshortcuts={keys(shortcut[k])}
               onClick={() => onView(k)}
               onKeyDown={onTabKey}
-              className="rounded-[5px] px-2.5 text-text outline-none aria-selected:bg-accent aria-selected:text-accent-contrast focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
+              // The ring sits inside the segment: accent on the button, white inside the selected fill
+              // (accent on --accent-strong would barely show; white reads 5.4:1 or more there).
+              className="rounded-[5px] px-2.5 text-text outline-none aria-selected:bg-accent-strong aria-selected:text-accent-contrast focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent aria-selected:focus-visible:outline-accent-contrast"
             >
-              {k === "data" ? v.data : v.structure}
+              {VIEW_TEXT[k].label}
             </button>
           ))}
         </div>
@@ -217,14 +232,14 @@ function DataControls({
       <button
         ref={filters.ref}
         type="button"
-        className={control}
+        className={filtersControl}
         aria-expanded={filters.open}
         aria-controls={filters.open ? filters.controls : undefined}
         title={g.filtersShortcut(formatShortcut(shortcut.filters))}
         aria-keyshortcuts={keys(shortcut.filters)}
         onClick={filters.onToggle}
       >
-        <ListFilter {...ICON} />
+        <Search {...ICON} />
         <span>{strings.filters.button(filters.count)}</span>
       </button>
       <div className="relative">
@@ -238,7 +253,6 @@ function DataControls({
           aria-keyshortcuts={keys(shortcut.columns)}
           onClick={() => columns.onOpenChange(!columns.open)}
         >
-          <Columns3 {...ICON} />
           <span>{g.columns}</span>
         </button>
         {columns.open && (

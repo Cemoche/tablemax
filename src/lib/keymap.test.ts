@@ -46,6 +46,7 @@ test("the defaults are the combinations the code binds today", () => {
     "grid.rowDetails": "Ctrl+Space",
     "grid.viewData": "Alt+1",
     "grid.viewStructure": "Alt+2",
+    "grid.viewIndex": "Alt+3",
     "font.increase": "Mod+=",
     "font.decrease": "Mod+-",
     "database.open": "Mod+K",
@@ -80,6 +81,10 @@ test("the defaults are the combinations the code binds today", () => {
     "filters.remove": "Mod+Shift+I",
     "filters.applyAll": "Mod+Enter",
     "filters.applyAllOr": "Mod+Shift+Enter",
+    "filters.up": "Mod+ArrowUp",
+    "filters.down": "Mod+ArrowDown",
+    "filters.column": "Alt+C",
+    "filters.operator": "Alt+O",
   });
   const scope = (id: KeymapActionId) => KEYMAP_ACTIONS.find((a) => a.id === id)?.scope;
   expect(scope("query.new")).toBe("global");
@@ -102,7 +107,17 @@ test("the defaults are the combinations the code binds today", () => {
   for (const id of ["grid.addRow", "grid.filters", "grid.columns", "grid.previousPage", "grid.nextPage"] as const) {
     expect(scope(id), id).toBe("tableTab");
   }
-  for (const id of ["filters.toggle", "filters.add", "filters.remove", "filters.applyAll", "filters.applyAllOr"] as const) {
+  for (const id of [
+    "filters.toggle",
+    "filters.add",
+    "filters.remove",
+    "filters.applyAll",
+    "filters.applyAllOr",
+    "filters.up",
+    "filters.down",
+    "filters.column",
+    "filters.operator",
+  ] as const) {
     expect(scope(id), id).toBe("filterBar");
   }
   expect(scope("font.increase")).toBe("global");
@@ -393,6 +408,9 @@ test("view_switch_alternates: Data / Structure also answer to ⌘⌥[ / ] on mac
   // Off macOS Ctrl+Alt is AltGr (#102): no alternate.
   expect(effectiveShortcuts("grid.viewData", {}, false)).toEqual(["Alt+1"]);
   expect(effectiveShortcuts("grid.viewStructure", {}, false)).toEqual(["Alt+2"]);
+  // #103: Index is Alt+3 on every platform (no third bracket key for ⌘⌥).
+  expect(effectiveShortcuts("grid.viewIndex", {}, false)).toEqual(["Alt+3"]);
+  expect(effectiveShortcuts("grid.viewIndex", {}, true)).toEqual(["Alt+3"]);
   expect(effectiveShortcuts("grid.viewData", { "grid.viewData": "Alt+D" }, true)).toEqual(["Alt+D"]);
   // Not the tab keys (Mod+[ / ]) nor the workspace keys (Mod+Shift+[ / ]).
   expect(conflictFor("grid.viewData", "Mod+Alt+[", {}, true)).toBeNull();
@@ -429,4 +447,17 @@ test("filter_bar_scope: the bar's keys shadow the table tab's inside the bar, ne
   expect(conflictFor("database.open", "Mod+Shift+I", {}, false)).toBe("filters.remove");
   // Page keys: Mod+← / Mod+→ only in the grid (a text field keeps its word moves).
   expect(conflictFor("grid.columns", "Mod+ArrowLeft", {}, false)).toBe("grid.previousPage");
+});
+
+test("filter_row_keys: Up / Down and the column / operator jumps (#103), ⌘← / ⌘→ on macOS only", () => {
+  expect(defaultShortcut("filters.up", false)).toBe("Mod+ArrowUp");
+  expect(defaultShortcut("filters.down", true)).toBe("Mod+ArrowDown");
+  // Off macOS Ctrl+← / Ctrl+→ are word moves in the value field: Alt+C / Alt+O instead.
+  expect(defaultShortcut("filters.column", false)).toBe("Alt+C");
+  expect(defaultShortcut("filters.operator", false)).toBe("Alt+O");
+  expect(defaultShortcut("filters.column", true)).toBe("Mod+ArrowLeft");
+  expect(defaultShortcut("filters.operator", true)).toBe("Mod+ArrowRight");
+  // In the bar they shadow the grid's page keys (macOS), which only act in the grid.
+  expect(conflictFor("filters.column", "Mod+ArrowLeft", {}, true)).toBeNull();
+  expect(conflictFor("filters.up", "Mod+ArrowDown", {}, false)).toBe("filters.down");
 });

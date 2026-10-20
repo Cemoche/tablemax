@@ -121,6 +121,21 @@ pub fn build_page(d: Dialect, info: &TableInfo, req: &PageRequest) -> AppResult<
     Ok(b.finish())
 }
 
+/// The WHERE clause [`build_page`] writes for `filters` joined by `combine` (`WHERE …`, or
+/// "" without filters), with its placeholders: the values are never written into it. A
+/// read-only preview (the filter bar's SQL button), refused like the page (unknown column,
+/// wrong value count, blank raw SQL).
+pub fn where_preview(
+    d: Dialect,
+    info: &TableInfo,
+    filters: &[Filter],
+    combine: FilterCombine,
+) -> AppResult<String> {
+    let mut b = Builder::new(d);
+    b.push_where(info, filters, combine)?;
+    Ok(b.sql.trim_start().to_string())
+}
+
 /// `SELECT COUNT(*) FROM (SELECT 1 FROM t WHERE … LIMIT cap) AS t`: counts at most `cap`
 /// rows (see [`read_count`]), the filters joined like the page's.
 pub fn build_filtered_count(
@@ -1066,6 +1081,64 @@ mod tests {
             build_page(Dialect::MySql, &my_info(), &bad)
                 .unwrap_err()
                 .kind,
+            ErrorKind::Invalid
+        );
+    }
+
+    #[test]
+    fn where_preview_is_the_page_where_without_values() {
+        // The filter bar's SQL button: the page's own WHERE, placeholders in place of the
+        // values (never written into the text), on every dialect, AND and OR.
+        let filters = vec![
+            f("id", FilterOp::Between, &["1", "secret-low"]),
+            f("note", FilterOp::Contains, &["secret-text"]),
+            any(FilterOp::Eq, "secret-any"),
+        ];
+        for (d, info) in [
+            (Dialect::Postgres, pg_info()),
+            (Dialect::MySql, my_info()),
+            (Dialect::Sqlite, info_with("main", my_info().columns)),
+        ] {
+            for combine in [FilterCombine::And, FilterCombine::Or] {
+                let w = where_preview(d, &info, &filters, combine).unwrap();
+                assert!(w.starts_with("WHERE "), "{w}");
+                assert!(!w.contains("secret"), "{w}");
+                let req = PageRequest {
+                    combine,
+                    ..req_with(filters.clone())
+                };
+                let page = build_page(d, &info, &req).unwrap();
+                assert!(
+                    page.sql.contains(&format!(" {w} ORDER BY")),
+                    "{}\n{w}",
+                    page.sql
+                );
+            }
+        }
+        assert_eq!(
+            where_preview(
+                Dialect::Postgres,
+                &pg_info(),
+                &filters[..1],
+                FilterCombine::And
+            )
+            .unwrap(),
+            "WHERE \"id\" BETWEEN CAST($1::text AS integer) AND CAST($2::text AS integer)"
+        );
+        // No filter: no clause. A bad filter is refused as the page refuses it.
+        assert_eq!(
+            where_preview(Dialect::MySql, &my_info(), &[], FilterCombine::Or).unwrap(),
+            ""
+        );
+        assert_eq!(
+            where_preview(
+                Dialect::MySql,
+                &my_info(),
+                &[f("nope", FilterOp::Eq, &["1"])],
+                FilterCombine::And
+            )
+            .unwrap_err()
+            .kind,
             ErrorKind::Invalid
         );
     }
