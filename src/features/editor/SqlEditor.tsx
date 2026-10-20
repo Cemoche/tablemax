@@ -119,18 +119,6 @@ export function insertAtCursor(view: EditorView, text: string): void {
   view.focus();
 }
 
-/** Replaces the whole content with `text` in ONE undoable transaction. */
-export function replaceDocument(view: EditorView, text: string): void {
-  view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: text },
-    selection: CmSelection.cursor(text.length),
-    annotations: isolateHistory.of("full"),
-    userEvent: "input.paste",
-    scrollIntoView: true,
-  });
-  view.focus();
-}
-
 // All colors come from the design tokens (they follow data-theme / the system color scheme).
 // The user's font reaches the editor only through the --editor-font-family and
 // --editor-font-size custom properties set on its container (CSSOM, never CSS text), so

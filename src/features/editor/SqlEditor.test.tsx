@@ -6,7 +6,7 @@ import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { act } from "react";
 import { useSettings, DEFAULT_SETTINGS } from "../../stores/settings";
 import { applyTheme } from "../../lib/theme";
-import { SqlEditor, buildEditorTheme, editorThemeSpec, insertAtCursor, replaceDocument } from "./SqlEditor";
+import { SqlEditor, buildEditorTheme, editorThemeSpec, insertAtCursor } from "./SqlEditor";
 
 test("editor theme takes background and text from the tokens", () => {
   expect(editorThemeSpec["&"]).toMatchObject({
@@ -86,17 +86,13 @@ test("an invalid font family is never applied", async () => {
   expect(css).not.toMatch(/\.a\s*\{/);
 });
 
-test("insertAtCursor and replaceDocument are one undo step each", () => {
+test("insertAtCursor is one undo step", () => {
   const view = new EditorView({
     state: EditorState.create({ doc: "select 1;\n", selection: { anchor: 10 }, extensions: [history()] }),
   });
   insertAtCursor(view, "select 2");
   expect(view.state.doc.toString()).toBe("select 1;\nselect 2");
   expect(view.state.selection.main.head).toBe(18);
-  replaceDocument(view, "select 3");
-  expect(view.state.doc.toString()).toBe("select 3");
-  undo(view);
-  expect(view.state.doc.toString()).toBe("select 1;\nselect 2");
   undo(view);
   expect(view.state.doc.toString()).toBe("select 1;\n");
   // A selection is replaced by the inserted text.

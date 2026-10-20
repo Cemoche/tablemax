@@ -47,7 +47,8 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
   const [error, setError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [reload, setReload] = useState(0);
-  const [menu, setMenu] = useState<{ entry: HistoryEntry; anchor: MenuAnchor } | null>(null);
+  /** The open menu and its entry's button (the focus goes back there on close). */
+  const [menu, setMenu] = useState<{ entry: HistoryEntry; anchor: MenuAnchor; trigger: HTMLElement } | null>(null);
   // A run of this connection ended (any tab, any workspace): the backend recorded it.
   const bumps = useChrome((s) => s.historyBumps[connectionId] ?? 0);
 
@@ -94,7 +95,7 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
 
   const menuItems = (entry: HistoryEntry) => [
     { label: M.run, run: () => runSqlInNewTab(wsId, entry.sql) },
-    { label: M.copy, run: () => void copyText(entry.sql).catch(() => {}) },
+    { label: M.copy, run: () => void copyText(entry.sql).catch(() => setError(strings.history.copyFailed)) },
     { label: M.insert, run: () => insertSql(wsId, entry.sql) },
     { label: M.delete, run: () => void remove(entry) },
   ];
@@ -116,13 +117,13 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
                   type="button"
                   title={H.itemHint}
                   onClick={() => openSqlTab(wsId, h.sql)}
-                  onContextMenu={(e: MouseEvent) => {
+                  onContextMenu={(e: MouseEvent<HTMLButtonElement>) => {
                     e.preventDefault();
-                    setMenu({ entry: h, anchor: { x: e.clientX, y: e.clientY } });
+                    setMenu({ entry: h, anchor: { x: e.clientX, y: e.clientY }, trigger: e.currentTarget });
                   }}
                   onKeyDown={(e) => {
                     const anchor = keyboardMenuAnchor(e);
-                    if (anchor) setMenu({ entry: h, anchor });
+                    if (anchor) setMenu({ entry: h, anchor, trigger: e.currentTarget });
                   }}
                   className="block w-full rounded-md px-1.5 py-1 text-left outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
                 >
@@ -144,13 +145,21 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
           type="button"
           onClick={() => setConfirmClear(true)}
           disabled={!entries || entries.length === 0}
-          className="rounded-md border border-pill-border bg-btn px-2 py-0.5 text-sm text-danger hover:bg-seg-sel disabled:opacity-40"
+          className="rounded-md border border-pill-border bg-btn px-2 py-0.5 text-sm text-danger outline-none hover:bg-seg-sel disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-accent"
         >
           {H.clear}
         </button>
       </div>
       {menu && (
-        <ContextMenu label={H.menuLabel} anchor={menu.anchor} items={menuItems(menu.entry)} onClose={() => setMenu(null)} />
+        <ContextMenu
+          label={H.menuLabel}
+          anchor={menu.anchor}
+          items={menuItems(menu.entry)}
+          onClose={() => {
+            setMenu(null);
+            if (menu.trigger.isConnected) menu.trigger.focus();
+          }}
+        />
       )}
       {confirmClear && (
         <ConfirmDialog

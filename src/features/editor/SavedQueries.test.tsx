@@ -280,3 +280,19 @@ test("the search box filters the saved queries", async () => {
   await userEvent.type(screen.getByRole("searchbox", { name: S.search }), "zzz");
   expect(screen.getByText(S.noMatch)).toBeInTheDocument();
 });
+
+test("the menu gives the focus back to its query on Escape", async () => {
+  await setupPanel({}, [sq("users")]);
+  await openMenu("users");
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("button", { name: S.open("users") })).toHaveFocus();
+});
+
+test("Copy without a clipboard reports the failure", async () => {
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+  await setupPanel({}, [sq("users")]);
+  vi.mocked(ipc.savedQueryRead).mockResolvedValue("select 1");
+  await userEvent.click(within(await openMenu("users")).getByRole("menuitem", { name: Q.copy }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(S.actionFailed(strings.sidebar.clipboardUnavailable));
+});

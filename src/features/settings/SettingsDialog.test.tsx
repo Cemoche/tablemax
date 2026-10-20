@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { KEYMAP_ACTIONS, useAction } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
@@ -322,6 +322,30 @@ test("Reset is refused when the default is now used by another action (rebind, t
   expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
   expect(shortcutOf(newQuery)).toBe("Ctrl+N");
   expect(shortcutOf(paletteLabel)).toBe("Ctrl+T");
+});
+
+test("Reset is refused when an alternate default is now used by another action", async () => {
+  const spy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  onTestFinished(() => spy.mockRestore());
+  const previous = strings.keymap["workspace.previous"];
+  // 1. Previous connection rebound: Mod+Shift+[ and Mod+Shift+PageUp are free.
+  useSettings.setState({
+    settings: { ...DEFAULT_SETTINGS, keymap: { "workspace.previous": "Alt+P" } },
+    confirmed: DEFAULT_SETTINGS,
+  });
+  setup();
+  // 2. The palette takes the alternate.
+  await userEvent.click(changeButton(paletteLabel));
+  await userEvent.keyboard("{Control>}{Shift>}[PageUp]{/Shift}{/Control}");
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({
+    ...DEFAULT_SETTINGS,
+    keymap: { "workspace.previous": "Alt+P", "palette.all": "Mod+Shift+PageUp" },
+  });
+  // 3. Resetting would bind Mod+Shift+PageUp twice: refused like any conflict.
+  await userEvent.click(queryReset(previous) as HTMLElement);
+  expect(screen.getByRole("alert")).toHaveTextContent(strings.settings.shortcutConflict(paletteLabel));
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
+  expect(shortcutOf(previous)).toBe("Alt+P");
 });
 
 test("Reset is refused when the default would conflict on the other platform", async () => {

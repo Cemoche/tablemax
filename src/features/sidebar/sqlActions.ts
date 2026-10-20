@@ -1,3 +1,4 @@
+import { strings } from "../../lib/strings";
 import { useChrome } from "../../stores/chrome";
 import { useWorkspaces } from "../../stores/workspaces";
 
@@ -35,7 +36,8 @@ export function insertSql(wsId: string, sql: string): void {
   else openSqlTab(wsId, sql);
 }
 
-/** Copies `text`; a refused clipboard rejects (callers report it). */
+/** Copies `text`; a missing or refused clipboard rejects (callers report it). */
 export async function copyText(text: string): Promise<void> {
-  await navigator.clipboard?.writeText(text);
+  if (!navigator.clipboard) throw { kind: "io", message: strings.sidebar.clipboardUnavailable };
+  await navigator.clipboard.writeText(text);
 }

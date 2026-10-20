@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import { useChrome } from "../../stores/chrome";
@@ -52,8 +52,8 @@ beforeEach(() => {
 
 /** What WorkspaceView does: the shortcuts always, the sidebar when it is shown. */
 function Harness({ id }: { id: string }) {
-  useSidebarShortcuts(id);
   const workspace = useWorkspaces((s) => s.workspaces.find((w) => w.id === id))!;
+  useSidebarShortcuts(id, workspace.status === "connected");
   const visible = useWorkspaces((s) => s.sidebarVisible);
   return visible ? <Sidebar workspace={workspace} /> : null;
 }
@@ -63,13 +63,13 @@ const segment = (name: string) => screen.getByRole("button", { name });
 test("segmented_tabs_switch_and_persist: Items / Queries / History, remembered per workspace", async () => {
   const { rerender } = render(<Harness key="w1" id="w1" />);
   expect(segment(S.segments.items)).toHaveAttribute("aria-pressed", "true");
-  expect(await screen.findByRole("button", { name: /orders/ })).toBeInTheDocument();
+  expect(await screen.findByRole("treeitem", { name: /orders/ })).toBeInTheDocument();
 
   await userEvent.click(segment(S.segments.queries));
   expect(segment(S.segments.queries)).toHaveAttribute("aria-pressed", "true");
   expect(segment(S.segments.items)).toHaveAttribute("aria-pressed", "false");
   expect(await screen.findByRole("region", { name: strings.savedQueries.label })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /orders/ })).toBeNull();
+  expect(screen.queryByRole("treeitem", { name: /orders/ })).toBeNull();
 
   // Another workspace starts on Items…
   rerender(<Harness key="w2" id="w2" />);
@@ -149,7 +149,7 @@ test("sidebar_toggle_and_resize: Ctrl+0 hides and shows; the width is dragged, c
 
 test("the footer: settings, new SQL tab, refresh and the schema picker", async () => {
   render(<Harness id="w1" />);
-  await screen.findByRole("button", { name: /orders/ });
+  await screen.findByRole("treeitem", { name: /orders/ });
 
   act(() => useChrome.setState({ settingsRequest: 0 }));
   await userEvent.click(screen.getByRole("button", { name: strings.settings.open }));
@@ -189,6 +189,33 @@ test("no New SQL query button for a connection without SQL", async () => {
     ],
   });
   render(<Harness id="w1" />);
-  await screen.findByRole("button", { name: /orders/ });
+  await screen.findByRole("treeitem", { name: /orders/ });
   expect(screen.queryByRole("button", { name: S.newQuery })).toBeNull();
+});
+
+test("the sidebar shortcuts do nothing in a disconnected workspace", () => {
+  useWorkspaces.setState({ workspaces: [ws("w1", { status: "disconnected" })], sidebarVisible: false });
+  render(<Harness id="w1" />);
+  fireEvent.keyDown(window, { code: "KeyF", ctrlKey: true, shiftKey: true });
+  expect(useSidebar.getState().focusSearch).toBe(false);
+  fireEvent.keyDown(window, { code: "KeyH", ctrlKey: true, shiftKey: true });
+  expect(useSidebar.getState().segments.w1).toBeUndefined();
+  fireEvent.keyDown(window, { code: "Digit0", ctrlKey: true });
+  expect(useWorkspaces.getState().sidebarVisible).toBe(false);
+});
+
+test("a resize drag saves the width once, when it ends", async () => {
+  const setItem = vi.spyOn(Storage.prototype, "setItem");
+  onTestFinished(() => setItem.mockRestore());
+  render(<Harness id="w1" />);
+  await screen.findByRole("treeitem", { name: /orders/ });
+  const widthWrites = () => setItem.mock.calls.filter(([k]) => k === SIDEBAR_WIDTH_KEY).length;
+  const handle = screen.getByRole("separator", { name: S.resize });
+  fireEvent.pointerDown(handle, { clientX: 300, pointerId: 1, button: 0 });
+  for (const x of [310, 330, 350, 380]) fireEvent.pointerMove(window, { clientX: x, pointerId: 1 });
+  expect(handle).toHaveAttribute("aria-valuenow", String(SIDEBAR_DEFAULT + 80));
+  expect(widthWrites()).toBe(0);
+  fireEvent.pointerUp(window, { clientX: 380, pointerId: 1 });
+  expect(widthWrites()).toBe(1);
+  expect(localStorage.getItem(SIDEBAR_WIDTH_KEY)).toBe(String(SIDEBAR_DEFAULT + 80));
 });

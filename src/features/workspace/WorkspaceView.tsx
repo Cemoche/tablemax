@@ -65,7 +65,7 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
   // reach the backend with it.
   const connected = workspace.status === "connected";
 
-  useSidebarShortcuts(id);
+  useSidebarShortcuts(id, connected);
   useAction("query.new", () => {
     if (sqlEditor) openQueryTab(id);
   });

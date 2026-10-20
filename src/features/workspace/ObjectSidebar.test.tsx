@@ -49,18 +49,18 @@ beforeEach(() => {
 
 test("sidebar filter is case-insensitive and keeps tables before views", async () => {
   render(<ObjectSidebar workspace={workspace} />);
-  await screen.findByRole("button", { name: /Accounts/ });
+  await screen.findByRole("treeitem", { name: /Accounts/ });
   expect(ipc.objectsList).toHaveBeenCalledWith("w1", "public");
   await userEvent.type(screen.getByRole("searchbox"), "USER");
-  const items = screen.getAllByRole("button", { name: /users/i }).map((b) => b.textContent);
+  const items = screen.getAllByRole("treeitem", { name: /users/i }).map((b) => b.textContent);
   expect(items[0]).toContain("users");
   expect(items[1]).toContain("active_users");
-  expect(screen.queryByRole("button", { name: /orders/ })).toBeNull();
+  expect(screen.queryByRole("treeitem", { name: /orders/ })).toBeNull();
 });
 
 test("clicking an object opens a table tab", async () => {
   render(<ObjectSidebar workspace={workspace} />);
-  await userEvent.click(await screen.findByRole("button", { name: /orders/ }));
+  await userEvent.click(await screen.findByRole("treeitem", { name: /orders/ }));
   await waitFor(() => expect(useWorkspaces.getState().workspaces[0].tabs).toHaveLength(1));
   expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({
     kind: "table",
@@ -70,7 +70,7 @@ test("clicking an object opens a table tab", async () => {
 
 test("single click opens a preview tab, double click pins it", async () => {
   render(<ObjectSidebar workspace={workspace} />);
-  const orders = await screen.findByRole("button", { name: /orders/ });
+  const orders = await screen.findByRole("treeitem", { name: /orders/ });
   await userEvent.click(orders);
   expect(useWorkspaces.getState().workspaces[0].tabs[0]).toMatchObject({ preview: true });
   await userEvent.dblClick(orders);
@@ -81,26 +81,26 @@ test("single click opens a preview tab, double click pins it", async () => {
 
 test("sections collapse and the filter applies to routines", async () => {
   render(<ObjectSidebar workspace={workspace} />);
-  await screen.findByRole("button", { name: /do_thing/ });
-  const routines = screen.getByRole("button", { name: strings.sidebar.routines, expanded: true });
+  await screen.findByRole("treeitem", { name: /do_thing/ });
+  const routines = screen.getByRole("treeitem", { name: strings.sidebar.routines, expanded: true });
   await userEvent.type(screen.getByRole("searchbox"), "purge");
-  expect(screen.queryByRole("button", { name: /do_thing/ })).toBeNull();
-  expect(screen.getByRole("button", { name: /purge/ })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /orders/ })).toBeNull();
+  expect(screen.queryByRole("treeitem", { name: /do_thing/ })).toBeNull();
+  expect(screen.getByRole("treeitem", { name: /purge/ })).toBeTruthy();
+  expect(screen.queryByRole("treeitem", { name: /orders/ })).toBeNull();
   await userEvent.click(routines);
   expect(routines.getAttribute("aria-expanded")).toBe("false");
-  expect(screen.queryByRole("button", { name: /purge/ })).toBeNull();
+  expect(screen.queryByRole("treeitem", { name: /purge/ })).toBeNull();
 });
 
 test("views section lists views apart from tables", async () => {
   render(<ObjectSidebar workspace={workspace} />);
-  await screen.findByRole("button", { name: /orders/ });
-  expect(screen.getByRole("button", { name: strings.sidebar.tables })).toBeTruthy();
-  expect(screen.getByRole("button", { name: strings.sidebar.views })).toBeTruthy();
+  await screen.findByRole("treeitem", { name: /orders/ });
+  expect(screen.getByRole("treeitem", { name: strings.sidebar.tables })).toBeTruthy();
+  expect(screen.getByRole("treeitem", { name: strings.sidebar.views })).toBeTruthy();
 });
 
 const openMenu = async (name: RegExp) => {
-  fireEvent.contextMenu(await screen.findByRole("button", { name }));
+  fireEvent.contextMenu(await screen.findByRole("treeitem", { name }));
   return screen.findByRole("menu");
 };
 const M = strings.sidebar.menu;
@@ -156,7 +156,7 @@ test("a failed CREATE script is reported in the sidebar", async () => {
   expect(await screen.findByText(strings.sidebar.copyFailed("no rights"))).toBeInTheDocument();
 });
 
-test("the menu: Escape closes it, arrows move through the items", async () => {
+test("the menu: Escape closes it and gives the focus back to its row, arrows move through the items", async () => {
   render(<ObjectSidebar workspace={workspace} />);
   const menu = await openMenu(/orders/);
   const items = within(menu).getAllByRole("menuitem");
@@ -167,6 +167,22 @@ test("the menu: Escape closes it, arrows move through the items", async () => {
   expect(items[items.length - 1]).toHaveFocus();
   await userEvent.keyboard("{Escape}");
   expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("treeitem", { name: "orders" })).toHaveFocus();
+  // A press outside closes it too, the focus goes back the same way.
+  await openMenu(/Accounts/);
+  fireEvent.mouseDown(document.body);
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("treeitem", { name: "Accounts" })).toHaveFocus();
+});
+
+test("Shift+F10 opens the menu of the focused row", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  const orders = await screen.findByRole("treeitem", { name: "orders" });
+  orders.focus();
+  await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+  expect(await screen.findByRole("menu")).toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  expect(orders).toHaveFocus();
 });
 
 test("routine menu offers Copy name and Refresh", async () => {
@@ -213,14 +229,14 @@ test("switching database reloads objects and routines even when the schema stays
   useWorkspaces.setState({ workspaces: [{ ...workspace, database: "app" }] });
   const view = (ws: Workspace) => <ObjectSidebar workspace={ws} />;
   const { rerender } = render(view({ ...workspace, database: "app" }));
-  await screen.findByRole("button", { name: /orders/ });
+  await screen.findByRole("treeitem", { name: /orders/ });
   vi.mocked(ipc.objectsList).mockResolvedValue([{ schema: "public", name: "fresh", kind: "table" }]);
   // Ctrl+K (the palette) switches the database now; the sidebar follows the workspace.
   await act(() => useWorkspaces.getState().switchDatabase("w1", "other"));
   await waitFor(() => expect(useWorkspaces.getState().workspaces[0].database).toBe("other"));
   rerender(view(useWorkspaces.getState().workspaces[0]));
-  expect(await screen.findByRole("button", { name: /fresh/ })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /orders/ })).toBeNull();
+  expect(await screen.findByRole("treeitem", { name: /fresh/ })).toBeTruthy();
+  expect(screen.queryByRole("treeitem", { name: /orders/ })).toBeNull();
 });
 
 /** A connection without SQL (e.g. a document database). */
@@ -236,10 +252,10 @@ const NO_SQL: Capabilities = {
 
 test("without the capabilities: no routines, no CREATE and no SELECT script", async () => {
   render(<ObjectSidebar workspace={{ ...workspace, dialect: null, capabilities: NO_SQL }} />);
-  await screen.findByRole("button", { name: /orders/ });
-  expect(screen.queryByRole("button", { name: strings.sidebar.routines })).toBeNull();
+  await screen.findByRole("treeitem", { name: /orders/ });
+  expect(screen.queryByRole("treeitem", { name: strings.sidebar.routines })).toBeNull();
   expect(ipc.routinesList).not.toHaveBeenCalled();
-  fireEvent.contextMenu(screen.getByRole("button", { name: /orders/ }));
+  fireEvent.contextMenu(screen.getByRole("treeitem", { name: /orders/ }));
   const menu = await screen.findByRole("menu");
   expect(within(menu).queryByRole("menuitem", { name: M.copySelectTop })).toBeNull();
   expect(within(menu).queryByRole("menuitem", { name: M.copyCreate })).toBeNull();
@@ -249,7 +265,7 @@ test("without the capabilities: no routines, no CREATE and no SELECT script", as
 
 test("the toolbar's Reload reloads the objects", async () => {
   render(<ObjectSidebar workspace={workspace} />);
-  await screen.findByRole("button", { name: /Accounts/ });
+  await screen.findByRole("treeitem", { name: /Accounts/ });
   expect(ipc.objectsList).toHaveBeenCalledTimes(1);
   act(() => useChrome.getState().requestReload("w1"));
   await waitFor(() => expect(ipc.objectsList).toHaveBeenCalledTimes(2));
@@ -261,13 +277,13 @@ test("the toolbar's Reload reloads the objects", async () => {
 const S = strings.sidebar;
 const names = () =>
   screen
-    .queryAllByRole("button")
+    .queryAllByRole("treeitem")
     .filter((b) => b.dataset.objectRow !== undefined)
     .map((b) => b.dataset.objectRow);
 
 test("search_options_filter_tree: contains / starts with / ends with, tables and views", async () => {
   render(<ObjectSidebar workspace={{ ...workspace, capabilities: { ...NO_SQL, sqlEditor: true } }} />);
-  await screen.findByRole("button", { name: /Accounts/ });
+  await screen.findByRole("treeitem", { name: /Accounts/ });
   const search = screen.getByRole("searchbox", { name: S.searchLabel });
   expect(search).toHaveAttribute("placeholder", S.search);
   await userEvent.type(search, "users");
@@ -299,13 +315,13 @@ test("search_options_filter_tree: contains / starts with / ends with, tables and
 
 test("tree_icons_by_kind: each row has the icon of its kind", async () => {
   render(<ObjectSidebar workspace={workspace} />);
-  const orders = await screen.findByRole("button", { name: /orders/ });
+  const orders = await screen.findByRole("treeitem", { name: /orders/ });
   expect(within(orders).getByRole("img", { name: S.kinds.table })).toBeInTheDocument();
-  const view = screen.getByRole("button", { name: /active_users/ });
+  const view = screen.getByRole("treeitem", { name: /active_users/ });
   expect(within(view).getByRole("img", { name: S.kinds.view })).toBeInTheDocument();
-  const fn = await screen.findByRole("button", { name: /do_thing/ });
+  const fn = await screen.findByRole("treeitem", { name: /do_thing/ });
   expect(within(fn).getByRole("img", { name: S.kinds.function })).toBeInTheDocument();
-  const proc = screen.getByRole("button", { name: /purge/ });
+  const proc = screen.getByRole("treeitem", { name: /purge/ });
   expect(within(proc).getByRole("img", { name: S.kinds.procedure })).toBeInTheDocument();
 });
 
@@ -313,7 +329,7 @@ test("long_names_truncate: one line with an ellipsis, the full name in the toolt
   const long = "a_really_long_table_name_that_does_not_fit_in_the_sidebar_at_all";
   vi.mocked(ipc.objectsList).mockResolvedValue([{ schema: "public", name: long, kind: "table" }]);
   render(<ObjectSidebar workspace={workspace} />);
-  const row = await screen.findByRole("button", { name: new RegExp(long) });
+  const row = await screen.findByRole("treeitem", { name: new RegExp(long) });
   expect(row).toHaveAttribute("title", long);
   expect(row).toHaveClass("whitespace-nowrap");
   expect(within(row).getByText(long)).toHaveClass("truncate");
@@ -322,7 +338,7 @@ test("long_names_truncate: one line with an ellipsis, the full name in the toolt
 test("the tree is monospace at the data font size, with 24 px rows", async () => {
   useSettings.setState((s) => ({ settings: { ...s.settings, dataFontSize: 15 } }));
   render(<ObjectSidebar workspace={workspace} />);
-  const row = await screen.findByRole("button", { name: /orders/ });
+  const row = await screen.findByRole("treeitem", { name: /orders/ });
   const tree = row.closest("[data-tree]") as HTMLElement;
   expect(tree).toHaveClass("font-mono");
   expect(tree.style.fontSize).toBe("15px");
@@ -336,22 +352,128 @@ test("thousands of objects: only the rows in view are rendered, scrolling shows 
   );
   vi.mocked(ipc.routinesList).mockResolvedValue([]);
   render(<ObjectSidebar workspace={workspace} />);
-  await screen.findByRole("button", { name: /t0000/ });
+  await screen.findByRole("treeitem", { name: /t0000/ });
   expect(names().length).toBeLessThan(100);
-  expect(screen.queryByRole("button", { name: /t4999/ })).toBeNull();
-  const scroller = screen.getByRole("button", { name: /t0000/ }).closest("[data-tree]") as HTMLElement;
+  expect(screen.queryByRole("treeitem", { name: /t4999/ })).toBeNull();
+  const scroller = screen.getByRole("treeitem", { name: /t0000/ }).closest("[data-tree]") as HTMLElement;
   scroller.scrollTop = 4990 * 24;
   fireEvent.scroll(scroller);
-  expect(await screen.findByRole("button", { name: /t4999/ })).toBeInTheDocument();
+  expect(await screen.findByRole("treeitem", { name: /t4999/ })).toBeInTheDocument();
   expect(names().length).toBeLessThan(100);
 });
 
-test("arrow keys move between the rows", async () => {
+const T = () => screen.getByRole("tree", { name: S.treeLabel });
+const item = (name: string) => screen.getByRole("treeitem", { name });
+
+test("the tree has tree semantics: levels, expanded sections, set sizes and positions", async () => {
   render(<ObjectSidebar workspace={workspace} />);
-  const accounts = await screen.findByRole("button", { name: /Accounts/ });
+  await screen.findByRole("treeitem", { name: "orders" });
+  expect(T()).toBeInTheDocument();
+  const tables = item(S.tables);
+  expect(tables).toHaveAttribute("aria-level", "1");
+  expect(tables).toHaveAttribute("aria-expanded", "true");
+  expect(tables).toHaveAttribute("aria-setsize", "3");
+  expect(tables).toHaveAttribute("aria-posinset", "1");
+  expect(item(S.routines)).toHaveAttribute("aria-posinset", "3");
+  const orders = item("orders");
+  expect(orders).toHaveAttribute("aria-level", "2");
+  expect(orders).not.toHaveAttribute("aria-expanded");
+  // Accounts, users, orders: the third of three tables.
+  expect(orders).toHaveAttribute("aria-setsize", "3");
+  expect(orders).toHaveAttribute("aria-posinset", "3");
+  expect(orders).toHaveAttribute("aria-selected", "false");
+});
+
+test("the tree is a single Tab stop (roving tabindex)", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  await screen.findByRole("treeitem", { name: "orders" });
+  const stops = within(T())
+    .getAllByRole("treeitem")
+    .filter((r) => r.tabIndex === 0);
+  expect(stops).toHaveLength(1);
+  screen.getByRole("searchbox").focus();
+  await userEvent.tab(); // search options
+  await userEvent.tab();
+  expect(item(S.tables)).toHaveFocus();
+  await userEvent.keyboard("{ArrowDown}{ArrowDown}");
+  expect(item("users")).toHaveFocus();
+  expect(item("users").tabIndex).toBe(0);
+  expect(item(S.tables).tabIndex).toBe(-1);
+  // Tab leaves the tree; Shift+Tab comes back to the row that had the focus.
+  await userEvent.tab();
+  expect(T()).not.toContainElement(document.activeElement as HTMLElement);
+  await userEvent.tab({ shift: true });
+  expect(item("users")).toHaveFocus();
+});
+
+test("arrow keys, Home and End move between the rows", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  const accounts = await screen.findByRole("treeitem", { name: "Accounts" });
   accounts.focus();
   await userEvent.keyboard("{ArrowDown}");
-  expect(screen.getByTitle("users")).toHaveFocus();
+  expect(item("users")).toHaveFocus();
   await userEvent.keyboard("{ArrowUp}");
   expect(accounts).toHaveFocus();
+  await screen.findByRole("treeitem", { name: "purge" });
+  await userEvent.keyboard("{End}");
+  expect(item("purge")).toHaveFocus();
+  await userEvent.keyboard("{Home}");
+  expect(item(S.tables)).toHaveFocus();
+});
+
+test("Left / Right collapse and expand a section, and move between a row and its section", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  const orders = await screen.findByRole("treeitem", { name: "orders" });
+  orders.focus();
+  // Left on an object: its section.
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(item(S.tables)).toHaveFocus();
+  // Left on an open section: collapse it (the focus stays).
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(item(S.tables)).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("treeitem", { name: "orders" })).toBeNull();
+  expect(item(S.tables)).toHaveFocus();
+  // Right on a closed section: expand it; Right again: its first child.
+  await userEvent.keyboard("{ArrowRight}");
+  expect(item(S.tables)).toHaveAttribute("aria-expanded", "true");
+  expect(item(S.tables)).toHaveFocus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(item("Accounts")).toHaveFocus();
+});
+
+test("Enter opens the focused object in a tab, Enter on a section toggles it", async () => {
+  render(<ObjectSidebar workspace={workspace} />);
+  const orders = await screen.findByRole("treeitem", { name: "orders" });
+  orders.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(useWorkspaces.getState().workspaces[0].tabs).toEqual([
+    expect.objectContaining({ kind: "table", title: "orders", preview: false }),
+  ]);
+  item(S.views).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(item(S.views)).toHaveAttribute("aria-expanded", "false");
+});
+
+test("the selection follows the active tab once another tab is shown", async () => {
+  const Live = () => <ObjectSidebar workspace={useWorkspaces((s) => s.workspaces[0])} />;
+  render(<Live />);
+  await userEvent.click(await screen.findByRole("treeitem", { name: "orders" }));
+  expect(item("orders")).toHaveAttribute("aria-selected", "true");
+  // A routine click (its menu) selects it; then another tab is shown: the selection follows it.
+  await userEvent.click(await screen.findByRole("treeitem", { name: "do_thing" }));
+  await userEvent.keyboard("{Escape}");
+  expect(item("do_thing")).toHaveAttribute("aria-selected", "true");
+  act(() => useWorkspaces.getState().openTableTab("w1", { schema: "public", name: "Accounts" }));
+  expect(item("do_thing")).toHaveAttribute("aria-selected", "false");
+  expect(item("Accounts")).toHaveAttribute("aria-selected", "true");
+  // A SQL tab: nothing is selected.
+  act(() => useWorkspaces.getState().openQueryTab("w1"));
+  expect(within(T()).queryAllByRole("treeitem", { selected: true })).toEqual([]);
+});
+
+test("Copy name without a clipboard reports the failure", async () => {
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+  render(<ObjectSidebar workspace={workspace} />);
+  await userEvent.click(within(await openMenu(/orders/)).getByRole("menuitem", { name: M.copyName }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(S.copyFailed(S.clipboardUnavailable));
 });

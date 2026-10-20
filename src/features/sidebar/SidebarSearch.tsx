@@ -1,6 +1,7 @@
 import { Check, Search, SlidersHorizontal } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
+import { useShallow } from "zustand/react/shallow";
 import { type MatchMode, useSidebar } from "../../stores/sidebar";
 
 const S = strings.sidebar;
@@ -68,7 +69,14 @@ function SearchOptions() {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
-  const { match, showTables, showViews, setSearchOptions } = useSidebar();
+  const { match, showTables, showViews, setSearchOptions } = useSidebar(
+    useShallow((s) => ({
+      match: s.match,
+      showTables: s.showTables,
+      showViews: s.showViews,
+      setSearchOptions: s.setSearchOptions,
+    })),
+  );
 
   useEffect(() => {
     if (!open) return;

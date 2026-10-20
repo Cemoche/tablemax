@@ -31,8 +31,10 @@ interface SidebarState {
   segments: Record<string, SidebarSegment>;
   setSegment: (wsId: string, segment: SidebarSegment) => void;
   width: number;
-  /** Clamps, applies and saves. */
+  /** Clamps and applies (a drag calls it on every move). */
   setWidth: (px: number) => void;
+  /** Saves the width for the next start (once, at the end of a drag or a key press). */
+  saveWidth: () => void;
   /** Items search options (one set for the whole app). */
   match: MatchMode;
   showTables: boolean;
@@ -46,15 +48,14 @@ interface SidebarState {
   requestSearchFocus: () => void;
 }
 
-export const useSidebar = create<SidebarState>((set) => ({
+export const useSidebar = create<SidebarState>((set, get) => ({
   segments: {},
   setSegment: (wsId, segment) => set((s) => ({ segments: { ...s.segments, [wsId]: segment } })),
   width: loadSidebarWidth(),
-  setWidth: (px) => {
-    const width = clampSidebarWidth(px);
-    set({ width });
+  setWidth: (px) => set({ width: clampSidebarWidth(px) }),
+  saveWidth: () => {
     try {
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(get().width));
     } catch {
       // Storage unavailable: the width only lasts for this session.
     }

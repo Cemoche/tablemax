@@ -27,7 +27,8 @@ export function SavedQueries({ workspace }: { workspace: Workspace }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ name: string; anchor: MenuAnchor } | null>(null);
+  /** The open menu and its row's button (the focus goes back there on close). */
+  const [menu, setMenu] = useState<{ name: string; anchor: MenuAnchor; trigger: HTMLElement } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -123,13 +124,13 @@ export function SavedQueries({ workspace }: { workspace: Workspace }) {
                   aria-label={S.open(q.name)}
                   title={q.name}
                   onClick={() => void open(q.name)}
-                  onContextMenu={(e: MouseEvent) => {
+                  onContextMenu={(e: MouseEvent<HTMLButtonElement>) => {
                     e.preventDefault();
-                    setMenu({ name: q.name, anchor: { x: e.clientX, y: e.clientY } });
+                    setMenu({ name: q.name, anchor: { x: e.clientX, y: e.clientY }, trigger: e.currentTarget });
                   }}
                   onKeyDown={(e) => {
                     const anchor = keyboardMenuAnchor(e);
-                    if (anchor) setMenu({ name: q.name, anchor });
+                    if (anchor) setMenu({ name: q.name, anchor, trigger: e.currentTarget });
                   }}
                   className="flex h-6 w-full items-center gap-1.5 rounded-md px-1.5 text-left whitespace-nowrap text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
                 >
@@ -142,7 +143,15 @@ export function SavedQueries({ workspace }: { workspace: Workspace }) {
         )}
       </div>
       {menu && (
-        <ContextMenu label={S.menuLabel} anchor={menu.anchor} items={menuItems(menu.name)} onClose={() => setMenu(null)} />
+        <ContextMenu
+          label={S.menuLabel}
+          anchor={menu.anchor}
+          items={menuItems(menu.name)}
+          onClose={() => {
+            setMenu(null);
+            if (menu.trigger.isConnected) menu.trigger.focus();
+          }}
+        />
       )}
       {renaming !== null && (
         <NameDialog

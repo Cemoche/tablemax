@@ -200,3 +200,28 @@ test("a failed load shows an error", async () => {
   render(<HistoryPanel workspace={workspace} />);
   expect(await screen.findByText(strings.history.loadFailed)).toBeInTheDocument();
 });
+
+test("the menu gives the focus back to its entry on Escape or a press outside", async () => {
+  setup([entry({ sql: "select 5" })]);
+  await openMenu(/select 5/);
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("button", { name: /select 5/ })).toHaveFocus();
+  await openMenu(/select 5/);
+  fireEvent.mouseDown(document.body);
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("button", { name: /select 5/ })).toHaveFocus();
+});
+
+test("Copy without a clipboard reports the failure", async () => {
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+  setup([entry({ sql: "select 5" })]);
+  await userEvent.click(within(await openMenu(/select 5/)).getByRole("menuitem", { name: Q.copy }));
+  expect(await screen.findByText(strings.history.copyFailed)).toBeInTheDocument();
+});
+
+test("Clear history has a visible focus ring", async () => {
+  setup();
+  const clear = await screen.findByRole("button", { name: strings.history.clear });
+  expect(clear).toHaveClass("focus-visible:outline-2", "focus-visible:outline-solid", "focus-visible:outline-accent");
+});

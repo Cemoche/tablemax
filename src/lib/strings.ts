@@ -292,7 +292,9 @@ export const strings = {
       copySelectTop: "Copy script as SELECT top 100",
       refresh: "Refresh",
     },
-    copyFailed: (message: string) => `Could not copy the script: ${message}`,
+    treeLabel: "Database objects",
+    copyFailed: (message: string) => `Could not copy: ${message}`,
+    clipboardUnavailable: "the clipboard is not available",
   },
   /** The column of open connections (workspaces) on the far left. */
   connectionsColumn: {
@@ -653,6 +655,7 @@ export const strings = {
     clearFailed: "Could not clear the history",
     itemHint: "Click to open in a new SQL tab; right-click for more",
     deleteFailed: "Could not delete the entry",
+    copyFailed: "Could not copy the query",
     menuLabel: "History actions",
     duration: (ms: number) => `${ms.toLocaleString("en-US")} ms`,
     rows: (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "row" : "rows"}`,

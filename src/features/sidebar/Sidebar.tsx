@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, useRef } from "react";
+import { type KeyboardEvent, type PointerEvent, type ReactNode, useRef } from "react";
 import { useAction } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import {
@@ -22,15 +22,21 @@ const KEY_STEP = 10;
 
 /**
  * The sidebar's shortcuts, bound by the workspace view whether the sidebar is shown or not:
- * Ctrl+0 shows / hides it, Ctrl+Shift+F searches it, Ctrl+Shift+H opens its History.
+ * Ctrl+0 shows / hides it, Ctrl+Shift+F searches it, Ctrl+Shift+H opens its History. Off
+ * while the workspace is not connected (it has no sidebar then).
  */
-export function useSidebarShortcuts(wsId: string) {
-  useAction("sidebar.toggle", () => useWorkspaces.getState().toggleSidebar());
-  useAction("sidebar.search", () => {
-    if (!useWorkspaces.getState().sidebarVisible) useWorkspaces.getState().toggleSidebar();
-    useSidebar.getState().requestSearchFocus();
-  });
-  useAction("history.toggle", () => showSidebarSegment(wsId, "history"));
+export function useSidebarShortcuts(wsId: string, connected: boolean) {
+  const opts = { enabled: connected };
+  useAction("sidebar.toggle", () => useWorkspaces.getState().toggleSidebar(), opts);
+  useAction(
+    "sidebar.search",
+    () => {
+      if (!useWorkspaces.getState().sidebarVisible) useWorkspaces.getState().toggleSidebar();
+      useSidebar.getState().requestSearchFocus();
+    },
+    opts,
+  );
+  useAction("history.toggle", () => showSidebarSegment(wsId, "history"), opts);
 }
 
 /**
@@ -41,14 +47,11 @@ export function useSidebarShortcuts(wsId: string) {
 export function Sidebar({ workspace }: { workspace: Workspace }) {
   const segment = useSidebar((s) => segmentOf(s.segments, workspace.id));
   const setSegment = useSidebar((s) => s.setSegment);
-  const width = useSidebar((s) => s.width);
 
+  // The width lives in SidebarFrame only: a resize drag re-renders the frame, not the tree
+  // and lists passed to it (same elements, so React skips them).
   return (
-    <aside
-      aria-label={S.label}
-      style={{ width }}
-      className="relative flex h-full shrink-0 flex-col border-r border-sep bg-side text-text"
-    >
+    <SidebarFrame>
       <div className="flex h-10 shrink-0 items-center px-2.5">
         <div
           role="group"
@@ -72,6 +75,19 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       {segment === "queries" && <SavedQueries workspace={workspace} />}
       {segment === "history" && <HistoryPanel workspace={workspace} />}
       <SidebarFooter workspace={workspace} />
+    </SidebarFrame>
+  );
+}
+
+function SidebarFrame({ children }: { children: ReactNode }) {
+  const width = useSidebar((s) => s.width);
+  return (
+    <aside
+      aria-label={S.label}
+      style={{ width }}
+      className="relative flex h-full shrink-0 flex-col border-r border-sep bg-side text-text"
+    >
+      {children}
       <ResizeHandle width={width} />
     </aside>
   );
@@ -80,6 +96,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
 /** The sidebar's right edge: drag it, or use the arrow keys once focused. */
 function ResizeHandle({ width }: { width: number }) {
   const setWidth = useSidebar((s) => s.setWidth);
+  const saveWidth = useSidebar((s) => s.saveWidth);
   const drag = useRef<{ x: number; width: number } | null>(null);
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
@@ -91,6 +108,7 @@ function ResizeHandle({ width }: { width: number }) {
     };
     const up = () => {
       drag.current = null;
+      saveWidth();
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
@@ -120,6 +138,9 @@ function ResizeHandle({ width }: { width: number }) {
       tabIndex={0}
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
+      onKeyUp={(e) => {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") saveWidth();
+      }}
       className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize outline-none hover:bg-accent/30 focus-visible:bg-accent/50"
     />
   );
