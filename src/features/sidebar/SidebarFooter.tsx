@@ -1,4 +1,4 @@
-import { ChevronDown, Plus, Settings } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import { useRef, useState } from "react";
 import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
@@ -21,8 +21,9 @@ export function refreshSidebar(ws: Workspace) {
 }
 
 /**
- * The bottom of the sidebar (spec §2.3): settings, [+ | ⌄] (new SQL tab; a menu with New
- * SQL query and Refresh) and the schema picker.
+ * The bottom of the sidebar (spec §2.3): [+ | ⌄] (new SQL tab; a menu with New SQL query
+ * and Refresh) and the schema picker. The settings live at the bottom of the connections
+ * column (#104).
  */
 export function SidebarFooter({ workspace }: { workspace: Workspace }) {
   const setSchema = useWorkspaces((s) => s.setSchema);
@@ -31,19 +32,9 @@ export function SidebarFooter({ workspace }: { workspace: Workspace }) {
   const more = useRef<HTMLButtonElement>(null);
   const newQuery = () => useWorkspaces.getState().openQueryTab(workspace.id);
   const newQueryKey = formatShortcut(useEffectiveShortcut("query.new"));
-  const settingsKey = formatShortcut(useEffectiveShortcut("settings.open"));
 
   return (
     <div className="flex h-10 shrink-0 items-center gap-1.5 border-t border-sep px-2">
-      <button
-        type="button"
-        aria-label={strings.settings.open}
-        {...tip(strings.settings.open, settingsKey)}
-        onClick={() => useChrome.getState().requestSettings()}
-        className={`${iconButton} rounded-md`}
-      >
-        <Settings aria-hidden size={15} strokeWidth={1.6} />
-      </button>
       <div className="flex shrink-0 items-center overflow-hidden rounded-md border border-pill-border bg-btn">
         {sqlEditor && (
           <button type="button" aria-label={S.newQuery} {...tip(S.newQuery, newQueryKey)} onClick={newQuery} className={iconButton}>

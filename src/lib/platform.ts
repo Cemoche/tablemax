@@ -23,6 +23,14 @@ export function isLinux(
   return /linux/i.test(platform) || (!platform && /Linux/.test(userAgent));
 }
 
+/** Windows, from the platform or the user agent (arguments for tests). */
+export function isWindows(
+  platform: string = currentPlatform(),
+  userAgent: string = typeof navigator === "undefined" ? "" : navigator.userAgent,
+): boolean {
+  return /^win/i.test(platform) || (!platform && /Windows/.test(userAgent));
+}
+
 /** The "Mod" key of a shortcut is down: Cmd on macOS, Ctrl elsewhere (not both). */
 export function isModKey(
   e: { ctrlKey: boolean; metaKey: boolean },

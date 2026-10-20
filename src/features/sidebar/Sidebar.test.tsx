@@ -1,9 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
-import { useChrome } from "../../stores/chrome";
 import { SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_WIDTH_KEY, loadSidebarWidth, useSidebar } from "../../stores/sidebar";
 import { useSavedQueries } from "../../stores/savedQueries";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
@@ -147,13 +146,11 @@ test("sidebar_toggle_and_resize: Ctrl+0 hides and shows; the width is dragged, c
   expect(loadSidebarWidth()).toBe(SIDEBAR_MIN);
 });
 
-test("the footer: settings, new SQL tab, refresh and the schema picker", async () => {
+test("the footer: [+] [⌄] [schema] only, the settings live in the connections column (#104)", async () => {
   render(<Harness id="w1" />);
   await screen.findByRole("treeitem", { name: /orders/ });
 
-  act(() => useChrome.setState({ settingsRequest: 0 }));
-  await userEvent.click(screen.getByRole("button", { name: strings.settings.open }));
-  expect(useChrome.getState().settingsRequest).toBe(1);
+  expect(screen.queryByRole("button", { name: strings.settings.open })).toBeNull();
 
   await userEvent.click(screen.getByRole("button", { name: S.newQuery }));
   expect(useWorkspaces.getState().workspaces[0].tabs).toEqual([
