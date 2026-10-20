@@ -8,6 +8,7 @@ import { useGridViews } from "../../stores/gridViews";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { CloseConfirm } from "./CloseConfirm";
 import { TabBar } from "./TabBar";
 
 vi.mock("../../lib/ipc");
@@ -43,11 +44,23 @@ function setup(tabs: Tab[], activeTabId: string | null = tabs[0]?.id ?? null) {
     const w = useWorkspaces((s) => s.workspaces[0]);
     return w ? <TabBar workspace={w} /> : null;
   };
-  return render(<Live />);
+  return render(
+    <>
+      <Live />
+      <CloseConfirm />
+    </>,
+  );
 }
 
 const ws = () => useWorkspaces.getState().workspaces[0];
 const tab = (name: string) => screen.getByRole("tab", { name });
+/** A capsule's close button (mouse only, hidden from assistive tech). */
+const closeButtonOf = (tabName: string) =>
+  screen
+    .getByRole("tab", { name: tabName })
+    .closest("[data-tab-id]")
+    ?.querySelector<HTMLButtonElement>('button[aria-hidden="true"]') as HTMLButtonElement;
+
 
 beforeEach(() => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
@@ -128,7 +141,8 @@ test("tabs follow the tablist pattern: one Tab stop, arrows move, Enter activate
   expect(tab("Query 1")).toHaveAttribute("tabindex", "0");
   expect(tab("Query 2")).toHaveAttribute("tabindex", "-1");
   // The close buttons are not Tab stops (Delete closes the focused tab).
-  expect(screen.getByRole("button", { name: strings.workspace.closeTab("Query 2") })).toHaveAttribute("tabindex", "-1");
+  const closeQ2 = closeButtonOf("Query 2");
+  expect(closeQ2).toHaveAttribute("tabindex", "-1");
   tab("Query 1").focus();
   await userEvent.keyboard("{ArrowRight}");
   expect(tab("Query 2")).toHaveFocus();
@@ -257,4 +271,94 @@ test("middle click closes a tab and a double click pins a preview tab", async ()
   expect(ws().tabs[0]).toMatchObject({ preview: false });
   await userEvent.pointer({ keys: "[MouseMiddle]", target: tab("Query 1") });
   expect(ws().tabs.map((t) => t.id)).toEqual(["p"]);
+});
+
+// ---- Fix round 1 ----
+
+const users2: ObjectRef = { schema: "public", name: "orders" };
+const pendingTabs = () => [
+  { id: "t", kind: "table" as const, object: users, title: "users", preview: false },
+  { id: "o", kind: "table" as const, object: users2, title: "orders", preview: false },
+  q("a", "Query 1"),
+];
+const cancel = () => screen.getByRole("button", { name: strings.grid.discardCancel });
+
+test("Close from the menu with pending changes leaves the focus on the dialog's Cancel", async () => {
+  setup(pendingTabs());
+  usePendingChanges.getState().addInsert("t", users);
+  await userEvent.pointer({ keys: "[MouseRight]", target: tab("users") });
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.workspace.tabMenu.close }));
+  await act(async () => {});
+  expect(cancel()).toHaveFocus();
+});
+
+test("Close others from the menu with pending changes leaves the focus on the dialog's Cancel", async () => {
+  setup(pendingTabs());
+  usePendingChanges.getState().addInsert("t", users);
+  await userEvent.pointer({ keys: "[MouseRight]", target: tab("Query 1") });
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.workspace.tabMenu.closeOthers }));
+  await act(async () => {});
+  expect(cancel()).toHaveFocus();
+});
+
+test("Delete with pending changes then Cancel: a later update never pulls the focus to the tabs", async () => {
+  setup(pendingTabs());
+  usePendingChanges.getState().addInsert("t", users);
+  tab("users").focus();
+  await userEvent.keyboard("{Delete}");
+  await userEvent.click(cancel());
+  expect(ws().tabs).toHaveLength(3);
+  const field = document.createElement("input");
+  document.body.appendChild(field);
+  field.focus();
+  act(() => {
+    useWorkspaces.getState().renameTab("w1", "a", "Other name");
+  });
+  await act(async () => {});
+  expect(field).toHaveFocus();
+  field.remove();
+});
+
+test("a real close from the menu moves the focus to the new active tab", async () => {
+  setup([q("a", "Query 1"), q("b", "Query 2")], "b");
+  await userEvent.pointer({ keys: "[MouseRight]", target: tab("Query 2") });
+  await userEvent.click(screen.getByRole("menuitem", { name: strings.workspace.tabMenu.close }));
+  expect(ws().tabs.map((t) => t.id)).toEqual(["a"]);
+  expect(tab("Query 1")).toHaveFocus();
+});
+
+test("close buttons are hidden from assistive tech; the tabs announce their keys", () => {
+  setup([q("a", "Query 1"), q("b", "Query 2")]);
+  const list = screen.getByRole("tablist");
+  // Only tabs are exposed inside the tablist (aria-required-children).
+  expect(within(list).queryAllByRole("button")).toHaveLength(0);
+  expect(within(list).getAllByRole("tab")).toHaveLength(2);
+  for (const b of within(list).getAllByRole("button", { hidden: true })) {
+    expect(b).toHaveAttribute("aria-hidden", "true");
+  }
+  expect(tab("Query 1")).toHaveAttribute("aria-keyshortcuts", "Delete F2 Shift+F10");
+});
+
+test("the close button of the active capsule has a hover colour that differs from the capsule", () => {
+  setup([q("a", "Query 1"), q("b", "Query 2")]);
+  const activeClose = closeButtonOf("Query 1");
+  const otherClose = closeButtonOf("Query 2");
+  expect(activeClose).toHaveClass("hover:bg-tab");
+  expect(activeClose).not.toHaveClass("hover:bg-tab-sel");
+  expect(otherClose).toHaveClass("hover:bg-tab-sel");
+});
+
+test("inactive capsule text and the database badge use the tab text token", () => {
+  setup([
+    q("a", "Query 1"),
+    { id: "b", kind: "query", title: "Query 2", sql: "", sqlSessionId: "s", database: "app" },
+  ]);
+  act(() =>
+    useWorkspaces.setState((s) => ({ workspaces: s.workspaces.map((w) => ({ ...w, database: "other" })) })),
+  );
+  const capsule = screen.getByRole("tab", { name: /Query 2/ }).closest("[data-tab-id]");
+  expect(capsule).toHaveClass("text-tab-text");
+  expect(capsule).not.toHaveClass("text-text-2");
+  const badge = screen.getByTitle(strings.workspace.tabDatabase("app"));
+  expect(badge.className).not.toMatch(/text-text-2/);
 });

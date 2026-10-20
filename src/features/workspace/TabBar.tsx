@@ -80,9 +80,18 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
+  /**
+   * Asks the focus to go to the new active tab, only when the tabs really closed: a close
+   * waiting for "Discard pending changes?" (or refused while committing) leaves the focus to
+   * the dialog, and nothing is left pending to take it later.
+   */
+  const focusActiveIfClosed = (closed: () => boolean) => {
+    refocus.current = closed() && !useWorkspaces.getState().closeRequest ? "active" : null;
+  };
+  const tabIds = () => useWorkspaces.getState().workspaces.find((w) => w.id === id)?.tabs.map((t) => t.id) ?? [];
   const close = (tabId: string) => {
-    refocus.current = "active";
     closeTab(id, tabId);
+    focusActiveIfClosed(() => !tabIds().includes(tabId));
   };
 
   const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>, t: Tab) => {
@@ -118,8 +127,9 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
           {
             label: S.tabMenu.closeOthers,
             run: () => {
-              refocus.current = "active";
+              const before = tabIds().length;
               closeOtherTabs(id, tabId);
+              focusActiveIfClosed(() => tabIds().length < before);
             },
           },
         ]
@@ -166,7 +176,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
               data-tab-id={t.id}
               style={{ flexGrow: 1, flexShrink: 0, flexBasis: 0, minWidth: 120 }}
               className={`group relative flex h-7 min-w-0 items-center rounded-full ${
-                active ? "bg-tab-sel text-text" : "bg-tab text-text-2 hover:text-text"
+                active ? "bg-tab-sel text-text" : "bg-tab text-tab-text hover:text-text"
               }`}
               onMouseDown={(e) => {
                 if (e.button === 1) e.preventDefault(); // suppress autoscroll
@@ -194,15 +204,18 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                 />
               ) : (
                 <>
+                  {/* Mouse only (hidden from assistive tech: a tablist owns tabs only); the
+                      keyboard closes with Delete or the tab menu. */}
                   <button
                     type="button"
                     tabIndex={-1}
+                    aria-hidden="true"
                     aria-label={S.closeTab(t.title)}
                     title={busy ? strings.grid.closeWhileCommitting : S.closeTab(t.title)}
                     disabled={busy}
                     onClick={() => closeTab(id, t.id)}
-                    className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon hover:bg-tab-sel disabled:opacity-40 ${
-                      active ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon disabled:opacity-40 ${
+                      active ? "opacity-100 hover:bg-tab" : "opacity-0 hover:bg-tab-sel group-hover:opacity-100"
                     }`}
                   >
                     <X aria-hidden="true" size={12} />
@@ -213,6 +226,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     id={tabDomId(t.id)}
                     aria-selected={active}
                     tabIndex={active ? 0 : -1}
+                    aria-keyshortcuts="Delete F2 Shift+F10"
                     title={t.title}
                     onClick={() => activateTab(id, t.id)}
                     onDoubleClick={() => pinTab(id, t.id)}
@@ -229,7 +243,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     {t.kind === "query" && t.database && workspace.database && t.database !== workspace.database && (
                       <span
                         title={S.tabDatabase(t.database)}
-                        className="shrink-0 rounded-sm border border-border px-1 text-xs font-normal not-italic text-text-2"
+                        className="shrink-0 rounded-sm border border-border px-1 text-xs font-normal not-italic"
                       >
                         {t.database}
                       </span>
