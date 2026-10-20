@@ -38,5 +38,15 @@
   "grid.setValue",
   "grid.copyCells",
   "grid.duplicateRows",
-  "grid.deleteRows"
+  "grid.deleteRows",
+  "grid.addRow",
+  "grid.filters",
+  "grid.columns",
+  "grid.previousPage",
+  "grid.nextPage",
+  "filters.toggle",
+  "filters.add",
+  "filters.remove",
+  "filters.applyAll",
+  "filters.applyAllOr"
 ]

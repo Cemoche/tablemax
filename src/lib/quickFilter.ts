@@ -1,4 +1,4 @@
-import type { Filter, FilterOp } from "./types";
+import type { Filter, FilterCombine, FilterOp } from "./types";
 
 // Quick-filter grammar (case-insensitive keywords):
 //   input := cond (AND cond)*            (empty/blank input = no filters)
@@ -16,8 +16,12 @@ import type { Filter, FilterOp } from "./types";
 // any) is never a value: write it quoted ('and'). Bare `any` as a column is the any-column
 // keyword, "any" is a real column. `any` accepts only the ops Filter allows for a null
 // column (eq, contains, notContains, like). `NOT ILIKE` does not exist (no Filter op).
-// `or` is not supported (Filters are ANDed). An ambiguous case-insensitive column match is
-// an error. Any error returns no filters at all.
+// `or` is not supported (the conditions of one text are ANDed). An ambiguous
+// case-insensitive column match is an error. Any error returns no filters at all.
+//
+// The filter bar's "Raw SQL" mode reads its text with this grammar first
+// (`rawConditionFilters`): there a value must not be read as SQL by the user (a bare word
+// naming a column, a "…" identifier, CURRENT_DATE…), else the text is sent as SQL.
 
 const RESERVED = new Set([
   "and", "not", "is", "null", "in", "between", "like", "ilike", "contains", "any",
@@ -85,11 +89,19 @@ const OPS: Record<string, FilterOp> = {
   "=": "eq", "!=": "neq", "<>": "neq", "<": "lt", ">": "gt", "<=": "lte", ">=": "gte",
 };
 
+/** Bare words SQL reads as values of its own (not text): the Raw SQL mode sends them as SQL. */
+const SQL_VALUE_WORDS = new Set([
+  "current_date", "current_time", "current_timestamp", "localtime", "localtimestamp",
+  "current_user", "session_user",
+]);
+
 class Parser {
   private p = 0;
   constructor(
     private t: Token[],
     private columns: string[],
+    /** Raw SQL mode: refuse a value SQL would read otherwise (see the grammar notes). */
+    private sqlValues = false,
   ) {}
 
   private peek = () => this.t[this.p];
@@ -138,6 +150,15 @@ class Parser {
 
   private value(): string {
     const t = this.next();
+    if (this.sqlValues) {
+      if (t.k === "dq") return fail("a double-quoted name");
+      if (t.k === "word" && !NUMBER.test(t.s)) {
+        const w = t.s.toLowerCase();
+        if (SQL_VALUE_WORDS.has(w) || this.columns.some((c) => c.toLowerCase() === w)) {
+          return fail(`"${t.s}" is a name`);
+        }
+      }
+    }
     if (t.k === "sq" || t.k === "dq") return t.s;
     if (t.k === "word") {
       if (t.s.toLowerCase() === "null") return fail("use IS NULL / IS NOT NULL to test for NULL");
@@ -242,17 +263,31 @@ class Parser {
   }
 }
 
-/** Parse the quick-filter bar text. Any error gives `filters: []` and a message. */
+/** Parse a quick-filter text. Any error gives `filters: []` and a message. */
 export function parseQuickFilter(
   input: string,
   columns: string[],
+  sqlValues = false,
 ): { filters: Filter[]; error: string | null } {
   try {
-    return { filters: new Parser(tokenize(input), columns).parseAll(), error: null };
+    return { filters: new Parser(tokenize(input), columns, sqlValues).parseAll(), error: null };
   } catch (e) {
     if (e instanceof QuickFilterError) return { filters: [], error: e.message };
     throw e;
   }
+}
+
+/**
+ * The filters of a "Raw SQL" row of the filter bar (spec §2.3: the quick syntax becomes the
+ * Raw SQL mode). Text in the quick syntax becomes bound filters: one condition always,
+ * several (joined by AND) only when the bar's filters are ANDed too, since under OR the
+ * row's conditions must stay together. Anything else is the user's own SQL, sent as typed
+ * (a `raw` filter, between parentheses on the backend). `text` must not be blank.
+ */
+export function rawConditionFilters(text: string, columns: string[], combine: FilterCombine = "and"): Filter[] {
+  const r = parseQuickFilter(text, columns, true);
+  if (r.error === null && r.filters.length > 0 && (r.filters.length === 1 || combine === "and")) return r.filters;
+  return [{ column: null, op: "raw", values: [text] }];
 }
 
 const SIMPLE_WORD = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -261,9 +296,6 @@ const quote = (s: string, q: string) => `${q}${s.split(q).join(q + q)}${q}`;
 
 const fmtColumn = (c: string | null): string =>
   c === null ? "any" : SIMPLE_WORD.test(c) && !RESERVED.has(c.toLowerCase()) ? c : quote(c, '"');
-
-/** A column as the quick filter writes it (quoted when it must be): `note`, `"order"`. */
-export const quickFilterColumn = (c: string): string => fmtColumn(c);
 
 const fmtValue = (v: string): string =>
   NUMBER.test(v) || (SIMPLE_WORD.test(v) && !RESERVED.has(v.toLowerCase())) ? v : quote(v, "'");
@@ -278,20 +310,6 @@ const SYMBOL: Partial<Record<FilterOp, string>> = {
 export const ARITY: Readonly<Partial<Record<FilterOp, number>>> = { isNull: 0, isNotNull: 0, between: 2, notBetween: 2 };
 /** The operators an any-column filter may use (the backend allows these four). */
 export const ANY_OPS: readonly FilterOp[] = ["eq", "contains", "notContains", "like"];
-
-/**
- * True when `parseQuickFilter(formatQuickFilter(filters))` gives the same filters, i.e. the
- * bar can show them. False for a `raw` filter, an any-column filter the grammar rejects, or
- * a filter with the wrong number of values (the UI shows an "advanced" badge instead).
- */
-export function isQuickFilterRepresentable(filters: Filter[]): boolean {
-  return filters.every((f) => {
-    if (f.op === "raw") return false;
-    if (f.column === null && !ANY_OPS.includes(f.op)) return false;
-    if (f.op === "in" || f.op === "notIn") return f.values.length >= 1;
-    return f.values.length === (ARITY[f.op] ?? 1);
-  });
-}
 
 function formatOne(f: Filter): string {
   if (f.op === "raw") return `(${f.values[0] ?? ""})`;
@@ -312,7 +330,10 @@ function formatOne(f: Filter): string {
   }
 }
 
-/** Inverse of parseQuickFilter, joined by " AND ". A `raw` filter shows as `(sql)` and cannot be re-parsed. */
-export function formatQuickFilter(filters: Filter[]): string {
-  return filters.map(formatOne).join(" AND ");
+/**
+ * Inverse of parseQuickFilter, joined by " AND " (" OR " for filters joined by OR, which
+ * the grammar does not read back). A `raw` filter shows as `(sql)` and cannot be re-parsed.
+ */
+export function formatQuickFilter(filters: Filter[], combine: FilterCombine = "and"): string {
+  return filters.map(formatOne).join(combine === "or" ? " OR " : " AND ");
 }

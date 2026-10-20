@@ -18,7 +18,7 @@ const lines: ObjectRef = { schema: "public", name: "order_lines" };
 const customers: ObjectRef = { schema: "public", name: "customers" };
 const eq = (column: string, v: string): Filter => ({ column, op: "eq", values: [v] });
 const ordersView: GridView = { page: 2, sort: ["total", "desc"], filters: [eq("status", "paid")] };
-const linesView: GridView = { page: 0, sort: null, filters: [eq("order_id", "7")] };
+const linesView: GridView = { page: 0, sort: null, filters: [eq("order_id", "7"), eq("line", "2")], combine: "or" };
 
 beforeEach(() => {
   useSettings.setState({ settings: DEFAULT_SETTINGS });
@@ -82,7 +82,10 @@ const tab = () => useWorkspaces.getState().workspaces[0].tabs[0];
 test("shows the trail then the current table with its filter", () => {
   render(<Harness />);
   const nav = screen.getByRole("navigation", { name: strings.grid.trail.label });
-  expect(nav).toHaveTextContent("orders (status = paid)›order_lines (order_id = 7)›customers (id = 42)");
+  // A view whose filters are joined by OR reads with OR.
+  expect(nav).toHaveTextContent(
+    "orders (status = paid)›order_lines (order_id = 7 OR line = 2)›customers (id = 42)",
+  );
   expect(screen.getByText(strings.grid.trail.crumb("customers", "id = 42"))).toHaveAttribute(
     "aria-current",
     "page",

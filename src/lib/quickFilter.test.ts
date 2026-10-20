@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Filter } from "./types";
-import { formatQuickFilter, isQuickFilterRepresentable, parseQuickFilter } from "./quickFilter";
+import { formatQuickFilter, parseQuickFilter, rawConditionFilters } from "./quickFilter";
 
 const cols = ["status", "total", "id", "name", "created_at", "notes", "order date", 'we"ird', "back`tick", "é名"];
 const ok = (s: string, c = cols) => {
@@ -230,25 +230,58 @@ describe("formatQuickFilter", () => {
   test("empty list formats to an empty string", () => {
     expect(formatQuickFilter([])).toBe("");
   });
-  test("raw is shown in parentheses and is not representable", () => {
+  test("raw is shown in parentheses", () => {
     const raw: Filter = { column: null, op: "raw", values: ["a > 1 OR b"] };
     expect(formatQuickFilter([raw])).toBe("(a > 1 OR b)");
-    expect(isQuickFilterRepresentable([raw])).toBe(false);
-    expect(isQuickFilterRepresentable([{ column: "a", op: "eq", values: ["1"] }, raw])).toBe(false);
+  });
+  test("filters joined by OR read with OR", () => {
+    const two: Filter[] = [
+      { column: "status", op: "eq", values: ["paid"] },
+      { column: "total", op: "gt", values: ["5"] },
+    ];
+    expect(formatQuickFilter(two, "or")).toBe("status = paid OR total > 5");
+    expect(formatQuickFilter(two, "and")).toBe("status = paid AND total > 5");
   });
 });
 
-describe("isQuickFilterRepresentable", () => {
-  test("true for parseable filters, including none", () => {
-    expect(isQuickFilterRepresentable([])).toBe(true);
-    expect(isQuickFilterRepresentable([{ column: "a", op: "in", values: ["1"] }])).toBe(true);
-    expect(isQuickFilterRepresentable([{ column: null, op: "contains", values: ["x"] }])).toBe(true);
+describe("rawConditionFilters", () => {
+  const columns = ["id", "status", "total", "cost", "note"];
+  const sql = (text: string): Filter[] => [{ column: null, op: "raw", values: [text] }];
+  test("raw_sql_mode_uses_quick_syntax: one quick condition becomes a bound filter", () => {
+    expect(rawConditionFilters("status = 'paid'", columns)).toEqual([
+      { column: "status", op: "eq", values: ["paid"] },
+    ]);
+    expect(rawConditionFilters("note contains x", columns)).toEqual([
+      { column: "note", op: "contains", values: ["x"] },
+    ]);
+    expect(rawConditionFilters("any contains 'foo bar'", columns)).toEqual([
+      { column: null, op: "contains", values: ["foo bar"] },
+    ]);
+    expect(rawConditionFilters("ID IN (1, 2)", columns)).toEqual([{ column: "id", op: "in", values: ["1", "2"] }]);
+    // A bare word that is not a column is a value, as in the quick filter.
+    expect(rawConditionFilters("status = paid", columns)).toEqual([
+      { column: "status", op: "eq", values: ["paid"] },
+    ]);
+    // Several conditions joined by AND are bound one by one when the filters are ANDed.
+    expect(rawConditionFilters("status = 'paid' AND total > 5", columns, "and")).toEqual([
+      { column: "status", op: "eq", values: ["paid"] },
+      { column: "total", op: "gt", values: ["5"] },
+    ]);
   });
-  test("false when the grammar cannot express it", () => {
-    expect(isQuickFilterRepresentable([{ column: null, op: "gt", values: ["1"] }])).toBe(false);
-    expect(isQuickFilterRepresentable([{ column: "a", op: "in", values: [] }])).toBe(false);
-    expect(isQuickFilterRepresentable([{ column: "a", op: "between", values: ["1"] }])).toBe(false);
-    expect(isQuickFilterRepresentable([{ column: "a", op: "eq", values: [] }])).toBe(false);
-    expect(isQuickFilterRepresentable([{ column: "a", op: "isNull", values: ["x"] }])).toBe(false);
+  test("anything else is the user's SQL, as typed", () => {
+    // Two columns compared: SQL, not the text "cost".
+    expect(rawConditionFilters("total = cost", columns)).toEqual(sql("total = cost"));
+    // "…" is an identifier in SQL (or a string, per engine): the engine decides.
+    expect(rawConditionFilters('status = "paid"', columns)).toEqual(sql('status = "paid"'));
+    expect(rawConditionFilters("total > 2 * cost", columns)).toEqual(sql("total > 2 * cost"));
+    expect(rawConditionFilters("status NOT ILIKE 'p%'", columns)).toEqual(sql("status NOT ILIKE 'p%'"));
+    expect(rawConditionFilters("created < current_date", ["created"])).toEqual(sql("created < current_date"));
+    expect(rawConditionFilters("nope = 1", columns)).toEqual(sql("nope = 1"));
+    // Under OR the conditions of one row must stay together: the SQL keeps them so.
+    expect(rawConditionFilters("status = 'paid' AND total > 5", columns, "or")).toEqual(
+      sql("status = 'paid' AND total > 5"),
+    );
+    // One condition reads the same under OR.
+    expect(rawConditionFilters("total > 5", columns, "or")).toEqual([{ column: "total", op: "gt", values: ["5"] }]);
   });
 });

@@ -1,9 +1,9 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { useEffectiveShortcut } from "../../lib/keymap";
+import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
-import type { Dialect, Filter, ObjectRef, SortDir } from "../../lib/types";
+import type { Dialect, Filter, FilterCombine, ObjectRef, SortDir } from "../../lib/types";
 import { useChrome, useOnRequest } from "../../stores/chrome";
 import { useGridViews } from "../../stores/gridViews";
 import { usePendingChanges } from "../../stores/pendingChanges";
@@ -22,12 +22,12 @@ import { GridContextMenu, type MenuItem, joinMenuGroups } from "./GridContextMen
 import { PendingChangesPanel } from "./PendingChangesPanel";
 import { QuickLook } from "./QuickLook";
 import { RowDetailPanel } from "./RowDetailPanel";
+import { type TableView, TableBottomBar, useTableView } from "./TableBottomBar";
 import { formatRowCount, usePagedTable } from "./usePagedTable";
 import { useFkLinks } from "./useFkLinks";
 import { useRowDetail } from "./useRowDetail";
 import { useSelectionCopy } from "./useSelectionCopy";
 import { useTableEditing } from "./useTableEditing";
-import { ViewToggle, useTableView } from "./ViewToggle";
 
 interface Props {
   workspaceId: string;
@@ -92,25 +92,33 @@ export function TableDataTab(props: Props) {
   /** The commit confirmation closed: Commit gets the focus back once the tab is unlocked. */
   const refocusCommit = useRef(false);
   const toggleRef = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const panelIds: Record<TableView, string> = { data: `${id}-data`, structure: `${id}-structure` };
+  const structure = structureSeen && (
+    <div
+      id={panelIds.structure}
+      role="tabpanel"
+      aria-label={strings.grid.view.structure}
+      hidden={view !== "structure"}
+      className="min-h-0 flex-1"
+    >
+      <StructureTab workspaceId={props.workspaceId} object={props.object} dialect={props.dialect} />
+    </div>
+  );
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <ViewToggle view={view} onChange={setView} listRef={toggleRef} />
-      <div hidden={view !== "data"} className="min-h-0 flex-1">
-        {/* Another table (foreign key navigation) starts afresh: page, grid, selection, menus. */}
-        <TableDataView
-          key={JSON.stringify([props.object.schema, props.object.name])}
-          {...props}
-          detail={detail}
-          active={view === "data"}
-          refocusCommit={refocusCommit}
-          toggleRef={toggleRef}
-        />
-      </div>
-      {structureSeen && (
-        <div hidden={view !== "structure"} className="min-h-0 flex-1">
-          <StructureTab workspaceId={props.workspaceId} object={props.object} dialect={props.dialect} />
-        </div>
-      )}
+      {/* Another table (foreign key navigation) starts afresh: page, grid, selection, menus. */}
+      <TableDataView
+        key={JSON.stringify([props.object.schema, props.object.name])}
+        {...props}
+        detail={detail}
+        view={view}
+        onView={setView}
+        panelIds={structureSeen ? panelIds : { data: panelIds.data }}
+        structure={structure}
+        refocusCommit={refocusCommit}
+        toggleRef={toggleRef}
+      />
       <CommitConfirmDialog
         workspaceId={props.workspaceId}
         tabId={props.tabId}
@@ -128,18 +136,25 @@ function TableDataView({
   object,
   dialect,
   detail,
-  active,
+  view,
+  onView,
+  panelIds,
+  structure,
   refocusCommit,
   toggleRef,
 }: Props & {
   detail: ReturnType<typeof useRowDetail>;
-  active: boolean;
+  view: TableView;
+  onView: (v: TableView) => void;
+  panelIds: Partial<Record<TableView, string>>;
+  /** The structure view (mounted once seen), shown above the bottom bar in place of the rows. */
+  structure: ReactNode;
   refocusCommit: RefObject<boolean>;
   toggleRef: RefObject<HTMLDivElement | null>;
 }) {
+  const active = view === "data";
   const pageSizeSetting = useSettings((s) => s.settings.pageSize);
   const commitShortcut = useEffectiveShortcut("grid.commit");
-  const rowDetailsShortcut = useEffectiveShortcut("grid.rowDetails");
   const t = usePagedTable(workspaceId, object, tabId, pageSizeSetting);
   // The toolbar's Reload (and Mod+R) reload this tab's page like its own Reload button.
   useOnRequest(useChrome((s) => s.reloads[tabId] ?? 0), t.reload);
@@ -171,11 +186,70 @@ function TableDataView({
     const l = reconcileLayout(storedLayout, modelCols);
     return l.order.filter((n) => !l.hidden.includes(n)).map((n) => modelCols.indexOf(n));
   })();
-  /** Narrows the rows with one more filter (the same one twice is kept once). */
+  /**
+   * Narrows the rows with one more filter, ANDed (the same one twice is kept once). Under
+   * OR one more filter would widen them instead: the filter then replaces the others.
+   */
   const addFilter = (f: Filter) => {
+    if (t.combine === "or" && t.filters.length > 1) {
+      t.setFilters([f]);
+      return;
+    }
     const key = JSON.stringify(f);
     t.setFilters([...t.filters.filter((x) => JSON.stringify(x) !== key), f]);
   };
+
+  // The filter bar (Filters, Ctrl+F). It opens by itself when filters get applied from
+  // elsewhere (a quick filter, a foreign key, Filter with column) so they always show.
+  const filterBarId = useId();
+  const filtersButtonRef = useRef<HTMLButtonElement>(null);
+  const filterBarRef = useRef<HTMLDivElement>(null);
+  const [filtersOpen, setFiltersOpen] = useState(() => t.filters.length > 0);
+  /** Each new value puts the focus in the bar (opened from the keyboard or its button). */
+  const [filterFocus, setFilterFocus] = useState(0);
+  /** What had the focus when the bar was opened from the keyboard: it gets it back on close. */
+  const filterOpener = useRef<Element | null>(null);
+  const appliedKey = JSON.stringify([t.filters, t.combine]);
+  const [seenApplied, setSeenApplied] = useState(appliedKey);
+  if (seenApplied !== appliedKey) {
+    setSeenApplied(appliedKey);
+    if (t.filters.length > 0 && !filtersOpen) setFiltersOpen(true);
+  }
+  const openFilters = () => {
+    filterOpener.current = document.activeElement;
+    setFiltersOpen(true);
+    setFilterFocus((n) => n + 1);
+  };
+  const closeFilters = () => {
+    const bar = filterBarRef.current;
+    if (bar?.contains(document.activeElement)) {
+      const back = filterOpener.current;
+      const target =
+        back instanceof HTMLElement && back.isConnected && !bar.contains(back) && back !== document.body
+          ? back
+          : filtersButtonRef.current;
+      target?.focus();
+    }
+    filterOpener.current = null;
+    setFiltersOpen(false);
+    setFilterFocus(0);
+    setFilterStart(null);
+  };
+  // Ctrl+F: opens the bar with the focus in it; from outside an open bar, moves the focus
+  // into it (inside the bar the bar closes itself). Not in a text field: it is the field's.
+  useAction(
+    "grid.filters",
+    () => {
+      if (!filtersOpen) openFilters();
+      else {
+        filterOpener.current = document.activeElement;
+        setFilterFocus((n) => n + 1);
+      }
+    },
+    { enabled: active, skipInEditable: true },
+  );
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  useAction("grid.columns", () => setColumnsOpen((o) => !o), { enabled: active, skipInEditable: true });
   const quickFilterItems = (row: number, col: number): MenuItem[] => {
     const name = e.model?.columns[col];
     const cell = e.model?.cell(row, col);
@@ -228,6 +302,14 @@ function TableDataView({
     const commitBtn = commitRef.current;
     (commitBtn && !commitBtn.disabled ? commitBtn : addRowRef.current)?.focus();
   }, [active, e.confirm, e.locked, refocusCommit, toggleRef]);
+  // + Row (Ctrl+I) as its button; not in a field (the filter bar takes Ctrl+I itself).
+  useAction(
+    "grid.addRow",
+    () => {
+      if (!e.locked) e.addRow();
+    },
+    { enabled: active && e.editable, skipInEditable: true },
+  );
   const menuItems = target
     ? joinMenuGroups(
         target.col === null
@@ -245,195 +327,218 @@ function TableDataView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} />
-      <FilterBar
-        dialect={dialect}
-        columns={columns}
-        filters={t.filters}
-        onApply={t.setFilters}
-        start={filterStart}
-      />
-      {t.error && (
-        <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger">
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold">{strings.grid.loadFailed}</p>
-            <p className="break-words">{t.error.message}</p>
-            {t.error.kind === "connectionLost" && (
-              <p className="text-muted">{strings.grid.reopenHint}</p>
-            )}
-          </div>
-          <button type="button" className={btn} onClick={t.reload}>
-            {strings.grid.retry}
-          </button>
-        </div>
-      )}
-      {e.readOnly && (
-        <div role="status" className="border-b border-border bg-surface px-3 py-1 text-sm text-muted">
-          {e.readOnly}
-        </div>
-      )}
-      {e.editable && (
-        <div className="flex items-center gap-3 border-b border-border bg-surface px-3 py-1 text-sm">
-          <button
-            ref={addRowRef}
-            type="button"
-            className={btn}
-            onClick={e.addRow}
-            disabled={e.locked}
-          >
-            {strings.grid.addRow}
-          </button>
-          <button
-            ref={commitRef}
-            type="button"
-            className={btn}
-            onClick={e.commit}
-            disabled={e.count === 0 || e.locked || e.outcomeUnknown || e.otherCommitting}
-            title={e.otherCommitting ? strings.grid.otherTabCommitting : undefined}
-          >
-            {e.committing ? strings.grid.committing : strings.grid.commit(formatShortcut(commitShortcut))}
-          </button>
-          {e.committing ? (
-            <button
-              type="button"
-              className={btn}
-              aria-label={strings.grid.cancelCommitLabel}
-              onClick={e.cancelCommit}
-            >
-              {strings.grid.cancelCommit}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={btn}
-              onClick={e.discard}
-              disabled={e.count === 0 || e.locked}
-            >
-              {strings.grid.discard}
-            </button>
+      <div
+        id={panelIds.data}
+        role="tabpanel"
+        aria-label={strings.grid.view.data}
+        hidden={!active}
+        className="min-h-0 flex-1"
+      >
+        <div className="flex h-full min-h-0 flex-col">
+          <Breadcrumb workspaceId={workspaceId} tabId={tabId} object={object} filters={t.filters} combine={t.combine} />
+          {filtersOpen && (
+            <div ref={filterBarRef}>
+              <FilterBar
+                id={filterBarId}
+                dialect={dialect}
+                columns={columns}
+                filters={t.filters}
+                combine={t.combine}
+                onApply={(filters: Filter[], combine: FilterCombine) => t.setFilters(filters, combine)}
+                onClose={closeFilters}
+                focusSeq={filterFocus}
+                start={filterStart}
+              />
+            </div>
+          )}      {t.error && (
+            <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold">{strings.grid.loadFailed}</p>
+                <p className="break-words">{t.error.message}</p>
+                {t.error.kind === "connectionLost" && (
+                  <p className="text-muted">{strings.grid.reopenHint}</p>
+                )}
+              </div>
+              <button type="button" className={btn} onClick={t.reload}>
+                {strings.grid.retry}
+              </button>
+            </div>
           )}
-          {e.count > 0 && <span>{strings.grid.pendingCount(e.count)}</span>}
-          {e.hint && <span className="ml-auto truncate text-muted">{e.hint}</span>}
-        </div>
-      )}
-      {e.failure && (
-        <div role="alert" className="border-b border-border px-3 py-1 text-sm text-danger">
-          <p className="break-words">{e.failure}</p>
-          {/* Only a rolled-back commit wrote nothing; an unknown outcome says so itself. */}
-          {!e.outcomeUnknown && <p className="text-muted">{strings.grid.nothingWritten}</p>}
-        </div>
-      )}
-      {copy.notice && (
-        <div
-          role={copy.notice.error ? "alert" : "status"}
-          className={`flex items-center gap-2 border-b border-border px-3 py-1 text-sm ${copy.notice.error ? "text-danger" : "text-muted"}`}
-        >
-          <span className="min-w-0 flex-1 break-words">{copy.notice.text}</span>
-          <button
-            type="button"
-            aria-label={strings.grid.dismiss}
-            onClick={copy.dismiss}
-            className="shrink-0 rounded-sm px-1.5 text-fg hover:bg-surface-2"
-          >
-            {strings.grid.dismissText}
-          </button>
-        </div>
-      )}
-      {e.blocked && e.count > 0 && (
-        <div role="status" className="border-b border-border px-3 py-1 text-sm text-warning">
-          {strings.grid.commitOrDiscardFirst}
-        </div>
-      )}
-      <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1">
-            {t.result && (
-              <DataGrid
+          {e.readOnly && (
+            <div role="status" className="border-b border-border bg-surface px-3 py-1 text-sm text-muted">
+              {e.readOnly}
+            </div>
+          )}
+          {e.editable && (
+            <div className="flex items-center gap-3 border-b border-border bg-surface px-3 py-1 text-sm">
+              <button
+                ref={commitRef}
+                type="button"
+                className={btn}
+                onClick={e.commit}
+                disabled={e.count === 0 || e.locked || e.outcomeUnknown || e.otherCommitting}
+                title={e.otherCommitting ? strings.grid.otherTabCommitting : undefined}
+              >
+                {e.committing ? strings.grid.committing : strings.grid.commit(formatShortcut(commitShortcut))}
+              </button>
+              {e.committing ? (
+                <button
+                  type="button"
+                  className={btn}
+                  aria-label={strings.grid.cancelCommitLabel}
+                  onClick={e.cancelCommit}
+                >
+                  {strings.grid.cancelCommit}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={btn}
+                  onClick={e.discard}
+                  disabled={e.count === 0 || e.locked}
+                >
+                  {strings.grid.discard}
+                </button>
+              )}
+              {e.count > 0 && <span>{strings.grid.pendingCount(e.count)}</span>}
+              {e.hint && <span className="ml-auto truncate text-muted">{e.hint}</span>}
+            </div>
+          )}
+          {e.failure && (
+            <div role="alert" className="border-b border-border px-3 py-1 text-sm text-danger">
+              <p className="break-words">{e.failure}</p>
+              {/* Only a rolled-back commit wrote nothing; an unknown outcome says so itself. */}
+              {!e.outcomeUnknown && <p className="text-muted">{strings.grid.nothingWritten}</p>}
+            </div>
+          )}
+          {copy.notice && (
+            <div
+              role={copy.notice.error ? "alert" : "status"}
+              className={`flex items-center gap-2 border-b border-border px-3 py-1 text-sm ${copy.notice.error ? "text-danger" : "text-muted"}`}
+            >
+              <span className="min-w-0 flex-1 break-words">{copy.notice.text}</span>
+              <button
+                type="button"
+                aria-label={strings.grid.dismiss}
+                onClick={copy.dismiss}
+                className="shrink-0 rounded-sm px-1.5 text-fg hover:bg-surface-2"
+              >
+                {strings.grid.dismissText}
+              </button>
+            </div>
+          )}
+          {e.blocked && e.count > 0 && (
+            <div role="status" className="border-b border-border px-3 py-1 text-sm text-warning">
+              {strings.grid.commitOrDiscardFirst}
+            </div>
+          )}
+          <div className="flex min-h-0 flex-1">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1">
+                {t.result && (
+                  <DataGrid
+                    data={t.result}
+                    sort={t.sort}
+                    onSort={t.setSort}
+                    editing={editing}
+                    layoutKey={layoutKey}
+                    onSortTo={(column: string, dir: SortDir | null) => t.setSortTo(column, dir)}
+                    onFilterColumn={(column) => {
+                      setFiltersOpen(true);
+                      setFilterStart((f) => ({ column, seq: (f?.seq ?? 0) + 1 }));
+                    }}
+                    onPageKey={(dir) => {
+                      if (t.loading) return;
+                      if (dir === "previous") t.prevPage();
+                      else t.nextPage();
+                    }}
+                    onToggleDetails={detail.toggle}
+                    onQuickLook={(row, col) => setQuickLook({ row, col })}
+                    onRowsAction={e.rowsAction}
+                    onCopyCells={copy.copyCells}
+                  />
+                )}
+              </div>
+              {e.editable && <PendingChangesPanel workspaceId={workspaceId} tabId={tabId} object={object} />}
+            </div>
+            {detail.open && t.result && e.model && (
+              <RowDetailPanel
+                workspaceId={workspaceId}
+                object={object}
                 data={t.result}
-                sort={t.sort}
-                onSort={t.setSort}
-                editing={editing}
-                layoutKey={layoutKey}
-                onSortTo={(column: string, dir: SortDir | null) => t.setSortTo(column, dir)}
-                onFilterColumn={(column) => setFilterStart((f) => ({ column, seq: (f?.seq ?? 0) + 1 }))}
-                onToggleDetails={detail.toggle}
-                onQuickLook={(row, col) => setQuickLook({ row, col })}
-                onRowsAction={e.rowsAction}
-                onCopyCells={copy.copyCells}
+                info={e.info}
+                model={e.model}
+                row={e.selectedRow}
+                onChange={e.setValue}
+                onAction={e.runAction}
+                linksAt={links.linksAt}
+                onOpenLink={links.open}
+                onClose={detail.close}
               />
             )}
           </div>
-          {e.editable && <PendingChangesPanel workspaceId={workspaceId} tabId={tabId} object={object} />}
+          {target && menuItems.length > 0 && (
+            <GridContextMenu
+              x={target.x}
+              y={target.y}
+              label={strings.grid.menuLabel}
+              items={menuItems}
+              onClose={e.closeMenu}
+            />
+          )}
+          {quickLook && quickCell && (
+            <QuickLook
+              column={e.model?.columns[quickLook.col] ?? ""}
+              value={quickCell.value}
+              load={
+                quickCell.truncated && quickKey
+                  ? () => ipc.cellValue(workspaceId, object, quickKey, e.model!.columns[quickLook.col])
+                  : undefined
+              }
+              onClose={() => setQuickLook(null)}
+            />
+          )}
         </div>
-        {detail.open && t.result && e.model && (
-          <RowDetailPanel
-            workspaceId={workspaceId}
-            object={object}
-            data={t.result}
-            info={e.info}
-            model={e.model}
-            row={e.selectedRow}
-            onChange={e.setValue}
-            onAction={e.runAction}
-            linksAt={links.linksAt}
-            onOpenLink={links.open}
-            onClose={detail.close}
-          />
-        )}
       </div>
-      {target && menuItems.length > 0 && (
-        <GridContextMenu
-          x={target.x}
-          y={target.y}
-          label={strings.grid.menuLabel}
-          items={menuItems}
-          onClose={e.closeMenu}
-        />
-      )}
-      {quickLook && quickCell && (
-        <QuickLook
-          column={e.model?.columns[quickLook.col] ?? ""}
-          value={quickCell.value}
-          load={
-            quickCell.truncated && quickKey
-              ? () => ipc.cellValue(workspaceId, object, quickKey, e.model!.columns[quickLook.col])
-              : undefined
-          }
-          onClose={() => setQuickLook(null)}
-        />
-      )}
-      <div className="flex items-center gap-3 border-t border-border bg-surface px-3 py-1 text-sm">
-        <button type="button" className={btn} onClick={t.prevPage} disabled={!t.hasPrev || t.loading}>
-          {strings.grid.prev}
-        </button>
-        <button type="button" className={btn} onClick={t.nextPage} disabled={!t.hasNext || t.loading}>
-          {strings.grid.next}
-        </button>
-        <button type="button" className={btn} onClick={t.reload} disabled={t.loading}>
-          {strings.grid.reload}
-        </button>
-        <button
-          type="button"
-          className={`${btn} aria-pressed:bg-surface-2`}
-          aria-pressed={detail.open}
-          title={strings.grid.rowDetailsShortcut(formatShortcut(rowDetailsShortcut))}
-          onClick={detail.toggle}
-        >
-          {strings.grid.rowDetails}
-        </button>
-        <span data-testid="footer-range">
-          {rows === 0
-            ? strings.grid.footerEmpty
-            : strings.grid.footerRange(from, from + rows - 1, formatRowCount(t.rowCount, t.filters.length > 0))}
-        </span>
-        <span className="ml-auto text-muted">
-          {t.loading
-            ? strings.grid.loading
-            : t.elapsedMs !== null
-              ? strings.grid.loadedIn(t.elapsedMs)
-              : ""}
-        </span>
-      </div>
+      {structure}
+      <TableBottomBar
+        view={view}
+        onView={onView}
+        tabsRef={toggleRef}
+        panelIds={panelIds}
+        data={
+          active
+            ? {
+                addRow: e.editable ? { onClick: e.addRow, disabled: e.locked, ref: addRowRef } : undefined,
+                counter:
+                  rows === 0
+                    ? t.loading && !t.result
+                      ? strings.grid.loading
+                      : strings.grid.footerEmpty
+                    : strings.grid.footerRange(from, from + rows - 1, formatRowCount(t.rowCount, t.filters.length > 0)),
+                busy: t.loading,
+                filters: {
+                  open: filtersOpen,
+                  count: t.filters.length,
+                  controls: filterBarId,
+                  onToggle: () => (filtersOpen ? closeFilters() : openFilters()),
+                  ref: filtersButtonRef,
+                },
+                columns: { names: modelCols, layoutKey, open: columnsOpen, onOpenChange: setColumnsOpen },
+                paging: {
+                  hasPrev: t.hasPrev,
+                  hasNext: t.hasNext,
+                  disabled: t.loading,
+                  onPrev: t.prevPage,
+                  onNext: t.nextPage,
+                  offset: t.offset,
+                  limit: t.pageSize,
+                  onGo: t.goTo,
+                },
+              }
+            : null
+        }
+      />
     </div>
   );
 }

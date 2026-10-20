@@ -69,6 +69,16 @@ test("the defaults are the combinations the code binds today", () => {
     "grid.copyCells": "Mod+Shift+C",
     "grid.duplicateRows": "Mod+D",
     "grid.deleteRows": "Mod+Backspace",
+    "grid.addRow": "Mod+I",
+    "grid.filters": "Mod+F",
+    "grid.columns": "Mod+Alt+F",
+    "grid.previousPage": "Mod+ArrowLeft",
+    "grid.nextPage": "Mod+ArrowRight",
+    "filters.toggle": "Mod+B",
+    "filters.add": "Mod+I",
+    "filters.remove": "Mod+Shift+I",
+    "filters.applyAll": "Mod+Enter",
+    "filters.applyAllOr": "Mod+Shift+Enter",
   });
   const scope = (id: KeymapActionId) => KEYMAP_ACTIONS.find((a) => a.id === id)?.scope;
   expect(scope("query.new")).toBe("global");
@@ -87,6 +97,13 @@ test("the defaults are the combinations the code binds today", () => {
   expect(scope("nav.forward")).toBe("global");
   expect(scope("tab.goto1")).toBe("global");
   expect(isKeymapActionId("grid.back")).toBe(false);
+  // Task 6: the bottom bar's keys act in the table tab; the filter bar's only in the bar.
+  for (const id of ["grid.addRow", "grid.filters", "grid.columns", "grid.previousPage", "grid.nextPage"] as const) {
+    expect(scope(id), id).toBe("tableTab");
+  }
+  for (const id of ["filters.toggle", "filters.add", "filters.remove", "filters.applyAll", "filters.applyAllOr"] as const) {
+    expect(scope(id), id).toBe("filterBar");
+  }
   expect(scope("font.increase")).toBe("global");
   expect(scope("font.decrease")).toBe("global");
   expect(scope("database.open")).toBe("global");
@@ -300,7 +317,8 @@ test("the editor conflicts with its query tab both ways (ruling B-R1), not with 
   // Completion is Ctrl+Space in the editor (CodeMirror) and Ctrl+Space shows the row details
   // in a table tab (spec §5.3): never active together.
   expect(conflictFor("editor.format", "Ctrl+Space", {}, false)).toBeNull();
-  expect(conflictFor("grid.rowDetails", "Mod+I", {}, false)).toBeNull();
+  // Mod+I is + Row in a table tab (Task 6), still free for the editor's Beautify.
+  expect(conflictFor("grid.rowDetails", "Mod+I", {}, false)).toBe("grid.addRow");
   // Mod+Shift+F searches the sidebar from anywhere, so the editor cannot take it back.
   expect(conflictFor("editor.format", "Mod+Shift+F", {}, false)).toBe("sidebar.search");
 });
@@ -366,4 +384,28 @@ test("useAction binds the effective combination: a custom one replaces the defau
   expect(handler).toHaveBeenCalledTimes(1);
   press({ code: "Space", altKey: true });
   expect(handler).toHaveBeenCalledTimes(2);
+});
+
+test("view_switch_alternates: Data / Structure also answer to Mod+Alt+[ / ], Alt+1 / Alt+2 kept", () => {
+  expect(effectiveShortcuts("grid.viewData", {})).toEqual(["Alt+1", "Mod+Alt+["]);
+  expect(effectiveShortcuts("grid.viewStructure", {})).toEqual(["Alt+2", "Mod+Alt+]"]);
+  expect(effectiveShortcuts("grid.viewData", { "grid.viewData": "Alt+D" })).toEqual(["Alt+D"]);
+  // Not the tab keys (Mod+[ / ]) nor the workspace keys (Mod+Shift+[ / ]).
+  expect(conflictFor("grid.viewData", "Mod+Alt+[", {}, false)).toBeNull();
+  expect(conflictFor("tab.previous", "Mod+Alt+[", {}, false)).toBe("grid.viewData");
+});
+
+test("filter_bar_scope: the bar's keys shadow the table tab's inside the bar, never the editor's", () => {
+  // Same keys, never both active: Mod+I adds a filter row in the bar, a table row elsewhere.
+  expect(conflictFor("filters.add", "Mod+I", {}, false)).toBeNull();
+  expect(conflictFor("grid.addRow", "Mod+I", {}, false)).toBeNull();
+  // The editor (query tabs) runs with Mod+Enter / Mod+Shift+Enter; the bar applies with them.
+  expect(conflictFor("filters.applyAll", "Mod+Enter", {}, false)).toBeNull();
+  expect(conflictFor("editor.run", "Mod+Enter", {}, false)).toBeNull();
+  // Inside the bar its own actions conflict with each other, and global keys win everywhere.
+  expect(conflictFor("filters.add", "Mod+B", {}, false)).toBe("filters.toggle");
+  expect(conflictFor("filters.toggle", "Mod+K", {}, false)).toBe("database.open");
+  expect(conflictFor("database.open", "Mod+Shift+I", {}, false)).toBe("filters.remove");
+  // Page keys: Mod+← / Mod+→ only in the grid (a text field keeps its word moves).
+  expect(conflictFor("grid.columns", "Mod+ArrowLeft", {}, false)).toBe("grid.previousPage");
 });
