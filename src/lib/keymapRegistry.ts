@@ -47,7 +47,10 @@ const SPECS = {
   "editor.format": { scope: "editor", defaultShortcut: "Mod+I" },
   "editor.comment": { scope: "editor", defaultShortcut: "Mod+/" },
   "grid.commit": { scope: "tableTab", defaultShortcut: "Mod+S" },
-  "grid.rowDetails": { scope: "tableTab", defaultShortcut: "Mod+I" },
+  // Spec §5.3: Ctrl+Space as TablePlus Linux (literal Ctrl: Cmd+Space is Spotlight on macOS),
+  // and Space in the grid (a fixed key of DataGrid: the grammar needs a modifier). Ctrl+I
+  // is the spec's add row key (Task 6).
+  "grid.rowDetails": { scope: "tableTab", defaultShortcut: "Ctrl+Space" },
   "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1" },
   "grid.viewStructure": { scope: "tableTab", defaultShortcut: "Alt+2" },
   "font.increase": { scope: "global", defaultShortcut: "Mod+=" },
@@ -72,6 +75,13 @@ const SPECS = {
   "tab.goto7": { scope: "global", defaultShortcut: "Mod+7" },
   "tab.goto8": { scope: "global", defaultShortcut: "Mod+8" },
   "tab.goto9": { scope: "global", defaultShortcut: "Mod+9" },
+  // Task 5, grid keys: DataGrid matches them in its own keydown, so they act only while the
+  // grid has the focus (never in a field, the editor or the cell editor). Enter (Quick
+  // Look), Space (row details) and Delete (delete rows) are fixed keys of the grid.
+  "grid.setValue": { scope: "tableTab", defaultShortcut: "Alt+Enter" },
+  "grid.copyCells": { scope: "tableTab", defaultShortcut: "Mod+Shift+C" },
+  "grid.duplicateRows": { scope: "tableTab", defaultShortcut: "Mod+D" },
+  "grid.deleteRows": { scope: "tableTab", defaultShortcut: "Mod+Backspace" },
 } as const satisfies Record<keyof typeof strings.keymap, Spec>;
 
 export type KeymapActionId = keyof typeof SPECS;

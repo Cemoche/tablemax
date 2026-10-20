@@ -34,5 +34,9 @@
   "tab.goto6",
   "tab.goto7",
   "tab.goto8",
-  "tab.goto9"
+  "tab.goto9",
+  "grid.setValue",
+  "grid.copyCells",
+  "grid.duplicateRows",
+  "grid.deleteRows"
 ]

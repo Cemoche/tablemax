@@ -60,3 +60,15 @@ export function formatShortcut(spec: string, mac: boolean = isMac()): string {
   names.push(key.length === 1 ? key.toUpperCase() : label);
   return names.filter((n) => n !== "").join(keySeparator);
 }
+
+/**
+ * A canonical shortcut spec as an `aria-keyshortcuts` value (WAI-ARIA names: Control, Meta,
+ * Alt, Shift, then the key's `KeyboardEvent.key` name): "Mod+Shift+C" is "Control+Shift+C"
+ * off macOS and "Meta+Shift+C" on macOS. Not shown to the user, so not in strings.ts.
+ */
+export function ariaShortcut(spec: string, mac: boolean = isMac()): string {
+  const parts = spec.split("+");
+  const key = parts.pop() ?? "";
+  const mods = parts.map((m) => (m === "Mod" ? (mac ? "Meta" : "Control") : m === "Ctrl" ? "Control" : m));
+  return [...mods, key].join("+");
+}

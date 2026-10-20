@@ -42,7 +42,7 @@ test("the defaults are the combinations the code binds today", () => {
     "editor.format": "Mod+I",
     "editor.comment": "Mod+/",
     "grid.commit": "Mod+S",
-    "grid.rowDetails": "Mod+I",
+    "grid.rowDetails": "Ctrl+Space",
     "grid.viewData": "Alt+1",
     "grid.viewStructure": "Alt+2",
     "font.increase": "Mod+=",
@@ -65,6 +65,10 @@ test("the defaults are the combinations the code binds today", () => {
     "tab.goto7": "Mod+7",
     "tab.goto8": "Mod+8",
     "tab.goto9": "Mod+9",
+    "grid.setValue": "Alt+Enter",
+    "grid.copyCells": "Mod+Shift+C",
+    "grid.duplicateRows": "Mod+D",
+    "grid.deleteRows": "Mod+Backspace",
   });
   const scope = (id: KeymapActionId) => KEYMAP_ACTIONS.find((a) => a.id === id)?.scope;
   expect(scope("query.new")).toBe("global");
@@ -73,6 +77,10 @@ test("the defaults are the combinations the code binds today", () => {
   expect(scope("history.toggle")).toBe("global");
   expect(scope("editor.format")).toBe("editor");
   expect(scope("grid.commit")).toBe("tableTab");
+  // Task 5: grid keys (the grid acts on them only while it has the focus).
+  for (const id of ["grid.setValue", "grid.copyCells", "grid.duplicateRows", "grid.deleteRows"] as const) {
+    expect(scope(id), id).toBe("tableTab");
+  }
   // Task 4: Alt+← / Alt+→ walk the workspace's history (and first the foreign key trail of a
   // table tab, which `grid.back` did alone before).
   expect(scope("nav.back")).toBe("global");
@@ -265,7 +273,8 @@ test("a global combination conflicts with every scope", () => {
   expect(conflictFor("editor.run", "Mod+K", {}, false)).toBe("database.open");
   // ...and a global action takes nothing any scope already uses.
   expect(conflictFor("database.open", "Mod+I", {}, false)).toBe("editor.format");
-  expect(conflictFor("database.open", "Mod+I", { "editor.format": "Mod+Shift+B" }, false)).toBe("grid.rowDetails");
+  expect(conflictFor("database.open", "Ctrl+Space", {}, false)).toBe("grid.rowDetails");
+  expect(conflictFor("database.open", "Mod+D", {}, false)).toBe("grid.duplicateRows");
   expect(conflictFor("database.open", "Mod+Enter", {}, false)).toBe("editor.run");
   expect(conflictFor("database.open", "Mod+T", {}, false)).toBe("query.new");
 });
@@ -288,7 +297,9 @@ test("the editor conflicts with its query tab both ways (ruling B-R1), not with 
   expect(conflictFor("query.save", "Mod+Enter", {}, false)).toBe("editor.run");
   expect(conflictFor("editor.format", "Mod+I", {}, false)).toBeNull();
   expect(conflictFor("grid.rowDetails", "Mod+/", {}, false)).toBeNull();
-  // Beautify is Mod+I in the editor (spec §5.3) and Mod+I shows the row details in a table tab.
+  // Completion is Ctrl+Space in the editor (CodeMirror) and Ctrl+Space shows the row details
+  // in a table tab (spec §5.3): never active together.
+  expect(conflictFor("editor.format", "Ctrl+Space", {}, false)).toBeNull();
   expect(conflictFor("grid.rowDetails", "Mod+I", {}, false)).toBeNull();
   // Mod+Shift+F searches the sidebar from anywhere, so the editor cannot take it back.
   expect(conflictFor("editor.format", "Mod+Shift+F", {}, false)).toBe("sidebar.search");

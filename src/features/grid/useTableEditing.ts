@@ -4,7 +4,9 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { EditValue, ObjectRef, ResultSet } from "../../lib/types";
 import { usePendingChanges } from "../../stores/pendingChanges";
-import type { GridEditing } from "./DataGrid";
+import { effectiveShortcut } from "../../lib/keymap";
+import { useSettings } from "../../stores/settings";
+import type { GridEditing, RowsAction } from "./DataGrid";
 import { buildGridModel, type GridModel, type MenuAction, menuActions } from "./editModel";
 import { cellText, insertValuesOf, parseEditorInput, readOnlyReason } from "./editing";
 import type { MenuItem } from "./GridContextMenu";
@@ -147,6 +149,8 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
   const rowSignature = result ? `${pageId(result)}|${locked ? 1 : 0}|${rowIds.join("\u0000")}` : "";
 
   const store = usePendingChanges.getState;
+  const duplicateKey = useSettings((st) => effectiveShortcut("grid.duplicateRows", st.settings.keymap));
+  const deleteKey = useSettings((st) => effectiveShortcut("grid.deleteRows", st.settings.keymap));
 
   const selectedRow = rowOf(model, selected, result);
 
@@ -235,6 +239,35 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
     if (row !== null && !model?.locked) runAction(a, row, col);
   };
 
+  /**
+   * Delete (or Restore, when every row that can be deleted already is) `rows`: new rows are
+   * dropped, loaded rows marked for deletion. Pending changes only: a commit writes them.
+   */
+  const deleteRows = (rows: number[]) => {
+    const { model } = latest.current;
+    if (!model || model.locked || !editable) return;
+    const targets = rows
+      .map((r) => model.rows[r])
+      .filter((r): r is NonNullable<typeof r> => r !== undefined && (r.kind === "insert" || r.key !== null));
+    const restoring = targets.length > 0 && targets.every((r) => r.kind === "row" && r.deleted);
+    for (const r of targets) {
+      if (r.kind === "insert") {
+        if (!restoring) store().removeInsert(tabId, r.tempId);
+      } else if (r.key && r.deleted === restoring) {
+        store().toggleDelete(tabId, object, r.key);
+      }
+    }
+  };
+
+  /** The grid keys on the selected rows: Delete / grid.deleteRows, grid.duplicateRows. */
+  const rowsAction = (action: RowsAction, rows: number[]) => {
+    const { model } = latest.current;
+    if (!model || model.locked || !editable) return;
+    if (action === "delete") deleteRows(rows);
+    // Indexes of this render: the new rows show up once the store's change renders.
+    else for (const r of rows) void duplicate(r);
+  };
+
   // Where the menu's record is now; the menu closes once it is gone, reloaded or locked.
   const menuRow = menuAt && menuAt.page === result && !locked ? rowOf(model, menuAt.ref, result) : null;
   const menuOpen = menuAt !== null && menuRow !== null;
@@ -275,20 +308,79 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
       }
     : undefined;
 
-  /** The editing entries of the context menu (why a cell is read-only, then the actions). */
-  const menuItems: MenuItem[] = [];
+  /** The menu's block rows (by identity) where they are now. */
+  const menuBlockRows = (): number[] =>
+    menuAt
+      ? menuAt.blockRows.map((r) => rowOf(model, r, result)).filter((r): r is number => r !== null)
+      : [];
+
+  /**
+   * The cell menu's editing entries: why the cell is read-only, the Set value group (NULL /
+   * EMPTY / DEFAULT, Revert, on every selected cell that takes it) and the row group (Add
+   * row, Duplicate, Delete / Restore, on every selected row).
+   */
+  const reasonItems: MenuItem[] = [];
+  const setValueItems: MenuItem[] = [];
+  const rowItems: MenuItem[] = [];
   if (menuAt && menuRow !== null && model) {
     const { ref, col } = menuAt;
     const reason = col !== null ? model.cell(menuRow, col).reason : null;
-    if (reason) menuItems.push({ label: reason, disabled: true, onSelect: () => {} });
-    for (const a of menuActions(model, menuRow, col)) {
-      if (a === "duplicateRow" && menuItems.length > 0 && menuItems[menuItems.length - 1] !== "separator") {
-        menuItems.push("separator");
+    if (reason) reasonItems.push({ label: reason, disabled: true, onSelect: () => {} });
+    const actions = menuActions(model, menuRow, col);
+    const blockRefs = menuAt.blockRows;
+    const blockCols = menuAt.blockCols;
+    /** Runs `a` on every cell of the block that takes it (the record of each by identity). */
+    const onBlock = (a: MenuAction) => () => {
+      for (const rref of blockRefs) {
+        const { model: m, result: page } = latest.current;
+        const r = rowOf(m, rref, page);
+        if (r === null || !m || m.locked) continue;
+        for (const c of blockCols) if (menuActions(m, r, c).includes(a)) runAction(a, r, c);
       }
-      menuItems.push({
-        label: strings.grid.menu[a],
-        onSelect: () => runActionOn(a, ref, col),
-      });
+    };
+    const cellEntry = (a: MenuAction, label: string, ariaLabel?: string): MenuItem => ({
+      label,
+      ariaLabel,
+      indent: true,
+      onSelect: col === null ? () => runActionOn(a, ref, col) : onBlock(a),
+    });
+    const values: MenuItem[] = [];
+    if (actions.includes("setNull")) values.push(cellEntry("setNull", strings.grid.nullText, strings.grid.menu.setNull));
+    if (actions.includes("setEmpty")) values.push(cellEntry("setEmpty", strings.grid.emptyText, strings.grid.menu.setEmpty));
+    if (actions.includes("setDefault")) {
+      values.push(cellEntry("setDefault", strings.grid.defaultText, strings.grid.menu.setDefault));
+    }
+    if (values.length > 0) setValueItems.push({ heading: strings.grid.menu.setValue }, ...values);
+    if (actions.includes("revertCell")) {
+      setValueItems.push({ label: strings.grid.menu.revertCell, onSelect: onBlock("revertCell") });
+    }
+    if (actions.includes("duplicateRow")) {
+      const rows = menuBlockRows();
+      const n = Math.max(1, rows.length);
+      const deletable = rows.map((r) => model.rows[r]).filter((r) => r && (r.kind === "insert" || r.key !== null));
+      const restoring = deletable.length > 0 && deletable.every((r) => r?.kind === "row" && r.deleted);
+      rowItems.push(
+        { label: strings.grid.menu.addRow, onSelect: () => store().addInsert(tabId, object) },
+        {
+          label: n === 1 ? strings.grid.menu.duplicateRow : strings.grid.menu.duplicateRows(n),
+          shortcut: duplicateKey,
+          onSelect: () => rowsAction("duplicate", menuBlockRows()),
+        },
+      );
+      if (deletable.length > 0) {
+        const m = deletable.length;
+        rowItems.push({
+          label: restoring
+            ? m === 1
+              ? strings.grid.menu.restoreRow
+              : strings.grid.menu.restoreRows(m)
+            : m === 1
+              ? strings.grid.menu.deleteRow
+              : strings.grid.menu.deleteRows(m),
+          shortcut: restoring ? undefined : deleteKey,
+          onSelect: () => deleteRows(menuBlockRows()),
+        });
+      }
     }
   }
 
@@ -340,8 +432,15 @@ export function useTableEditing({ workspaceId, tabId, object, result, reload }: 
             } satisfies CellBlock,
           }
         : null,
-    menuItems,
+    /** Why the clicked cell is read-only (a disabled entry), else nothing. */
+    reasonItems,
+    /** The Set value group of the cell menu. */
+    setValueItems,
+    /** Add row, Duplicate and Delete / Restore of the menu. */
+    rowItems,
     closeMenu: () => setMenuAt(null),
+    /** The grid keys on the selected rows. */
+    rowsAction,
     /** Display row selected in the grid (null: none, or the row is gone). */
     selectedRow,
     /** Writes a cell through the store (same rules as the grid's editor). */

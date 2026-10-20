@@ -10,12 +10,19 @@ export function selectedRowOf(s: GridSelection): number | null {
 }
 
 /**
- * `s` moved to `row`: the same object when it is already there, the current cell moved
- * to `row` in the same column (column 0 without one), or no selection for null.
+ * `s` moved to `row`: the same object when it is already there, selected rows shifted with
+ * their first one, the current cell moved to `row` in the same column (column 0 without
+ * one), or no selection for null.
  */
 export function withSelectedRow(s: GridSelection, row: number | null): GridSelection {
-  if (selectedRowOf(s) === row) return s;
+  const now = selectedRowOf(s);
+  if (now === row) return s;
   if (row === null) return EMPTY;
+  // Whole rows selected by their numbers: they all move with the record (rows added above).
+  if (!s.current && now !== null && s.rows.length > 0) {
+    const moved = s.rows.offset(row - now);
+    if (moved.first() === row) return { ...EMPTY, rows: moved };
+  }
   const col = s.current?.cell[0] ?? 0;
   return {
     ...EMPTY,
@@ -51,4 +58,39 @@ export function blockAt(block: CellBlock | null, row: number, col: number | null
     return block;
   }
   return { rows: [row], cols: col === null ? span(0, colCount) : [col] };
+}
+
+/**
+ * A click on the number of `row` (#78): only that row; with `shift`, the rows from the
+ * anchor (the last row clicked without Shift) to `row`; with `toggle` (Ctrl, Cmd on macOS),
+ * that row added or removed. The current cell is dropped (whole rows are selected).
+ */
+export function rowMarkerClick(
+  s: GridSelection,
+  row: number,
+  anchor: number | null,
+  mods: { shift?: boolean; toggle?: boolean },
+): { selection: GridSelection; anchor: number | null } {
+  if (mods.shift && anchor !== null) {
+    const from = Math.min(anchor, row);
+    const to = Math.max(anchor, row);
+    return { selection: { ...EMPTY, rows: CompactSelection.fromSingleSelection([from, to + 1]) }, anchor };
+  }
+  if (mods.toggle) {
+    const rows = s.rows.hasIndex(row) ? s.rows.remove(row) : s.rows.add(row);
+    return { selection: { ...EMPTY, rows }, anchor: row };
+  }
+  return { selection: { ...EMPTY, rows: CompactSelection.fromSingleSelection(row) }, anchor: row };
+}
+
+/** The rows drawn as selected: whole selected rows and the rows of the current range(s). */
+export function highlightedRows(s: GridSelection): Set<number> {
+  const out = new Set<number>(s.rows.toArray());
+  const cur = s.current;
+  if (cur) {
+    for (const r of [cur.range, ...cur.rangeStack]) {
+      for (let y = r.y; y < r.y + r.height; y++) out.add(y);
+    }
+  }
+  return out;
 }

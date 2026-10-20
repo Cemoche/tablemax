@@ -28,15 +28,22 @@ function cellCopyText(c: CellValue): string {
   }
 }
 
+/** Options of the delimited copies. */
+export interface DelimitedOptions {
+  /** A first line with the column names (default true). */
+  header?: boolean;
+}
+
 function delimited(
   columns: string[],
   rows: CellValue[][],
   sep: string,
   eol: string,
   needsQuote: RegExp,
+  { header = true }: DelimitedOptions = {},
 ): string {
   const field = (s: string) => (needsQuote.test(s) ? `"${s.split('"').join('""')}"` : s);
-  const lines = [columns.map(field).join(sep)];
+  const lines = header ? [columns.map(field).join(sep)] : [];
   for (const row of rows) {
     // Iterate over the columns: a short row pads with empty fields.
     lines.push(columns.map((_, i) => field(row[i] ? cellCopyText(row[i]) : "")).join(sep));
@@ -50,8 +57,8 @@ function delimited(
  * This is a raw data copy, not a spreadsheet-safe export: values starting with `= + - @` are
  * NOT neutralised, because a database client must copy the data exactly as stored.
  */
-export function toTsv(columns: string[], rows: CellValue[][]): string {
-  return delimited(columns, rows, "\t", "\n", /[\t\r\n"]/);
+export function toTsv(columns: string[], rows: CellValue[][], opts?: DelimitedOptions): string {
+  return delimited(columns, rows, "\t", "\n", /[\t\r\n"]/, opts);
 }
 
 /**
@@ -60,8 +67,26 @@ export function toTsv(columns: string[], rows: CellValue[][]): string {
  * Raw data copy, not a spreadsheet-safe export: values starting with `= + - @` are NOT
  * neutralised (formula injection), because a database client must copy data exactly.
  */
-export function toCsv(columns: string[], rows: CellValue[][]): string {
-  return delimited(columns, rows, ",", "\r\n", /[,"\r\n]/);
+export function toCsv(columns: string[], rows: CellValue[][], opts?: DelimitedOptions): string {
+  return delimited(columns, rows, ",", "\r\n", /[,"\r\n]/, opts);
+}
+
+/** A Markdown table cell: `|` escaped, line breaks as `<br>`. */
+const mdCell = (s: string) => s.split("|").join("\\|").replace(/\r\n|\r|\n/g, "<br>");
+
+/**
+ * A GitHub-flavoured Markdown table: the header, a `---` line, one line per row. NULL is
+ * written `NULL` (a reader cannot tell an empty cell from it otherwise), the empty string
+ * an empty cell; truncated values as their preview. No columns give "".
+ */
+export function toMarkdown(columns: string[], rows: CellValue[][]): string {
+  if (columns.length === 0) return "";
+  const line = (cells: string[]) => `| ${cells.join(" | ")} |`;
+  const out = [line(columns.map(mdCell)), line(columns.map(() => "---"))];
+  for (const row of rows) {
+    out.push(line(columns.map((_, i) => (row[i]?.t === "null" ? "NULL" : mdCell(row[i] ? cellCopyText(row[i]) : "")))));
+  }
+  return out.join("\n");
 }
 
 /** Drops the whitespace outside strings of valid JSON text (keeps number text untouched). */

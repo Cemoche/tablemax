@@ -5,7 +5,7 @@ import { useWorkspaces } from "./workspaces";
 
 vi.mock("../lib/ipc");
 
-beforeEach(() => useGridViews.setState({ views: {}, trails: {} }));
+beforeEach(() => useGridViews.setState({ views: {}, trails: {}, layouts: {} }));
 
 test("views default, patch and drop", () => {
   const v = useGridViews.getState();
@@ -60,4 +60,19 @@ test("setNavigation replaces view and trail; both are dropped with the view", ()
   useGridViews.getState().dropView("t1");
   expect(useGridViews.getState().getTrail("t1")).toEqual([]);
   expect(useGridViews.getState().trails).not.toHaveProperty("t1");
+});
+
+test("column layouts are kept per table, not per tab, and survive the tab", () => {
+  const v = useGridViews.getState();
+  const key = "c1|db|public|users";
+  expect(v.getLayout(key)).toBeUndefined();
+  v.setLayout(key, { widths: { id: 80 } });
+  v.setLayout(key, { order: ["name", "id"] });
+  expect(useGridViews.getState().getLayout(key)).toEqual({ widths: { id: 80 }, order: ["name", "id"], hidden: [] });
+  // Another table is untouched; dropping a tab's view keeps the table's layout.
+  expect(useGridViews.getState().getLayout("c1|db|public|orders")).toBeUndefined();
+  useGridViews.getState().dropView("t1");
+  expect(useGridViews.getState().getLayout(key)?.order).toEqual(["name", "id"]);
+  useGridViews.getState().resetLayout(key, "order");
+  expect(useGridViews.getState().getLayout(key)).toEqual({ widths: { id: 80 }, order: [], hidden: [] });
 });

@@ -5,31 +5,58 @@ import {
   type GridCell,
   GridCellKind,
   type GridColumn,
+  type GridKeyEventArgs,
   type GridSelection,
+  type HeaderClickedEventArgs,
   type Item,
   type ProvideEditorCallback,
   type ProvideEditorComponent,
   type TextCell,
   type Theme,
   DataEditor,
+  type DataEditorRef,
 } from "@glideapps/glide-data-grid";
 import "@glideapps/glide-data-grid/dist/index.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toTsv } from "../../lib/copyFormats";
+import { type KeymapActionId, effectiveShortcuts } from "../../lib/keymap";
 import { isModKey } from "../../lib/platform";
+import { matchShortcut } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
-import type { ResultSet, SortDir } from "../../lib/types";
+import type { CellValue, ResultSet, SortDir } from "../../lib/types";
+import { useGridViews } from "../../stores/gridViews";
+import { useSettings } from "../../stores/settings";
 import { CellEditorOverlay } from "./CellEditorOverlay";
 import { type CellContent, cellContent } from "./cellContent";
+import {
+  type ColumnLayout,
+  type ColumnMeasure,
+  RESIZE_MAX,
+  RESIZE_MIN,
+  autoSizeColumns,
+  fitColumn,
+  moveColumn,
+  reconcileLayout,
+} from "./columnLayout";
 import type { GridModel } from "./editModel";
-import { type CellBlock, selectedRowOf, selectionBlock, withSelectedRow } from "./gridSelection";
+import { GridContextMenu, type MenuItem } from "./GridContextMenu";
+import {
+  type CellBlock,
+  highlightedRows,
+  rowMarkerClick,
+  selectedRowOf,
+  selectionBlock,
+  withSelectedRow,
+} from "./gridSelection";
 import { useGridTheme } from "./gridTheme";
+import { QuickLook } from "./QuickLook";
 
-const ROW_HEIGHT = 24;
-const HEADER_HEIGHT = 28;
+/** Spec §5.2 at 100 %: rows 26 (they grow with a larger data font), header 30, numbers 46. */
+const MIN_ROW_HEIGHT = 26;
+const HEADER_HEIGHT = 30;
+const ROW_NUMBER_WIDTH = 46;
 
-const DEFAULT_COL_WIDTH = 160;
-
-/** Editing hooks of a table grid; row/col are display indexes of `model`. */
+/** Editing hooks of a table grid; row/col are display rows and columns of `model` (its own column order). */
 export interface GridEditing {
   model: GridModel;
   onEdit: (row: number, col: number, text: string) => void;
@@ -44,7 +71,7 @@ export interface GridEditing {
   linkAt: (row: number, col: number) => boolean;
   /** Opens the row the cell references (Mod+click). */
   onOpenLink: (row: number, col: number) => void;
-  /** Enter / double click, also on a read-only cell (to say why it is read-only). */
+  /** Activation (Alt+Enter, double click), also on a read-only cell (to say why it is read-only). */
   onActivate: (row: number, col: number) => void;
   /** The cell editor opened (true) or closed (false). */
   onEditorOpen: (open: boolean) => void;
@@ -63,6 +90,9 @@ export interface GridEditing {
   rowById: (id: string) => number | null;
 }
 
+/** A grid key acting on the selected rows. */
+export type RowsAction = "delete" | "duplicate";
+
 export interface DataGridProps {
   data: ResultSet;
   sort?: [string, SortDir] | null;
@@ -71,36 +101,170 @@ export interface DataGridProps {
   sortable?: boolean;
   /** Table tabs: pending changes laid over `data`, editable cells. Absent = read-only. */
   editing?: GridEditing;
+  /** Where the column widths, order and hidden columns are kept (gridViews); absent: in the grid only. */
+  layoutKey?: string;
+  /** Header menu: sort the column one way (null removes the sort). */
+  onSortTo?: (column: string, dir: SortDir | null) => void;
+  /** Header menu: Filter with column. */
+  onFilterColumn?: (column: string) => void;
+  /** Space in the grid: show or hide the row details. */
+  onToggleDetails?: () => void;
+  /** Enter: Quick Look of a cell (the table's column). Absent: the grid shows it itself. */
+  onQuickLook?: (row: number, col: number) => void;
+  /** Delete / grid.deleteRows and grid.duplicateRows on the selected rows. */
+  onRowsAction?: (action: RowsAction, rows: number[]) => void;
+  /** grid.copyCells (Ctrl+Shift+C) on the selected cells (the table's columns, as shown). Absent: copied here. */
+  onCopyCells?: (block: CellBlock) => void;
 }
 
-const DEFAULT_CONTENT: CellContent = { kind: "null", display: strings.grid.defaultText, copyText: "" };
+const EMPTY_SELECTION: GridSelection = { columns: CompactSelection.empty(), rows: CompactSelection.empty() };
+
+// Key codes for Glide's hotkey syntax (`alt+_13`): our specs name keys by KeyboardEvent.code.
+const KEY_CODES: Record<string, number> = {
+  Enter: 13,
+  Tab: 9,
+  Escape: 27,
+  Space: 32,
+  Backspace: 8,
+  Delete: 46,
+  ArrowLeft: 37,
+  ArrowUp: 38,
+  ArrowRight: 39,
+  ArrowDown: 40,
+  PageUp: 33,
+  PageDown: 34,
+  ",": 188,
+  ".": 190,
+  "/": 191,
+  ";": 186,
+  "-": 189,
+  "=": 187,
+  "[": 219,
+  "]": 221,
+  "\\": 220,
+  "`": 192,
+};
+
+/** A canonical spec ("Alt+Enter", "Mod+E") in Glide's hotkey syntax ("alt+_13", "primary+_69"). */
+export function glideHotkey(spec: string): string {
+  const parts = spec.split("+");
+  const key = parts.pop() ?? "";
+  const mods = parts.map((m) => (m === "Mod" ? "primary" : m.toLowerCase()));
+  const fn = /^F(\d+)$/.exec(key);
+  const code = fn ? 111 + Number(fn[1]) : /^[A-Z0-9]$/.test(key) ? key.charCodeAt(0) : KEY_CODES[key];
+  return code === undefined ? "" : [...mods, `_${code}`].join("+");
+}
+
+type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+let measureCtx: Ctx | null | undefined;
+function measureContext(): Ctx | null {
+  if (measureCtx !== undefined) return measureCtx;
+  try {
+    if (typeof OffscreenCanvas !== "undefined") measureCtx = new OffscreenCanvas(1, 1).getContext("2d");
+    else if (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent)) measureCtx = null;
+    else measureCtx = document.createElement("canvas").getContext("2d");
+  } catch {
+    measureCtx = null;
+  }
+  return measureCtx ?? null;
+}
+
+/** Text widths in the grid's fonts (estimates where no canvas can measure: tests). */
+function columnMeasure(dataFont: string, headerFont: string, fontSize: number): ColumnMeasure {
+  const ctx = measureContext();
+  if (!ctx) return { text: (s) => s.length * fontSize * 0.6, header: (s) => s.length * 7.5 };
+  return {
+    text: (s) => {
+      ctx.font = dataFont;
+      return ctx.measureText(s).width;
+    },
+    header: (s) => {
+      ctx.font = headerFont;
+      return ctx.measureText(s).width;
+    },
+  };
+}
+
+/**
+ * Unique keys of the result's columns (a query may return the same name twice): the name,
+ * then `name␀index` for a repeated one. Layouts are stored by these keys.
+ */
+const columnKeys = (names: string[]) => names.map((n, i) => (names.indexOf(n) === i ? n : `${n}\u0000${i}`));
+
+/** The column layout: in gridViews per table when `key` is given, else local to the grid. */
+function useColumnLayout(key: string | undefined, columns: string[]) {
+  const stored = useGridViews((s) => (key === undefined ? undefined : s.layouts[key]));
+  const [local, setLocal] = useState<ColumnLayout | undefined>(undefined);
+  const raw = key === undefined ? local : stored;
+  const columnsKey = columns.join("\u0000");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layout = useMemo(() => reconcileLayout(raw, columns), [raw, columnsKey]);
+  const update = useCallback(
+    (patch: Partial<ColumnLayout>) => {
+      if (key !== undefined) useGridViews.getState().setLayout(key, patch);
+      else setLocal((l) => ({ ...(l ?? { widths: {}, order: [], hidden: [] }), ...patch }));
+    },
+    [key],
+  );
+  return { layout, update };
+}
 
 /** Thin adapter over Glide Data Grid (canvas; not testable in jsdom). */
-export function DataGrid({ data, sort = null, onSort, sortable = true, editing }: DataGridProps) {
-  const { theme, muted: mutedOverride, edit: editThemes } = useGridTheme();
-  const colKey = data.columns.map((c) => c.name).join("\u0000");
-  const [widths, setWidths] = useState<{ key: string; w: Record<string, number> }>({
-    key: colKey,
-    w: {},
-  });
-  const colWidths = widths.key === colKey ? widths.w : {};
+export function DataGrid({
+  data,
+  sort = null,
+  onSort,
+  sortable = true,
+  editing,
+  layoutKey,
+  onSortTo,
+  onFilterColumn,
+  onToggleDetails,
+  onQuickLook,
+  onRowsAction,
+  onCopyCells,
+}: DataGridProps) {
+  const g = useGridTheme();
+  const { theme, muted: mutedOverride, edit: editThemes, rows: rowThemes } = g;
+  const keymap = useSettings((s) => s.settings.keymap);
+  const keymapRef = useRef(keymap);
+  keymapRef.current = keymap;
+  const names = useMemo(() => data.columns.map((c) => c.name), [data.columns]);
+  const keys = useMemo(() => columnKeys(names), [names]);
+  const { layout, update: updateLayout } = useColumnLayout(layoutKey, keys);
+  /** Data columns in display order (hidden ones left out). */
+  const shownCols = useMemo(
+    () => layout.order.filter((k) => !layout.hidden.includes(k)).map((k) => keys.indexOf(k)),
+    [layout.order, layout.hidden, keys],
+  );
+  const shownRef = useRef(shownCols);
+  shownRef.current = shownCols;
+  /** The data column shown at display column `col`. */
+  const dataCol = useCallback((col: number) => shownRef.current[col] ?? col, []);
+
   const editingRef = useRef(editing);
   editingRef.current = editing;
-  /** The cell last activated (Enter / double click): the one the editor opens on. */
+  /** The cell last activated (Alt+Enter / double click): the one the editor opens on (display col). */
   const activated = useRef<Item | null>(null);
   /** Cancels the open cell editor (set while one is open). */
   const closeEditor = useRef<(() => void) | null>(null);
-  /** The record and column the open editor edits (captured when it opened). */
+  /** The record and (data) column the open editor edits (captured when it opened). */
   const editorTarget = useRef<{ id: string | null; col: number } | null>(null);
-  /** Controlled for table grids: reports the selected row and follows the selected record. */
-  const [selection, setSelection] = useState<GridSelection>(() => ({
-    columns: CompactSelection.empty(),
-    rows: CompactSelection.empty(),
-  }));
+  /** Controlled: reports the selected row and follows the selected record (table grids). */
+  const [selection, setSelection] = useState<GridSelection>(EMPTY_SELECTION);
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  /** Where Shift+click on a row number extends from. */
+  const anchor = useRef<number | null>(null);
+  const gridRef = useRef<DataEditorRef>(null);
   if (editing) {
     const moved = withSelectedRow(selection, editing.selectedRow);
     if (moved !== selection) setSelection(moved);
   }
+  const [headerMenu, setHeaderMenu] = useState<{ col: number; x: number; y: number } | null>(null);
+  const [quickLook, setQuickLook] = useState<{ row: number; col: number } | null>(null);
+  /** A column border is being dragged (Glide's resize start … end). */
+  const resizing = useRef(false);
 
   // New data (a reload), rows added or removed, or a commit closes an open editor: its row
   // index may now be another row.
@@ -112,35 +276,64 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
     closeEditor.current?.();
   }, [data, signature]);
 
-  const columns = useMemo<GridColumn[]>(
-    () =>
-      data.columns.map((c) => {
-        const ind =
-          sort && sort[0] === c.name
-            ? ` ${sort[1] === "asc" ? strings.grid.sortAsc : strings.grid.sortDesc}`
-            : "";
-        return {
-          id: c.name,
-          title: c.name + ind,
-          width: colWidths[c.name] ?? DEFAULT_COL_WIDTH,
-        };
-      }),
-    [data.columns, sort, colWidths],
+  // Widths from the loaded page (not its pending edits: the columns do not jump while typing),
+  // measured again once the data font changed or loaded.
+  const measure = useMemo(
+    () => columnMeasure(`${theme.baseFontStyle} ${theme.fontFamily}`, g.header, g.fontSize),
+    [theme, g.header, g.fontSize],
+  );
+  const textAt = useCallback(
+    (row: number, col: number) => {
+      const v = data.rows[row]?.[col];
+      return v ? cellContent(v).display : "";
+    },
+    [data.rows],
+  );
+  const autoWidths = useMemo(
+    () => autoSizeColumns(keys, data.rows.length, textAt, measure),
+    [keys, data.rows.length, textAt, measure],
+  );
+  const fit = useCallback(
+    (col: number) => fitColumn(keys[col], data.rows.length, (r) => textAt(r, col), measure),
+    [keys, data.rows.length, textAt, measure],
   );
 
+  const headerOverride = useMemo(() => ({ headerFontFull: g.header }) as Partial<Theme>, [g.header]);
+  const columns = useMemo<GridColumn[]>(
+    () =>
+      shownCols.map((c) => {
+        const name = names[c];
+        const ind =
+          sort && sort[0] === name ? ` ${sort[1] === "asc" ? strings.grid.sortAsc : strings.grid.sortDesc}` : "";
+        return {
+          id: keys[c],
+          title: name + ind,
+          width: layout.widths[keys[c]] ?? autoWidths[keys[c]],
+          themeOverride: headerOverride,
+        };
+      }),
+    [shownCols, names, keys, sort, layout.widths, autoWidths, headerOverride],
+  );
+
+  const highlighted = useMemo(() => highlightedRows(selection), [selection]);
+  const placeholderOnAccent = useMemo<Partial<Theme>>(
+    () => ({ baseFontStyle: mutedOverride.baseFontStyle }),
+    [mutedOverride],
+  );
   const model = editing?.model;
   const getCellContent = useCallback(
-    ([col, row]: Item): GridCell => {
+    ([displayCol, row]: Item): GridCell => {
+      const col = dataCol(displayCol);
+      // A placeholder is dim on a plain row; on a selected (accent) row it keeps the row's text colour.
+      const placeholderTheme = highlighted.has(row) ? placeholderOnAccent : mutedOverride;
       if (model) {
         const cell = model.cell(row, col);
-        const c = cell.value === "default" ? DEFAULT_CONTENT : cellContent(cell.value);
+        const c: CellContent = cellContent(cell.value);
         const rowInserted = model.rows[row]?.kind === "insert";
+        const editedTheme = cell.edited && !rowInserted ? editThemes.edited : undefined;
         const theme: Partial<Theme> | undefined =
-          c.kind === "null" || (cell.edited && !rowInserted)
-            ? {
-                ...(c.kind === "null" ? mutedOverride : {}),
-                ...(cell.edited && !rowInserted ? editThemes.edited : {}),
-              }
+          c.placeholder || editedTheme
+            ? { ...(c.placeholder ? placeholderTheme : {}), ...editedTheme }
             : undefined;
         return {
           kind: GridCellKind.Text,
@@ -168,22 +361,24 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
         allowOverlay: false,
         readonly: true,
         contentAlign: c.kind === "number" ? "right" : undefined,
-        themeOverride: c.kind === "null" ? mutedOverride : undefined,
+        themeOverride: c.placeholder ? placeholderTheme : undefined,
       };
     },
-    [model, data.rows, mutedOverride, editThemes],
+    [model, data.rows, mutedOverride, placeholderOnAccent, editThemes, highlighted, dataCol],
   );
 
   const getRowThemeOverride = useCallback(
     (row: number): Partial<Theme> | undefined => {
-      if (!model) return undefined;
-      const r = model.rows[row];
-      if (!r) return undefined;
-      const base =
-        r.kind === "insert" ? editThemes.inserted : r.deleted ? editThemes.deleted : undefined;
-      return model.rowError(row) !== null ? { ...base, ...editThemes.failed } : base;
+      const zebra = row % 2 === 1 ? rowThemes.odd : undefined;
+      const r = model?.rows[row];
+      const change =
+        r?.kind === "insert" ? editThemes.inserted : r?.kind === "row" && r.deleted ? editThemes.deleted : undefined;
+      const failed = r && model?.rowError(row) !== null ? editThemes.failed : undefined;
+      const selected = highlighted.has(row) ? rowThemes.selected : undefined;
+      if (!change && !failed && !selected) return zebra;
+      return { ...zebra, ...change, ...failed, ...selected };
     },
-    [model, editThemes],
+    [model, editThemes, rowThemes, highlighted],
   );
 
   // Rows to delete are struck through; foreign key links get an indicator on the right.
@@ -191,9 +386,10 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
     (args, drawContent) => {
       drawContent();
       const { ctx, rect, theme: t } = args;
-      if (editingRef.current?.linkAt(args.row, args.col)) {
+      const col = dataCol(args.col);
+      if (editingRef.current?.linkAt(args.row, col)) {
         ctx.save();
-        ctx.fillStyle = t.accentColor;
+        ctx.fillStyle = t.linkColor;
         ctx.font = `${t.baseFontStyle} ${t.fontFamily}`;
         ctx.textAlign = "right";
         ctx.textBaseline = "middle";
@@ -212,114 +408,315 @@ export function DataGrid({ data, sort = null, onSort, sortable = true, editing }
       ctx.stroke();
       ctx.restore();
     },
-    [model],
+    [model, dataCol],
   );
 
   // Stable (Glide re-creates the editor when this changes); reads the latest props by ref.
-  const provideEditor = useCallback<ProvideEditorCallback<GridCell>>((cell) => {
-    const ed = editingRef.current;
-    if (!ed || cell.kind !== GridCellKind.Text) return undefined;
-    const at = activated.current;
-    const Editor: ProvideEditorComponent<GridCell> = (p) => {
-      const value = p.value as TextCell;
-      const finish = useRef(p.onFinishedEditing);
-      finish.current = p.onFinishedEditing;
-      // A typed character replaces the value: nothing to load then.
-      const load =
-        p.initialValue === undefined && at && ed.model.cell(at[1], at[0]).truncated
-          ? () => ed.loadFull(at[1], at[0])
-          : undefined;
-      return (
-        <CellEditorOverlay
-          value={value.data}
-          load={load}
-          onChange={(text) => p.onChange({ ...value, data: text })}
-          onMount={() => {
-            const target = at ? { id: ed.rowIdAt(at[1]), col: at[0] } : null;
-            editorTarget.current = target;
-            closeEditor.current = () => finish.current(undefined);
-            editingRef.current?.onEditorOpen(true);
-            return () => {
-              closeEditor.current = null;
-              editingRef.current?.onEditorOpen(false);
-              // After Glide reported the edit (if any) for this editor.
-              setTimeout(() => {
-                if (editorTarget.current === target) editorTarget.current = null;
-              }, 0);
-            };
-          }}
-        />
-      );
+  const provideEditor = useCallback<ProvideEditorCallback<GridCell>>(
+    (cell) => {
+      const ed = editingRef.current;
+      if (!ed || cell.kind !== GridCellKind.Text) return undefined;
+      const at = activated.current;
+      const col = at ? dataCol(at[0]) : 0;
+      const Editor: ProvideEditorComponent<GridCell> = (p) => {
+        const value = p.value as TextCell;
+        const finish = useRef(p.onFinishedEditing);
+        finish.current = p.onFinishedEditing;
+        // A typed character replaces the value: nothing to load then.
+        const load =
+          p.initialValue === undefined && at && ed.model.cell(at[1], col).truncated
+            ? () => ed.loadFull(at[1], col)
+            : undefined;
+        return (
+          <CellEditorOverlay
+            value={value.data}
+            load={load}
+            onChange={(text) => p.onChange({ ...value, data: text })}
+            onMount={() => {
+              const target = at ? { id: ed.rowIdAt(at[1]), col } : null;
+              editorTarget.current = target;
+              closeEditor.current = () => finish.current(undefined);
+              editingRef.current?.onEditorOpen(true);
+              return () => {
+                closeEditor.current = null;
+                editingRef.current?.onEditorOpen(false);
+                // After Glide reported the edit (if any) for this editor.
+                setTimeout(() => {
+                  if (editorTarget.current === target) editorTarget.current = null;
+                }, 0);
+              };
+            }}
+          />
+        );
+      };
+      return { editor: Editor, disablePadding: true };
+    },
+    [dataCol],
+  );
+
+  const select = (s: GridSelection) => {
+    setSelection(s);
+    editingRef.current?.onSelect(selectedRowOf(s));
+  };
+
+  /** The selected cells, as the table's columns in display order (null: nothing selected). */
+  const currentBlock = (): CellBlock | null => {
+    const rowCount = model ? model.rows.length : data.rows.length;
+    const b = selectionBlock(selectionRef.current, rowCount, shownRef.current.length);
+    return b && { rows: b.rows, cols: b.cols.map(dataCol) };
+  };
+  /** The rows the row actions act on: selected rows, or the rows of the selected range. */
+  const selectedRows = () => [...highlightedRows(selectionRef.current)].sort((a, b) => a - b);
+
+  const copyCells = (block: CellBlock) => {
+    const cols = block.cols.map((c) => names[c]);
+    const rows = block.rows.map((r) => block.cols.map((c): CellValue => data.rows[r]?.[c] ?? { t: "null" }));
+    Promise.resolve()
+      .then(() => navigator.clipboard.writeText(toTsv(cols, rows, { header: false })))
+      .catch(() => {});
+  };
+
+  const isAction = (id: KeymapActionId, e: GridKeyEventArgs) =>
+    e.rawEvent !== undefined &&
+    effectiveShortcuts(id, keymapRef.current).some((s) =>
+      matchShortcut(e.rawEvent as unknown as KeyboardEvent, s),
+    );
+
+  // Grid keys (only while the grid has the focus and no cell editor is open: Glide's keydown).
+  const onKeyDown = (e: GridKeyEventArgs) => {
+    const code = e.rawEvent?.code;
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+    const take = () => {
+      e.cancel();
+      e.preventDefault();
+      e.stopPropagation();
     };
-    return { editor: Editor, disablePadding: true };
-  }, []);
+    if (plain && code === "Enter") {
+      const cur = selectionRef.current.current?.cell;
+      const row = cur?.[1] ?? selectedRows()[0];
+      if (row === undefined) return;
+      take();
+      const col = dataCol(cur?.[0] ?? 0);
+      if (onQuickLook) onQuickLook(row, col);
+      else setQuickLook({ row, col });
+      return;
+    }
+    const menuKey = code === "ContextMenu" || (code === "F10" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey);
+    if (menuKey && editingRef.current) {
+      // The cell menu from the keyboard, under the active cell (or the grid's corner for rows).
+      const cur = selectionRef.current.current?.cell;
+      const row = cur?.[1] ?? selectedRows()[0];
+      if (row === undefined) return;
+      take();
+      const area =
+        e.bounds ?? (document.activeElement instanceof HTMLElement ? document.activeElement.getBoundingClientRect() : null);
+      editingRef.current.onContextMenu(
+        row,
+        cur ? dataCol(cur[0]) : null,
+        area ? area.x : 0,
+        area ? area.y + (e.bounds ? e.bounds.height : HEADER_HEIGHT) : 0,
+        currentBlock(),
+      );
+      return;
+    }
+    if (plain && code === "Space") {
+      if (!onToggleDetails) return;
+      take();
+      onToggleDetails();
+      return;
+    }
+    const remove = (plain && code === "Delete") || isAction("grid.deleteRows", e);
+    if (onRowsAction && (remove || isAction("grid.duplicateRows", e))) {
+      const rows = selectedRows();
+      if (rows.length === 0) return;
+      take();
+      onRowsAction(remove ? "delete" : "duplicate", rows);
+      return;
+    }
+    if (isAction("grid.copyCells", e)) {
+      const block = currentBlock();
+      if (!block) return;
+      take();
+      if (onCopyCells) onCopyCells(block);
+      else copyCells(block);
+    }
+  };
+
+  const keybindings = useMemo(
+    () => ({
+      // Space shows the row details, Ctrl+Space too (window): never select a column.
+      selectColumn: false,
+      // Enter is Quick Look; Glide opens its cell editor on grid.setValue (Alt+Enter).
+      activateCell: effectiveShortcuts("grid.setValue", keymap).map(glideHotkey).filter(Boolean).join("|"),
+    }),
+    [keymap],
+  );
+
+  const onHeaderContextMenu = (col: number, e: HeaderClickedEventArgs) => {
+    e.preventDefault();
+    setHeaderMenu({ col: dataCol(col), x: e.bounds.x + e.localEventX, y: e.bounds.y + e.localEventY });
+  };
+
+  const headerItems = (col: number): MenuItem[] => {
+    const name = names[col];
+    const key = keys[col];
+    const out: MenuItem[] = [];
+    const item = (label: string, onSelect: () => void, disabled = false) => ({ label, onSelect, disabled });
+    if (onFilterColumn) out.push(item(strings.grid.headerMenu.filter, () => onFilterColumn(name)));
+    out.push(
+      item(
+        strings.grid.headerMenu.hide,
+        () => updateLayout({ hidden: [...layout.hidden, key] }),
+        shownCols.length <= 1,
+      ),
+      item(strings.grid.headerMenu.fit, () => updateLayout({ widths: { ...layout.widths, [key]: fit(col) } })),
+      item(strings.grid.headerMenu.resetPositions, () => updateLayout({ order: [] })),
+      item(strings.grid.headerMenu.showAll, () => updateLayout({ hidden: [] }), layout.hidden.length === 0),
+    );
+    if (sortable && onSortTo) {
+      out.push(
+        "separator",
+        item(strings.grid.headerMenu.sortAsc, () => onSortTo(name, "asc")),
+        item(strings.grid.headerMenu.sortDesc, () => onSortTo(name, "desc")),
+        item(strings.grid.headerMenu.sortNone, () => onSortTo(name, null), sort?.[0] !== name),
+      );
+    }
+    out.push(
+      "separator",
+      item(strings.grid.headerMenu.copyName, () => {
+        Promise.resolve()
+          .then(() => navigator.clipboard.writeText(name))
+          .catch(() => {});
+      }),
+    );
+    return out;
+  };
+
+  const rowCount = model ? model.rows.length : data.rows.length;
+  const rowHeight = Math.max(MIN_ROW_HEIGHT, Math.round(g.fontSize * 2));
+  const quickValue = quickLook
+    ? model
+      ? model.cell(quickLook.row, quickLook.col).value
+      : data.rows[quickLook.row]?.[quickLook.col]
+    : undefined;
 
   return (
-    <DataEditor
-      width="100%"
-      height="100%"
-      columns={columns}
-      rows={model ? model.rows.length : data.rows.length}
-      getCellContent={getCellContent}
-      getCellsForSelection={true}
-      theme={theme}
-      rowHeight={ROW_HEIGHT}
-      headerHeight={HEADER_HEIGHT}
-      rowMarkers="number"
-      smoothScrollX
-      smoothScrollY
-      onHeaderClicked={(col) => {
-        const name = data.columns[col]?.name;
-        if (sortable && name && onSort) onSort(name);
-      }}
-      onColumnResize={(col, newSize) =>
-        setWidths({ key: colKey, w: { ...colWidths, [String(col.id)]: newSize } })
-      }
-      {...(editing && {
-        getRowThemeOverride,
-        drawCell,
-        provideEditor,
-        // Delete would clear the selected cells to "": NULL/empty are explicit menu choices.
-        onDelete: () => false,
-        gridSelection: selection,
-        onGridSelectionChange: (s: GridSelection) => {
-          setSelection(s);
-          editingRef.current?.onSelect(selectedRowOf(s));
-        },
-        onCellActivated: ([col, row]: Item) => {
-          activated.current = [col, row];
-          editingRef.current?.onActivate(row, col);
-        },
-        onCellEdited: ([col, row]: Item, v: GridCell) => {
-          const ed = editingRef.current;
-          if (!ed || v.kind !== GridCellKind.Text) return;
-          // The editor's edit goes to the record it was opened on, wherever it is now.
-          const target = editorTarget.current;
-          editorTarget.current = null;
-          if (!target) {
-            ed.onEdit(row, col, v.data);
+    <>
+      <DataEditor
+        ref={gridRef}
+        width="100%"
+        height="100%"
+        columns={columns}
+        rows={rowCount}
+        getCellContent={getCellContent}
+        getCellsForSelection={true}
+        theme={theme}
+        rowHeight={rowHeight}
+        headerHeight={HEADER_HEIGHT}
+        rowMarkers={{ kind: "number", width: ROW_NUMBER_WIDTH, theme: rowThemes.rowNumber }}
+        getRowThemeOverride={getRowThemeOverride}
+        smoothScrollX
+        smoothScrollY
+        // A header click sorts; it never selects the column (spec §5.4).
+        columnSelect="none"
+        cellActivationBehavior="double-click"
+        keybindings={keybindings}
+        minColumnWidth={RESIZE_MIN}
+        maxColumnWidth={RESIZE_MAX}
+        gridSelection={selection}
+        onGridSelectionChange={(s: GridSelection) => {
+          anchor.current = selectedRowOf(s);
+          select(s);
+        }}
+        onKeyDown={onKeyDown}
+        onHeaderClicked={(col) => {
+          const name = names[dataCol(col)];
+          if (sortable && name !== undefined && onSort) onSort(name);
+        }}
+        onHeaderContextMenu={onHeaderContextMenu}
+        onColumnMoved={(from, to) => updateLayout({ order: moveColumn(layout.order, layout.hidden, from, to) })}
+        onColumnResizeStart={() => {
+          resizing.current = true;
+        }}
+        onColumnResize={(_col, newSize, index) => {
+          const c = dataCol(index);
+          // Outside a drag, Glide fits the column (a double click on its border): fit the page.
+          const w = resizing.current ? newSize : fit(c);
+          updateLayout({ widths: { ...layout.widths, [keys[c]]: w } });
+        }}
+        onColumnResizeEnd={() => {
+          resizing.current = false;
+        }}
+        onCellClicked={([col, row]: Item, e: CellClickedEventArgs) => {
+          if (col < 0) {
+            // A row number (#78): select the row; Shift extends, Ctrl (Cmd on macOS) toggles.
+            const r = rowMarkerClick(selectionRef.current, row, anchor.current, {
+              shift: e.shiftKey,
+              toggle: isModKey(e),
+            });
+            anchor.current = r.anchor;
+            select(r.selection);
+            // Glide prevents the press's default and does not focus for a row number: the
+            // grid keys (Space, Delete, Ctrl+D…) must reach it next.
+            gridRef.current?.focus();
             return;
           }
-          const at = target.id === null ? null : ed.rowById(target.id);
-          if (at !== null) ed.onEdit(at, target.col, v.data);
-        },
-        onCellClicked: ([col, row]: Item, e: CellClickedEventArgs) => {
           const ed = editingRef.current;
-          if (col < 0 || !isModKey(e) || !ed?.linkAt(row, col)) return;
+          const c = dataCol(col);
+          if (!isModKey(e) || !ed?.linkAt(row, c)) return;
           e.preventDefault();
-          ed.onOpenLink(row, col);
-        },
-        onCellContextMenu: ([col, row]: Item, e: CellClickedEventArgs) => {
-          e.preventDefault();
-          editingRef.current?.onContextMenu(
-            row,
-            col < 0 ? null : col,
-            e.bounds.x + e.localEventX,
-            e.bounds.y + e.localEventY,
-            selectionBlock(selection, model ? model.rows.length : data.rows.length, data.columns.length),
-          );
-        },
-      })}
-    />
+          ed.onOpenLink(row, c);
+        }}
+        {...(editing && {
+          drawCell,
+          provideEditor,
+          // Delete would clear the selected cells to "": NULL/empty are explicit menu choices.
+          onDelete: () => false,
+          onCellActivated: ([col, row]: Item) => {
+            activated.current = [col, row];
+            editingRef.current?.onActivate(row, dataCol(col));
+          },
+          onCellEdited: ([col, row]: Item, v: GridCell) => {
+            const ed = editingRef.current;
+            if (!ed || v.kind !== GridCellKind.Text) return;
+            // The editor's edit goes to the record it was opened on, wherever it is now.
+            const target = editorTarget.current;
+            editorTarget.current = null;
+            if (!target) {
+              ed.onEdit(row, dataCol(col), v.data);
+              return;
+            }
+            const at = target.id === null ? null : ed.rowById(target.id);
+            if (at !== null) ed.onEdit(at, target.col, v.data);
+          },
+          onCellContextMenu: ([col, row]: Item, e: CellClickedEventArgs) => {
+            e.preventDefault();
+            editingRef.current?.onContextMenu(
+              row,
+              col < 0 ? null : dataCol(col),
+              e.bounds.x + e.localEventX,
+              e.bounds.y + e.localEventY,
+              currentBlock(),
+            );
+          },
+        })}
+      />
+      {headerMenu && (
+        <GridContextMenu
+          x={headerMenu.x}
+          y={headerMenu.y}
+          label={strings.grid.headerMenuLabel(names[headerMenu.col] ?? "")}
+          items={headerItems(headerMenu.col)}
+          onClose={() => setHeaderMenu(null)}
+        />
+      )}
+      {quickLook && quickValue !== undefined && (
+        <QuickLook
+          column={names[quickLook.col] ?? ""}
+          value={quickValue}
+          onClose={() => setQuickLook(null)}
+        />
+      )}
+    </>
   );
 }
