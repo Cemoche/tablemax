@@ -109,7 +109,7 @@ test("toolbar_groups_in_spec_order", () => {
     t.safeMode(strings.safety.bannerModeConfirmWrites),
     t.database,
     t.sql,
-    `PostgreSQL 16.4 : shop : public.orders${strings.statusPill.prod}`,
+    `${strings.statusPill.tags.prod}${strings.statusPill.tagSeparator}PostgreSQL 16.4 : Shop : shop : public.orders`,
     t.reload,
     t.openAnything,
     t.rowDetails,
@@ -295,15 +295,17 @@ test("a maximize or restore done by the desktop is followed (resize event)", asy
   expect(await screen.findByRole("button", { name: strings.window.restore })).toBeInTheDocument();
 });
 
-test("the space around the capped status pill moves and maximizes the window", async () => {
+test("the space around the status pill moves and maximizes the window", async () => {
   const user = userEvent.setup();
   setup();
-  const pill = screen.getByRole("button", { name: /^PostgreSQL 16\.4/ });
-  // Capped and centred in a wrapper that takes the free space.
-  expect(pill.className).toContain("max-w-140");
+  const pill = screen.getByRole("button", { name: /PostgreSQL 16\.4/ });
+  // The pill fills a wrapper that takes the free space (#104); the wrapper's padding on
+  // both sides is left for moving the window.
+  expect(pill.className).toContain("w-full");
   const area = pill.parentElement as HTMLElement;
   expect(area).toHaveAttribute("data-pill-area");
   expect(area.className).toContain("flex-1");
+  expect(area.className).toMatch(/\bpx-\d/);
   await user.dblClick(area);
   expect(ipc.windowStartDrag).toHaveBeenCalledTimes(1);
   expect(ipc.windowToggleMaximize).toHaveBeenCalledTimes(1);
@@ -402,6 +404,7 @@ test("a looser saved mode stays enforced until the next open, and the menu says 
 });
 
 test("the connections screen shows only the settings, the title and the window buttons", () => {
+  useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null });
   render(<AppToolbar workspace={null} onEditConnection={vi.fn()} />);
   const header = screen.getByRole("banner");
   expect(within(header).getByText(strings.appName)).toBeInTheDocument();
@@ -424,6 +427,7 @@ test("the sidebar button names Ctrl+0", () => {
 });
 
 test("on the connections screen a gear button opens the settings", async () => {
+  useWorkspaces.setState({ workspaces: [], activeWorkspaceId: null });
   useChrome.setState({ settingsRequest: 0 });
   render(<AppToolbar workspace={null} onEditConnection={vi.fn()} />);
   await userEvent.click(screen.getByRole("button", { name: strings.settings.open }));
@@ -439,4 +443,31 @@ test("a failed safe mode save is the button's description, not only its tooltip 
   await user.click(within(screen.getByRole("menu")).getAllByRole("menuitemradio")[3]);
   await waitFor(() => expect(button).toHaveAccessibleDescription(expect.stringContaining("disk full")));
   expect(button).toHaveAttribute("data-tooltip", expect.stringContaining("disk full"));
+});
+
+test("the command palette button opens Open anything with Ctrl+P in its tooltip (#104)", async () => {
+  const user = userEvent.setup();
+  setup();
+  const group = screen.getByRole("group", { name: t.groups.search });
+  // [reload] [command palette]: no metrics button (TableMax has no metrics view).
+  expect(within(group).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+    t.reload,
+    t.openAnything,
+  ]);
+  const palette = within(group).getByRole("button", { name: t.openAnything });
+  expect(palette).toHaveAttribute("data-tooltip", t.openAnything);
+  expect(palette).toHaveAttribute("data-tooltip-key", "Ctrl+P");
+  // A command glyph, as the reference's command palette button.
+  expect(palette.querySelector("svg.lucide-command")).not.toBeNull();
+  await user.click(palette);
+  expect(useChrome.getState().paletteRequest).toMatchObject({ kind: "all" });
+  // [right panel] alone in the last group: no console panel (not built yet).
+  const panels = screen.getByRole("group", { name: t.groups.panels });
+  expect(within(panels).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([t.rowDetails]);
+});
+
+test("with open workspaces the settings are in the connections column, not in the toolbar (#104)", () => {
+  useWorkspaces.setState({ workspaces: [ws()], activeWorkspaceId: "w1" });
+  render(<AppToolbar workspace={null} onEditConnection={vi.fn()} />);
+  expect(within(screen.getByRole("banner")).queryByRole("button", { name: strings.settings.open })).toBeNull();
 });

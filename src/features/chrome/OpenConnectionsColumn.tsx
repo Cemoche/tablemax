@@ -1,12 +1,14 @@
-import { Database, LayoutList, X } from "lucide-react";
+import { Database, LayoutList, SlidersHorizontal, X } from "lucide-react";
 import { useId } from "react";
-import { useAction } from "../../lib/keymap";
+import { useAction, useEffectiveShortcut } from "../../lib/keymap";
+import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
 import { tip, tipIfCut } from "../../lib/tooltip";
+import { useChrome } from "../../stores/chrome";
 import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
-import { swatchClass } from "./swatch";
+import { iconColorClass } from "./swatch";
 
 const C = strings.connectionsColumn;
 
@@ -27,7 +29,11 @@ interface TileProps {
   onSelect: () => void;
 }
 
-/** One open workspace: its database icon in the connection's live color, its name on two lines. */
+/**
+ * One open workspace (#104): an outlined database icon in the connection's live color on a
+ * neutral tile, its name in small text below on two lines at most; the current one has a
+ * light panel behind it.
+ */
 function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
   const reasonId = useId();
   const color = useConnections((s) => s.items.find((c) => c.id === w.connectionId)?.color) ?? w.color;
@@ -48,9 +54,9 @@ function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
         <span
           data-tile-icon=""
           aria-hidden
-          className={`flex size-8 items-center justify-center rounded-lg ${swatchClass(color)}`}
+          className={`flex size-9 items-center justify-center rounded-lg border border-pill-border bg-pill ${iconColorClass(color)}`}
         >
-          <Database size={17} strokeWidth={1.6} />
+          <Database size={20} strokeWidth={1.6} />
         </span>
         <span className="line-clamp-2 w-full text-center text-xs leading-tight break-words text-text">
           {w.name}
@@ -83,9 +89,10 @@ function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
 }
 
 /**
- * The column of open connections on the far left (spec §2.3, 80 px): a tile per open
- * workspace and the Connections button. Ctrl+Shift+[ / ] (and Ctrl+Shift+PageUp /
- * PageDown) go to the previous / next workspace, wrapping around.
+ * The column of open connections on the far left (spec §2.3, 80 px): the Connections
+ * button, a tile per open workspace and, at the bottom, the settings (#104).
+ * Ctrl+Shift+[ / ] (and Ctrl+Shift+PageUp / PageDown) go to the previous / next
+ * workspace, wrapping around.
  */
 export function OpenConnectionsColumn({ connectionsActive, onShowConnections, onSelectWorkspace }: Props) {
   const workspaces = useWorkspaces((s) => s.workspaces);
@@ -101,35 +108,46 @@ export function OpenConnectionsColumn({ connectionsActive, onShowConnections, on
   };
   useAction("workspace.next", () => cycle(1));
   useAction("workspace.previous", () => cycle(-1));
+  const settingsKey = formatShortcut(useEffectiveShortcut("settings.open"));
 
   return (
-    <nav
-      aria-label={C.label}
-      className="flex w-20 shrink-0 flex-col gap-1 overflow-y-auto border-r border-sep bg-win px-1.5 py-2"
-    >
-      <button
-        type="button"
-        aria-pressed={connectionsActive}
-        {...tip(C.connections)}
-        onClick={onShowConnections}
-        className={`flex flex-col items-center gap-1 rounded-lg px-1 py-1.5 text-text-2 aria-pressed:bg-sel aria-pressed:text-text hover:bg-seg-sel ${focusRing}`}
-      >
-        <LayoutList aria-hidden size={18} strokeWidth={1.6} />
-        <span className="text-xs">{C.connections}</span>
-      </button>
-      <div aria-hidden className="mx-2 my-1 border-t border-sep" />
-      <ul className="flex flex-col gap-1">
-        {workspaces.map((w) => (
-          <Tile
-            key={w.id}
-            workspace={w}
-            current={!connectionsActive && w.id === activeId}
-            // A running commit must finish before its workspace can close.
-            busy={w.tabs.some((t) => committing[t.id] === true)}
-            onSelect={() => onSelectWorkspace(w.id)}
-          />
-        ))}
-      </ul>
+    <nav aria-label={C.label} className="flex w-20 shrink-0 flex-col border-r border-sep bg-win">
+      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 py-2">
+        <button
+          type="button"
+          aria-pressed={connectionsActive}
+          {...tip(C.connections)}
+          onClick={onShowConnections}
+          className={`flex flex-col items-center gap-1 rounded-lg px-1 py-1.5 text-text-2 aria-pressed:bg-sel aria-pressed:text-text hover:bg-seg-sel ${focusRing}`}
+        >
+          <LayoutList aria-hidden size={18} strokeWidth={1.6} />
+          <span className="text-xs">{C.connections}</span>
+        </button>
+        <div aria-hidden className="mx-2 my-1 border-t border-sep" />
+        <ul className="flex flex-col gap-1">
+          {workspaces.map((w) => (
+            <Tile
+              key={w.id}
+              workspace={w}
+              current={!connectionsActive && w.id === activeId}
+              // A running commit must finish before its workspace can close.
+              busy={w.tabs.some((t) => committing[t.id] === true)}
+              onSelect={() => onSelectWorkspace(w.id)}
+            />
+          ))}
+        </ul>
+      </div>
+      <div className="flex shrink-0 justify-center py-2">
+        <button
+          type="button"
+          aria-label={strings.settings.open}
+          {...tip(strings.settings.open, settingsKey)}
+          onClick={() => useChrome.getState().requestSettings()}
+          className={`flex size-8 items-center justify-center rounded-lg text-icon hover:bg-seg-sel ${focusRing}`}
+        >
+          <SlidersHorizontal aria-hidden size={17} strokeWidth={1.6} />
+        </button>
+      </div>
     </nav>
   );
 }

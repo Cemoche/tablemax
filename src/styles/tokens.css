@@ -70,13 +70,30 @@
   --swatch-4: #E6E6E6;
   --swatch-5: #F7C7C9;
   --swatch-6: #DCCBF3;
-  /* Text on each connection color (status pill), at least 4.5:1. */
-  --swatch-1-text: #1E1E1E;
-  --swatch-2-text: #1E1E1E;
-  --swatch-3-text: #1E1E1E;
-  --swatch-4-text: #1E1E1E;
-  --swatch-5-text: #1E1E1E;
-  --swatch-6-text: #1E1E1E;
+  /* The status pill's tint of each connection color and its text, at least 4.5:1
+     (#104): light = the light swatch; dark = the swatch at 55 % over --win. */
+  --swatch-1-tint: #BDCFF4;
+  --swatch-2-tint: #BFE3A8;
+  --swatch-3-tint: #F6E8A8;
+  --swatch-4-tint: #E6E6E6;
+  --swatch-5-tint: #F7C7C9;
+  --swatch-6-tint: #DCCBF3;
+  --swatch-1-tint-text: #1E1E1E;
+  --swatch-2-tint-text: #1E1E1E;
+  --swatch-3-tint-text: #1E1E1E;
+  --swatch-4-tint-text: #1E1E1E;
+  --swatch-5-tint-text: #1E1E1E;
+  --swatch-6-tint-text: #1E1E1E;
+  /* The outlined database icon of a connection tile, on --pill, at least 3:1 (#104). */
+  --swatch-1-icon: #1F5FA8;
+  --swatch-2-icon: #2E8B57;
+  --swatch-3-icon: #A3793E;
+  --swatch-4-icon: #4A5160;
+  --swatch-5-icon: #8E1C22;
+  --swatch-6-icon: #6B3FA0;
+  /* Sidebar object icons (#104): tables blue, views purple, 3:1 on --side / --seg-sel / --sel. */
+  --icon-table: #0A6CDB;
+  --icon-view: #8A3FD1;
   /* Status pill texts while not connected, on --pill, at least 4.5:1. */
   --status-connecting: #945A00;
   --status-error: #C62828;
@@ -93,6 +110,9 @@
   --row-selected: var(--accent-strong);
   --row-selected-text: #FFFFFF;
   --accent-contrast: #FFFFFF;
+  /* The Windows close button on hover (#104): red, white glyph (5.7:1). */
+  --window-close: #C42B1C;
+  --window-close-text: #FFFFFF;
 
   /* Previous names, aliases of the new tokens until the components move to them. */
   --bg: var(--win);
@@ -157,12 +177,26 @@
     --swatch-4: #4A5160;
     --swatch-5: #8E1C22;
     --swatch-6: #6B3FA0;
-    --swatch-1-text: #FFFFFF;
-    --swatch-2-text: #000000;
-    --swatch-3-text: #000000;
-    --swatch-4-text: #FFFFFF;
-    --swatch-5-text: #FFFFFF;
-    --swatch-6-text: #FFFFFF;
+    --swatch-1-tint: #1D4068;
+    --swatch-2-tint: #25583C;
+    --swatch-3-tint: #654E2E;
+    --swatch-4-tint: #343841;
+    --swatch-5-tint: #5A1B1E;
+    --swatch-6-tint: #472E64;
+    --swatch-1-tint-text: #F2F2F2;
+    --swatch-2-tint-text: #F2F2F2;
+    --swatch-3-tint-text: #F2F2F2;
+    --swatch-4-tint-text: #F2F2F2;
+    --swatch-5-tint-text: #F2F2F2;
+    --swatch-6-tint-text: #F2F2F2;
+    --swatch-1-icon: #799FCB;
+    --swatch-2-icon: #82B99A;
+    --swatch-3-icon: #C8AF8B;
+    --swatch-4-icon: #9297A0;
+    --swatch-5-icon: #BB777A;
+    --swatch-6-icon: #A68CC6;
+    --icon-table: #5AA2FF;
+    --icon-view: #B58CFF;
     --status-connecting: #F0B429;
     --status-error: #FF8A8A;
     --danger: #ff6b6b;
@@ -223,12 +257,26 @@
   --swatch-4: #4A5160;
   --swatch-5: #8E1C22;
   --swatch-6: #6B3FA0;
-  --swatch-1-text: #FFFFFF;
-  --swatch-2-text: #000000;
-  --swatch-3-text: #000000;
-  --swatch-4-text: #FFFFFF;
-  --swatch-5-text: #FFFFFF;
-  --swatch-6-text: #FFFFFF;
+  --swatch-1-tint: #1D4068;
+  --swatch-2-tint: #25583C;
+  --swatch-3-tint: #654E2E;
+  --swatch-4-tint: #343841;
+  --swatch-5-tint: #5A1B1E;
+  --swatch-6-tint: #472E64;
+  --swatch-1-tint-text: #F2F2F2;
+  --swatch-2-tint-text: #F2F2F2;
+  --swatch-3-tint-text: #F2F2F2;
+  --swatch-4-tint-text: #F2F2F2;
+  --swatch-5-tint-text: #F2F2F2;
+  --swatch-6-tint-text: #F2F2F2;
+  --swatch-1-icon: #799FCB;
+  --swatch-2-icon: #82B99A;
+  --swatch-3-icon: #C8AF8B;
+  --swatch-4-icon: #9297A0;
+  --swatch-5-icon: #BB777A;
+  --swatch-6-icon: #A68CC6;
+  --icon-table: #5AA2FF;
+  --icon-view: #B58CFF;
   --status-connecting: #F0B429;
   --status-error: #FF8A8A;
   --danger: #ff6b6b;

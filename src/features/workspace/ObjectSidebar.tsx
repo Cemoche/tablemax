@@ -16,7 +16,7 @@ import * as ipc from "../../lib/ipc";
 import { qualifiedName } from "../../lib/sqlIdent";
 import { strings } from "../../lib/strings";
 import { tipIfCut } from "../../lib/tooltip";
-import type { DbObject, DbRoutine } from "../../lib/types";
+import type { ColumnInfo, DbObject, DbRoutine } from "../../lib/types";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome, useOnRequest } from "../../stores/chrome";
 import { useSettings } from "../../stores/settings";
@@ -31,9 +31,21 @@ const S = strings.sidebar;
 
 type Entry = { type: "object"; object: DbObject } | { type: "routine"; routine: DbRoutine };
 
+/** The columns of an opened table or view, loaded on first open (#104). */
+type ColumnsState =
+  | { state: "loading" }
+  | { state: "error"; message: string }
+  | { state: "loaded"; columns: ColumnInfo[] };
+
 type Row =
   | { type: "section"; key: string; label: string; count: number; expanded: boolean }
-  | Entry;
+  /** A table or view: it opens to its columns. */
+  | { type: "object"; object: DbObject; expanded: boolean }
+  | { type: "routine"; routine: DbRoutine }
+  /** A column of the opened object `parent` (its entry key). */
+  | { type: "column"; parent: string; column: ColumnInfo }
+  /** Its columns are loading, or failed to load. */
+  | { type: "columnsStatus"; parent: string; label: string; failed: boolean };
 
 /** Rows kept rendered above and below the visible ones. */
 const OVERSCAN = 12;
@@ -46,7 +58,14 @@ export const treeRowHeight = (fontSize: number) => Math.max(24, Math.ceil(fontSi
 const entryName = (e: Entry) => (e.type === "object" ? e.object.name : e.routine.name);
 const entryKey = (e: Entry) =>
   e.type === "object" ? `o:${e.object.kind}:${e.object.name}` : `r:${e.routine.kind}:${e.routine.name}`;
-const rowKey = (r: Row) => (r.type === "section" ? `s:${r.key}` : entryKey(r));
+const rowKey = (r: Row) =>
+  r.type === "section"
+    ? `s:${r.key}`
+    : r.type === "column"
+      ? `c:${r.parent}:${r.column.name}`
+      : r.type === "columnsStatus"
+        ? `cs:${r.parent}`
+        : entryKey(r);
 
 /**
  * The sidebar's Items tab: the schema's tables, views and routines in a virtualized tree
@@ -63,6 +82,17 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
   const [query, setQuery] = useState("");
   const [reload, setReload] = useState(0);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  /** Tables and views opened in the tree, by entry key, and their columns (cached). */
+  const [opened, setOpened] = useState<Record<string, DbObject>>({});
+  const [columns, setColumns] = useState<Record<string, ColumnsState>>({});
+  const columnsRef = useRef(columns);
+  columnsRef.current = columns;
+  /** Bumped by a reload or another schema: late answers of older loads are ignored. */
+  const columnsGen = useRef(0);
+  /** Keys whose columns are being loaded (this generation). */
+  const inflight = useRef(new Set<string>());
+  /** Keys a reload marked: loaded again from the database, their old columns shown meanwhile. */
+  const staleKeys = useRef(new Set<string>());
   /**
    * The open menu, and the row it came from by key (its index as a fallback): the focus
    * goes back to that row on close, even if the rows moved meanwhile.
@@ -125,6 +155,73 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
     };
   }, [id, caps.routines, currentSchema, database, reload]);
 
+  // Another schema or database: nothing stays open, nothing is kept.
+  useEffect(() => {
+    columnsGen.current += 1;
+    inflight.current.clear();
+    staleKeys.current.clear();
+    setOpened({});
+    setColumns({});
+  }, [id, currentSchema, database]);
+  // A reload (Refresh, Mod+R): every loaded entry is stale. The columns stay on screen and
+  // load again from the database (refresh=true) once the object list is back; every
+  // other load reads the backend's cache, shared with the grid tabs (refresh=false).
+  useEffect(() => {
+    if (reload === 0) return;
+    columnsGen.current += 1;
+    inflight.current.clear();
+    staleKeys.current = new Set(Object.keys(columnsRef.current));
+  }, [reload]);
+  // Objects gone after a reload are closed, and forgotten.
+  useEffect(() => {
+    if (loading) return;
+    const present = new Set(objects.map((object) => entryKey({ type: "object", object })));
+    const gone = (o: Record<string, unknown>) => Object.keys(o).some((k) => !present.has(k));
+    for (const k of staleKeys.current) if (!present.has(k)) staleKeys.current.delete(k);
+    setOpened((o) => (gone(o) ? Object.fromEntries(Object.entries(o).filter(([k]) => present.has(k))) : o));
+    setColumns((c) => (gone(c) ? Object.fromEntries(Object.entries(c).filter(([k]) => present.has(k))) : c));
+  }, [objects, loading]);
+  useEffect(() => {
+    // The stale ones wait for the object list, so a dropped table is never asked for.
+    const present = loading ? null : new Set(objects.map((object) => entryKey({ type: "object", object })));
+    for (const [key, object] of Object.entries(opened)) {
+      if (inflight.current.has(key)) continue;
+      const stale = staleKeys.current.has(key);
+      if (stale ? present === null || !present.has(key) : columns[key]) continue;
+      inflight.current.add(key);
+      const gen = columnsGen.current;
+      const done = (next: ColumnsState) => {
+        if (gen !== columnsGen.current) return;
+        inflight.current.delete(key);
+        staleKeys.current.delete(key);
+        setColumns((c) => ({ ...c, [key]: next }));
+      };
+      if (!columns[key]) setColumns((c) => ({ ...c, [key]: { state: "loading" } }));
+      ipc
+        .tableInfo(id, { schema: object.schema, name: object.name }, stale)
+        .then((info) => done({ state: "loaded", columns: info.columns }))
+        .catch((e) => done({ state: "error", message: toAppError(e).message }));
+    }
+  }, [opened, columns, objects, loading, id]);
+
+  const toggleObject = (object: DbObject) => {
+    const key = entryKey({ type: "object", object });
+    const closing = opened[key] !== undefined;
+    setOpened((o) => {
+      const next = { ...o };
+      if (next[key]) delete next[key];
+      else next[key] = object;
+      return next;
+    });
+    // A failed load is tried again at the next open.
+    if (closing && columns[key]?.state === "error")
+      setColumns((c) => {
+        const next = { ...c };
+        delete next[key];
+        return next;
+      });
+  };
+
   const { tables, views, shownRoutines } = useMemo(() => {
     const q = query.trim().toLowerCase();
     const keep = <T extends { name: string }>(l: T[]) => l.filter((o) => nameMatches(o.name, q, match));
@@ -138,22 +235,40 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
 
   const rows = useMemo(() => {
     const out: Row[] = [];
-    const section = (key: string, label: string, entries: Entry[], show: boolean) => {
+    const section = (key: string, label: string, entries: Row[], show: boolean) => {
       if (!show) return;
       const expanded = !collapsed[key];
       out.push({ type: "section", key, label, count: entries.length, expanded });
-      if (expanded) out.push(...entries);
+      if (!expanded) return;
+      for (const entry of entries) {
+        out.push(entry);
+        if (entry.type !== "object" || !entry.expanded) continue;
+        const parent = entryKey(entry);
+        const loaded = columns[parent];
+        if (!loaded || loaded.state === "loading")
+          out.push({ type: "columnsStatus", parent, label: S.columnsLoading, failed: false });
+        else if (loaded.state === "error")
+          out.push({ type: "columnsStatus", parent, label: S.columnsFailed(loaded.message), failed: true });
+        else for (const column of loaded.columns) out.push({ type: "column", parent, column });
+      }
     };
-    section("tables", S.tables, tables.map((object) => ({ type: "object", object })), showTables);
-    section("views", S.views, views.map((object) => ({ type: "object", object })), showViews);
+    const objectRows = (list: DbObject[]): Row[] =>
+      list.map((object) => ({
+        type: "object",
+        object,
+        expanded: opened[entryKey({ type: "object", object })] !== undefined,
+      }));
+    section("tables", S.tables, objectRows(tables), showTables);
+    section("views", S.views, objectRows(views), showViews);
+    // Functions: only when the engine has some in this schema.
     section(
       "routines",
       S.routines,
       shownRoutines.map((routine) => ({ type: "routine", routine })),
-      caps.routines,
+      caps.routines && routines.length > 0,
     );
     return out;
-  }, [tables, views, shownRoutines, collapsed, showTables, showViews, caps.routines]);
+  }, [tables, views, shownRoutines, routines.length, collapsed, opened, columns, showTables, showViews, caps.routines]);
 
   // The active table tab's object is the selected row until another row is clicked.
   // Another tab shown: the selection follows it again.
@@ -259,6 +374,7 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
         fontSize={fontSize}
         selectedKey={selectedKey}
         onToggle={(key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }))}
+        onToggleObject={toggleObject}
         onSelect={(entry, permanent) => {
           setSelected(entryKey(entry));
           if (entry.type === "object") {
@@ -303,6 +419,8 @@ interface TreeProps {
   fontSize: number;
   selectedKey: string | null;
   onToggle: (key: string) => void;
+  /** Opens or closes a table or view on its columns. */
+  onToggleObject: (object: DbObject) => void;
   /** Click (preview) or double click / Enter (permanent) on an object; a routine opens its menu. */
   onSelect: (entry: Entry, permanent: boolean) => void;
   onMenu: (entry: Entry, anchor: MenuAnchor, row: number) => void;
@@ -310,10 +428,10 @@ interface TreeProps {
 
 /** Level, set size, position and parent row of each row (the tree is virtualized). */
 interface RowMeta {
-  level: 1 | 2;
+  level: 1 | 2 | 3;
   setSize: number;
   posInSet: number;
-  /** The section row of an object or routine. */
+  /** The section row of an object or routine; the object row of a column. */
   parent: number | null;
 }
 
@@ -323,13 +441,25 @@ function rowMeta(rows: Row[]): RowMeta[] {
   let section = -1;
   let sectionPos = 0;
   let childPos = 0;
+  let object = -1;
+  let columnPos = 0;
+  let columnCount = 0;
   rows.forEach((r, i) => {
     if (r.type === "section") {
       section = i;
       childPos = 0;
       meta.push({ level: 1, setSize: sections, posInSet: ++sectionPos, parent: null });
+    } else if (r.type === "column" || r.type === "columnsStatus") {
+      meta.push({ level: 3, setSize: columnCount, posInSet: ++columnPos, parent: object >= 0 ? object : null });
     } else {
       const head = rows[section];
+      if (r.type === "object") {
+        object = i;
+        columnPos = 0;
+        columnCount = 0;
+        for (let j = i + 1; j < rows.length && (rows[j].type === "column" || rows[j].type === "columnsStatus"); j++)
+          columnCount++;
+      }
       meta.push({
         level: 2,
         setSize: head?.type === "section" ? head.count : 0,
@@ -341,13 +471,15 @@ function rowMeta(rows: Row[]): RowMeta[] {
   return meta;
 }
 
+const isChild = (r: Row | undefined) => r?.type === "column" || r?.type === "columnsStatus";
+
 /**
  * The tree (ARIA tree pattern): fixed-height rows, only those in view (plus some)
  * rendered, so `aria-setsize` / `aria-posinset` tell where each row sits. A single Tab
  * stop (roving tabindex); Up / Down, Home / End, Right (expand, then first child), Left
  * (collapse, or back to the section), Enter (open), Space (preview), Shift+F10 (menu).
  */
-function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSelect, onMenu }: TreeProps) {
+function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onToggleObject, onSelect, onMenu }: TreeProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(FALLBACK_VIEWPORT);
@@ -461,23 +593,27 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
         if (row.type === "section") {
           if (!row.expanded) onToggle(row.key);
           else if (rows[at + 1] && rows[at + 1].type !== "section") focusRow(at + 1);
+        } else if (row.type === "object") {
+          if (!row.expanded) onToggleObject(row.object);
+          else if (isChild(rows[at + 1])) focusRow(at + 1);
         }
         break;
       case "ArrowLeft":
         if (row.type === "section") {
           if (row.expanded) onToggle(row.key);
-        } else if (m.parent !== null) focusRow(m.parent);
+        } else if (row.type === "object" && row.expanded) onToggleObject(row.object);
+        else if (m.parent !== null) focusRow(m.parent);
         break;
       case "Enter":
       case " ":
         if (row.type === "section") onToggle(row.key);
         else if (row.type === "routine") menuAt(row, at, target);
-        else onSelect(row, e.key === "Enter");
+        else if (row.type === "object") onSelect(row, e.key === "Enter");
         break;
       case "ContextMenu":
       case "F10":
-        if (row.type === "section" || (e.key === "F10" && !e.shiftKey)) return;
-        menuAt(row, at, target);
+        if (row.type === "section" || isChild(row) || (e.key === "F10" && !e.shiftKey)) return;
+        if (row.type === "object" || row.type === "routine") menuAt(row, at, target);
         break;
       default:
         return;
@@ -505,6 +641,7 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
     } as const;
     if (row.type === "section") {
       const Chevron = row.expanded ? ChevronDown : ChevronRight;
+      // A plain row with a chevron (#104): no bold small caps, no count.
       return (
         <div
           key={rowKey(row)}
@@ -512,13 +649,40 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
           aria-label={row.label}
           aria-expanded={row.expanded}
           onClick={() => onToggle(row.key)}
-          className={`${rowClass(false)} font-sans text-xs font-semibold text-text-2`}
+          className={`${rowClass(false)} text-text`}
         >
-          <Chevron aria-hidden size={13} strokeWidth={1.8} className="shrink-0" />
+          <Chevron aria-hidden size={13} strokeWidth={1.8} className="shrink-0 text-icon" />
           <span>{row.label}</span>
-          <span aria-hidden="true" className="ml-auto font-normal">
-            {row.count}
+        </div>
+      );
+    }
+    if (row.type === "column") {
+      const { name, typeName } = row.column;
+      return (
+        <div
+          key={rowKey(row)}
+          {...common}
+          aria-label={name}
+          {...tipIfCut(`${name} ${typeName}`)}
+          data-column-row={name}
+          className={`${rowClass(false)} cursor-default pl-14 text-text`}
+        >
+          <span className="min-w-0 truncate">
+            {name} <span className="text-text-2">{typeName}</span>
           </span>
+        </div>
+      );
+    }
+    if (row.type === "columnsStatus") {
+      return (
+        <div
+          key={rowKey(row)}
+          {...common}
+          aria-label={row.label}
+          {...tipIfCut(row.label)}
+          className={`${rowClass(false)} cursor-default pl-14 font-sans ${row.failed ? "text-danger" : "text-text-2"}`}
+        >
+          <span className="min-w-0 truncate">{row.label}</span>
         </div>
       );
     }
@@ -543,8 +707,28 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onSele
           e.preventDefault();
           onMenu(row, { x: e.clientX, y: e.clientY }, index);
         }}
-        className={`${rowClass(selected)} pl-6 text-text`}
+        aria-expanded={row.type === "object" ? row.expanded : undefined}
+        className={`${rowClass(selected)} ${row.type === "object" ? "pl-4" : "pl-8.5"} text-text`}
       >
+        {row.type === "object" && (
+          // Mouse only: the row itself carries aria-expanded (Right / Left from the keyboard).
+          <span
+            aria-hidden
+            data-chevron=""
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleObject(row.object);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            className="-my-1 flex shrink-0 items-center self-stretch text-icon"
+          >
+            {row.expanded ? (
+              <ChevronDown size={13} strokeWidth={1.8} />
+            ) : (
+              <ChevronRight size={13} strokeWidth={1.8} />
+            )}
+          </span>
+        )}
         <ObjectIcon kind={row.type === "object" ? row.object.kind : row.routine.kind} />
         <span className="min-w-0 truncate">{name}</span>
       </div>

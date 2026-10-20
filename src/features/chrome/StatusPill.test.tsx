@@ -60,32 +60,83 @@ beforeEach(() => {
   useWorkspaces.setState({ workspaces: [ws()], activeWorkspaceId: "w1", connectRequest: null });
 });
 
-test("status_pill_text_and_color", () => {
+/** The pill's text (without its tag badge). */
+const pillText = () => pill().querySelector("[data-pill-text]") as HTMLElement;
+const pillTag = () => pill().querySelector("[data-pill-tag]") as HTMLElement | null;
+
+test("status_pill_text_and_color: tag | engine version : name : database : schema.table, on the tint (#104)", () => {
   const { rerender } = render(<StatusPill workspace={ws()} />);
-  expect(pill()).toHaveTextContent(/^PostgreSQL 16\.4 : tablemax_demo : public\.orders$/);
-  expect(pill().className).toContain("bg-swatch-2");
-  // Its own text color, readable on that swatch in both themes (tokens.test.ts).
-  expect(pill().className).toContain("text-swatch-2-text");
+  expect(pillTag()).toHaveTextContent(/^LOCAL$/);
+  expect(pillText()).toHaveTextContent(/^PostgreSQL 16\.4 : Demo : tablemax_demo : public\.orders$/);
+  // The tag comes first, outside the text, outlined so it shows on any tint (#104 review).
+  expect(pill().firstElementChild).toBe(pillTag());
+  expect(pillTag()).toHaveClass("border", "border-current");
+  // Read out as "LOCAL | PostgreSQL …": the pill carries an explicit aria-label built from the same values.
+  expect(pill()).toHaveAccessibleName("LOCAL | PostgreSQL 16.4 : Demo : tablemax_demo : public.orders");
+  // The tint of the connection color and its own text color (≥ 4.5:1, tokens.test.ts).
+  expect(pill().className).toContain("bg-swatch-2-tint");
+  expect(pill().className).toContain("text-swatch-2-tint-text");
   expect(pill().className).toContain("font-mono");
 
   // A SQL tab: the schema only.
   rerender(<StatusPill workspace={ws({ activeTabId: "q1" })} />);
-  expect(pill()).toHaveTextContent(/^PostgreSQL 16\.4 : tablemax_demo : public$/);
+  expect(pillText()).toHaveTextContent(/^PostgreSQL 16\.4 : Demo : tablemax_demo : public$/);
 
-  // The live color of the saved connection.
-  useConnections.setState({ items: [cfg({ color: "swatch-5" })] });
+  // The live color, tag and name of the saved connection.
+  useConnections.setState({ items: [cfg({ color: "swatch-5", envTag: "dev", name: "Shop dev" })] });
   rerender(<StatusPill workspace={ws()} />);
-  expect(pill().className).toContain("bg-swatch-5");
+  expect(pill().className).toContain("bg-swatch-5-tint");
+  expect(pillTag()).toHaveTextContent(/^DEV$/);
+  expect(pillText()).toHaveTextContent(/^PostgreSQL 16\.4 : Shop dev : tablemax_demo : public\.orders$/);
 
   // MariaDB names itself; SQLite shows its file.
   useConnections.setState({ items: [cfg({ kind: "mariaDb" })] });
   rerender(<StatusPill workspace={ws({ dialect: "mySql", serverVersion: "10.11.6-MariaDB-1:10.11.6+maria~ubu2204", database: null, currentSchema: "shop", activeTabId: "q1" })} />);
-  expect(pill()).toHaveTextContent(/^MariaDB 10\.11\.6 : shop$/);
+  expect(pillText()).toHaveTextContent(/^MariaDB 10\.11\.6 : Demo : shop$/);
   useConnections.setState({
     items: [cfg({ kind: "sqlite", database: null, sqlitePath: "/home/u/data/demo.db" })],
   });
   rerender(<StatusPill workspace={ws({ dialect: "sqlite", serverVersion: "3.46.0", database: null, currentSchema: "main", activeTabId: "q1" })} />);
-  expect(pill()).toHaveTextContent(/^SQLite 3\.46\.0 : demo\.db : main$/);
+  expect(pillText()).toHaveTextContent(/^SQLite 3\.46\.0 : Demo : demo\.db : main$/);
+});
+
+test("SSH is named when the connection goes through a tunnel (#104)", () => {
+  useConnections.setState({
+    items: [
+      cfg({
+        ssh: { host: "bastion", port: null, user: null, auth: "agent", keyFile: null, secretMode: "none" },
+      }),
+    ],
+  });
+  render(<StatusPill workspace={ws()} />);
+  expect(pillText()).toHaveTextContent(/^PostgreSQL 16\.4 : SSH : Demo : tablemax_demo : public\.orders$/);
+});
+
+test("every tag has its label: LOCAL, DEV, STAGING, PROD (#104)", () => {
+  const { rerender } = render(<StatusPill workspace={ws()} />);
+  for (const [tag, label] of [
+    ["local", "LOCAL"],
+    ["dev", "DEV"],
+    ["staging", "STAGING"],
+    ["prod", "PROD"],
+  ] as const) {
+    useConnections.setState({ items: [cfg({ envTag: tag })] });
+    rerender(<StatusPill workspace={ws()} />);
+    expect(pillTag()).toHaveTextContent(label);
+    expect(pillTag()?.className).toContain(`bg-tag-${tag}-bg`);
+    expect(pillTag()?.className).toContain(`text-tag-${tag}-text`);
+  }
+});
+
+test("the pill takes the free width; the throughput slot on its right stays empty (#104)", () => {
+  render(<StatusPill workspace={ws()} />);
+  // No cap any more: the pill fills its wrapper, whose padding stays a drag area.
+  expect(pill().className).not.toMatch(/max-w-/);
+  expect(pill().className).toContain("w-full");
+  const slot = pill().querySelector("[data-throughput-slot]");
+  expect(slot).not.toBeNull();
+  // No byte counter yet (follow-up issue): no number, never a fake one.
+  expect(slot?.textContent).toBe("");
 });
 
 test("shortVersion keeps the version number", () => {
@@ -100,6 +151,7 @@ test("connecting, reconnecting and error use the state tokens", () => {
   const { rerender } = render(<StatusPill workspace={ws({ status: "connecting", serverVersion: undefined })} />);
   expect(pill()).toHaveTextContent(s.connecting("Demo"));
   expect(pill().className).not.toContain("bg-swatch");
+  expect(pill().querySelector("[data-pill-tag]")).toHaveTextContent("LOCAL");
   expect(pill().className).toContain("text-status-connecting");
 
   // Connected before in this session: reconnecting.
@@ -122,8 +174,8 @@ test("status_pill_keeps_prod_badge_when_truncated", () => {
   useConnections.setState({ items: [cfg({ envTag: "prod", database: long })] });
   const { rerender } = render(<StatusPill workspace={ws({ envTag: "prod", database: long })} />);
   const button = pill();
-  const badge = within(button).getByText(s.prod);
-  const text = within(button).getByText(new RegExp(`^PostgreSQL 16\\.4 : ${long}`));
+  const badge = within(button).getByText(s.tags.prod);
+  const text = within(button).getByText(new RegExp(`^PostgreSQL 16\\.4 : Demo : ${long}`));
   // One line: the text shrinks with an ellipsis, the badge never does and is not inside it.
   expect(button.className).toContain("whitespace-nowrap");
   expect(button.className).toContain("overflow-hidden");
@@ -138,22 +190,22 @@ test("status_pill_keeps_prod_badge_when_truncated", () => {
 
   // Also while connecting or failed.
   rerender(<StatusPill workspace={ws({ envTag: "prod", status: "connecting" })} />);
-  expect(within(pill()).getByText(s.prod)).toBeInTheDocument();
+  expect(within(pill()).getByText(s.tags.prod)).toBeInTheDocument();
   rerender(<StatusPill workspace={ws({ envTag: "prod", status: "disconnected" })} connectError="boom" />);
-  expect(within(pill()).getByText(s.prod)).toBeInTheDocument();
+  expect(within(pill()).getByText(s.tags.prod)).toBeInTheDocument();
 });
 
 test("the PROD badge follows the live tag of the saved connection", () => {
   const { rerender } = render(<StatusPill workspace={ws()} />);
-  expect(within(pill()).queryByText(s.prod)).toBeNull();
+  expect(within(pill()).queryByText(s.tags.prod)).toBeNull();
   // Retagged prod while open: at once.
   useConnections.setState({ items: [cfg({ envTag: "prod" })] });
   rerender(<StatusPill workspace={ws()} />);
-  expect(within(pill()).getByText(s.prod)).toBeInTheDocument();
+  expect(within(pill()).getByText(s.tags.prod)).toBeInTheDocument();
   // A deleted connection keeps the tag it was opened with.
   useConnections.setState({ items: [] });
   rerender(<StatusPill workspace={ws({ envTag: "prod" })} />);
-  expect(within(pill()).getByText(s.prod)).toBeInTheDocument();
+  expect(within(pill()).getByText(s.tags.prod)).toBeInTheDocument();
 });
 
 test("a click opens the connection popover: details, Edit, Reconnect, Disconnect", async () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { ConnectionConfig } from "../../lib/types";
+import { useChrome } from "../../stores/chrome";
 import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
@@ -107,14 +108,46 @@ test("on the connections screen no tile is current and Connections is pressed", 
   expect(screen.getByRole("button", { name: "Local PG" })).not.toHaveAttribute("aria-current");
 });
 
-test("the tile icon has the live color of the saved connection", () => {
+test("tile_layout: an outlined database icon in the live connection color on a neutral tile, the name below (#104)", () => {
   useConnections.setState({ items: [saved("c-w1", "swatch-5")] });
   renderColumn();
-  const icon = screen.getByRole("button", { name: "Local PG" }).querySelector("[data-tile-icon]");
-  expect(icon).toHaveClass("bg-swatch-5");
+  const tile = screen.getByRole("button", { name: "Local PG" });
+  const icon = tile.querySelector("[data-tile-icon]") as HTMLElement;
+  // Neutral tile, the icon stroked in the connection color: no filled colored square.
+  expect(icon).toHaveClass("bg-pill", "border-pill-border", "text-swatch-5-icon");
+  expect(icon.className).not.toMatch(/bg-swatch/);
+  expect(icon.querySelector("svg.lucide-database")).not.toBeNull();
+  // The name in small text under the icon.
+  const name = within(tile).getByText("Local PG");
+  expect(name).toHaveClass("text-xs");
+  expect(icon.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   // Without a saved connection, the color the workspace was opened with.
   const icon2 = screen.getByRole("button", { name: "Staging MySQL" }).querySelector("[data-tile-icon]");
-  expect(icon2).toHaveClass("bg-swatch-3");
+  expect(icon2).toHaveClass("text-swatch-3-icon");
+});
+
+test("tile_active_state: the current tile gets a light panel behind it, the others only on hover (#104)", () => {
+  renderColumn();
+  const current = screen.getByRole("button", { name: "Local PG" });
+  const other = screen.getByRole("button", { name: "Prod" });
+  expect(current).toHaveClass("bg-sel");
+  expect(other).not.toHaveClass("bg-sel");
+  expect(other).toHaveClass("hover:bg-seg-sel");
+});
+
+test("settings_button_location: the settings button sits at the bottom of the column (#104)", async () => {
+  useChrome.setState({ settingsRequest: 0 });
+  renderColumn();
+  const nav = screen.getByRole("navigation", { name: C.label });
+  const settings = within(nav).getByRole("button", { name: strings.settings.open });
+  // Last control of the column, below the tiles, with its shortcut in the tooltip.
+  const all = within(nav).getAllByRole("button");
+  expect(all[all.length - 1]).toBe(settings);
+  expect(settings).toHaveAttribute("data-tooltip", strings.settings.open);
+  expect(settings).toHaveAttribute("data-tooltip-key");
+  expect(settings.querySelector("svg.lucide-sliders-horizontal")).not.toBeNull();
+  await userEvent.click(settings);
+  expect(useChrome.getState().settingsRequest).toBe(1);
 });
 
 test("a long name is shown on two lines at most, with the full name in the tooltip", () => {

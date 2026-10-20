@@ -138,18 +138,57 @@ test("fonts: system UI font, bundled JetBrains Mono for data, 13 px base", () =>
   expect(light["--text-md"]).toBe("13px");
 });
 
-test("the status pill text is readable on every connection color and in every state", () => {
+test("the status pill text is readable on every connection tint and in every state (#104)", () => {
   for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
     const v = values(selector);
     const ratio = (fg: string, bg: string) => contrastRatio(v[fg], v[bg]);
     // ~12 px text: WCAG AA for small text, 4.5:1.
     for (const n of [1, 2, 3, 4, 5, 6]) {
-      expect(ratio(`--swatch-${n}-text`, `--swatch-${n}`), `${selector} swatch-${n}`).toBeGreaterThanOrEqual(4.5);
+      expect(v[`--swatch-${n}-tint`], `${selector} swatch-${n}-tint`).toMatch(/^#[0-9A-F]{6}$/i);
+      expect(ratio(`--swatch-${n}-tint-text`, `--swatch-${n}-tint`), `${selector} swatch-${n}`).toBeGreaterThanOrEqual(4.5);
     }
     for (const state of ["--status-connecting", "--status-error", "--text-2"]) {
       expect(ratio(state, "--pill"), `${selector} ${state}`).toBeGreaterThanOrEqual(4.5);
     }
+    // The tag badge at the start of the pill.
+    for (const tag of ["local", "dev", "staging", "prod"]) {
+      expect(ratio(`--tag-${tag}-text`, `--tag-${tag}-bg`), `${selector} tag ${tag}`).toBeGreaterThanOrEqual(4.5);
+    }
+    // The old text-on-swatch tokens are gone (the pill sits on the tint now).
+    expect(v["--swatch-1-text"], selector).toBeUndefined();
   }
+  // Light: the light swatch itself (a light tint) under dark text. Dark: a darker tint than
+  // the saturated swatch, under light text.
+  const light = values(LIGHT);
+  const dark = values(DARK_FORCED);
+  for (const n of [1, 2, 3, 4, 5, 6]) {
+    expect(light[`--swatch-${n}-tint`]).toBe(light[`--swatch-${n}`]);
+    expect(contrastRatio(dark[`--swatch-${n}-tint`], "#000000"), `dark tint ${n} darker than the swatch`).toBeLessThan(
+      contrastRatio(dark[`--swatch-${n}`], "#000000"),
+    );
+  }
+});
+
+test("connection tile icons and object icons stand out (3:1, non-text) in both themes (#104)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = values(selector);
+    const ratio = (fg: string, bg: string) => contrastRatio(v[fg], v[bg]);
+    // The outlined database icon in the connection color on the neutral tile (--pill).
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      expect(ratio(`--swatch-${n}-icon`, "--pill"), `${selector} swatch-${n}-icon`).toBeGreaterThanOrEqual(3);
+    }
+    // Tables blue, views purple, on the sidebar, a hovered row and a selected row.
+    for (const icon of ["--icon-table", "--icon-view"]) {
+      for (const bg of ["--side", "--seg-sel", "--sel"]) {
+        expect(ratio(icon, bg), `${selector} ${icon} on ${bg}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  }
+});
+
+test("the Windows close button turns red with a white glyph (#104)", () => {
+  const v = values(LIGHT);
+  expect(contrastRatio(v["--window-close-text"], v["--window-close"])).toBeGreaterThanOrEqual(4.5);
 });
 
 test("tab text is readable on the capsules in both themes (ruling R3: surfaces unchanged)", () => {

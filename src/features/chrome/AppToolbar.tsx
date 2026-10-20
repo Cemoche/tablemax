@@ -1,4 +1,4 @@
-import { CircleX, Database, Eye, ListChecks, PanelLeft, PanelRight, Plug, RotateCw, Search, Settings } from "lucide-react";
+import { CircleX, Command, Database, Eye, ListChecks, PanelLeft, PanelRight, Plug, RotateCw, Settings } from "lucide-react";
 import { type MouseEvent, type ReactNode, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
@@ -59,14 +59,18 @@ interface Props {
 /**
  * The unified toolbar (spec §2.3), which is also the title bar of the frameless window:
  * [sidebar · connection] [Discard · Preview · Commit] [safe mode · database · SQL]
- * status pill [reload · Open anything] [row details] and the window buttons. A press on
- * its empty space moves the window; a double press maximizes or restores it.
+ * status pill [reload · command palette (Open anything)] [row details] and the window
+ * buttons. TableMax has no metrics view and no console panel yet, so their buttons are not
+ * shown (#104). A press on its empty space moves the window; a double press maximizes or
+ * restores it.
  */
 export function AppToolbar({ workspace, connectError = null, onEditConnection }: Props) {
   const systemTitleBar = useSettings((s) => s.systemTitleBar);
   useTrackMaximized();
   useAction("workspace.reload", () => reloadWorkspace(workspace));
   const settingsHint = useHint(strings.settings.open, "settings.open");
+  // With a workspace open, the connections column shows and holds the settings (#104).
+  const columnShown = useWorkspaces((s) => s.workspaces.length > 0);
 
   const onMouseDown = (e: MouseEvent<HTMLElement>) => {
     if (systemTitleBar || e.button !== 0) return;
@@ -86,15 +90,17 @@ export function AppToolbar({ workspace, connectError = null, onEditConnection }:
         <WorkspaceTools workspace={workspace} connectError={connectError} onEditConnection={onEditConnection} />
       ) : (
         <>
-          <button
-            type="button"
-            aria-label={strings.settings.open}
-            {...settingsHint}
-            onClick={() => useChrome.getState().requestSettings()}
-            className={`${iconButton} shrink-0`}
-          >
-            <Settings aria-hidden {...ICON} />
-          </button>
+          {!columnShown && (
+            <button
+              type="button"
+              aria-label={strings.settings.open}
+              {...settingsHint}
+              onClick={() => useChrome.getState().requestSettings()}
+              className={`${iconButton} shrink-0`}
+            >
+              <Settings aria-hidden {...ICON} />
+            </button>
+          )}
           <span className="flex-1 text-center font-semibold text-text-2">{strings.appName}</span>
         </>
       )}
@@ -314,7 +320,7 @@ function WorkspaceTools({
           onClick={() => useChrome.getState().requestPalette("all")}
           className={iconButton}
         >
-          <Search aria-hidden {...ICON} />
+          <Command aria-hidden {...ICON} />
         </button>
       </Group>
 

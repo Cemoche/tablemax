@@ -197,7 +197,6 @@ export const strings = {
     noTabsHint: (shortcut: string) => `Pick a table in the sidebar or press ${shortcut} for a new query`,
     tabsLabel: "Open tabs",
     tabContentLabel: "Tab content",
-    newQueryTab: "New query tab",
     closeTab: (title: string) => `Close ${title}`,
     queryTitle: (n: number) => `Query ${n}`,
     tabList: "Search tabs",
@@ -288,7 +287,10 @@ export const strings = {
     },
     tables: "Tables",
     views: "Views",
-    routines: "Routines",
+    routines: "Functions",
+    /** Under a table or view opened in the tree (#104). */
+    columnsLoading: "Loading columns…",
+    columnsFailed: (message: string) => `Could not load columns: ${message}`,
     resize: "Resize the sidebar",
     newQuery: "New SQL query",
     more: "More actions",
@@ -919,7 +921,12 @@ export const strings = {
   },
   statusPill: {
     separator: " : ",
-    prod: "PROD",
+    /** The connection's tag, at the start of the pill. */
+    tags: { local: "LOCAL", dev: "DEV", staging: "STAGING", prod: "PROD" },
+    /** Between the tag and the text in the pill's accessible name. */
+    tagSeparator: " | ",
+    /** Said when the connection goes through an SSH tunnel. */
+    ssh: "SSH",
     connecting: (name: string) => `Connecting to ${name}…`,
     reconnecting: (name: string) => `Reconnecting to ${name}…`,
     error: (name: string) => `${name} : connection failed`,
