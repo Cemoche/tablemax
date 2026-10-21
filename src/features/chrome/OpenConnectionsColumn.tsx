@@ -2,6 +2,7 @@ import { Database, LayoutList, SlidersHorizontal, X } from "lucide-react";
 import { useId } from "react";
 import { useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
+import { softDisabled } from "../../lib/softDisabled";
 import { strings } from "../../lib/strings";
 import { tip, tipIfCut } from "../../lib/tooltip";
 import { useChrome } from "../../stores/chrome";
@@ -67,14 +68,12 @@ function Tile({ workspace: w, current, busy, onSelect }: TileProps) {
         aria-label={C.close(w.name)}
         {...tip(busy ? strings.grid.closeWhileCommitting : C.close(w.name))}
         // A running commit is a reason to read: focusable, does nothing (review #109).
-        aria-disabled={busy || undefined}
         aria-describedby={busy ? reasonId : undefined}
-        onClick={() => {
-          if (busy) return;
+        {...softDisabled(busy, () => {
           // The workspace is already gone from the UI; a failed backend close (e.g. a lost
           // connection) has nothing left to report to.
           closeWorkspace(w.id).catch(() => {});
-        }}
+        })}
         className={`absolute top-0.5 right-0.5 flex size-4.5 items-center justify-center rounded-full bg-pill text-icon opacity-0 group-hover:opacity-100 focus-visible:opacity-100 aria-disabled:text-icon-dim ${focusRing}`}
       >
         <X aria-hidden size={11} strokeWidth={2} />
