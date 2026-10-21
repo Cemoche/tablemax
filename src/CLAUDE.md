@@ -40,8 +40,15 @@ The UI follows the redesign spec `docs/superpowers/specs/2026-10-19-tablemax-ui-
   A coloured variant of a shared style uses its colourless base (`btnBase`,
   `buttonBaseClass`, `iconButtonBase`) plus one colour (`textColor.test.ts` checks it).
 - Canvas code (the grid) reads tokens at runtime: see `src/features/grid/gridTheme.ts`.
-- Focus rings: `outline-none focus-visible:outline-2 focus-visible:outline-solid
-  focus-visible:outline-accent` (Tailwind 4 needs `outline-solid` after `outline-none`).
+- Focus rings (#135): one two-tone ring, `outline-none focus-visible:focus-ring` (outside the
+  control) or `outline-none focus-visible:focus-ring-inset` (inside it: list rows, tabs,
+  toolbar and menu items, fields, anything a scrolling or `overflow-hidden` parent would cut);
+  `focus-within:` / `has-[:focus-visible]:` work too. The utilities (`src/index.css`) draw a
+  2 px `--accent` outline plus a `--focus-ring-inner` band (black / white), 3:1 on every
+  background (`tokens.test.ts`). Never an `outline-*`, `ring-*` or border colour under a focus
+  variant, nor an `outline-none` without the ring (`src/styles/focusRing.test.ts`; exceptions
+  in its `ALLOWED`). Native checkboxes: `accent-accent-control`, not `accent-accent`. The grid
+  draws the same band inside its `--cell-focus` ring (`drawFocusInnerBand`).
 - Sizes follow spec §5.2 at 100 %; the interface size is the webview's native zoom
   (`interfaceScale`), never CSS scaling.
 
