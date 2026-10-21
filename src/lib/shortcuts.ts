@@ -89,10 +89,10 @@ function noteLayoutScript(e: KeyboardEvent): void {
 
 /**
  * Installs (once) the window listener that learns the layout's script, in the capture phase:
- * it runs before every shortcut listener and the recorder, so a press reads the state it
- * has just set (Ctrl+ц on a Russian layout is read as Russian). The webview cannot ask the
- * system which layout is active; right after a layout switch the state is the previous
- * layout's until a letter is typed.
+ * it runs before every shortcut listener and the recorder, so they all read the state after
+ * the press (only letter presses change it, and those are named alike in both states). The
+ * webview cannot ask the system which layout is active; right after a layout switch the
+ * state is the previous layout's until a letter is typed.
  */
 export function installLayoutTracker(): void {
   if (trackerInstalled || typeof window === "undefined") return;
@@ -126,10 +126,9 @@ export interface KeyPress {
  * 4. Latin layout only: with Shift, a US shifted symbol (`< > ? : _ + { } | ~`) is Shift +
  *    its US key's character ("{" is Shift+[), off the digit row.
  * 5. Else the position (`e.code`): the digit row's digit, a letter position's letter (a
- *    non-Latin letter, a dead key; on a non-Latin layout anything: Hebrew's "/" key is Q),
- *    a punctuation position's US character (AZERTY's "!" key is "/", its ")" key "-";
- *    Russian's "." key is "/"). On a Latin layout a letter position typing ASCII that names
- *    no shortcut has no name (Dvorak's "'" key is no Ctrl+Q: Q is elsewhere).
+ *    non-Latin letter, a dead key, or a character no shortcut can name: Hebrew's "'" key is
+ *    W; on a non-Latin layout anything: Hebrew's "/" key is Q), a punctuation position's US
+ *    character (AZERTY's "!" key is "/", its ")" key "-"; Russian's "." key is "/").
  * No layout table: `keyCode` says nothing more on Linux (WebKitGTK derives it from the
  * typed character), and the webview cannot tell which layout is active; the layout's
  * script comes from the last letter typed (`installLayoutTracker`).
@@ -150,7 +149,7 @@ export function keyPressOf(e: Pick<KeyboardEvent, "key" | "code" | "shiftKey">):
   }
   if (digitRow) return { key: code.slice(5), shift };
   const letter = LETTER_POSITION.exec(code);
-  if (letter) return { key: !nonLatin && ASCII_PRINTABLE.test(ch) ? "" : letter[1], shift };
+  if (letter) return { key: letter[1], shift };
   return { key: POSITION_CHARS.get(code) ?? "", shift };
 }
 
@@ -292,7 +291,7 @@ export function useShortcut(
   const key = typeof spec === "string" ? spec : spec.join("\n");
   useEffect(() => {
     if (!enabled) return;
-    installLayoutTracker(); // before this listener: a press is read with the state it sets
+    installLayoutTracker(); // before this listener, which then reads the state after the press
     const specs = key.split("\n");
     const onKey = (e: KeyboardEvent) => {
       if (!specs.some((s) => matchCombination(e, s))) return;
