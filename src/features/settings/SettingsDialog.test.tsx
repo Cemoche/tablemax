@@ -519,6 +519,46 @@ test("a combination used by another action is refused with its label and saves n
   expect(shortcutOf(paletteLabel)).toBe("Ctrl+P");
 });
 
+test("results_grid_keys_vs_query_tab (#141): a grid key the SQL results grid reads is refused on the SQL tab's keys, and back", async () => {
+  // Ctrl+S commits a table tab; moved off it, the row details still may not take it: the
+  // SQL tab's results grid reads the row details key, and Ctrl+S saves the query there.
+  const moved = { "grid.commit": "Alt+S" };
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: moved }, confirmed: DEFAULT_SETTINGS });
+  await setupKeymap();
+  const details = strings.keymap["grid.rowDetails"];
+  const save = strings.keymap["query.save"];
+  await userEvent.click(changeButton(details));
+  await userEvent.keyboard("{Control>}s{/Control}");
+  expect(screen.getByText(strings.settings.shortcutConflict(save))).toBeInTheDocument();
+  expect(shortcutOf(details)).toBe("Ctrl+Space");
+  await userEvent.keyboard("{Escape}");
+  // Copy cells likewise.
+  await userEvent.click(changeButton(strings.keymap["grid.copyCells"]));
+  await userEvent.keyboard("{Control>}s{/Control}");
+  expect(screen.getByText(strings.settings.shortcutConflict(save))).toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  // And back: Save query may not take the row details' key.
+  await userEvent.click(changeButton(save));
+  await userEvent.keyboard("{Control>} {/Control}");
+  expect(screen.getByText(strings.settings.shortcutConflict(details))).toBeInTheDocument();
+  expect(shortcutOf(save)).toBe("Ctrl+S");
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+  // A grid key of table tabs only (Duplicate rows, Ctrl+D) is still free for Save query.
+  await userEvent.keyboard("{Control>}d{/Control}");
+  expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { ...moved, "query.save": "Mod+D" } });
+  expect(shortcutOf(save)).toBe("Ctrl+D");
+});
+
+test("a saved grid key on the SQL tab's keys is flagged, not rewritten (#141)", async () => {
+  const keymap = { "grid.commit": "Alt+S", "grid.rowDetails": "Mod+S" };
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap }, confirmed: DEFAULT_SETTINGS });
+  await setupKeymap();
+  const row = screen.getByText(strings.keymap["grid.rowDetails"]).closest("li") as HTMLElement;
+  expect(row).toHaveTextContent(strings.settings.shortcutCollision(strings.keymap["query.save"]));
+  expect(shortcutOf(strings.keymap["grid.rowDetails"])).toBe("Ctrl+S");
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+});
+
 test("a combination the grammar rejects shows an inline error and saves nothing", async () => {
   await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));

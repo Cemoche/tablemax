@@ -48,6 +48,15 @@ type Spec = {
    * sidebar elsewhere). Declared on the inner action only.
    */
   shadows?: readonly string[];
+  /**
+   * Other scopes whose own actions this one fires along with, besides those `scopesOverlap`
+   * gives its scope: the read-only results grid of a SQL tab reads these grid actions too
+   * (DataGrid's keydown and Glide's activateCell, #141), so they conflict with the
+   * `queryTab` actions. Only with that scope's own actions: the editor's keys never reach
+   * the grid, nor the grid's the editor. DataGrid.test.tsx checks the list against the keys
+   * the results grid takes.
+   */
+  alsoIn?: readonly ShortcutScope[];
 };
 
 const SPECS = {
@@ -76,7 +85,7 @@ const SPECS = {
   // Spec §5.3: Ctrl+Space as TablePlus Linux (literal Ctrl: Cmd+Space is Spotlight on macOS),
   // and Space in the grid (a fixed key of DataGrid: the grammar needs a modifier). Ctrl+I
   // is the spec's add row key (Task 6).
-  "grid.rowDetails": { scope: "tableTab", defaultShortcut: "Ctrl+Space" },
+  "grid.rowDetails": { scope: "tableTab", defaultShortcut: "Ctrl+Space", alsoIn: ["queryTab"] },
   // Spec §5.3: Alt+1 / Alt+2, and Ctrl+Alt+[ / ] (TablePlus ⌃⌘[ / ]) on macOS only, as ⌘⌥[ / ]
   // (Ctrl+Mod would be Ctrl+[ elsewhere): off macOS Ctrl+Alt is AltGr (#102).
   "grid.viewData": { scope: "tableTab", defaultShortcut: "Alt+1", mac: { alternates: ["Mod+Alt+["] } },
@@ -113,8 +122,10 @@ const SPECS = {
   // Task 5, grid keys: DataGrid matches them in its own keydown, so they act only while the
   // grid has the focus (never in a field, the editor or the cell editor). Enter (Quick
   // Look), Space (row details) and Delete (delete rows) are fixed keys of the grid.
-  "grid.setValue": { scope: "tableTab", defaultShortcut: "Alt+Enter" },
-  "grid.copyCells": { scope: "tableTab", defaultShortcut: "Mod+Shift+C" },
+  // The SQL tab's results grid reads grid.rowDetails, grid.setValue and grid.copyCells too
+  // (`alsoIn`, #141).
+  "grid.setValue": { scope: "tableTab", defaultShortcut: "Alt+Enter", alsoIn: ["queryTab"] },
+  "grid.copyCells": { scope: "tableTab", defaultShortcut: "Mod+Shift+C", alsoIn: ["queryTab"] },
   "grid.duplicateRows": { scope: "tableTab", defaultShortcut: "Mod+D" },
   "grid.deleteRows": { scope: "tableTab", defaultShortcut: "Mod+Backspace" },
   // Task 6, the bottom bar (spec §5.3). + Row, Filters and Columns act in the table tab
@@ -284,6 +295,14 @@ export function actionsOfScope(scope: ShortcutScope): KeymapActionId[] {
   return KEYMAP_ACTIONS.filter((a) => a.scope === scope).map((a) => a.id);
 }
 
+/**
+ * The actions that also act in `scope` besides their own (`alsoIn`), in registry order:
+ * `actionsAlsoIn("queryTab")` are the grid actions the SQL tab's results grid reads (#141).
+ */
+export function actionsAlsoIn(scope: ShortcutScope): KeymapActionId[] {
+  return KEYMAP_ACTIONS.filter((a) => (SPECS[a.id] as Spec).alsoIn?.includes(scope) ?? false).map((a) => a.id);
+}
+
 /** Does one of `a` / `b` declare that it shadows the other inside its focus scope? */
 export function shadowPair(a: KeymapActionId, b: KeymapActionId): boolean {
   const sa: Spec = SPECS[a];
@@ -297,6 +316,18 @@ function scopesOverlap(a: ShortcutScope, b: ShortcutScope): boolean {
   // `filterBar` overlaps nothing else: it shadows the table tab inside the bar;
   // `connectionList` neither: no tab is on screen with the connection list.
   return (a === "editor" && b === "queryTab") || (a === "queryTab" && b === "editor");
+}
+
+/**
+ * Can actions `a` and `b` fire on the same keydown: their scopes overlap, or one of them
+ * also acts in the other's own scope (`alsoIn`, #141).
+ */
+function actionsOverlap(a: KeymapActionId, b: KeymapActionId): boolean {
+  const sa: Spec = SPECS[a];
+  const sb: Spec = SPECS[b];
+  return (
+    scopesOverlap(sa.scope, sb.scope) || (sa.alsoIn?.includes(sb.scope) ?? false) || (sb.alsoIn?.includes(sa.scope) ?? false)
+  );
 }
 
 /** The physical combination of a valid spec, `Mod` resolved for the platform. */
@@ -315,7 +346,8 @@ export function sameCombination(a: string, b: string, mac: boolean = isMac()): b
 /**
  * The action that would fire along with `id` if `id` used `spec`: another action whose
  * effective combination is the same physical keys (Mod = Cmd on macOS, Ctrl elsewhere) in
- * an overlapping scope. Null when there is none or `spec` is not a valid spec.
+ * an overlapping scope (or a scope one of them also acts in, `alsoIn`). Null when there is
+ * none or `spec` is not a valid spec.
  */
 export function conflictFor(
   id: KeymapActionId,
@@ -324,10 +356,9 @@ export function conflictFor(
   mac: boolean = isMac(),
 ): KeymapActionId | null {
   if (!isValidShortcut(spec)) return null;
-  const scope = SPECS[id].scope;
   const wanted = combination(spec, mac);
   for (const other of KEYMAP_ACTIONS) {
-    if (other.id === id || !scopesOverlap(scope, other.scope) || shadowPair(id, other.id)) continue;
+    if (other.id === id || !actionsOverlap(id, other.id) || shadowPair(id, other.id)) continue;
     if (effectiveShortcuts(other.id, keymap, mac).some((s) => combination(s, mac) === wanted)) return other.id;
   }
   return null;

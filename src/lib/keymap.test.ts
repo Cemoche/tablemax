@@ -6,6 +6,7 @@ import {
   DEFAULT_KEYMAP,
   KEYMAP_ACTIONS,
   type KeymapActionId,
+  actionsAlsoIn,
   conflictAnywhere,
   alternateShortcuts,
   conflictFor,
@@ -374,6 +375,34 @@ test("the editor conflicts with its query tab both ways (ruling B-R1), not with 
   // Other actions still refuse it: the editor's own (Beautify has it), the rest the search's.
   expect(conflictFor("editor.run", "Mod+Shift+F", {}, false)).toBe("editor.format");
   expect(conflictFor("grid.commit", "Mod+Shift+F", {}, false)).toBe("sidebar.search");
+});
+
+test("results_grid_actions_conflict_with_query_tab (#141): grid keys the SQL results grid reads conflict with the SQL tab's", () => {
+  // The read-only results grid of a SQL tab reads these grid actions too (DataGrid's keydown
+  // and Glide's activateCell): the parity test in DataGrid.test.tsx pins the list.
+  expect(actionsAlsoIn("queryTab")).toEqual(["grid.rowDetails", "grid.setValue", "grid.copyCells"]);
+  const commitMoved = { "grid.commit": "Alt+S" };
+  for (const id of ["grid.rowDetails", "grid.setValue", "grid.copyCells"] as const) {
+    expect(conflictFor(id, "Mod+S", commitMoved, false), id).toBe("query.save");
+    expect(conflictFor(id, "Mod+S", commitMoved, true), id).toBe("query.save");
+  }
+  // And the other way: query.save on one of their keys.
+  expect(conflictFor("query.save", "Ctrl+Space", {}, false)).toBe("grid.rowDetails");
+  expect(conflictFor("query.save", "Alt+Enter", {}, false)).toBe("grid.setValue");
+  expect(conflictFor("query.save", "Mod+Shift+C", {}, false)).toBe("grid.copyCells");
+  expect(conflictFor("query.save", "Alt+Enter", { "grid.setValue": "Alt+E" }, false)).toBeNull();
+  // Ctrl+Space stays the editor's completion in the SQL tab once the row details move off it.
+  expect(conflictFor("query.save", "Ctrl+Space", { "grid.rowDetails": "Alt+D" }, false)).toBe("editor.complete");
+  // Grid actions of the table tab only still share keys with the SQL tab.
+  expect(conflictFor("query.save", "Mod+D", {}, false)).toBeNull();
+  expect(conflictFor("query.save", "Mod+Backspace", {}, false)).toBeNull();
+  expect(conflictFor("grid.duplicateRows", "Mod+S", commitMoved, false)).toBeNull();
+  expect(conflictFor("grid.commit", "Mod+S", {}, false)).toBeNull();
+  // The editor's keys never reach the grid, nor the grid's the editor.
+  expect(conflictFor("grid.rowDetails", "Ctrl+Space", {}, false)).toBeNull();
+  expect(conflictFor("editor.complete", "Ctrl+Space", {}, false)).toBeNull();
+  expect(conflictFor("editor.run", "Mod+Shift+C", {}, false)).toBeNull();
+  expect(conflictFor("grid.setValue", "Mod+Enter", {}, false)).toBeNull();
 });
 
 test("Mod is resolved per platform: Mod+K is Ctrl+K on Linux, not on macOS", () => {
