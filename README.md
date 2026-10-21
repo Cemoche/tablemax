@@ -323,8 +323,11 @@ A shortcut acts only where it belongs: in a text field or the editor, keys such 
 
 Letters and punctuation follow the character your layout types, and the digit row stays
 digits: on QWERTZ `Ctrl+/` is `Ctrl+Shift+7`; on AZERTY `Ctrl+,` is the "," key and
-`Ctrl+-` is the ")" key or the keypad's − (the "-" key is `Ctrl+6`). The keypad's Enter
-works as Enter.
+`Ctrl+-` is the ")" key or the keypad's − (the "-" key is `Ctrl+6`). On a non-Latin layout
+(Russian, Hebrew, Greek…) keys go by their US legend, as in browsers: `Ctrl+/` is the "/"
+key. TableMax tells the layout from the last letter you typed, so right after switching
+layouts type one letter before using a punctuation shortcut. The keypad's Enter works as
+Enter.
 
 ## Test databases
 

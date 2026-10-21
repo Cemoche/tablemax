@@ -478,16 +478,37 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 > déduit du caractère tapé) et la webview ne connaît pas la disposition active. Vérifié
 > touche par touche pour us, fr, de, us(dvorak), il, gr, ru (valeurs xkeyboard-config,
 > `src/test/layouts.ts`) : chaque défaut a une touche, une touche ne vaut qu'une combinaison.
-> Provisoire sur les dispositions non latines (#131 : y garder les positions US, en retenant
-> l'écriture de la dernière lettre tapée) : une touche qui y tape une ponctuation ASCII suit
-> ce caractère, pas sa position US (russe : Ctrl+/ = `Ctrl+Shift+\` ou la touche ISO « / » ;
-> hébreu : Ctrl+/ = la touche Q, crochets tels que tapés). QWERTZ reste ainsi (Ctrl+/ =
-> Ctrl+Shift+7) ; sa touche « + » vaut Ctrl+] (onglet suivant) et non le zoom, c'est #132.
+> Les dispositions non latines suivent l'amendement #131 ci-dessous (positions US). QWERTZ
+> reste ainsi (Ctrl+/ = Ctrl+Shift+7) ; sa touche « + » vaut Ctrl+] (onglet suivant) et non
+> le zoom, c'est #132.
 > Ctrl+AltGr sous Linux (Ctrl seul, caractère d'AltGr) : sur la rangée des chiffres la touche
 > reste son chiffre (AZERTY Ctrl+AltGr+5 « [ » = Ctrl+5) ; ailleurs le caractère compte
 > (AZERTY Ctrl+AltGr+« ) » tape « ] » = Ctrl+], onglet suivant, au lieu de Ctrl+- avant).
 > L'enregistreur des réglages ignore les touches mortes : AZERTY Ctrl+^ et QWERTZ Ctrl+´
 > valent Ctrl+[ et Ctrl+= par position mais ne s'enregistrent pas.
+
+> Amendement 2026-10-21 (#131) : sur une disposition non latine (russe, hébreu, grec…), la
+> ponctuation se nomme par sa position US, comme dans les navigateurs et les applications
+> GTK (les touches y portent les légendes US). La webview ne connaît pas la disposition
+> active : un écouteur `keydown` de `window` en phase de capture (`installLayoutTracker`,
+> installé une fois par `useShortcut` et l'enregistreur, avant leurs propres écouteurs)
+> retient l'écriture de la dernière lettre tapée — une touche `KeyA`–`KeyZ` sans Shift (le
+> niveau Shift de l'hébreu tape des capitales latines), sans Alt, AltGr ni Meta (niveaux
+> variables), Ctrl compris (GTK garde la lettre de la disposition dans `e.key`) ; non latine
+> = `/^\p{L}$/u` hors `\p{Script=Latin}` (le « ı » turc reste latin) ; toute autre touche
+> laisse l'état tel quel. État non latin : les étapes 3 et 4 sont sautées, l'étape 5 nomme
+> par position (lettres comprises : la touche « / » de l'hébreu est Q). Russe : Ctrl+/ = la
+> touche « / » (qui tape « . »), Ctrl+, = la touche « , » ; hébreu : Ctrl+/ = la touche « / »
+> et non Q, Ctrl+[ / Ctrl+] à leurs positions US (plus inversés) ; grec : comme US, sa
+> touche Q (« ; ») est Q. État latin : la règle #105, sauf qu'une position de lettre qui tape
+> un caractère ASCII sans raccourci n'a plus de nom (la touche « ' » de Dvorak, KeyQ, et
+> QWERTZ Ctrl+AltGr+Q « @ » ne sont plus Ctrl+Q). L'enregistreur lit le même état au même
+> moment. Limites : juste après un changement de disposition, l'état reste celui de
+> l'ancienne jusqu'à la première lettre tapée (au démarrage : latin) ; en hébreu dans
+> l'état latin (avant toute lettre), la touche W (« ' ») n'a pas de nom, Ctrl+W y attend
+> donc une lettre hébraïque. Vérifié touche par touche pour les sept dispositions, dans les
+> deux états (une touche ne vaut qu'une combinaison, aller-retour de l'enregistreur), et
+> chaque défaut a une touche dans l'état que la disposition produit.
 
 Règle : un raccourci n'existe que dans son contexte (grille, éditeur, barre de filtres) quand
 TablePlus le réutilise (⌘I, ⌘F, ⌘←) ; tous restent réassignables (registre existant) ; un
