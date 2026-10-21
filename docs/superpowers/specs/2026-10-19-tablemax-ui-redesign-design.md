@@ -345,7 +345,7 @@ Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E
 > (raccourci, type) ou une icône à 60 % y devient opaque (blanc à 70 % : ≈3,5:1 ; à 60 % :
 > ≈3:1). `--accent` reste pour les teintes (`bg-accent/30`), anneaux de focus, bordures et
 > icônes. L'accent comme couleur de texte (liens) est sous 4,5:1 (4,02:1 clair / 4,24:1
-> sombre) : suivi dans #129. Tests : `accent_fill_guard` (`src/styles/accentText.test.ts`,
+> sombre) : suivi dans #129 (fait, voir l'amendement #129). Tests : `accent_fill_guard` (`src/styles/accentText.test.ts`,
 > aucun fond `--accent` opaque dans `src/`) et `accent_text_contrast` (`tokens.test.ts`, clair,
 > sombre média, sombre forcé).
 
@@ -358,10 +358,33 @@ Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E
 > texte il fait ≥ 4,5:1 sur `--content` (= `--surface`, dialogues), `--side`, `--win`,
 > `--row-a/b`, `--search`, `--bottom` (5,62 / 6,01 sur `--content`), mais pas sur `--btn`
 > sombre (4,49:1), `--pill` sombre (4,23:1), `--seg-sel` (survol : 4,10:1 clair / 4,04:1
-> sombre) ni `--sel` (3,79 / 3,40) : à traiter avec #129. Tests : `danger_fill_guard`
+> sombre) ni `--sel` (3,79 / 3,40) : à traiter avec #129 (fait : `--danger-text`). Tests : `danger_fill_guard`
 > (`src/styles/accentText.test.ts`, aucun fond `--danger` opaque dans `src/`),
 > `danger_fill_contrast` et `danger_text_contrast` (`tokens.test.ts`, clair, sombre média,
 > sombre forcé).
+
+> Amendement 2026-10-21 (#129) : règle — un texte en accent ou en rouge (lien, indicateur de
+> clé étrangère, message d'erreur, libellé destructif, icône colorée par `text-*`) prend
+> `--accent-text` / `--danger-text`, jamais `--accent` / `--danger`. Nouveaux tokens, même
+> teinte : `--accent-text` #0057B5 (clair) / #92B6FA (sombre), `--danger-text` #AD2323 /
+> #FF9999. Fonds mesurés depuis les usages : accent — `--content` (fil d'Ariane), `--side`
+> (panneau de ligne), `--win` (onglet Structure), `--seg-sel` (survol), `--row-a/b` et `--sel`
+> (indicateur ↗ de la grille, colonne sélectionnée) ; rouge — `--content` (dialogues,
+> palette, réglages, formulaire, panneaux), `--win` (notices d'onglet, Structure, Index),
+> `--side` (barre latérale, filtres), `--filter-applied`, `--pill` (popovers), `--btn`,
+> `--seg-sel` (survol), `--row-a/b` et `--sel` (ligne en échec). Pire cas `--sel` : 4,67:1 /
+> 4,63:1 (accent), 4,66:1 / 4,62:1 (rouge) ; sur `--content` 6,93 / 8,17 et 6,90 / 8,15.
+> `--danger` restait sous 4,5:1 sur `--seg-sel` (4,10 / 4,04), `--sel` (3,79 / 3,40), `--btn`
+> et `--pill` sombres (4,49 / 4,23). `--accent` et `--danger` restent pour teintes, anneaux,
+> bordures et contours. Grille : `linkColor` = `--accent-text` ; une ligne supprimée garde
+> son texte pour l'indicateur ; une ligne en échec est en `--danger-text` sur les lignes
+> simples seulement — sur un remplissage de changement (insérée, supprimée) le texte du
+> remplissage l'emporte, et une cellule modifiée d'une ligne en échec garde `--modified` avec
+> le texte qui s'y lit (rouge sombre : 2,5:1 sur `--modified`, 2,0:1 sur `--inserted`). Tests :
+> `accent_text_guard` et `danger_text_guard` (`src/styles/textColor.test.ts`, aucun texte
+> `--accent` / `--danger` dans `src/`), `accent_as_text_contrast` et `danger_as_text_contrast`
+> (`tokens.test.ts`, clair, sombre média, sombre forcé), `link_and_failed_text_contrast`
+> (`gridTheme.test.ts`).
 
 ### 5.2 Dimensions (à 100 %)
 Barre du haut 52, pilules 34, boutons 28–32 ; colonne des connexions 80 ; barre latérale 262

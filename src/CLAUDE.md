@@ -26,10 +26,15 @@ The UI follows the redesign spec `docs/superpowers/specs/2026-10-19-tablemax-ui-
   `src/index.css`. Text tokens keep ≥ 4.5:1 on their backgrounds in both themes
   (`src/styles/tokens.test.ts` checks the pairs it draws).
 - Accent fills: `bg-accent-strong` + `text-accent-contrast`, never an opaque `bg-accent`
-  (white is 4.0:1 there); `--accent` is for tints (`bg-accent/30`), rings, borders and icons
-  (`src/styles/accentText.test.ts` checks it, #107). Accent as a text colour (links) is
-  below 4.5:1 too (4.02:1 light / 4.24:1 dark), tracked in #129. Same for danger (#128):
-  a destructive button is `bg-danger-strong` + `text-danger-contrast`, never `bg-danger`.
+  (white is 4.0:1 there). Same for danger (#128): a destructive button is
+  `bg-danger-strong` + `text-danger-contrast`, never `bg-danger`
+  (`src/styles/accentText.test.ts` checks both, #107).
+- Accent or danger as a text colour (links, error messages, destructive labels, an icon
+  coloured through `text-*`): `text-accent-text` / `text-danger-text`, never `text-accent` /
+  `text-danger` (under 4.5:1 on some backgrounds); the canvas reads `--accent-text` /
+  `--danger-text` too. `--accent` and `--danger` stay for tints (`bg-accent/30`), focus rings,
+  borders and outlines (`src/styles/textColor.test.ts` checks it, #129). A new background
+  under these texts goes into the lists of `tokens.test.ts`.
 - Canvas code (the grid) reads tokens at runtime: see `src/features/grid/gridTheme.ts`.
 - Focus rings: `outline-none focus-visible:outline-2 focus-visible:outline-solid
   focus-visible:outline-accent` (Tailwind 4 needs `outline-solid` after `outline-none`).
