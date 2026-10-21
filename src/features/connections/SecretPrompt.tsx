@@ -46,14 +46,14 @@ export function SecretPrompt({ kind, connectionName, error, onSubmit, onCancel }
           aria-label={text.label}
           value={secret}
           onChange={(e) => setSecret(e.target.value)}
-          className="w-full rounded-sm border border-border bg-bg px-2 py-1"
+          className="w-full rounded-sm border border-border bg-bg px-2 py-1 outline-none focus-visible:focus-ring"
         />
         {error && <p className="mt-2 text-danger-text">{error}</p>}
         <div className="mt-3 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="rounded-sm border border-border px-3 py-1">
+          <button type="button" onClick={onCancel} className="rounded-sm border border-border px-3 py-1 outline-none focus-visible:focus-ring">
             {strings.secretPrompt.cancel}
           </button>
-          <button type="submit" className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast">
+          <button type="submit" className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast outline-none focus-visible:focus-ring">
             {strings.secretPrompt.ok}
           </button>
         </div>

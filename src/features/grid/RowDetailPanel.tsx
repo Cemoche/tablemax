@@ -343,7 +343,7 @@ function Field({
                 aria-label={strings.grid.openReferencedIn(l.object.name)}
                 {...tip(strings.grid.openReferencedIn(l.object.name))}
                 onClick={() => onOpenLink(l)}
-                className="max-w-40 truncate rounded-sm px-1 text-xs text-accent-text hover:bg-surface-2"
+                className="max-w-40 truncate rounded-sm px-1 text-xs text-accent-text hover:bg-surface-2 outline-none focus-visible:focus-ring"
               >
                 {strings.grid.fkLinkButton(l.object.name)}
               </button>
@@ -375,7 +375,7 @@ function Field({
           <button
             type="button"
             onClick={onRetry}
-            className="shrink-0 rounded-sm border border-border px-1.5 text-fg hover:bg-surface-2"
+            className="shrink-0 rounded-sm border border-border px-1.5 text-fg hover:bg-surface-2 outline-none focus-visible:focus-ring"
           >
             {strings.grid.retry}
           </button>
@@ -392,7 +392,7 @@ function Field({
                 setDraft(null);
                 onAction(a);
               }}
-              className="rounded-sm border border-border px-1.5 text-xs hover:bg-surface-2"
+              className="rounded-sm border border-border px-1.5 text-xs hover:bg-surface-2 outline-none focus-visible:focus-ring"
             >
               {strings.grid.menu[a]}
             </button>

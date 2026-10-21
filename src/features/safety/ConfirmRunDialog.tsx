@@ -18,7 +18,7 @@ interface Props {
   onCancel: () => void;
 }
 
-const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2";
+const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2 outline-none focus-visible:focus-ring";
 
 /** Modal shown when a protected connection refused an unconfirmed batch (nothing ran yet). */
 export function ConfirmRunDialog({ connectionName, envTag, safeMode, statements, flagged, onRun, onCancel }: Props) {

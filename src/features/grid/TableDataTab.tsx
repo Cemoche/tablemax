@@ -38,7 +38,7 @@ interface Props {
 }
 
 const btn =
-  "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
+  "rounded-sm border border-border px-2 py-0.5 text-sm hover:bg-surface-2 outline-none focus-visible:focus-ring disabled:opacity-40 disabled:hover:bg-transparent";
 
 /** Only while the workspace is gone (a table tab always lives in one): the strictest look. */
 const NO_WORKSPACE: LiveEnvSource = { connectionId: "", envTag: "prod", safeMode: null };
@@ -450,7 +450,7 @@ function TableDataView({
                 type="button"
                 aria-label={strings.grid.dismiss}
                 onClick={copy.dismiss}
-                className="shrink-0 rounded-sm px-1.5 text-fg hover:bg-surface-2"
+                className="shrink-0 rounded-sm px-1.5 text-fg hover:bg-surface-2 outline-none focus-visible:focus-ring"
               >
                 {strings.grid.dismissText}
               </button>

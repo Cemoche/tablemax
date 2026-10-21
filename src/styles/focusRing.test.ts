@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
 
 // Focus rings (#135): one two-tone ring for the whole app, the `focus-ring` (outside the
@@ -202,4 +202,184 @@ test("checkbox_accent: native checkboxes and radios take --accent-control, never
     ),
   );
   expect(bad).toEqual([]);
+});
+
+// Structural guard (#135 review): a focusable element that never mentions `outline-none` falls
+// back to the browser's ring, which the scans above cannot see. Every <button>, <input> (not
+// hidden), <select>, <textarea>, <a href> and element with a tabIndex other than -1 must draw
+// the shared ring, through its className: literals, and constants of the file or of a module
+// it imports (`${btn}`, `{field}`), resolved like textColor.test.ts does.
+
+/**
+ * String constants of a source text by name: `const x = "…"` (or a template), and the string
+ * properties of its objects (`button: \`…\``, read for `style.button`) under `.button`.
+ */
+function constants(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  // A constant, or a function of a few arguments returning one (`const tab = (on) => \`…\``).
+  const value = /(?:^|\n)\s*(?:export )?const (\w+)\s*=\s*(?:\([^()]*\)\s*=>\s*)?("(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)/g;
+  for (const m of text.matchAll(value)) out[m[1]] = m[2].slice(1, -1);
+  for (const m of text.matchAll(/\n\s*(\w+):\s*("(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`),/g)) out[`.${m[1]}`] ??= m[2].slice(1, -1);
+  return out;
+}
+
+/** `expr` with the names of `scope` replaced by their values, a few levels deep (constants built from constants). */
+function resolve(expr: string, scope: Record<string, string>): string {
+  let out = expr;
+  for (let i = 0; i < 4; i++) {
+    out = out.replace(/\.([A-Za-z_]\w*)\b/g, (m, name) => (scope[`.${name}`] !== undefined ? ` ${scope[`.${name}`]} ` : m));
+    out = out.replace(/\b[A-Za-z_]\w*\b/g, (name) => (scope[name] !== undefined ? ` ${scope[name]} ` : name));
+  }
+  return out;
+}
+
+/** The constants a file sees: its own, then those it imports from relative modules (resolved there). */
+function scopeOf(text: string, file: string, depth = 0): Record<string, string> {
+  const scope = constants(text);
+  if (depth > 2) return scope;
+  for (const im of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*"(\.[^"]+)"/g)) {
+    const from = [".ts", ".tsx"].map((x) => join(dirname(file), im[2]) + x).find(existsSync);
+    if (!from) continue;
+    const theirs = scopeOf(readFileSync(from, "utf8"), from, depth + 1);
+    for (const name of im[1].split(",").map((n) => n.replace(/^type\s+/, "").trim()))
+      if (theirs[name] !== undefined) scope[name] ??= resolve(theirs[name], theirs);
+  }
+  return scope;
+}
+
+/** The end (index after `>`) of the JSX opening tag starting at `start`, skipping braces and strings. */
+function tagEnd(text: string, start: number): number {
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' || c === "'" || c === "`") {
+      // A string: skip to its end (template expressions hold no backtick in our sources).
+      const close = text.indexOf(c, i + 1);
+      if (close < 0) return text.length;
+      i = close;
+    } else if (c === "{") depth++;
+    else if (c === "}") depth--;
+    else if (c === ">" && depth === 0 && text[i - 1] !== "=") return i + 1;
+  }
+  return text.length;
+}
+
+/** The value of attribute `name` in an opening tag: a string, a `{…}` expression, or null. */
+function attr(tag: string, name: string): string | null {
+  const at = tag.search(new RegExp(`\\s${name}=`));
+  if (at < 0) return null;
+  const v = at + name.length + 2;
+  if (tag[v] === '"') return tag.slice(v + 1, tag.indexOf('"', v + 1));
+  if (tag[v] !== "{") return null;
+  let depth = 0;
+  for (let i = v; i < tag.length; i++) {
+    const c = tag[i];
+    if (c === '"' || c === "'" || c === "`") i = tag.indexOf(c, i + 1);
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return tag.slice(v + 1, i);
+  }
+  return null;
+}
+
+/** Components that hand their className to a focusable element: their call sites are scanned. */
+const FORWARDING = ["MenuButton"];
+
+/** The focusable elements of a TSX text whose className does not draw the shared ring. */
+function unringedFocusables(source: string, file: string): string[] {
+  const scope = scopeOf(source, file);
+  // Comments may name a tag (`<select>` values…): blank them, keeping the line numbers.
+  const text = source.replace(/\/\*[\s\S]*?\*\/|(^|[^:"'`\w])\/\/[^\n]*/g, (c) => c.replace(/[^\n]/g, " "));
+  const out: string[] = [];
+  for (const m of text.matchAll(/<([a-z]+|[A-Z]\w*)(?=[\s>])/g)) {
+    const tag = text.slice(m.index, tagEnd(text, m.index));
+    const name = m[1];
+    const tabIndex = attr(tag, "tabIndex");
+    // tabIndex -1: focused by code or by a click only, never by the keyboard.
+    if (tabIndex?.trim() === "-1") continue;
+    const tabStop = tabIndex !== null;
+    const focusable =
+      ["button", "select", "textarea", ...FORWARDING].includes(name) ||
+      (name === "input" && attr(tag, "type") !== "hidden") ||
+      (name === "a" && attr(tag, "href") !== null) ||
+      tabStop;
+    if (!focusable) continue;
+    const classes = resolve(attr(tag, "className") ?? "", scope);
+    if (!classes.split(/[\s"'`{}$(),?:]+|\s/).some((t) => SHARED_RING.test(t)) && !/\S*focus\S*:focus-ring(?:-inset)?\b/.test(classes))
+      out.push(`line ${text.slice(0, m.index).split("\n").length}: ${tag.replace(/\s+/g, " ").slice(0, 90)}`);
+  }
+  return out;
+}
+
+/**
+ * Focusables without the ring, "file: piece of the tag" → reason. Each one shows its focus
+ * another way.
+ */
+const UNRINGED_ALLOWED: { file: string; has: string; reason: string }[] = [
+  {
+    file: "src/features/connections/ConnectionForm.tsx",
+    has: '<input type="radio" name={colorName}',
+    reason: "an invisible radio over its swatch: the swatch's label draws the ring (has-[:focus-visible])",
+  },
+  {
+    file: "src/features/grid/RowDetailPanel.tsx",
+    has: '<input type="search"',
+    reason: "the search input: its field draws the ring (focus-within)",
+  },
+  {
+    file: "src/features/sidebar/SidebarSearch.tsx",
+    has: '<input ref={input} type="search"',
+    reason: "the search input: its field draws the ring (focus-within)",
+  },
+  {
+    file: "src/features/grid/CellEditorOverlay.tsx",
+    has: "<textarea",
+    reason: "the cell editor, focused on open over the grid's focused cell; the caret shows the focus",
+  },
+  {
+    file: "src/features/grid/MenuButton.tsx",
+    has: "<button ref={button}",
+    reason: "takes its caller's className: the <MenuButton> call sites are scanned (FORWARDING)",
+  },
+];
+
+test("unringedFocusables finds focusables without the shared ring, through constants", () => {
+  const f = "src/x.tsx";
+  expect(unringedFocusables('<button type="button" onClick={go}>Go</button>', f)).toHaveLength(1);
+  expect(unringedFocusables('<button className="px-2 hover:bg-seg-sel">Go</button>', f)).toHaveLength(1);
+  expect(unringedFocusables('<input value={v} onChange={(e) => set(e.target.value)} />', f)).toHaveLength(1);
+  expect(unringedFocusables('<a href="#x" className="underline">x</a>', f)).toHaveLength(1);
+  expect(unringedFocusables('<div tabIndex={0} className="p-2" />', f)).toHaveLength(1);
+  expect(unringedFocusables('<li tabIndex={on ? 0 : -1} className="p-2" />', f)).toHaveLength(1);
+  // Ringed, directly, through a constant (even a constant of constants) or a branch.
+  expect(unringedFocusables('<button className="outline-none focus-visible:focus-ring">Go</button>', f)).toEqual([]);
+  const consts = 'const ring = "outline-none focus-visible:focus-ring-inset";\nconst btn = `px-2 ${ring}`;\n';
+  expect(unringedFocusables(`${consts}<button className={btn} onClick={() => a > b}>Go</button>`, f)).toEqual([]);
+  expect(unringedFocusables(`${consts}<select className={\`\${btn} w-full\`} />`, f)).toEqual([]);
+  expect(unringedFocusables('<textarea className={`p-1 ${x ? "a" : "b"} focus-within:focus-ring-inset`} />', f)).toEqual([]);
+  // A component forwarding its className, a function constant, a tag named in a comment.
+  expect(unringedFocusables('<MenuButton label="x" className="px-2">x</MenuButton>', f)).toHaveLength(1);
+  const tab = 'const tab = (on: boolean) =>\n  `px-2 outline-none focus-visible:focus-ring ${on ? "a" : "b"}`;\n';
+  expect(unringedFocusables(`${tab}<button className={tab(v === w)} />`, f)).toEqual([]);
+  expect(unringedFocusables("// <select> values\n/* <button> */ const a = 1;", f)).toEqual([]);
+  // Not focusable: hidden inputs, links without href, tabIndex -1, other elements.
+  expect(unringedFocusables('<input type="hidden" name="x" />', f)).toEqual([]);
+  expect(unringedFocusables('<a className="x">x</a>', f)).toEqual([]);
+  expect(unringedFocusables('<div tabIndex={-1} className="p-2" />', f)).toEqual([]);
+  expect(unringedFocusables('<button tabIndex={-1} aria-hidden="true" className="p-2" />', f)).toEqual([]);
+  expect(unringedFocusables('<div className="p-2" />', f)).toEqual([]);
+});
+
+test("focus_ring_everywhere: every focusable element draws the shared ring, or UNRINGED_ALLOWED says why (#135)", () => {
+  const files = appSources().filter((f) => f.endsWith(".tsx"));
+  // The scan resolves the shared style modules (formStyles, toolbarStyles…).
+  expect(files).toContain(join("src", "features", "connections", "ConnectionForm.tsx"));
+  const bad = files.flatMap((f) =>
+    unringedFocusables(readFileSync(f, "utf8"), f)
+      .filter((m) => !UNRINGED_ALLOWED.some((a) => a.file === f && m.includes(a.has)))
+      .map((m) => `${f}: ${m}`),
+  );
+  expect(bad).toEqual([]);
+  for (const a of UNRINGED_ALLOWED) {
+    expect(unringedFocusables(readFileSync(a.file, "utf8"), a.file).some((m) => m.includes(a.has)), `${a.file}: ${a.has}`).toBe(true);
+  }
 });

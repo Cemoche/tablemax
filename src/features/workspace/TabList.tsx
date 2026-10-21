@@ -88,7 +88,7 @@ export function TabList({ workspace }: { workspace: Workspace }) {
             onKeyDown={onKeyDown}
             aria-controls={listId}
             aria-activedescendant={shown[hi] ? `${listId}-${shown[hi].id}` : undefined}
-            className="w-full rounded-t-lg border-b border-pill-border bg-search px-2 py-1 text-text"
+            className="w-full rounded-t-lg border-b border-pill-border bg-search px-2 py-1 text-text outline-none focus-visible:focus-ring-inset"
           />
           {shown.length === 0 ? (
             <p className="p-2 text-text-2">{strings.workspace.tabListEmpty}</p>

@@ -46,8 +46,9 @@ The UI follows the redesign spec `docs/superpowers/specs/2026-10-19-tablemax-ui-
   `focus-within:` / `has-[:focus-visible]:` work too. The utilities (`src/index.css`) draw a
   2 px `--accent` outline plus a `--focus-ring-inner` band (black / white), 3:1 on every
   background (`tokens.test.ts`). Never an `outline-*`, `ring-*` or border colour under a focus
-  variant, nor an `outline-none` without the ring (`src/styles/focusRing.test.ts`; exceptions
-  in its `ALLOWED`). Native checkboxes: `accent-accent-control`, not `accent-accent`. The grid
+  variant, nor an `outline-none` without the ring, and every `<button>`, `<input>`, `<select>`,
+  `<textarea>`, `<a href>` or tab stop draws it through its className (literal or constant;
+  `src/styles/focusRing.test.ts`, exceptions in its `ALLOWED` / `UNRINGED_ALLOWED`). Native checkboxes: `accent-accent-control`, not `accent-accent`. The grid
   draws the same band inside its `--cell-focus` ring (`drawFocusInnerBand`).
 - Sizes follow spec §5.2 at 100 %; the interface size is the webview's native zoom
   (`interfaceScale`), never CSS scaling.

@@ -25,7 +25,7 @@ const KIND = {
 } as const;
 
 const btn =
-  "rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent";
+  "rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2 outline-none focus-visible:focus-ring disabled:opacity-40 disabled:hover:bg-transparent";
 
 /** A key value as it reads in SQL: numbers and booleans bare, anything else quoted. */
 function keyValueText(v: CellValue): string {
@@ -183,7 +183,7 @@ export function PendingChangesPanel({ workspaceId, tabId, object }: Props) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 px-3 py-1 text-left font-semibold hover:bg-surface-2"
+        className="flex items-center gap-2 px-3 py-1 text-left font-semibold hover:bg-surface-2 outline-none focus-visible:focus-ring-inset"
       >
         <span aria-hidden="true" className="text-muted">
           {open ? strings.grid.panelOpen : strings.grid.panelClosed}
