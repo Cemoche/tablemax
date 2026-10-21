@@ -639,6 +639,9 @@ test("a failed safe mode save is the button's description, not only its tooltip 
   await user.click(within(screen.getByRole("menu")).getAllByRole("menuitemradio")[3]);
   await waitFor(() => expect(button).toHaveAccessibleDescription(expect.stringContaining("disk full")));
   expect(button).toHaveAttribute("data-tooltip", expect.stringContaining("disk full"));
+  // The icon turns red: --danger-text alone, without text-icon (a later rule, it would win, #129).
+  expect(button).toHaveClass("text-danger-text");
+  expect(button).not.toHaveClass("text-icon");
 });
 
 test("the command palette button opens Open anything with Ctrl+P in its tooltip (#104)", async () => {

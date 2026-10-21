@@ -222,6 +222,18 @@ test("Browse… picks the CA file and Clear removes it", async () => {
   expect(screen.getByRole("button", { name: "Browse for CA certificate" })).toHaveTextContent(strings.ssl.caShort);
 });
 
+test("a failed file pick turns its Browse button red, without the base text colour (#129)", async () => {
+  const user = userEvent.setup();
+  vi.mocked(ipc.filePick).mockRejectedValue({ kind: "io", message: "no portal" });
+  render(<ConnectionForm connection={null} onConnect={vi.fn()} />);
+  const browse = screen.getByRole("button", { name: "Browse for CA certificate" });
+  expect(browse).toHaveClass("text-text");
+  await user.click(browse);
+  await waitFor(() => expect(browse).toHaveClass("text-danger-text"));
+  // text-text comes later in the CSS and would win.
+  expect(browse).not.toHaveClass("text-text");
+});
+
 test("a cancelled file pick keeps the current path", async () => {
   const user = userEvent.setup();
   vi.mocked(ipc.filePick).mockResolvedValueOnce("/certs/client.pem").mockResolvedValueOnce(null);
@@ -527,6 +539,9 @@ test("Delete asks first: Cancel keeps the connection, Delete removes it", async 
   vi.mocked(ipc.connectionDelete).mockResolvedValue(undefined);
   render(<ConnectionForm connection={saved} onConnect={vi.fn()} onDeleted={onDeleted} />);
   const del = screen.getByRole("button", { name: strings.form.delete });
+  // Red, without text-icon (a later rule in the CSS, it would win, #129).
+  expect(del).toHaveClass("text-danger-text");
+  expect(del).not.toHaveClass("text-icon");
   await user.click(del);
   const dialog = screen.getByRole("dialog", { name: strings.connections.deleteTitle("Local PG") });
   expect(within(dialog).getByText(strings.connections.deleteMessage)).toBeInTheDocument();

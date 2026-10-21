@@ -27,9 +27,13 @@ import { type Statement, delimiterAt, splitStatements, statementAt } from "./spl
 
 const SAVE_DEBOUNCE_MS = 300;
 
-/** A toolbar button (spec §5.2: controls 24–26 px in a 36 px bar). */
-const btn =
-  "flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent aria-expanded:bg-seg-sel disabled:text-icon-dim disabled:hover:bg-btn";
+/**
+ * A toolbar button (spec §5.2: controls 24–26 px in a 36 px bar), without its text colour:
+ * Tailwind orders `.text-text` after `.text-danger-text`, so one colour per button (#129).
+ */
+const btnBase =
+  "flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent aria-expanded:bg-seg-sel disabled:text-icon-dim disabled:hover:bg-btn";
+const btn = `${btnBase} text-text`;
 
 /**
  * ← / → (Home / End) move the focus along the toolbar's buttons (WAI-ARIA toolbar); the
@@ -414,7 +418,7 @@ export function QueryTab({ workspace, tab }: Props) {
           {strings.savedQueries.save}
         </button>
         {running && (
-          <button type="button" className={`${btn} text-danger-text`} onClick={cancel}>
+          <button type="button" className={`${btnBase} text-danger-text`} onClick={cancel}>
             <CircleStop aria-hidden size={14} strokeWidth={1.6} />
             {strings.query.cancel}
           </button>

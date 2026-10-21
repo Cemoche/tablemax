@@ -8,7 +8,7 @@ import type { SafeMode } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
 import type { Workspace } from "../../stores/workspaces";
 import { useLiveEnv } from "../workspace/useLiveEnv";
-import { ICON, iconButton } from "./toolbarStyles";
+import { ICON, iconButtonBase } from "./toolbarStyles";
 
 const t = strings.toolbar;
 /** null = Default (by tag), as in the connection form. */
@@ -97,7 +97,7 @@ export function SafeModeMenu({ workspace }: { workspace: Workspace }) {
         aria-expanded={open}
         disabled={!cfg}
         onClick={() => (open ? close(false) : setOpen(true))}
-        className={`${iconButton} ${error ? "text-danger-text" : ""}`}
+        className={`${iconButtonBase} ${error ? "text-danger-text" : "text-icon"}`}
       >
         <Icon aria-hidden {...ICON} />
       </button>

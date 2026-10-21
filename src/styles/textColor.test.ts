@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
 
 // --accent reads 4.02:1 (light) / 4.24:1 (dark) as text, and --danger falls under 4.5:1 on
@@ -109,4 +109,77 @@ test("accent_text_guard: no --accent text colour in src/, text uses --accent-tex
 
 test("danger_text_guard: no --danger text colour in src/, text uses --danger-text (#129)", () => {
   expect(badTexts("danger")).toEqual([]);
+});
+
+// Tailwind 4 orders utilities of one property by name: in `${btn} text-danger-text` with a
+// `btn` holding `text-text`, `.text-text` comes later in the CSS and wins, so the red never
+// shows (#129). One class string holds at most one base (unvariant) text colour. The scan
+// resolves `${name}` to a string constant of the file or one it imports, and checks each
+// branch of a `${cond ? "a" : "b"}` on its own.
+
+/** The colour names of src/index.css (`--color-text` → `text`), so `text-sm` is not one. */
+const COLOURS = new Set(
+  [...readFileSync("src/index.css", "utf8").matchAll(/--color-([a-z0-9-]+)\s*:/g)].map((m) => m[1]),
+);
+
+/** The base text colour utilities of a class string (no variant: `hover:text-text` is not one). */
+const baseTextColours = (classes: string) =>
+  classes.split(/[\s"'`{}$,()]+/).filter((t) => t.startsWith("text-") && COLOURS.has(t.slice(5)));
+
+/** String constants of a source text (`const x = "…"` or a template), by name. */
+function constants(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of text.matchAll(/(?:^|\n)(?:export )?const (\w+)\s*=\s*("(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)/g))
+    out[m[1]] = m[2].slice(1, -1);
+  return out;
+}
+
+/** The class strings of `text` (in file `file`, to resolve its imports) holding two base text colours. */
+function colourConflicts(text: string, file: string, read = (f: string) => readFileSync(f, "utf8")): string[] {
+  const scope = constants(text);
+  for (const im of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*"(\.[^"]+)"/g)) {
+    const from = [".ts", ".tsx"].map((x) => join(dirname(file), im[2]) + x).find(existsSync);
+    if (!from) continue;
+    const exported = constants(read(from));
+    for (const name of im[1].split(",").map((n) => n.replace(/^type\s+/, "").trim()))
+      if (exported[name] !== undefined) scope[name] ??= exported[name];
+  }
+  const out: string[] = [];
+  const check = (colours: Set<string>, what: string) => {
+    if (colours.size > 1) out.push(`${[...colours].join(" + ")} in ${what.trim().slice(0, 80)}`);
+  };
+  for (const m of text.matchAll(/`((?:[^`\\]|\\.)*)`/g)) {
+    const t = m[1];
+    const exprs = [...t.matchAll(/\$\{([^}]*)\}/g)].map((e) => e[1].trim());
+    const base = new Set(baseTextColours(t.replace(/\$\{[^}]*\}/g, " ")));
+    for (const e of exprs) if (/^\w+$/.test(e) && scope[e] !== undefined) for (const c of baseTextColours(scope[e])) base.add(c);
+    check(base, t);
+    for (const e of exprs.filter((x) => x.includes("?")))
+      for (const branch of e.matchAll(/"([^"]*)"/g)) check(new Set([...base, ...baseTextColours(branch[1])]), t);
+  }
+  for (const m of text.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)) check(new Set(baseTextColours(m[1])), m[1]);
+  return out;
+}
+
+test("colourConflicts finds two base text colours in one class string, through constants and branches", () => {
+  const consts = 'const btn = "rounded-md bg-btn px-2 text-text hover:bg-seg-sel disabled:text-icon-dim";\n';
+  expect(colourConflicts(`${consts}const a = <b className={\`\${btn} text-danger-text\`} />;`, "src/x.tsx")).toHaveLength(1);
+  expect(colourConflicts(`${consts}const a = <b className={\`\${btn} \${err ? "text-danger-text" : ""}\`} />;`, "src/x.tsx")).toHaveLength(1);
+  expect(colourConflicts('const a = "px-2 text-text text-danger-text";', "src/x.tsx")).toHaveLength(1);
+  // One colour per string or per branch, variants, sizes and alignments: fine.
+  const base = 'const btnBase = "rounded-md bg-btn px-2 text-sm hover:bg-seg-sel disabled:text-icon-dim";\n';
+  expect(colourConflicts(`${base}const a = <b className={\`\${btnBase} text-danger-text\`} />;`, "src/x.tsx")).toEqual([]);
+  expect(colourConflicts(`${base}const a = \`\${btnBase} \${err ? "text-danger-text" : "text-text"}\`;`, "src/x.tsx")).toEqual([]);
+  expect(colourConflicts('const a = "text-sm text-left text-text hover:text-text-2 aria-invalid:text-danger-text";', "src/x.tsx")).toEqual([]);
+});
+
+test("text_colour_conflict_guard: no class string in src/ holds two base text colours (#129)", () => {
+  const files = sources("src").filter((f) => /\.tsx?$/.test(f));
+  expect(files.length).toBeGreaterThan(100);
+  // The guard knows the colours (not an empty list) and resolves the shared style modules.
+  expect(COLOURS.has("text")).toBe(true);
+  expect(COLOURS.has("danger-text")).toBe(true);
+  expect(files).toContain(join("src", "features", "connections", "formStyles.ts"));
+  const bad = files.flatMap((f) => colourConflicts(readFileSync(f, "utf8"), f).map((m) => `${f}: ${m}`));
+  expect(bad).toEqual([]);
 });

@@ -3,7 +3,7 @@ import { strings } from "../../lib/strings";
 import { tip } from "../../lib/tooltip";
 import type { DriverKind, FilePurpose, SslConfig, SslMode } from "../../lib/types";
 import { FileField, useFilePick } from "./FileField";
-import { buttonClass, fieldClass, labelClass, rowClass } from "./formStyles";
+import { buttonBaseClass, fieldClass, labelClass, rowClass } from "./formStyles";
 
 interface Props {
   kind: DriverKind;
@@ -28,7 +28,7 @@ function BrowseButton({ file, ssl, onChange }: { file: (typeof FILES)[number]; s
   return (
     <button
       type="button"
-      className={`${buttonClass} px-2 ${ssl[file.key] !== null ? "font-medium" : ""} ${error ? "text-danger-text" : ""}`}
+      className={`${buttonBaseClass} px-2 ${ssl[file.key] !== null ? "font-medium" : ""} ${error ? "text-danger-text" : "text-text"}`}
       aria-label={strings.ssl.browseFor(file.label)}
       {...tip(error ?? ssl[file.key] ?? file.label)}
       onClick={browse}

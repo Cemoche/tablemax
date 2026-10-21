@@ -34,6 +34,7 @@ import {
   buttonClass,
   fieldClass,
   formClass,
+  iconButtonBaseClass,
   iconButtonClass,
   inlineLabelClass,
   labelClass,
@@ -269,7 +270,7 @@ export function ConnectionForm({
             <button
               ref={deleteButton}
               type="button"
-              className={`${iconButtonClass} text-danger-text`}
+              className={`${iconButtonBaseClass} text-danger-text`}
               aria-label={strings.form.delete}
               {...tip(strings.form.delete)}
               disabled={busy !== null}
