@@ -212,7 +212,10 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > ouvert et le sélecteur de fichier natif (ils prennent la touche avant la page). Pas
 > d'Échap depuis une autre région (barre d'outils, colonne des connexions ouvertes) ni pour
 > le formulaire caché derrière un workspace. Pas d'action de keymap : c'est l'Échap propre
-> du formulaire, comme celle d'une boîte de dialogue, non réassignable.
+> du formulaire, comme celle d'une boîte de dialogue, non réassignable. Les boîtes de
+> dialogue des connexions prennent leur Échap (`preventDefault`), pour que le formulaire
+> derrière ne réagisse pas à la même frappe ; dans la question de confirmation, une touche
+> maintenue n'agit qu'une fois (ses répétitions ne l'annulent pas).
 
 ### 2.5 Éditeur SQL
 - Barre de 36 px sous l'onglet : « No limit ⌄ » (LIMIT automatique), « Beautify », « Run Current

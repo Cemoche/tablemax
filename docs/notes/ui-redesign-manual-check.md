@@ -152,7 +152,11 @@ Screenshots: `<pass>-pill.png`, `<pass>-pill-prod-960.png`
       an edited form it asks "Discard changes to this connection?"; Escape there keeps the
       form and its edits. Escape with Import from URL…, Delete's question, a Test prompt, an
       open select popup or a shown tooltip closes only that. In Group (with suggestions):
-      type a letter, the first Escape closes the suggestions, the second the form.
+      type a letter, the first Escape closes the suggestions, the second asks "Discard
+      changes to this connection?" (the form is now edited).
+- [ ] Escape with the focus in the toolbar or the open connections column: the form stays.
+- [ ] Group: if the first Escape already closes the suggestion list and a second one is
+      still swallowed (nothing happens), report it.
 - [ ] From a workspace: `Ctrl+Shift+K` shows the list with its search focused (also from the
       SQL editor, where the line is not deleted); `Ctrl+N` opens a blank form.
 - [ ] Toolbar safe mode changed while that connection's form has edits: back on the form,
