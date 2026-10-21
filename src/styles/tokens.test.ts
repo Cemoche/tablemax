@@ -298,3 +298,40 @@ test("accent_text_contrast: text on an accent fill (menus, palette, primary butt
     expect(contrastRatio(over(onAccent, v["--accent-strong"], 0.7), v["--accent-strong"]), `${selector} 70 % hint`).toBeLessThan(4.5);
   }
 });
+
+/** Hue (0–360°) of a #RRGGBB colour. */
+function hue(hex: string): number {
+  const [r, g, b] = [0, 1, 2].map((i) => parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16) / 255);
+  const max = Math.max(r, g, b);
+  const d = max - Math.min(r, g, b);
+  if (d === 0) return 0;
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return (h * 60 + 360) % 360;
+}
+
+test("danger_fill_contrast: a destructive button's label reads 4.5:1 on --danger-strong, not on --danger (#128)", () => {
+  const onDanger = values(LIGHT)["--danger-contrast"];
+  // White in both themes (not redefined in dark), like --accent-contrast.
+  expect(onDanger).toBe("#FFFFFF");
+  for (const selector of [DARK_MEDIA, DARK_FORCED]) expect(values(selector)["--danger-contrast"], selector).toBeUndefined();
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = values(selector);
+    expect(v["--danger-strong"], `${selector} danger-strong`).toMatch(/^#[0-9A-F]{6}$/i);
+    // ConfirmDialog's confirm button (Discard, Delete…).
+    expect(contrastRatio(onDanger, v["--danger-strong"]), `${selector} danger-contrast on danger-strong`).toBeGreaterThanOrEqual(4.5);
+    // Still the danger red: same hue as --danger.
+    expect(Math.abs(hue(v["--danger-strong"]) - hue(v["--danger"])), `${selector} hue`).toBeLessThan(5);
+  }
+  // The reason for the token: white on the dark --danger is 2.78:1.
+  expect(contrastRatio(onDanger, values(DARK_FORCED)["--danger"])).toBeLessThan(4.5);
+});
+
+test("danger_text_contrast: --danger as text (errors) reads 4.5:1 on the content, dialogs and sidebar (#128)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    // --surface (dialogs) is an alias of --content.
+    for (const bg of ["--content", "--side", "--win", "--row-a", "--row-b", "--search", "--bottom"]) {
+      expect(contrastRatio(v["--danger"], v[bg]), `${selector} danger on ${bg}`).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+});

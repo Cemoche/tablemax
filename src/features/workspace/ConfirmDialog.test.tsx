@@ -47,3 +47,10 @@ test("initial_focus: Cancel by default, Confirm with initialFocus=\"confirm\" (E
   expect(onConfirm).toHaveBeenCalledOnce();
   expect(onCancel).not.toHaveBeenCalled();
 });
+
+test("danger_button_contrast: the destructive button is --danger-strong with --danger-contrast text (#128)", () => {
+  setup();
+  const confirm = screen.getByRole("button", { name: "Discard" });
+  expect(confirm).toHaveClass("bg-danger-strong", "text-danger-contrast");
+  expect(confirm).not.toHaveClass("bg-danger");
+});

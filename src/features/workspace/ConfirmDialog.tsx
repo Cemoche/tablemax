@@ -57,7 +57,7 @@ export function ConfirmDialog({
             type="button"
             autoFocus={initialFocus === "confirm"}
             onClick={onConfirm}
-            className="rounded-sm bg-danger px-3 py-1 text-accent-contrast"
+            className="rounded-sm bg-danger-strong px-3 py-1 text-danger-contrast"
           >
             {confirmLabel}
           </button>
