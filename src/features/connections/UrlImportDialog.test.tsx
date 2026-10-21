@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { strings } from "../../lib/strings";
 import { UrlImportDialog } from "./UrlImportDialog";
@@ -21,4 +21,11 @@ test("an invalid URL shows an error and cannot be opened", async () => {
   await user.type(screen.getByLabelText("Connection URL"), "redis://x");
   expect(screen.getByRole("alert")).toHaveTextContent("Not a valid connection URL");
   expect(screen.getByRole("button", { name: strings.url.open })).toBeDisabled();
+});
+
+test("Escape cancels and takes the press (the connection form behind ignores it, #118)", () => {
+  const onCancel = vi.fn();
+  render(<UrlImportDialog onResult={vi.fn()} onCancel={onCancel} />);
+  expect(fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })).toBe(false);
+  expect(onCancel).toHaveBeenCalledTimes(1);
 });

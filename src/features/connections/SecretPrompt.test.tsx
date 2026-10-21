@@ -33,6 +33,7 @@ test("submits the typed secret and shows the error", async () => {
 test("Escape cancels", () => {
   const onCancel = vi.fn();
   render(<SecretPrompt kind="password" connectionName="Prod" onSubmit={vi.fn()} onCancel={onCancel} />);
-  fireEvent.keyDown(screen.getByLabelText("Password"), { key: "Escape" });
+  // Taken (default prevented): the connection form behind ignores this press (#118).
+  expect(fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })).toBe(false);
   expect(onCancel).toHaveBeenCalledTimes(1);
 });

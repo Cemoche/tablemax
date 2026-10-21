@@ -14,7 +14,7 @@ interface Props {
   initialFocus?: "cancel" | "confirm";
 }
 
-/** A modal asking to confirm a destructive action; Escape cancels, Cancel has the focus by default. */
+/** A modal asking to confirm a destructive action; Escape cancels (not its repeats), Cancel has the focus by default. */
 export function ConfirmDialog({
   title,
   message,
@@ -28,7 +28,8 @@ export function ConfirmDialog({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onCancel();
+        // A held key acts once: its repeats never cancel a question they just opened.
+        if (!e.repeat) onCancel();
       }
     };
     window.addEventListener("keydown", onKey);
