@@ -1,27 +1,81 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
-import { KEYMAP_ACTIONS, type KeymapActionId, conflictAnywhere, conflictFor, defaultShortcut, effectiveShortcut, effectiveShortcuts, isValidShortcut, sameCombination } from "../../lib/keymap";
+import {
+  KEYMAP_ACTIONS,
+  type KeymapActionId,
+  type ShortcutScope,
+  conflictAnywhere,
+  conflictFor,
+  defaultShortcut,
+  effectiveShortcut,
+  effectiveShortcuts,
+  isValidShortcut,
+  sameCombination,
+  useEffectiveShortcut,
+} from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import { useRestoreFocus } from "../../lib/useRestoreFocus";
 import type { Settings, ThemeSetting } from "../../lib/types";
 import { useSettings } from "../../stores/settings";
-import { type NumericSettingKey, SETTINGS_BOUNDS, isValidFontFamily, parseBounded } from "./bounds";
+import {
+  INTERFACE_SCALE_PERCENTS,
+  type NumericSettingKey,
+  SETTINGS_BOUNDS,
+  isValidFontFamily,
+  parseBounded,
+  scalePercent,
+} from "./bounds";
 import { formatShortcut, isMac } from "../../lib/platform";
 import { shortcutKeyOf } from "../../lib/shortcuts";
 
-const input = "rounded-sm border border-border bg-bg px-2 py-1";
+const S = strings.settings;
+const focusRing = "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent";
+const input = `h-7 rounded-md border border-pill-border bg-search px-2 text-text placeholder:text-text-2 aria-invalid:border-danger ${focusRing} focus-visible:-outline-offset-1`;
+const button = `h-7 shrink-0 rounded-md border border-pill-border bg-btn px-3 text-text hover:bg-seg-sel ${focusRing}`;
+const smallButton = `h-6 shrink-0 rounded-md border border-pill-border bg-btn px-2 text-sm text-text hover:bg-seg-sel ${focusRing}`;
+const hint = "text-sm text-text-2";
 const FOCUSABLE = 'button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])';
 
 const THEMES: { value: ThemeSetting; label: string }[] = [
-  { value: "system", label: strings.settings.themeSystem },
-  { value: "light", label: strings.settings.themeLight },
-  { value: "dark", label: strings.settings.themeDark },
+  { value: "system", label: S.themeSystem },
+  { value: "light", label: S.themeLight },
+  { value: "dark", label: S.themeDark },
 ];
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+type SectionId = keyof typeof S.sections;
+const SECTIONS: SectionId[] = ["general", "table", "editor", "fonts", "keymap"];
+
+/** The Keymap groups, in this order: where a shortcut acts. */
+const SCOPES: ShortcutScope[] = ["global", "tableTab", "filterBar", "queryTab", "editor", "connectionList"];
+
+/** One line of a section: the label column (right-aligned), then the control and its notes. */
+function Row({ label, labelFor, labelId, children }: { label: string; labelFor?: string; labelId?: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="font-semibold">{title}</h3>
+    <div className="grid grid-cols-[11rem_minmax(0,1fr)] items-start gap-x-4">
+      {labelFor ? (
+        <label htmlFor={labelFor} className="pt-1 text-right text-text-2">
+          {label}
+        </label>
+      ) : (
+        <span id={labelId} className="pt-1 text-right text-text-2">
+          {label}
+        </span>
+      )}
+      <div className="flex min-w-0 flex-col items-start gap-1">{children}</div>
+    </div>
+  );
+}
+
+/** A titled group of rows inside a section. */
+function Group({ title, children }: { title?: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <section aria-labelledby={title ? id : undefined} className="flex flex-col gap-3">
+      {title && (
+        <h3 id={id} className="font-semibold">
+          {title}
+        </h3>
+      )}
       {children}
     </section>
   );
@@ -32,7 +86,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
  * within the bounds. An invalid draft shows an inline error, saves nothing and is kept on blur
  * so it can be fixed. Escape reverts the draft (and does not close the dialog).
  */
-function NumberField({ field, label }: { field: NumericSettingKey; label: string }) {
+function NumberField({ field, label, describedBy }: { field: NumericSettingKey; label: string; describedBy?: string }) {
   const value = useSettings((s) => s.settings[field]);
   const update = useSettings((s) => s.update);
   const [draft, setDraft] = useState<string | null>(null);
@@ -47,19 +101,17 @@ function NumberField({ field, label }: { field: NumericSettingKey; label: string
     setDraft(null);
     if (n !== value) void update({ [field]: n } as Partial<Settings>);
   };
+  const described = [invalid ? `${id}-error` : null, describedBy ?? null].filter(Boolean).join(" ");
   return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="text-muted">
-        {label}
-      </label>
+    <Row label={label} labelFor={id}>
       <input
         id={id}
         type="text"
         inputMode="numeric"
-        className={`${input} w-40 ${invalid ? "border-danger" : ""}`}
+        className={`${input} w-36`}
         value={text}
         aria-invalid={invalid}
-        aria-describedby={invalid ? `${id}-error` : undefined}
+        aria-describedby={described || undefined}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") commit();
@@ -73,10 +125,10 @@ function NumberField({ field, label }: { field: NumericSettingKey; label: string
       />
       {invalid && (
         <p id={`${id}-error`} className="text-danger">
-          {strings.settings.range(min, max)}
+          {S.range(min, max)}
         </p>
       )}
-    </div>
+    </Row>
   );
 }
 
@@ -99,16 +151,13 @@ function FontFamilyField() {
     if (next !== value) void update({ editorFontFamily: next });
   };
   return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="text-muted">
-        {strings.settings.fontFamily}
-      </label>
+    <Row label={S.fontFamily} labelFor={id}>
       <input
         id={id}
         type="text"
-        className={`${input} ${invalid ? "border-danger" : ""}`}
+        className={`${input} w-full`}
         value={text}
-        placeholder={strings.settings.fontFamilyPlaceholder}
+        placeholder={S.fontFamilyPlaceholder}
         aria-invalid={invalid}
         aria-describedby={invalid ? `${id}-error` : undefined}
         onChange={(e) => setDraft(e.target.value)}
@@ -119,10 +168,10 @@ function FontFamilyField() {
       />
       {invalid && (
         <p id={`${id}-error`} className="text-danger">
-          {strings.settings.fontFamilyInvalid}
+          {S.fontFamilyInvalid}
         </p>
       )}
-    </div>
+    </Row>
   );
 }
 
@@ -179,13 +228,13 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
       }
       const spec = specFromEvent(e, isMac());
       if (!isValidShortcut(spec)) {
-        setError(strings.settings.shortcutInvalid);
+        setError(S.shortcutInvalid);
         return;
       }
       const current = keymapRef.current;
       const other = conflictAnywhere(id, spec, current);
       if (other !== null) {
-        setError(strings.settings.shortcutConflict(strings.keymap[other]));
+        setError(S.shortcutConflict(strings.keymap[other]));
         return;
       }
       setRecording(false);
@@ -210,7 +259,7 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
         .map((spec) => conflictAnywhere(id, spec, next))
         .find((o) => o !== null) ?? null;
     if (other !== null) {
-      setError(strings.settings.shortcutConflict(strings.keymap[other]));
+      setError(S.shortcutConflict(strings.keymap[other]));
       return;
     }
     setError(null);
@@ -218,22 +267,22 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
   };
 
   return (
-    <li className="flex flex-col gap-1">
+    <li className="flex flex-col gap-1 py-1">
       <div className="flex items-center justify-between gap-4">
-        <span>{label}</span>
+        <span className="min-w-0">{label}</span>
         <span className="flex items-center gap-2">
-          <span className="flex flex-wrap justify-end gap-x-1 text-muted">
+          <span className="flex flex-wrap justify-end gap-x-1 text-text-2">
             {combos.map((spec, i) => (
               <span key={spec}>
                 <kbd className="font-mono">{formatShortcut(spec)}</kbd>
-                {i < combos.length - 1 && strings.settings.shortcutListSeparator}
+                {i < combos.length - 1 && S.shortcutListSeparator}
               </span>
             ))}
           </span>
           <button
             type="button"
-            aria-label={strings.settings.changeShortcutFor(label)}
-            className="rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2"
+            aria-label={S.changeShortcutFor(label)}
+            className={smallButton}
             onClick={() => {
               setError(null);
               setRecording(true);
@@ -243,16 +292,16 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
               setError(null);
             }}
           >
-            {recording ? strings.settings.recording : strings.settings.changeShortcut}
+            {recording ? S.recording : S.changeShortcut}
           </button>
           {overridden && (
             <button
               type="button"
-              aria-label={strings.settings.resetShortcutFor(label)}
-              className="rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2"
+              aria-label={S.resetShortcutFor(label)}
+              className={smallButton}
               onClick={reset}
             >
-              {strings.settings.resetShortcut}
+              {S.resetShortcut}
             </button>
           )}
         </span>
@@ -264,24 +313,195 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
       )}
       {collision && !error && (
         <p role="status" className="text-sm text-danger">
-          {strings.settings.shortcutCollision(strings.keymap[collision])}
+          {S.shortcutCollision(strings.keymap[collision])}
         </p>
       )}
     </li>
   );
 }
 
-/** Modal settings editor; valid changes are saved through the settings store (the font family and numbers on Enter or blur). */
+/** Theme, interface size, font sizes and the editor font (spec §2.2). */
+function FontsSection() {
+  const settings = useSettings((s) => s.settings);
+  const update = useSettings((s) => s.update);
+  const themeId = useId();
+  const sizeId = useId();
+  const increase = formatShortcut(useEffectiveShortcut("font.increase"));
+  const decrease = formatShortcut(useEffectiveShortcut("font.decrease"));
+  return (
+    <>
+      <Group>
+        <Row label={S.theme} labelId={`${themeId}-label`}>
+          <div
+            role="radiogroup"
+            aria-labelledby={`${themeId}-label`}
+            aria-describedby={`${themeId}-hint`}
+            className="flex h-7 items-center gap-4"
+          >
+            {THEMES.map((t) => (
+              <label key={t.value} className="flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="theme"
+                  value={t.value}
+                  checked={settings.theme === t.value}
+                  onChange={() => void update({ theme: t.value })}
+                  className={focusRing}
+                />
+                {t.label}
+              </label>
+            ))}
+          </div>
+          <p id={`${themeId}-hint`} className={hint}>
+            {S.themeSystemHint}
+          </p>
+        </Row>
+        <Row label={S.interfaceSize} labelFor={sizeId}>
+          <select
+            id={sizeId}
+            value={String(scalePercent(settings.interfaceScale) / 100)}
+            aria-describedby={`${sizeId}-hint`}
+            onChange={(e) => void update({ interfaceScale: Number(e.target.value) })}
+            className={`${input} w-36`}
+          >
+            {INTERFACE_SCALE_PERCENTS.map((p) => (
+              <option key={p} value={String(p / 100)}>
+                {S.interfaceSizeOption(p)}
+              </option>
+            ))}
+          </select>
+          <p id={`${sizeId}-hint`} className={hint}>
+            {S.interfaceSizeHint}
+          </p>
+        </Row>
+      </Group>
+      <Group>
+        <NumberField field="dataFontSize" label={S.dataFontSize} describedBy={`${sizeId}-keys`} />
+        <NumberField field="editorFontSize" label={S.editorFontSize} describedBy={`${sizeId}-keys`} />
+        <Row label="">
+          <p id={`${sizeId}-keys`} className={hint}>
+            {S.fontSizeKeysHint(increase, decrease)}
+          </p>
+        </Row>
+        <FontFamilyField />
+      </Group>
+    </>
+  );
+}
+
+/** Every shortcut, grouped by where it acts; each can be changed or reset (spec §5.3). */
+function KeymapSection() {
+  return (
+    <>
+      {SCOPES.map((scope) => {
+        const actions = KEYMAP_ACTIONS.filter((a) => a.scope === scope);
+        if (actions.length === 0) return null;
+        return <KeymapGroup key={scope} title={S.scopes[scope]} actions={actions} />;
+      })}
+    </>
+  );
+}
+
+function KeymapGroup({ title, actions }: { title: string; actions: typeof KEYMAP_ACTIONS }) {
+  const id = useId();
+  return (
+    <div role="group" aria-labelledby={id} className="flex flex-col">
+      <h3 id={id} className="mb-1 font-semibold">
+        {title}
+      </h3>
+      <ul className="flex flex-col divide-y divide-grid-sep">
+        {actions.map((a) => (
+          <KeyboardRow key={a.id} id={a.id} label={a.label} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SectionContent({ section, version }: { section: SectionId; version: string | null }) {
+  const settings = useSettings((s) => s.settings);
+  const update = useSettings((s) => s.update);
+  switch (section) {
+    case "general":
+      return (
+        <>
+          <Group>
+            <Row label={S.window}>
+              <label className="flex h-7 items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={settings.useSystemTitleBar}
+                  aria-describedby="settings-system-title-bar-hint"
+                  onChange={(e) => void update({ useSystemTitleBar: e.target.checked })}
+                  className={focusRing}
+                />
+                {S.systemTitleBar}
+              </label>
+              <p id="settings-system-title-bar-hint" className={hint}>
+                {S.systemTitleBarHint}
+              </p>
+            </Row>
+          </Group>
+          <Group title={S.about}>
+            <p>
+              {S.version}: {version ?? S.versionUnknown}
+            </p>
+            <p>{S.license}</p>
+            <p>
+              {S.repository}: {S.repositoryUrl}
+            </p>
+          </Group>
+        </>
+      );
+    case "table":
+      return (
+        <Group>
+          <NumberField field="pageSize" label={S.pageSize} />
+          <NumberField field="exactCountThreshold" label={S.exactCount} />
+        </Group>
+      );
+    case "editor":
+      return (
+        <Group>
+          <Row label={S.queries}>
+            <label className="flex h-7 items-center gap-2">
+              <input
+                type="checkbox"
+                checked={settings.autoLimitDefault}
+                onChange={(e) => void update({ autoLimitDefault: e.target.checked })}
+                className={focusRing}
+              />
+              {S.autoLimit}
+            </label>
+          </Row>
+          <NumberField field="autoLimitValue" label={S.autoLimitValue} />
+        </Group>
+      );
+    case "fonts":
+      return <FontsSection />;
+    case "keymap":
+      return <KeymapSection />;
+  }
+}
+
+/**
+ * Modal settings editor (spec §2.2 / §5.3, Task 11): the sections on the left as a
+ * vertical tablist (one Tab stop; ↑ / ↓, Home / End move and show), the selected one on
+ * the right. Valid changes are saved through the settings store at once (the font family
+ * and numbers on Enter or blur; the interface size zooms the window at once).
+ */
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   useRestoreFocus();
-  const settings = useSettings((s) => s.settings);
   const error = useSettings((s) => s.error);
-  const update = useSettings((s) => s.update);
   const [version, setVersion] = useState<string | null>(null);
+  const [section, setSection] = useState<SectionId>("general");
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const domId = useId();
+  const tabId = (s: SectionId) => `${domId}-tab-${s}`;
+  const panelId = `${domId}-panel`;
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -304,7 +524,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const onKeyDown = (e: ReactKeyboardEvent) => {
     if (e.key !== "Tab") return;
     const items = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
     if (items.length === 0) return;
@@ -323,6 +543,24 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const onTabKeyDown = (e: ReactKeyboardEvent) => {
+    const i = SECTIONS.indexOf(section);
+    const next =
+      e.key === "ArrowDown"
+        ? SECTIONS[(i + 1) % SECTIONS.length]
+        : e.key === "ArrowUp"
+          ? SECTIONS[(i - 1 + SECTIONS.length) % SECTIONS.length]
+          : e.key === "Home"
+            ? SECTIONS[0]
+            : e.key === "End"
+              ? SECTIONS[SECTIONS.length - 1]
+              : null;
+    if (!next) return;
+    e.preventDefault();
+    setSection(next);
+    document.getElementById(tabId(next))?.focus();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/70" onKeyDown={onKeyDown}>
       <div
@@ -330,96 +568,54 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="flex max-h-[85vh] w-[34rem] max-w-[90vw] flex-col gap-4 overflow-auto rounded-md border border-border bg-surface p-4 shadow-lg"
+        className="flex h-[min(36rem,85vh)] w-[46rem] max-w-[90vw] flex-col overflow-hidden rounded-xl border border-pill-border bg-content text-text shadow-lg"
       >
-        <div className="flex items-center justify-between">
+        <div className="flex h-12 shrink-0 items-center justify-between border-b border-sep bg-win px-4">
           <h2 id="settings-title" className="font-semibold">
-            {strings.settings.title}
+            {S.title}
           </h2>
-          <button
-            ref={closeRef}
-            type="button"
-            className="rounded-sm border border-border px-3 py-1 hover:bg-surface-2"
-            onClick={onClose}
-          >
-            {strings.settings.close}
+          <button ref={closeRef} type="button" className={button} onClick={onClose}>
+            {S.close}
           </button>
         </div>
         {error && (
-          <p role="alert" className="text-danger">
-            {strings.settings.saveFailed(error)}
+          <p role="alert" className="shrink-0 border-b border-sep px-4 py-2 text-danger">
+            {S.saveFailed(error)}
           </p>
         )}
-
-        <Section title={strings.settings.appearance}>
-          <fieldset className="flex items-center gap-4">
-            <legend className="mb-1 text-muted">{strings.settings.theme}</legend>
-            {THEMES.map((t) => (
-              <label key={t.value} className="flex items-center gap-1">
-                <input
-                  type="radio"
-                  name="theme"
-                  value={t.value}
-                  checked={settings.theme === t.value}
-                  onChange={() => void update({ theme: t.value })}
-                />
-                {t.label}
-              </label>
+        <div className="flex min-h-0 flex-1">
+          <div
+            role="tablist"
+            aria-label={S.sectionsLabel}
+            aria-orientation="vertical"
+            className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-sep bg-side p-2"
+          >
+            {SECTIONS.map((s) => (
+              <button
+                key={s}
+                id={tabId(s)}
+                type="button"
+                role="tab"
+                aria-selected={section === s}
+                aria-controls={section === s ? panelId : undefined}
+                tabIndex={section === s ? 0 : -1}
+                onClick={() => setSection(s)}
+                onKeyDown={onTabKeyDown}
+                className={`h-8 shrink-0 truncate rounded-md px-3 text-left hover:bg-seg-sel aria-selected:bg-sel aria-selected:font-medium ${focusRing} focus-visible:-outline-offset-2`}
+              >
+                {S.sections[s]}
+              </button>
             ))}
-          </fieldset>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={settings.useSystemTitleBar}
-              aria-describedby="settings-system-title-bar-hint"
-              onChange={(e) => void update({ useSystemTitleBar: e.target.checked })}
-            />
-            {strings.settings.systemTitleBar}
-          </label>
-          <p id="settings-system-title-bar-hint" className="text-sm text-muted">
-            {strings.settings.systemTitleBarHint}
-          </p>
-        </Section>
-
-        <Section title={strings.settings.editor}>
-          <FontFamilyField />
-          <NumberField field="editorFontSize" label={strings.settings.fontSize} />
-        </Section>
-
-        <Section title={strings.settings.data}>
-          <NumberField field="pageSize" label={strings.settings.pageSize} />
-          <NumberField field="exactCountThreshold" label={strings.settings.exactCount} />
-        </Section>
-
-        <Section title={strings.settings.queries}>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={settings.autoLimitDefault}
-              onChange={(e) => void update({ autoLimitDefault: e.target.checked })}
-            />
-            {strings.settings.autoLimit}
-          </label>
-          <NumberField field="autoLimitValue" label={strings.settings.autoLimitValue} />
-        </Section>
-
-        <Section title={strings.settings.keyboard}>
-          <ul className="flex flex-col gap-1">
-            {KEYMAP_ACTIONS.map((a) => (
-              <KeyboardRow key={a.id} id={a.id} label={a.label} />
-            ))}
-          </ul>
-        </Section>
-
-        <Section title={strings.settings.about}>
-          <p>
-            {strings.settings.version}: {version ?? strings.settings.versionUnknown}
-          </p>
-          <p>{strings.settings.license}</p>
-          <p>
-            {strings.settings.repository}: {strings.settings.repositoryUrl}
-          </p>
-        </Section>
+          </div>
+          <div
+            id={panelId}
+            role="tabpanel"
+            aria-labelledby={tabId(section)}
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-y-auto px-6 py-5"
+          >
+            <SectionContent section={section} version={version} />
+          </div>
+        </div>
       </div>
     </div>
   );

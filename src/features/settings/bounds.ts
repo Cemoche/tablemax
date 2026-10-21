@@ -11,6 +11,18 @@ export const SETTINGS_BOUNDS = {
 
 export type NumericSettingKey = keyof typeof SETTINGS_BOUNDS;
 
+/**
+ * The interface size choices, in percent: `INTERFACE_SCALE` of src-tauri/src/settings.rs
+ * (0.9–1.3) on its 5 % step.
+ */
+export const INTERFACE_SCALE_PERCENTS: readonly number[] = Array.from({ length: 9 }, (_, i) => 90 + 5 * i);
+
+/** The stored scale as the percent of its nearest step (a float read back may be 1.2999…). */
+export function scalePercent(scale: number): number {
+  const p = Math.round((scale * 100) / 5) * 5;
+  return Math.min(130, Math.max(90, p));
+}
+
 /** The integer typed in `text`, or null when it is not a whole number within the bounds of `key`. */
 export function parseBounded(key: NumericSettingKey, text: string): number | null {
   const t = text.trim().replace(/[ _,]/g, "");

@@ -716,26 +716,51 @@ export const strings = {
     open: "Settings",
     title: "Settings",
     close: "Close",
-    appearance: "Appearance",
+    /** The list of sections on the left of the dialog. */
+    sectionsLabel: "Settings sections",
+    sections: {
+      general: "General",
+      table: "Table",
+      editor: "Editor",
+      fonts: "Fonts & Themes",
+      keymap: "Keymap",
+    },
     theme: "Theme",
     themeSystem: "System",
     themeLight: "Light",
     themeDark: "Dark",
-    editor: "Editor",
-    fontFamily: "Font family",
+    themeSystemHint: "System follows the light or dark mode of the desktop.",
+    interfaceSize: "Interface size",
+    /** One choice of the interface size, in percent. */
+    interfaceSizeOption: (percent: number) => `${percent}%`,
+    interfaceSizeHint: "Zooms the whole window, grid included.",
+    fontFamily: "Editor font",
     fontFamilyPlaceholder: "Empty = default monospace font",
     fontFamilyInvalid:
       "Use font names separated by commas: letters, digits, spaces, - and _, each optionally in quotes (200 characters max)",
-    fontSize: "Font size",
-    data: "Data",
+    dataFontSize: "Data font size",
+    editorFontSize: "Editor font size",
+    /** Under the font sizes: the effective font size shortcuts. */
+    fontSizeKeysHint: (increase: string, decrease: string) =>
+      `${increase} and ${decrease} make both font sizes larger or smaller.`,
     pageSize: "Page size (rows)",
     exactCount: "Exact count threshold (rows)",
-    queries: "Queries",
     autoLimit: "Add a LIMIT to SELECT queries by default",
     autoLimitValue: "Default LIMIT",
+    /** Row labels of the General and Editor sections. */
+    window: "Window",
+    queries: "Queries",
     systemTitleBar: "Use the system title bar",
     systemTitleBarHint: "Takes effect the next time TableMax starts.",
-    keyboard: "Keyboard",
+    /** Groups of the Keymap section: where the shortcuts act. */
+    scopes: {
+      global: "Everywhere",
+      tableTab: "Table tabs",
+      filterBar: "Filter bar",
+      queryTab: "SQL tabs",
+      editor: "SQL editor",
+      connectionList: "Connection list",
+    },
     /** Modifier names in shortcut labels; `Mod` resolves to cmd on macOS, ctrl elsewhere. */
     keyNames: {
       ctrl: "Ctrl",

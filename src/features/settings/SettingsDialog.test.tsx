@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
@@ -30,6 +30,117 @@ const setup = () => {
   return { onClose };
 };
 
+const SEC = strings.settings.sections;
+/** Shows the section `name` (a tab of the dialog's section list). */
+const openSection = (name: string) => userEvent.click(screen.getByRole("tab", { name }));
+const setupKeymap = async () => {
+  const r = setup();
+  await openSection(SEC.keymap);
+  return r;
+};
+
+test("settings_sections_and_fields: General, Table, Editor, Fonts & Themes and Keymap, each with its labelled fields", async () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, interfaceScale: 1.15, dataFontSize: 14, editorFontSize: 15 } });
+  setup();
+  const list = screen.getByRole("tablist", { name: strings.settings.sectionsLabel });
+  expect(list).toHaveAttribute("aria-orientation", "vertical");
+  const tabs = within(list).getAllByRole("tab");
+  expect(tabs.map((t) => t.textContent)).toEqual([SEC.general, SEC.table, SEC.editor, SEC.fonts, SEC.keymap]);
+  // General is shown first; one Tab stop for the list (the selected section).
+  expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+  expect(tabs.map((t) => t.tabIndex)).toEqual([0, -1, -1, -1, -1]);
+  const panel = () => screen.getByRole("tabpanel");
+  expect(panel()).toHaveAccessibleName(SEC.general);
+  expect(tabs[0]).toHaveAttribute("aria-controls", panel().id);
+  expect(within(panel()).getByRole("checkbox", { name: strings.settings.systemTitleBar })).toBeInTheDocument();
+  expect(within(panel()).getByText(strings.settings.license)).toBeInTheDocument();
+
+  await openSection(SEC.table);
+  expect(panel()).toHaveAccessibleName(SEC.table);
+  expect(within(panel()).getByLabelText(strings.settings.pageSize)).toHaveValue(String(DEFAULT_SETTINGS.pageSize));
+  expect(within(panel()).getByLabelText(strings.settings.exactCount)).toBeInTheDocument();
+  // Only the shown section is in the document.
+  expect(screen.queryByRole("checkbox", { name: strings.settings.systemTitleBar })).toBeNull();
+
+  await openSection(SEC.editor);
+  expect(within(panel()).getByRole("checkbox", { name: strings.settings.autoLimit })).toBeInTheDocument();
+  expect(within(panel()).getByLabelText(strings.settings.autoLimitValue)).toBeInTheDocument();
+
+  await openSection(SEC.fonts);
+  const theme = within(panel()).getByRole("radiogroup", { name: strings.settings.theme });
+  expect(within(theme).getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual(["system", "light", "dark"]);
+  expect(within(theme).getByRole("radio", { name: strings.settings.themeSystem })).toBeChecked();
+  expect(within(panel()).getByRole("combobox", { name: strings.settings.interfaceSize })).toHaveValue("1.15");
+  expect(within(panel()).getByLabelText(strings.settings.dataFontSize)).toHaveValue("14");
+  expect(within(panel()).getByLabelText(strings.settings.editorFontSize)).toHaveValue("15");
+  expect(within(panel()).getByLabelText(strings.settings.fontFamily)).toBeInTheDocument();
+  // The font size keys are named next to the sizes (Ctrl+= / Ctrl+-).
+  expect(panel()).toHaveTextContent(strings.settings.fontSizeKeysHint("Ctrl+=", "Ctrl+-"));
+
+  await openSection(SEC.keymap);
+  // Grouped by where the shortcut acts; each action in its scope's group.
+  const group = (scope: keyof typeof strings.settings.scopes) =>
+    within(panel()).getByRole("group", { name: strings.settings.scopes[scope] });
+  expect(within(group("global")).getByText(strings.keymap["palette.all"])).toBeInTheDocument();
+  expect(within(group("tableTab")).getByText(strings.keymap["grid.commit"])).toBeInTheDocument();
+  expect(within(group("filterBar")).getByText(strings.keymap["filters.toggle"])).toBeInTheDocument();
+  expect(within(group("queryTab")).getByText(strings.keymap["query.save"])).toBeInTheDocument();
+  expect(within(group("editor")).getByText(strings.keymap["editor.run"])).toBeInTheDocument();
+  expect(within(group("connectionList")).getByText(strings.keymap["connections.search"])).toBeInTheDocument();
+  expect(within(group("global")).queryByText(strings.keymap["editor.run"])).toBeNull();
+});
+
+test("the section list moves with the arrow keys, Home and End", async () => {
+  setup();
+  const tab = (name: string) => screen.getByRole("tab", { name });
+  tab(SEC.general).focus();
+  await userEvent.keyboard("{ArrowDown}");
+  expect(tab(SEC.table)).toHaveFocus();
+  expect(tab(SEC.table)).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tabpanel")).toHaveAccessibleName(SEC.table);
+  await userEvent.keyboard("{End}");
+  expect(tab(SEC.keymap)).toHaveFocus();
+  await userEvent.keyboard("{ArrowDown}");
+  expect(tab(SEC.general)).toHaveFocus();
+  await userEvent.keyboard("{ArrowUp}");
+  expect(tab(SEC.keymap)).toHaveFocus();
+  await userEvent.keyboard("{Home}");
+  expect(tab(SEC.general)).toHaveFocus();
+  expect(tab(SEC.general)).toHaveAttribute("aria-selected", "true");
+});
+
+test("interface_size_control_updates_zoom: choosing a size zooms the window at once and saves it", async () => {
+  setup();
+  await openSection(SEC.fonts);
+  const size = screen.getByRole("combobox", { name: strings.settings.interfaceSize });
+  expect(size).toHaveValue("1");
+  const options = within(size).getAllByRole("option");
+  expect(options.map((o) => o.textContent)).toEqual(["90%", "95%", "100%", "105%", "110%", "115%", "120%", "125%", "130%"]);
+  await userEvent.selectOptions(size, "1.3");
+  expect(ipc.windowSetZoom).toHaveBeenLastCalledWith(1.3);
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, interfaceScale: 1.3 });
+  expect(size).toHaveValue("1.3");
+  await userEvent.selectOptions(size, "0.95");
+  expect(ipc.windowSetZoom).toHaveBeenLastCalledWith(0.95);
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, interfaceScale: 0.95 });
+});
+
+test("a stored scale off the 5 % grid shows its nearest step", async () => {
+  useSettings.setState({ settings: { ...DEFAULT_SETTINGS, interfaceScale: 1.2999999523162842 } });
+  setup();
+  await openSection(SEC.fonts);
+  expect(screen.getByRole("combobox", { name: strings.settings.interfaceSize })).toHaveValue("1.3");
+});
+
+test("the data font size is saved like the editor's", async () => {
+  setup();
+  await openSection(SEC.fonts);
+  const input = screen.getByLabelText(strings.settings.dataFontSize);
+  await userEvent.clear(input);
+  await userEvent.type(input, "16{Enter}");
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, dataFontSize: 16 });
+});
+
 test("is a modal dialog labelled by its title with focus inside", async () => {
   setup();
   const dialog = screen.getByRole("dialog", { name: strings.settings.title });
@@ -40,6 +151,7 @@ test("is a modal dialog labelled by its title with focus inside", async () => {
 
 test("changing the theme saves it and sets data-theme at once", async () => {
   setup();
+  await openSection(SEC.fonts);
   await userEvent.click(screen.getByRole("radio", { name: strings.settings.themeDark }));
   expect(document.documentElement.dataset.theme).toBe("dark");
   expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, theme: "dark" });
@@ -47,6 +159,7 @@ test("changing the theme saves it and sets data-theme at once", async () => {
 
 test("an out-of-range page size shows an error and sends nothing", async () => {
   setup();
+  await openSection(SEC.table);
   const input = screen.getByLabelText(strings.settings.pageSize);
   await userEvent.clear(input);
   await userEvent.click(input);
@@ -59,7 +172,8 @@ test("an out-of-range page size shows an error and sends nothing", async () => {
 
 test("a non-integer value is rejected", async () => {
   setup();
-  const input = screen.getByLabelText(strings.settings.fontSize);
+  await openSection(SEC.fonts);
+  const input = screen.getByLabelText(strings.settings.editorFontSize);
   await userEvent.clear(input);
   await userEvent.type(input, "1.5");
   expect(input).toHaveAttribute("aria-invalid", "true");
@@ -68,6 +182,7 @@ test("a non-integer value is rejected", async () => {
 
 test("a valid number is saved and clears the error", async () => {
   setup();
+  await openSection(SEC.table);
   const input = screen.getByLabelText(strings.settings.pageSize);
   await userEvent.clear(input);
   await userEvent.paste("6000");
@@ -81,6 +196,7 @@ test("a valid number is saved and clears the error", async () => {
 
 test("a number is saved on Enter or blur, not while typing", async () => {
   setup();
+  await openSection(SEC.table);
   const input = screen.getByLabelText(strings.settings.pageSize);
   await userEvent.clear(input);
   await userEvent.type(input, "6");
@@ -91,7 +207,8 @@ test("a number is saved on Enter or blur, not while typing", async () => {
   await userEvent.keyboard("{Enter}");
   expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, pageSize: 600 });
-  const size = screen.getByLabelText(strings.settings.fontSize);
+  await openSection(SEC.fonts);
+  const size = screen.getByLabelText(strings.settings.editorFontSize);
   await userEvent.clear(size);
   await userEvent.type(size, "16");
   expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
@@ -102,6 +219,7 @@ test("a number is saved on Enter or blur, not while typing", async () => {
 
 test("an invalid number keeps its draft and error on Enter and blur, and sends nothing", async () => {
   setup();
+  await openSection(SEC.table);
   const input = screen.getByLabelText(strings.settings.pageSize);
   await userEvent.clear(input);
   await userEvent.type(input, "6000");
@@ -115,6 +233,7 @@ test("an invalid number keeps its draft and error on Enter and blur, and sends n
 
 test("Escape reverts a number draft without closing the dialog; without a draft it closes", async () => {
   const { onClose } = setup();
+  await openSection(SEC.table);
   const input = screen.getByLabelText(strings.settings.pageSize);
   await userEvent.clear(input);
   await userEvent.type(input, "77");
@@ -128,6 +247,7 @@ test("Escape reverts a number draft without closing the dialog; without a draft 
 
 test("the auto LIMIT checkbox is saved", async () => {
   setup();
+  await openSection(SEC.editor);
   await userEvent.click(screen.getByRole("checkbox", { name: strings.settings.autoLimit }));
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, autoLimitDefault: true });
 });
@@ -142,6 +262,7 @@ test("the system title bar checkbox is saved and says when it applies", async ()
 
 test("the font family is saved on Enter or blur, not on each keystroke", async () => {
   setup();
+  await openSection(SEC.fonts);
   const input = screen.getByLabelText(strings.settings.fontFamily);
   await userEvent.type(input, "JetBrains Mono, monospace");
   expect(ipc.settingsSet).not.toHaveBeenCalled();
@@ -166,6 +287,7 @@ test.each(["x; } .a { color: red", "url(x)", "a:b", '"Fira'])(
   "an invalid font family %s shows an error and is never sent",
   async (bad) => {
     setup();
+    await openSection(SEC.fonts);
     const input = screen.getByLabelText(strings.settings.fontFamily);
     await userEvent.click(input);
     await userEvent.paste(bad);
@@ -183,6 +305,7 @@ test.each(["x; } .a { color: red", "url(x)", "a:b", '"Fira'])(
 test("clearing the font family saves the default", async () => {
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, editorFontFamily: "Fira Code" } });
   setup();
+  await openSection(SEC.fonts);
   const input = screen.getByLabelText(strings.settings.fontFamily);
   await userEvent.clear(input);
   await userEvent.tab();
@@ -200,8 +323,9 @@ test("About shows the version, the license line and the repository as text", asy
 /** The combination shown on the Keyboard row of `label`. */
 const shortcutOf = (label: string) => screen.getByText(label).closest("li")?.querySelector("kbd")?.textContent;
 
-test("lists every keymap action with the platform's modifier names", () => {
+test("lists every keymap action with the platform's modifier names", async () => {
   setup();
+  await openSection(SEC.keymap);
   for (const a of KEYMAP_ACTIONS) expect(screen.getByText(a.label)).toBeInTheDocument();
   // jsdom is not macOS: Mod reads Ctrl.
   expect(shortcutOf(strings.keymap["editor.run"])).toBe("Ctrl+Enter");
@@ -211,11 +335,12 @@ test("lists every keymap action with the platform's modifier names", () => {
   expect(screen.getByRole("dialog").textContent).not.toMatch(/Mod/);
 });
 
-test("the keyboard list shows a custom combination, and the default for an invalid entry", () => {
+test("the keyboard list shows a custom combination, and the default for an invalid entry", async () => {
   useSettings.setState({
     settings: { ...DEFAULT_SETTINGS, keymap: { "grid.commit": "Mod+Shift+S", "query.new": "Mod-N" } },
   });
   setup();
+  await openSection(SEC.keymap);
   expect(shortcutOf(strings.keymap["grid.commit"])).toBe("Ctrl+Shift+S");
   expect(shortcutOf(strings.keymap["query.save"])).toBe("Ctrl+S");
   expect(shortcutOf(strings.keymap["query.new"])).toBe("Ctrl+T");
@@ -225,9 +350,10 @@ test("the keyboard list shows a custom combination, and the default for an inval
 const shortcutsOf = (label: string) =>
   [...(screen.getByText(label).closest("li")?.querySelectorAll("kbd") ?? [])].map((k) => k.textContent);
 
-test("shortcut_alternates_listed: a row shows every default combination; a custom one replaces them (#90)", () => {
+test("shortcut_alternates_listed: a row shows every default combination; a custom one replaces them (#90)", async () => {
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "tab.previous": "Alt+P" } } });
   setup();
+  await openSection(SEC.keymap);
   expect(shortcutsOf(strings.keymap["tab.next"])).toEqual(["Ctrl+Tab", "Ctrl+]", "Ctrl+PageDown"]);
   expect(shortcutsOf(strings.keymap["editor.format"])).toEqual(["Ctrl+I", "Ctrl+Shift+F"]);
   expect(shortcutsOf(strings.keymap["font.increase"])).toEqual(["Ctrl+=", "Ctrl+Shift+=", "Ctrl+Num +"]);
@@ -236,13 +362,14 @@ test("shortcut_alternates_listed: a row shows every default combination; a custo
   for (const a of KEYMAP_ACTIONS) expect(a.label, a.id).not.toMatch(/Ctrl\+|⌘/);
 });
 
-test("saved_binding_collision_flagged: a custom binding equal to another action's new default is flagged, not rewritten", () => {
+test("saved_binding_collision_flagged: a custom binding equal to another action's new default is flagged, not rewritten", async () => {
   // Saved before #90, when Ctrl+Shift+P was free: it is now Preview's default (table tabs).
   useSettings.setState({
     settings: { ...DEFAULT_SETTINGS, keymap: { "grid.copyCells": "Mod+Shift+P" } },
     confirmed: DEFAULT_SETTINGS,
   });
   setup();
+  await openSection(SEC.keymap);
   const row = screen.getByText(strings.keymap["grid.copyCells"]).closest("li") as HTMLElement;
   expect(row).toHaveTextContent(strings.settings.shortcutCollision(strings.keymap["grid.preview"]));
   expect(shortcutOf(strings.keymap["grid.copyCells"])).toBe("Ctrl+Shift+P");
@@ -279,7 +406,7 @@ const queryReset = (label: string) => screen.queryByRole("button", { name: strin
 const paletteLabel = strings.keymap["palette.all"];
 
 test("recording a combination saves it and the label updates", async () => {
-  setup();
+  await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   expect(screen.getByText(strings.settings.recording)).toBeInTheDocument();
   await userEvent.keyboard("{Control>}{Shift>}y{/Shift}{/Control}");
@@ -289,7 +416,7 @@ test("recording a combination saves it and the label updates", async () => {
 });
 
 test("recording follows the layout's letter, and the physical key on a non-Latin layout", async () => {
-  setup();
+  await setupKeymap();
   const key = (init: KeyboardEventInit) =>
     document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
   // AZERTY: the key at QWERTY's W types "z".
@@ -308,7 +435,7 @@ test("recording follows the layout's letter, and the physical key on a non-Latin
 });
 
 test("a combination used by another action is refused with its label and saves nothing", async () => {
-  setup();
+  await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Control>}k{/Control}");
   expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["database.open"]))).toBeInTheDocument();
@@ -317,7 +444,7 @@ test("a combination used by another action is refused with its label and saves n
 });
 
 test("a combination the grammar rejects shows an inline error and saves nothing", async () => {
-  setup();
+  await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("k");
   expect(screen.getByText(strings.settings.shortcutInvalid)).toBeInTheDocument();
@@ -325,7 +452,7 @@ test("a combination the grammar rejects shows an inline error and saves nothing"
 });
 
 test("Escape cancels recording without closing the dialog", async () => {
-  const { onClose } = setup();
+  const { onClose } = await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Escape}");
   expect(screen.queryByText(strings.settings.recording)).toBeNull();
@@ -336,7 +463,7 @@ test("Escape cancels recording without closing the dialog", async () => {
 });
 
 test("modifier-only presses are ignored while recording", async () => {
-  setup();
+  await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Control>}{Shift>}{Alt>}");
   expect(screen.getByText(strings.settings.recording)).toBeInTheDocument();
@@ -350,7 +477,7 @@ test("Reset appears only for an overridden action and removes the override", asy
     settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K", "grid.commit": "Mod+Shift+S" } },
     confirmed: DEFAULT_SETTINGS,
   });
-  setup();
+  await setupKeymap();
   expect(queryReset(strings.keymap["query.new"])).toBeNull();
   await userEvent.click(queryReset(paletteLabel) as HTMLElement);
   expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: { "grid.commit": "Mod+Shift+S" } });
@@ -360,7 +487,7 @@ test("Reset appears only for an overridden action and removes the override", asy
 test("Reset is refused when the default is now used by another action (rebind, take, reset)", async () => {
   const newQuery = strings.keymap["query.new"];
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+N" } }, confirmed: DEFAULT_SETTINGS });
-  setup();
+  await setupKeymap();
   // Mod+T is free once New query moved to Mod+N: the palette takes it.
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Control>}t{/Control}");
@@ -383,7 +510,7 @@ test("Reset is refused when an alternate default is now used by another action",
     settings: { ...DEFAULT_SETTINGS, keymap: { "workspace.previous": "Alt+P" } },
     confirmed: DEFAULT_SETTINGS,
   });
-  setup();
+  await setupKeymap();
   // 2. The palette takes the alternate.
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Control>}{Shift>}[PageUp]{/Shift}{/Control}");
@@ -405,14 +532,14 @@ test("Reset is refused when the default would conflict on the other platform", a
     settings: { ...DEFAULT_SETTINGS, keymap: { "query.new": "Mod+N", "palette.all": "Meta+T" } },
     confirmed: DEFAULT_SETTINGS,
   });
-  setup();
+  await setupKeymap();
   await userEvent.click(queryReset(newQuery) as HTMLElement);
   expect(screen.getByRole("alert")).toHaveTextContent(strings.settings.shortcutConflict(paletteLabel));
   expect(ipc.settingsSet).not.toHaveBeenCalled();
 });
 
 test("a combination that conflicts on the other platform is refused (Meta+T is Mod+T on macOS)", async () => {
-  setup();
+  await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Meta>}t{/Meta}");
   expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["query.new"]))).toBeInTheDocument();
@@ -420,7 +547,7 @@ test("a combination that conflicts on the other platform is refused (Meta+T is M
 });
 
 test("Shift alone is not a modifier: Shift+K is refused as invalid", async () => {
-  setup();
+  await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Shift>}k{/Shift}");
   expect(screen.getByText(strings.settings.shortcutInvalid)).toBeInTheDocument();
@@ -429,14 +556,14 @@ test("Shift alone is not a modifier: Shift+K is refused as invalid", async () =>
 
 test("recording the default combination removes the override instead of storing it", async () => {
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+K" } }, confirmed: DEFAULT_SETTINGS });
-  setup();
+  await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Control>}p{/Control}");
   expect(ipc.settingsSet).toHaveBeenCalledWith({ ...DEFAULT_SETTINGS, keymap: {} });
 });
 
 test("Tab without modifiers cancels recording; Ctrl+Tab style combinations are candidates", async () => {
-  setup();
+  await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Tab}");
   expect(screen.queryByText(strings.settings.recording)).toBeNull();
@@ -446,7 +573,7 @@ test("Tab without modifiers cancels recording; Ctrl+Tab style combinations are c
 });
 
 test("recording the default combination in another spelling stores no override (Ctrl+Tab for tab.next)", async () => {
-  setup();
+  await setupKeymap();
   const label = strings.keymap["tab.next"];
   await userEvent.click(changeButton(label));
   await userEvent.keyboard("{Control>}{Tab}{/Control}");
@@ -456,13 +583,13 @@ test("recording the default combination in another spelling stores no override (
 
 test("an override spelled differently from the default is removed when its default is recorded", async () => {
   useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "tab.next": "Mod+Tab" } }, confirmed: DEFAULT_SETTINGS });
-  setup();
+  await setupKeymap();
   expect(queryReset(strings.keymap["tab.next"])).toBeNull();
 });
 
 test("on macOS Meta records as Mod and Ctrl stays Ctrl", async () => {
   platform.mac = true;
-  setup();
+  await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Meta>}{Shift>}y{/Shift}{/Meta}");
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+Y" } });
@@ -488,6 +615,7 @@ test("a global shortcut does not fire while recording, and fires again after can
       <SettingsDialog onClose={onClose} />
     </>,
   );
+  await openSection(SEC.keymap);
   await userEvent.click(changeButton(paletteLabel));
   await userEvent.keyboard("{Control>}t{/Control}"); // query.new's own combination, recorded for palette.all
   expect(onFire).not.toHaveBeenCalled();
