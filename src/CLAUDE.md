@@ -51,6 +51,9 @@ The UI follows the redesign spec `docs/superpowers/specs/2026-10-19-tablemax-ui-
   `src/lib/tooltip.ts` (one `TooltipLayer` shows it), or `tipIfCut(name)` for text that
   may be truncated. The shortcut text comes from the live keymap
   (`formatShortcut(useEffectiveShortcut(id))`), never written by hand.
+- An off button with a tooltip uses `softDisabled(off, onClick)` from
+  `src/lib/softDisabled.ts` (aria-disabled), not native `disabled`, so WebKitGTK still shows
+  its tooltip (#110); style it with `aria-disabled:` variants.
 
 ## Keyboard shortcuts
 
