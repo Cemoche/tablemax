@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type KeyboardEvent, type ReactNode, useId } from "react";
 import { useAction } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import {
@@ -46,6 +46,28 @@ export function useSidebarShortcuts(wsId: string, connected: boolean) {
 export function Sidebar({ workspace }: { workspace: Workspace }) {
   const segment = useSidebar((s) => segmentOf(s.segments, workspace.id));
   const setSegment = useSidebar((s) => s.setSegment);
+  const domId = useId();
+  const tabId = (s: SidebarSegment) => `${domId}-${s}`;
+  const panelId = `${domId}-panel`;
+
+  // Tablist keys (automatic activation): ← / → wrap, Home / End; the focus follows.
+  const onKeyDown = (e: KeyboardEvent) => {
+    const i = SEGMENTS.indexOf(segment);
+    const next =
+      e.key === "ArrowRight"
+        ? SEGMENTS[(i + 1) % SEGMENTS.length]
+        : e.key === "ArrowLeft"
+          ? SEGMENTS[(i - 1 + SEGMENTS.length) % SEGMENTS.length]
+          : e.key === "Home"
+            ? SEGMENTS[0]
+            : e.key === "End"
+              ? SEGMENTS[SEGMENTS.length - 1]
+              : null;
+    if (!next) return;
+    e.preventDefault();
+    setSegment(workspace.id, next);
+    document.getElementById(tabId(next))?.focus();
+  };
 
   // The width lives in SidebarFrame only: a resize drag re-renders the frame, not the tree
   // and lists passed to it (same elements, so React skips them).
@@ -53,26 +75,33 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
     <SidebarFrame>
       <div className="flex h-10 shrink-0 items-center px-2.5">
         <div
-          role="group"
+          role="tablist"
           aria-label={S.segments.label}
           className="flex h-7 w-full items-center rounded-md border border-pill-border bg-search p-0.5"
         >
           {SEGMENTS.map((s) => (
             <button
               key={s}
+              id={tabId(s)}
               type="button"
-              aria-pressed={segment === s}
+              role="tab"
+              aria-selected={segment === s}
+              aria-controls={segment === s ? panelId : undefined}
+              tabIndex={segment === s ? 0 : -1}
               onClick={() => setSegment(workspace.id, s)}
-              className="h-full min-w-0 flex-1 truncate rounded-[5px] text-sm text-text-2 outline-none hover:text-text aria-pressed:bg-seg-sel aria-pressed:font-medium aria-pressed:text-text focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
+              onKeyDown={onKeyDown}
+              className="h-full min-w-0 flex-1 truncate rounded-[5px] text-sm text-text-2 outline-none hover:text-text aria-selected:bg-seg-sel aria-selected:font-medium aria-selected:text-text focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
             >
               {S.segments[s]}
             </button>
           ))}
         </div>
       </div>
-      {segment === "items" && <ObjectSidebar workspace={workspace} />}
-      {segment === "queries" && <SavedQueries workspace={workspace} />}
-      {segment === "history" && <HistoryPanel workspace={workspace} />}
+      <div id={panelId} role="tabpanel" aria-labelledby={tabId(segment)} className="flex min-h-0 flex-1 flex-col">
+        {segment === "items" && <ObjectSidebar workspace={workspace} />}
+        {segment === "queries" && <SavedQueries workspace={workspace} />}
+        {segment === "history" && <HistoryPanel workspace={workspace} />}
+      </div>
       <SidebarFooter workspace={workspace} />
     </SidebarFrame>
   );

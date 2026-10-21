@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
@@ -57,27 +57,55 @@ function Harness({ id }: { id: string }) {
   return visible ? <Sidebar workspace={workspace} /> : null;
 }
 
-const segment = (name: string) => screen.getByRole("button", { name });
+const segment = (name: string) => screen.getByRole("tab", { name });
 
 test("segmented_tabs_switch_and_persist: Items / Queries / History, remembered per workspace", async () => {
   const { rerender } = render(<Harness key="w1" id="w1" />);
-  expect(segment(S.segments.items)).toHaveAttribute("aria-pressed", "true");
+  expect(segment(S.segments.items)).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByRole("treeitem", { name: /orders/ })).toBeInTheDocument();
 
   await userEvent.click(segment(S.segments.queries));
-  expect(segment(S.segments.queries)).toHaveAttribute("aria-pressed", "true");
-  expect(segment(S.segments.items)).toHaveAttribute("aria-pressed", "false");
+  expect(segment(S.segments.queries)).toHaveAttribute("aria-selected", "true");
+  expect(segment(S.segments.items)).toHaveAttribute("aria-selected", "false");
   expect(await screen.findByRole("region", { name: strings.savedQueries.label })).toBeInTheDocument();
   expect(screen.queryByRole("treeitem", { name: /orders/ })).toBeNull();
 
   // Another workspace starts on Items…
   rerender(<Harness key="w2" id="w2" />);
-  expect(segment(S.segments.items)).toHaveAttribute("aria-pressed", "true");
+  expect(segment(S.segments.items)).toHaveAttribute("aria-selected", "true");
   await userEvent.click(segment(S.segments.history));
   expect(await screen.findByRole("region", { name: strings.history.label })).toBeInTheDocument();
   // …and the first one comes back on Queries.
   rerender(<Harness key="w1b" id="w1" />);
-  expect(segment(S.segments.queries)).toHaveAttribute("aria-pressed", "true");
+  expect(segment(S.segments.queries)).toHaveAttribute("aria-selected", "true");
+});
+
+test("segments_are_a_tablist: one Tab stop, arrows / Home / End move and show, the list in a tabpanel", async () => {
+  render(<Harness id="w1" />);
+  const list = screen.getByRole("tablist", { name: S.segments.label });
+  expect(list).toBeInTheDocument();
+  const items = segment(S.segments.items);
+  expect([items, segment(S.segments.queries), segment(S.segments.history)].map((t) => t.tabIndex)).toEqual([0, -1, -1]);
+  const panel = screen.getByRole("tabpanel");
+  expect(panel).toHaveAccessibleName(S.segments.items);
+  expect(items).toHaveAttribute("aria-controls", panel.id);
+  expect(await within(panel).findByRole("treeitem", { name: /orders/ })).toBeInTheDocument();
+
+  items.focus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(segment(S.segments.queries)).toHaveFocus();
+  expect(segment(S.segments.queries)).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tabpanel")).toHaveAccessibleName(S.segments.queries);
+  expect(useSidebar.getState().segments.w1).toBe("queries");
+  await userEvent.keyboard("{End}");
+  expect(segment(S.segments.history)).toHaveFocus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(segment(S.segments.items)).toHaveFocus();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(segment(S.segments.history)).toHaveFocus();
+  await userEvent.keyboard("{Home}");
+  expect(segment(S.segments.items)).toHaveFocus();
+  expect(segment(S.segments.items)).toHaveAttribute("aria-selected", "true");
 });
 
 test("history_shortcut_opens_history_tab: Ctrl+Shift+H shows the sidebar on History", async () => {
@@ -86,12 +114,12 @@ test("history_shortcut_opens_history_tab: Ctrl+Shift+H shows the sidebar on Hist
   expect(screen.queryByRole("complementary", { name: S.label })).toBeNull();
   fireEvent.keyDown(window, { code: "KeyH", ctrlKey: true, shiftKey: true });
   expect(await screen.findByRole("complementary", { name: S.label })).toBeInTheDocument();
-  expect(segment(S.segments.history)).toHaveAttribute("aria-pressed", "true");
+  expect(segment(S.segments.history)).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByRole("region", { name: strings.history.label })).toBeInTheDocument();
   await waitFor(() => expect(ipc.historyList).toHaveBeenCalledWith("c-w1", null, 200));
   // Pressed again it stays on History (it opens, it does not hide).
   fireEvent.keyDown(window, { code: "KeyH", ctrlKey: true, shiftKey: true });
-  expect(segment(S.segments.history)).toHaveAttribute("aria-pressed", "true");
+  expect(segment(S.segments.history)).toHaveAttribute("aria-selected", "true");
 });
 
 test("Ctrl+Shift+F shows the sidebar and focuses the search box of the shown tab", async () => {
