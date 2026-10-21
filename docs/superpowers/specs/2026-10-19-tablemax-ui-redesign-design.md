@@ -187,15 +187,23 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > pastille ne bouge jamais ; il reste vide tant que le backend n'a pas de mesure (la première
 > demande ne fait que poser une référence), jamais de chiffre inventé. La pastille interroge
 > `workspace_throughput` chaque seconde tant qu'elle montre ce workspace (rien pour les
-> workspaces en arrière-plan). Nom accessible « TAG | texte | network 1.2 KB/s » ; pas de
-> région live (un chiffre qui change chaque seconde ne doit pas bavarder). Comptage côté Rust,
+> workspaces en arrière-plan), et s'arrête tant que la fenêtre est cachée (réduite) : rien
+> n'est affiché alors, et au retour l'emplacement repart vide jusqu'à la première réponse.
+> Nom accessible « TAG | texte | network 1.2 KB/s » ; pas de région live (un chiffre qui
+> change chaque seconde ne doit pas bavarder) ; tant que la pastille a le focus, la partie
+> débit du nom reste celle du moment où elle l'a reçu (un lecteur d'écran relit un élément
+> focalisé dont le nom change), mise à jour à la perte du focus. `capabilities.throughput`
+> du workspace dit ce qui est réellement compté (faux pour un hôte PostgreSQL donné comme
+> répertoire de socket Unix : pas d'emplacement réservé qui resterait vide). Comptage côté Rust,
 > octets seulement (jamais de contenu) : à travers SSH, la boucle de transfert du tunnel ; en
 > direct, PostgreSQL ouvre lui-même son flux TCP compté et le passe à tokio-postgres
 > (`connect_raw`, annulation par `cancel_query_raw`), sans écoute locale ; mysql_async ne
 > pouvant recevoir de flux (et sur une socket Unix il saute TLS et envoie le mot de passe en
 > clair), chaque connexion MySQL / MariaDB (session, `KILL QUERY`, nouvel essai `Prefer`) passe
 > par un relais à un coup sur `127.0.0.1:0` qui accepte une seule connexion, ferme aussitôt
-> son écoute (et après 10 s si personne ne s'y connecte) : jamais de relais ouvert. TLS reste
+> son écoute (aussitôt si le pilote abandonne avant de s'y connecter, au plus tard après
+> 10 s) : jamais de relais ouvert. Une annulation PostgreSQL vise l'adresse que la session a
+> jointe, pas une nouvelle résolution DNS. TLS reste
 > de bout en bout, vérifié contre l'hôte de la connexion. Si le serveur est injoignable,
 > l'erreur dit pourquoi (« cannot connect to hôte:port: … »).
 
