@@ -104,6 +104,12 @@ test("keyPressOf names a keydown as the matching reads it", () => {
   expect(name({ code: "F5", key: "F5" })).toEqual({ key: "F5", shift: false });
   expect(name({ code: "Enter", key: "Enter", shiftKey: true })).toEqual({ key: "Enter", shift: true });
   expect(name({ code: "IntlBackslash", key: "<" })).toEqual({ key: "", shift: false });
+  // An unshifted "+" (QWERTZ, Nordic layouts) is Shift+=, as on US (#132); with Shift the
+  // key is its position ("*" is Shift+]); the digit row stays digits (Czech "+" is 1).
+  expect(name({ code: "BracketRight", key: "+" })).toEqual({ key: "=", shift: true });
+  expect(name({ code: "Minus", key: "+" })).toEqual({ key: "=", shift: true });
+  expect(name({ code: "BracketRight", key: "*", shiftKey: true })).toEqual({ key: "]", shift: true });
+  expect(name({ code: "Digit1", key: "+" })).toEqual({ key: "1", shift: false });
   // On a non-Latin layout (#131): punctuation and letter positions by US position; a Latin
   // letter typed is still that letter.
   __setNonLatinLayoutForTests(true);
@@ -114,6 +120,9 @@ test("keyPressOf names a keydown as the matching reads it", () => {
   expect(name({ code: "BracketLeft", key: "}", shiftKey: true })).toEqual({ key: "[", shift: true });
   expect(name({ code: "KeyW", key: "W", shiftKey: true })).toEqual({ key: "W", shift: true });
   expect(name({ code: "Digit7", key: "?", shiftKey: true })).toEqual({ key: "7", shift: true });
+  // An unshifted "+" names font size up in both states (#132): QWERTZ right after Russian.
+  expect(name({ code: "BracketRight", key: "+" })).toEqual({ key: "=", shift: true });
+  expect(name({ code: "Digit1", key: "+" })).toEqual({ key: "1", shift: false });
 });
 
 test("modifiers must match exactly", () => {
@@ -368,11 +377,37 @@ test("typing a letter tells a non-Latin layout from a Latin one (#131)", () => {
   }
 });
 
-test("every default combination has a key on every layout (#105, #131)", () => {
-  platform("Linux x86_64");
+/**
+ * The default combinations a layout leaves without a key, with the reason (#132). Listed
+ * ones must have no key (the list cannot go stale); every other one must have a key; and
+ * every action keeps at least one combination with a key.
+ */
+const UNREACHABLE: Partial<Record<LayoutName, Readonly<Record<string, string>>>> = {
+  de: {
+    // QWERTZ types "]" with AltGr only; its "+" key (US "]" position) is Ctrl+Shift+=.
+    "Mod+]": "the \"+\" key enlarges the font (#132); next tab stays Ctrl+Tab / Ctrl+PageDown",
+  },
+};
+
+/** Checks the defaults' keys on every layout, `where` giving the presses that match a spec. */
+function expectEveryActionHasAKey(where: (layout: LayoutName, spec: string) => string[]): void {
   for (const layout of LAYOUT_NAMES) {
-    for (const spec of DEFAULT_SPECS) expect(whereIs(layout, spec), `${layout} ${spec}`).not.toEqual([]);
+    const keysOf = new Map(DEFAULT_SPECS.map((spec) => [spec, where(layout, spec)]));
+    const allowed = UNREACHABLE[layout] ?? {};
+    for (const [spec, keys] of keysOf) {
+      if (spec in allowed) expect(keys, `${layout} ${spec}: listed as having no key`).toEqual([]);
+      else expect(keys, `${layout} ${spec}`).not.toEqual([]);
+    }
+    for (const id of Object.keys(DEFAULT_KEYMAP) as KeymapActionId[]) {
+      const reachable = effectiveShortcuts(id, {}, false).filter((spec) => keysOf.get(spec)?.length);
+      expect(reachable, `${layout} ${id}`).not.toEqual([]);
+    }
   }
+}
+
+test("every default action has a key on every layout; a combination only by exception (#105, #131, #132)", () => {
+  platform("Linux x86_64");
+  expectEveryActionHasAKey(whereIs);
 });
 
 /** The presses of `layout` that match `spec`, in the tracker's current state (no letter typed). */
@@ -383,14 +418,12 @@ function whereIsNow(layout: LayoutName, spec: string): string[] {
     .sort();
 }
 
-test("every default combination has a key on every layout at startup, no letter typed yet (#131)", () => {
+test("every default action has a key on every layout at startup, no letter typed yet (#131, #132)", () => {
   platform("Linux x86_64");
   // The startup state is Latin, and stays so right after a switch from a Latin layout: a
   // non-Latin layout must still reach every default then (Hebrew's W key types "'").
   expect(nonLatinLayout()).toBe(false);
-  for (const layout of LAYOUT_NAMES) {
-    for (const spec of DEFAULT_SPECS) expect(whereIsNow(layout, spec), `${layout} ${spec}`).not.toEqual([]);
-  }
+  expectEveryActionHasAKey(whereIsNow);
   expect(whereIsNow("il", "Mod+W")).toEqual(["Ctrl+KeyW (')"]);
 });
 
@@ -472,8 +505,16 @@ test("punctuation follows the character the layout types; positions fill in (#10
   expect(whereIs("de", "Mod+-")).toEqual(["Ctrl+Minus (ß)", "Ctrl+Slash (-)"]);
   expect(whereIs("de", "Mod+/")).toEqual(["Ctrl+Shift+Digit7 (/)"]);
   expect(whereIs("de", "Mod+=")).toEqual(["Ctrl+Equal (Dead)", "Ctrl+Shift+Digit0 (=)"]);
-  expect(whereIs("de", "Mod+]")).toEqual(["Ctrl+BracketRight (+)"]);
   expect(whereIs("de", "Mod+Z")).toEqual(["Ctrl+KeyY (z)"]);
+  // QWERTZ "+" key: Ctrl+"+" enlarges the font (Ctrl+Shift+=, as "+" is Shift+= on US), so
+  // Ctrl+] (next tab) has no key there (#132); Ctrl+Shift+"+" ("*") stays Ctrl+Shift+] by
+  // position (next connection). "[" stays the "ü" key by position.
+  expect(whereIs("de", "Mod+Shift+=")).toEqual(["Ctrl+BracketRight (+)", "Ctrl+Shift+Equal (Dead)"]);
+  expect(whereIs("de", "Mod+]")).toEqual([]);
+  expect(whereIs("de", "Mod+Shift+]")).toEqual(["Ctrl+Shift+BracketRight (*)"]);
+  expect(whereIs("de", "Mod+[")).toEqual(["Ctrl+BracketLeft (ü)"]);
+  expect(whereIs("de", "Mod+PageDown")).toEqual(["Ctrl+PageDown (PageDown)"]);
+  expect(whereIs("de", "Ctrl+Tab")).toEqual(["Ctrl+Tab (Tab)"]);
   // Dvorak: every punctuation where Dvorak types it, Shift chords included.
   expect(whereIs("dvorak", "Mod+,")).toEqual(["Ctrl+KeyW (,)"]);
   expect(whereIs("dvorak", "Mod+/")).toEqual(["Ctrl+BracketLeft (/)"]);

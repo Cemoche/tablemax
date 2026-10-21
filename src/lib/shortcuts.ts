@@ -110,7 +110,7 @@ export interface KeyPress {
 }
 
 /**
- * Names a keydown for the shortcuts (spec §5.3, amendments #102, #105 and #131): on a Latin
+ * Names a keydown for the shortcuts (spec §5.3, amendments #102, #105, #131 and #132): on a Latin
  * layout a key is the character the layout types on it when that character can name a
  * shortcut, else its position; on a non-Latin layout (`nonLatinLayout`) letters and
  * punctuation go by US position, as in browsers and GTK apps. In order:
@@ -118,14 +118,18 @@ export interface KeyPress {
  *    keypad's Enter is Enter (#122); the keypad's other keys have no name.
  * 2. A Latin letter typed (`e.key`) is that letter, wherever the key sits (AZERTY's Z key is
  *    Z, Dvorak's are Dvorak's).
- * 3. Latin layout only: a shortcut punctuation character typed (`, . / ; - = [ ] \ \``) is
+ * 3. A "+" typed without Shift, off the digit row (QWERTZ's key at US "]", the Nordic
+ *    layouts' at US "-"), is Shift+=, as "+" is on US: Ctrl+"+" enlarges the font (#132).
+ *    In both layout states, so a stale state (QWERTZ right after Russian) keeps the zoom;
+ *    a non-Latin layout typing "+" unshifted (Serbian Cyrillic, at US "=") still enlarges.
+ * 4. Latin layout only: a shortcut punctuation character typed (`, . / ; - = [ ] \ \``) is
  *    that character: AZERTY's "," key is Ctrl+, and Dvorak's "/" key Ctrl+/. When Shift
  *    typed it (QWERTZ Shift+7 = "/"), Shift belongs to the character, not to the shortcut.
  *    On the digit row a character typed without Shift does not count: the row stays digits
  *    (AZERTY's "-" key is Ctrl+6, tab 6, as in browsers).
- * 4. Latin layout only: with Shift, a US shifted symbol (`< > ? : _ + { } | ~`) is Shift +
+ * 5. Latin layout only: with Shift, a US shifted symbol (`< > ? : _ + { } | ~`) is Shift +
  *    its US key's character ("{" is Shift+[), off the digit row.
- * 5. Else the position (`e.code`): the digit row's digit, a letter position's letter (a
+ * 6. Else the position (`e.code`): the digit row's digit, a letter position's letter (a
  *    non-Latin letter, a dead key, or a character no shortcut can name: Hebrew's "'" key is
  *    W; on a non-Latin layout anything: Hebrew's "/" key is Q), a punctuation position's US
  *    character (AZERTY's "!" key is "/", its ")" key "-"; Russian's "." key is "/").
@@ -142,6 +146,7 @@ export function keyPressOf(e: Pick<KeyboardEvent, "key" | "code" | "shiftKey">):
   const ch = e.key ?? "";
   if (LATIN_LETTER.test(ch)) return { key: ch.toUpperCase(), shift };
   const digitRow = DIGIT_ROW.test(code);
+  if (ch === "+" && !shift && !digitRow) return { key: "=", shift: true };
   if (!nonLatin) {
     if (PUNCTUATION.has(ch) && (shift || !digitRow)) return { key: ch, shift: false };
     const base = US_SHIFTED.get(ch);
