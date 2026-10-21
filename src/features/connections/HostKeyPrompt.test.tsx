@@ -24,7 +24,8 @@ test("Trust and connect calls onTrust", async () => {
 test("Escape and Cancel call onCancel", async () => {
   const onCancel = vi.fn();
   render(<HostKeyPrompt host="h" fingerprint={FP} onTrust={vi.fn()} onCancel={onCancel} />);
-  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  // Taken (default prevented): the connection form behind ignores this press (#118).
+  expect(fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })).toBe(false);
   expect(onCancel).toHaveBeenCalledTimes(1);
   await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
   expect(onCancel).toHaveBeenCalledTimes(2);

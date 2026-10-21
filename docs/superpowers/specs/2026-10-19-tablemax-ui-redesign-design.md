@@ -202,6 +202,21 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > sinon la recherche. Ctrl+Shift+K ne supprime plus de ligne dans l'éditeur SQL
 > (`Shift-Mod-k` retiré du keymap de CodeMirror, §5.5).
 
+> Amendement 2026-10-21 (#118) : Échap ferme le formulaire comme ← (même question « Discard
+> changes to this connection? » s'il a des modifications, même focus au retour : la ligne
+> sélectionnée, sinon la recherche), depuis n'importe quel champ — y compris un champ texte —
+> ou quand le focus est sur la page. Échap reste à l'élément ouvert : une boîte de dialogue
+> (Import from URL…, Delete, invites de Test, la question elle-même), une infobulle affichée
+> (#109), une composition IME, la liste de suggestions d'un champ (Group, SSH host : la
+> première Échap après une saisie, ↓ / ↑ ou un clic lui revient), le menu natif d'un select
+> ouvert et le sélecteur de fichier natif (ils prennent la touche avant la page). Pas
+> d'Échap depuis une autre région (barre d'outils, colonne des connexions ouvertes) ni pour
+> le formulaire caché derrière un workspace. Pas d'action de keymap : c'est l'Échap propre
+> du formulaire, comme celle d'une boîte de dialogue, non réassignable. Les boîtes de
+> dialogue des connexions prennent leur Échap (`preventDefault`), pour que le formulaire
+> derrière ne réagisse pas à la même frappe ; dans la question de confirmation, une touche
+> maintenue n'agit qu'une fois (ses répétitions ne l'annulent pas).
+
 ### 2.5 Éditeur SQL
 - Barre de 36 px sous l'onglet : « No limit ⌄ » (LIMIT automatique), « Beautify », « Run Current
   ⌄ » ; résultats avec onglets Data / Message, mêmes règles de grille que les tables.

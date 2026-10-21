@@ -5,6 +5,7 @@ import * as ipc from "../../lib/ipc";
 import { strings } from "../../lib/strings";
 import type { ConnectionConfig } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
+import { TooltipLayer } from "../chrome/TooltipLayer";
 import { ConnectionForm } from "./ConnectionForm";
 
 vi.mock("../../lib/ipc");
@@ -821,4 +822,195 @@ test("an inactive form (behind a workspace) shows none of its dialogs until it i
   expect(document.querySelector('[aria-modal="true"]')).toBeNull();
   rerender(<ConnectionForm connection={saved} onConnect={vi.fn()} active />);
   expect(screen.getByRole("dialog", { name: strings.ssh.unknownHostTitle })).toBeInTheDocument();
+});
+
+describe("Escape closes the form (#118)", () => {
+  const esc = (el: Element | Document = document.activeElement ?? document.body, init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(el, { key: "Escape", code: "Escape", ...init });
+
+  test("from any field of the form, or with the focus nowhere (a click on the page)", () => {
+    const onClose = vi.fn();
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />);
+    const fields = [
+      screen.getByLabelText("Name"), // text
+      screen.getByLabelText("Driver"), // a closed select
+      screen.getByLabelText("Port"), // number
+      screen.getByLabelText("Password"), // password
+      screen.getByLabelText(strings.ssh.enable), // checkbox
+      screen.getByRole("radio", { name: strings.form.colorLabel(2) }),
+      screen.getByRole("button", { name: "Save" }),
+    ];
+    for (const [i, field] of fields.entries()) {
+      act(() => field.focus());
+      esc(field);
+      expect(onClose).toHaveBeenCalledTimes(i + 1);
+    }
+    act(() => (document.activeElement as HTMLElement).blur());
+    esc(document.body);
+    expect(onClose).toHaveBeenCalledTimes(fields.length + 1);
+  });
+
+  test("the press is taken: its default is prevented", () => {
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={vi.fn()} />);
+    expect(esc(screen.getByLabelText("Name"))).toBe(false);
+  });
+
+  test("not with a modifier, an auto-repeat, during an IME composition, or once handled", () => {
+    const onClose = vi.fn();
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />);
+    const name = screen.getByLabelText("Name");
+    esc(name, { shiftKey: true });
+    esc(name, { ctrlKey: true });
+    esc(name, { altKey: true });
+    esc(name, { metaKey: true });
+    esc(name, { repeat: true });
+    esc(name, { isComposing: true });
+    const handled = (e: Event) => e.preventDefault();
+    name.addEventListener("keydown", handled);
+    esc(name);
+    name.removeEventListener("keydown", handled);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("not from outside the form (another region of the window)", () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <button type="button">elsewhere</button>
+        <ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />
+      </>,
+    );
+    const elsewhere = screen.getByRole("button", { name: "elsewhere" });
+    act(() => elsewhere.focus());
+    esc(elsewhere);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("a form kept behind a workspace (inactive) never reacts", () => {
+    const onClose = vi.fn();
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} active={false} />);
+    esc(screen.getByLabelText("Name"));
+    esc(document.body);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("Escape in Import from URL… closes only that dialog; the focus goes back to its button", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />);
+    const button = screen.getByRole("button", { name: strings.form.importUrl });
+    await user.click(button);
+    await user.type(screen.getByLabelText(strings.url.label), "postgres://x");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(button).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("Escape in the Delete confirmation closes only it; the focus goes back to Delete", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />);
+    const del = screen.getByRole("button", { name: strings.form.delete });
+    await user.click(del);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(ipc.connectionDelete).not.toHaveBeenCalled();
+    expect(del).toHaveFocus();
+  });
+
+  test("Escape in a Test prompt (host key, passphrase) closes only the prompt; the next Escape closes the form", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    vi.mocked(ipc.connectionTest)
+      .mockRejectedValueOnce({ kind: "hostKeyUnknown", message: FP, host: "bastion:22" })
+      .mockRejectedValueOnce({ kind: "auth", message: "ssh passphrase required" });
+    render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />);
+    const testButton = screen.getByRole("button", { name: "Test" });
+    await user.click(testButton);
+    await screen.findByRole("dialog", { name: strings.ssh.unknownHostTitle });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(testButton);
+    await screen.findByRole("dialog", { name: "Key passphrase required" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("a shown tooltip takes the first Escape (#109); the next closes the form", () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <TooltipLayer />
+        <ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />
+      </>,
+    );
+    const back = screen.getByRole("button", { name: strings.connections.back });
+    fireEvent.keyDown(screen.getByLabelText("Name"), { key: "Tab" });
+    act(() => back.focus());
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    esc(back);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    esc(back);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a field with suggestions (Group, SSH host): its list may be open, the first Escape is the list's", () => {
+    test("after typing, ↓ / ↑ or a click; Enter, Tab or leaving the field give Escape back to the form", async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      useConnections.setState({ items: [{ ...saved, group: "Work" }] });
+      render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />);
+      const group = screen.getByLabelText(strings.form.group);
+      await user.click(group);
+      await user.keyboard("{Escape}");
+      expect(onClose).not.toHaveBeenCalled();
+      await user.keyboard("{Escape}");
+      expect(onClose).toHaveBeenCalledTimes(1);
+      await user.type(group, "W");
+      await user.keyboard("{Escape}");
+      expect(onClose).toHaveBeenCalledTimes(1);
+      await user.keyboard("{ArrowDown}{Escape}");
+      expect(onClose).toHaveBeenCalledTimes(1);
+      await user.keyboard("{ArrowUp}{Enter}{Escape}");
+      expect(onClose).toHaveBeenCalledTimes(2);
+      await user.keyboard("{ArrowDown}");
+      act(() => screen.getByLabelText("Name").focus());
+      act(() => group.focus());
+      await user.keyboard("{Escape}");
+      expect(onClose).toHaveBeenCalledTimes(3);
+    });
+
+    test("a field whose list has no suggestion closes the form at once", async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />);
+      await user.type(screen.getByLabelText(strings.form.group), "W");
+      await user.keyboard("{Escape}");
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    test("the SSH host's ~/.ssh/config aliases count too", async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      vi.mocked(ipc.sshHostsList).mockResolvedValue(["bastion"]);
+      render(<ConnectionForm connection={saved} onConnect={vi.fn()} onClose={onClose} />);
+      fireEvent.click(screen.getByLabelText(strings.ssh.enable));
+      await waitFor(() => expect(document.querySelector("#ssh-host-aliases option")).not.toBeNull());
+      await user.type(screen.getByLabelText("SSH host"), "b");
+      await user.keyboard("{Escape}");
+      expect(onClose).not.toHaveBeenCalled();
+      await user.keyboard("{Escape}");
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -12,7 +12,12 @@ interface Props {
 export function UrlImportDialog({ onResult, onCancel }: Props) {
   const [text, setText] = useState("");
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCancel();
+    // Taken (preventDefault): the connection form behind does not close on the same press.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      onCancel();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);

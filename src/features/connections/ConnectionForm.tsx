@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { toConnectionUrl } from "../../lib/connectionUrl";
 import { toAppError } from "../../lib/errors";
 import * as ipc from "../../lib/ipc";
+import { isModalOpen } from "../../lib/shortcuts";
 import { strings } from "../../lib/strings";
 import { tip } from "../../lib/tooltip";
 import {
@@ -54,7 +55,7 @@ interface Props {
   onConnect: (cfg: ConnectionConfig, password: string | null, sshSecret: string | null) => void;
   onSaved?: (cfg: ConnectionConfig) => void;
   onDeleted?: (id: string) => void;
-  /** The header's back button: the connection list. */
+  /** The header's back button, and Escape: the connection list. */
   onClose?: () => void;
   /**
    * Whether the form holds unsaved edits: the draft differs from what was loaded (or last
@@ -63,7 +64,8 @@ interface Props {
   onDirtyChange?: (dirty: boolean) => void;
   /**
    * False while the form is kept, hidden, behind a workspace: its dialogs (URL import,
-   * Delete, the Test prompts) wait until it is on screen again. Default true.
+   * Delete, the Test prompts) wait until it is on screen again, and Escape is not its.
+   * Default true.
    */
   active?: boolean;
 }
@@ -74,6 +76,13 @@ type Notice = { tone: "ok" | "error"; text: string } | null;
 const DRIVERS = ["postgres", "mySql", "mariaDb", "sqlite"] as const;
 const TAGS = ["local", "dev", "staging", "prod"] as const;
 
+/** A text field with a suggestion list (`list` naming a datalist with options): Group, SSH host. */
+function suggests(el: EventTarget | null): el is HTMLInputElement {
+  if (!(el instanceof HTMLInputElement)) return false;
+  const id = el.getAttribute("list");
+  return id !== null && document.getElementById(id)?.querySelector("option") != null;
+}
+
 /**
  * The compact connection form (spec §2.4, §5.2): 620 px wide, labels right-aligned in a
  * 104 px column, 28 px lines in the order name ; colour + tag ; safe mode ; host + port ;
@@ -81,7 +90,7 @@ const TAGS = ["local", "dev", "staging", "prod"] as const;
  * then Import from URL… / Test / Save / Connect. PostgreSQL and MySQL without SSH fit a
  * 900 px window without scrolling (ConnectionForm.test.tsx). Typed secrets go to the
  * backend (keyring) on Save / Connect / Test only. On mount the focus goes to Name for a
- * saved connection, to Driver for a new one.
+ * saved connection, to Driver for a new one. Escape closes it like ← (`onClose`, #118).
  */
 export function ConnectionForm({
   connection,
@@ -108,6 +117,15 @@ export function ConnectionForm({
   const [busy, setBusy] = useState<"test" | "save" | "connect" | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [urlDialog, setUrlDialog] = useState(false);
+  const urlButton = useRef<HTMLButtonElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  /**
+   * The field whose suggestion list may be open: the webview shows it on typing, ↓ / ↑ or a
+   * click, and closes it on Escape in its default action, after the page's listeners. No
+   * API tells whether it is open, so its first Escape is left to it (one Escape too many when
+   * nothing matched); Enter, Escape and leaving the field end it.
+   */
+  const suggesting = useRef<HTMLInputElement | null>(null);
   const items = useConnections((s) => s.items);
   const save = useConnections((s) => s.save);
   const remove = useConnections((s) => s.remove);
@@ -124,6 +142,37 @@ export function ConnectionForm({
   }, [connection]);
 
   useEffect(() => firstField.current?.focus(), []);
+
+  // Escape closes the form like ←, through the app's discard question (#118): the form's own
+  // Escape, as a dialog's, so a text field does not keep it. A window listener, not the
+  // form's onKeyDown: after a dialog, a disabled button or a click on the page the focus is
+  // on the body, and Escape must still close the form. Not taken: another region's keys
+  // (focus outside the form), a dialog's (`isModalOpen`; the form's dialogs and the app's
+  // discard question handle their Escape), a shown tooltip's (TooltipLayer stops it first,
+  // in the capture phase), an IME composition's, a suggestion list's; never while hidden
+  // behind a workspace. A native select's open popup and the native file picker take the
+  // key before the page.
+  const close = useRef(onClose);
+  close.current = onClose;
+  const closable = onClose !== undefined;
+  useEffect(() => {
+    if (!active || !closable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.repeat || e.isComposing) return;
+      if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || isModalOpen()) return;
+      const t = e.target;
+      const inForm = t instanceof Node && formRef.current?.contains(t) === true;
+      if (!inForm && t !== document.body && t !== document.documentElement && t !== document) return;
+      if (t !== null && t === suggesting.current) {
+        suggesting.current = null;
+        return;
+      }
+      e.preventDefault();
+      close.current?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, closable]);
 
   // The connection may change in the store behind the form (the toolbar's safe mode menu
   // while the form waits behind a workspace): a clean draft takes the stored settings, an
@@ -235,6 +284,12 @@ export function ConnectionForm({
     patch(driverPatch(cfg, kind));
   };
 
+  /** The URL dialog closes with the focus back on its button. */
+  const closeUrlDialog = () => {
+    setUrlDialog(false);
+    urlButton.current?.focus();
+  };
+
   // Import from URL…: the URL's fields over the draft (the connection keeps its name,
   // colour, tag, group and safe mode); its password is typed in, saved with the connection.
   const onUrlResult = (imported: Partial<ConnectionConfig>, urlPassword: string | null, explicit: boolean) => {
@@ -244,12 +299,32 @@ export function ConnectionForm({
     setSshSecret("");
     setSslPicked(sslModePicked(next, explicit));
     setNotice(null);
-    setUrlDialog(false);
+    closeUrlDialog();
   };
 
   return (
     <>
-      <form data-connection-form="" onSubmit={(e) => e.preventDefault()} className={formClass}>
+      <form
+        ref={formRef}
+        data-connection-form=""
+        onSubmit={(e) => e.preventDefault()}
+        onInput={(e) => {
+          if (suggests(e.target)) suggesting.current = e.target;
+        }}
+        onClick={(e) => {
+          if (suggests(e.target)) suggesting.current = e.target;
+        }}
+        onKeyDown={(e) => {
+          if (!suggests(e.target)) return;
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") suggesting.current = e.target;
+          else if (e.key === "Enter") suggesting.current = null;
+        }}
+        onBlur={(e) => {
+          // React types a bubbled blur's target as the form itself: widened to compare.
+          if (suggesting.current === (e.target as EventTarget)) suggesting.current = null;
+        }}
+        className={formClass}
+      >
         <div className="flex h-10 items-center gap-3">
           <DriverTile kind={cfg.kind} />
           <h1 className="min-w-0 flex-1 truncate text-lg font-semibold text-text">
@@ -488,7 +563,7 @@ export function ConnectionForm({
         )}
 
         <div className="flex h-8 items-end gap-2">
-          <button type="button" className={buttonClass} onClick={() => setUrlDialog(true)}>
+          <button ref={urlButton} type="button" className={buttonClass} onClick={() => setUrlDialog(true)}>
             {strings.form.importUrl}
           </button>
           <span className="flex-1" />
@@ -503,7 +578,7 @@ export function ConnectionForm({
           </button>
         </div>
       </form>
-      {active && urlDialog && <UrlImportDialog onCancel={() => setUrlDialog(false)} onResult={onUrlResult} />}
+      {active && urlDialog && <UrlImportDialog onCancel={closeUrlDialog} onResult={onUrlResult} />}
       {active && confirmDelete && (
         <ConfirmDialog
           title={strings.connections.deleteTitle(cfg.name)}

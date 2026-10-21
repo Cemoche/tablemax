@@ -15,7 +15,12 @@ export function SecretPrompt({ kind, connectionName, error, onSubmit, onCancel }
   const text = strings.secretPrompt[kind];
   const [secret, setSecret] = useState("");
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCancel();
+    // Taken (preventDefault): the connection form behind does not close on the same press.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      onCancel();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);

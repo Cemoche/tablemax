@@ -398,6 +398,92 @@ describe("unsaved edits in the connection form are never dropped silently", () =
     expect(nameField()).toHaveValue("");
   });
 
+  test("Escape on a clean form returns to the list at once: focus on the selected row, else the search (#118)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("option", { name: "Dev PG" });
+    await editRow(user, "Dev PG");
+    expect(nameField()).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(discardDialog()).toBeNull();
+    expect(screen.getByRole("option", { name: "Dev PG" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: strings.connections.create }));
+    expect(screen.getByLabelText(strings.form.driver)).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("option", { name: "Dev PG" })).toHaveFocus();
+  });
+
+  test("Escape on a new form with no row selected puts the focus in the search (#118)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("option", { name: "Dev PG" });
+    await user.click(screen.getByRole("button", { name: strings.connections.create }));
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("searchbox", { name: strings.connections.searchLabel })).toHaveFocus();
+  });
+
+  test("Escape on a dirty form asks; Escape in the question keeps the form and its edits; Discard drops them (#118)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("option", { name: "Dev PG" });
+    await editRow(user, "Dev PG");
+    await user.type(nameField(), " 2");
+    await user.keyboard("{Escape}");
+    const ask = discardDialog() as HTMLElement;
+    expect(within(ask).getByText(strings.connections.discardMessage("Dev PG"))).toBeInTheDocument();
+    // Escape in the question is the question's Cancel, nothing more.
+    await user.keyboard("{Escape}");
+    expect(discardDialog()).toBeNull();
+    expect(nameField()).toHaveValue("Dev PG 2");
+    expect(nameField()).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await user.click(within(discardDialog() as HTMLElement).getByRole("button", { name: strings.connections.discardCancel }));
+    expect(nameField()).toHaveValue("Dev PG 2");
+    expect(nameField()).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await user.click(within(discardDialog() as HTMLElement).getByRole("button", { name: strings.connections.discardOk }));
+    expect(screen.queryByLabelText(strings.form.name)).toBeNull();
+    expect(screen.getByRole("option", { name: "Dev PG" })).toHaveFocus();
+    expect(ipc.connectionSave).not.toHaveBeenCalled();
+  });
+
+  test("Escape over the form in an app modal (Settings, the palette) closes only that modal (#118)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("option", { name: "Dev PG" });
+    await editRow(user, "Dev PG");
+    await user.keyboard("{Control>},{/Control}");
+    await screen.findByRole("dialog", { name: strings.settings.title });
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: strings.settings.title })).toBeNull();
+    expect(nameField()).toHaveValue("Dev PG");
+    await user.keyboard("{Control>}p{/Control}");
+    await screen.findByRole("dialog", { name: strings.palette.label });
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: strings.palette.label })).toBeNull();
+    expect(nameField()).toHaveValue("Dev PG");
+    expect(discardDialog()).toBeNull();
+  });
+
+  test("the form kept behind a workspace ignores Escape (#118)", async () => {
+    vi.mocked(ipc.sessionLoad).mockResolvedValue(JSON.stringify(session));
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("tab", { name: "users" });
+    await user.click(screen.getByRole("button", { name: strings.connectionsColumn.connections }));
+    await editRow(user, "Dev PG");
+    await user.type(nameField(), " 2");
+    vi.mocked(ipc.workspaceOpen).mockRejectedValueOnce({ kind: "connection", message: "connection refused" });
+    await user.click(screen.getByRole("button", { name: "Prod PG" }));
+    await screen.findByRole("tab", { name: "users" });
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    await user.keyboard("{Escape}");
+    expect(discardDialog()).toBeNull();
+    expect(screen.getByRole("tab", { name: "users" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: strings.connectionsColumn.connections }));
+    expect(nameField()).toHaveValue("Dev PG 2");
+  });
+
   test("a Test prompt arriving behind a workspace leaves the shortcuts working and shows on return", async () => {
     vi.mocked(ipc.sessionLoad).mockResolvedValue(JSON.stringify(session));
     let failTest: (e: unknown) => void = () => {};
