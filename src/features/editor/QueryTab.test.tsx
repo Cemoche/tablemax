@@ -13,14 +13,18 @@ import { useConnections } from "../../stores/connections";
 import { useQueryRuns } from "../../stores/queryRuns";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
+import type { DataGridProps } from "../grid/DataGrid";
 import { runEditorCommand } from "./editorCommands";
 import { QueryTab } from "./QueryTab";
 
 vi.mock("../../lib/ipc");
+/** The props of the results grid last rendered (the canvas grid does not run in jsdom). */
+let grid: DataGridProps | null = null;
 vi.mock("../grid/DataGrid", () => ({
-  DataGrid: ({ data, onSort }: { data: { rows: unknown[] }; onSort?: unknown }) => (
-    <div data-testid="grid" data-rows={data.rows.length} data-sortable={String(!!onSort)} />
-  ),
+  DataGrid: (p: DataGridProps) => {
+    grid = p;
+    return <div data-testid="grid" data-rows={p.data.rows.length} data-sortable={String(!!p.onSort)} />;
+  },
 }));
 // CodeMirror measures text ranges, which jsdom does not lay out.
 if (!Range.prototype.getClientRects) {
@@ -115,7 +119,8 @@ beforeEach(() => {
   useCatalog.setState({ catalogs: {}, errors: {}, loading: {} });
   useAutoLimit.setState({ override: {} });
   useSettings.setState({ settings: DEFAULT_SETTINGS });
-  useChrome.setState({ runRequests: {}, editorInserts: {}, historyBumps: {} });
+  useChrome.setState({ runRequests: {}, editorInserts: {}, historyBumps: {}, rowDetailsOpen: false });
+  grid = null;
   vi.mocked(ipc.catalogGet).mockResolvedValue({ schema: "public", tables: [] });
   vi.mocked(ipc.sqlSessionOpen).mockResolvedValue("s1");
   vi.mocked(ipc.sqlCancel).mockResolvedValue(undefined);
@@ -917,4 +922,123 @@ test("a tab chosen by hand stays chosen while the run goes on", async () => {
     emit({ event: "batchFinished", data: { cancelled: false } });
   });
   expect(screen.getByRole("tab", { name: strings.query.messageTab })).toHaveAttribute("aria-selected", "true");
+});
+
+describe("row details of the results (#115)", () => {
+  const two: ExecEvent[] = [
+    {
+      event: "statementFinished",
+      data: {
+        index: 0,
+        outcome: {
+          result: {
+            columns: [
+              { name: "id", typeName: "int4" },
+              { name: "doc", typeName: "jsonb" },
+              { name: "note", typeName: "text" },
+            ],
+            rows: [
+              [{ t: "int", v: 1 }, { t: "json", v: '{"a":1}' }, { t: "null" }],
+              [{ t: "int", v: 2 }, { t: "json", v: "[]" }, { t: "text", v: "second" }],
+            ],
+            truncated: false,
+          },
+          rowsAffected: null,
+          elapsedMs: 1,
+        },
+      },
+    },
+    {
+      event: "statementFinished",
+      data: {
+        index: 1,
+        outcome: {
+          result: { columns: [{ name: "label", typeName: "text" }], rows: [[{ t: "text", v: "other set" }]], truncated: false },
+          rowsAffected: null,
+          elapsedMs: 1,
+        },
+      },
+    },
+    { event: "batchFinished", data: { cancelled: false } },
+  ];
+  const panel = () => screen.queryByRole("complementary", { name: strings.grid.rowDetails });
+  const field = (name: string) => within(panel()!).getByLabelText(name) as HTMLTextAreaElement;
+  const empty = () => within(panel()!).queryByText(strings.grid.rowDetailsEmpty);
+  const run = async (events: ExecEvent[], calls: number) => {
+    await runAll();
+    await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(calls));
+    act(() => events.forEach((e) => emit(e)));
+  };
+
+  test("sql_row_details: the results grid toggles the panel, which shows the selected row read-only and follows Result N", async () => {
+    await setup("select 1; select 2");
+    await run(two, 1);
+    expect(panel()).toBeNull();
+    // Space / Ctrl+Space in the results grid (its own keydown, see DataGrid).
+    act(() => grid!.onToggleDetails!());
+    expect(useChrome.getState().rowDetailsOpen).toBe(true);
+    expect(empty()).toBeInTheDocument();
+
+    act(() => grid!.onSelectRow!(1));
+    expect(field("id").value).toBe("2");
+    expect(field("note").value).toBe("second");
+    expect(field("doc").value).toBe("[]");
+    for (const box of within(panel()!).getAllByRole("textbox")) expect(box).toHaveAttribute("readonly");
+    act(() => grid!.onSelectRow!(0));
+    // JSON indented, NULL as in the grid.
+    expect(field("doc").value).toBe('{\n  "a": 1\n}');
+    expect(field("note")).toHaveAttribute("placeholder", strings.grid.nullText);
+
+    // Another result set: its own selection (none yet), then its row.
+    await userEvent.click(screen.getByRole("tab", { name: strings.query.resultTab(2) }));
+    expect(empty()).toBeInTheDocument();
+    act(() => grid!.onSelectRow!(0));
+    expect(field("label").value).toBe("other set");
+    await userEvent.click(screen.getByRole("tab", { name: strings.query.resultTab(1) }));
+    expect(empty()).toBeInTheDocument();
+
+    // The Message view shows no row.
+    await userEvent.click(screen.getByRole("tab", { name: strings.query.messageTab }));
+    expect(empty()).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: strings.query.dataTab }));
+
+    // The grid toggles it off again.
+    act(() => grid!.onToggleDetails!());
+    expect(panel()).toBeNull();
+    expect(useChrome.getState().rowDetailsOpen).toBe(false);
+  });
+
+  test("Escape in the panel hands the focus back to the results grid; × closes it", async () => {
+    await setup("select 1; select 2");
+    await run(two, 1);
+    act(() => useChrome.getState().setRowDetails(true));
+    act(() => grid!.onSelectRow!(0));
+    const before = grid!.focusRequest ?? 0;
+    field("note").focus();
+    await userEvent.keyboard("{Escape}");
+    expect(grid!.focusRequest).toBe(before + 1);
+    await userEvent.click(within(panel()!).getByRole("button", { name: strings.grid.rowDetailsClose }));
+    expect(panel()).toBeNull();
+    expect(useChrome.getState().rowDetailsOpen).toBe(false);
+  });
+
+  test("shown while results come (a run, empty), hidden without result sets: the switch stays on", async () => {
+    await setup("select 1; select 2");
+    act(() => useChrome.getState().setRowDetails(true));
+    // No run yet: nothing to show.
+    expect(panel()).toBeNull();
+    await run(two, 1);
+    expect(empty()).toBeInTheDocument();
+    // A new run: empty while it runs.
+    await runAll();
+    await waitFor(() => expect(ipc.sqlExecute).toHaveBeenCalledTimes(2));
+    expect(empty()).toBeInTheDocument();
+    // Statements without rows: no result set, no panel; the switch is still on.
+    act(() => {
+      emit({ event: "statementFinished", data: { index: 0, outcome: { result: null, rowsAffected: 3, elapsedMs: 1 } } });
+      emit({ event: "batchFinished", data: { cancelled: false } });
+    });
+    expect(panel()).toBeNull();
+    expect(useChrome.getState().rowDetailsOpen).toBe(true);
+  });
 });

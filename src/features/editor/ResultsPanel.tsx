@@ -1,7 +1,8 @@
-import { type KeyboardEvent, useId, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
 import { strings } from "../../lib/strings";
+import type { ResultSet } from "../../lib/types";
 import type { QueryRun } from "../../stores/queryRuns";
 import { DataGrid } from "../grid/DataGrid";
 
@@ -30,6 +31,26 @@ function onTabListKey(e: KeyboardEvent<HTMLElement>) {
   tab.click();
 }
 
+/** What the row details panel of a SQL tab shows: the result set on screen and its selected row. */
+export interface ShownRow {
+  data: ResultSet;
+  /** Row of `data` (the grid's active cell row), null when none is selected. */
+  row: number | null;
+}
+
+interface Props {
+  run: QueryRun | undefined;
+  /**
+   * The result set shown in the grid and its selected row, each time either changes; null
+   * when no grid is shown (no run, the Message view, a run without rows yet) (#115).
+   */
+  onShownRow?: (shown: ShownRow | null) => void;
+  /** Space / grid.rowDetails in the results grid. */
+  onToggleDetails?: () => void;
+  /** Each new value puts the focus in the results grid (Escape in the row details). */
+  focusRequest?: number;
+}
+
 /**
  * The results of a SQL tab: Data (the result sets in the grid, one tab per set when there
  * are several) and Message (what each statement did, the error, a cancel). A run shows
@@ -37,22 +58,34 @@ function onTabListKey(e: KeyboardEvent<HTMLElement>) {
  * rows, an error or a cancel are only seen there); a tab chosen by hand stays until the
  * next run.
  */
-export function ResultsPanel({ run }: { run: QueryRun | undefined }) {
+export function ResultsPanel({ run, onShownRow, onToggleDetails, focusRequest }: Props) {
   // Both choices hold for the run they were made in only.
   const [selected, setSelected] = useState<{ run: number; index: number } | null>(null);
   const [chosen, setChosen] = useState<{ run: number; view: View } | null>(null);
+  /** The row selected in the grid, for the result set it was selected in. */
+  const [pick, setPick] = useState<ShownRow | null>(null);
   const runShortcut = useEffectiveShortcut("editor.run");
   const uid = useId();
+
+  const sets = run ? run.results.filter((r) => r.outcome.result) : [];
+  const active = sets.find((r) => run && selected?.run === run.id && r.index === selected.index) ?? sets[0];
+  const result = active?.outcome.result ?? null;
+  const preferred: View = sets.length > 0 && !run?.error && !run?.cancelled ? "data" : "message";
+  const view = run && chosen?.run === run.id ? chosen.view : preferred;
+  const shownData = run && view === "data" ? result : null;
+  // The grid starts each result set with no selection, and so does a grid shown again (after
+  // the Message view): a row picked before is forgotten as soon as another set is on screen.
+  if (pick !== null && pick.data !== shownData) setPick(null);
+  const shownRow = pick && pick.data === shownData ? pick.row : null;
+  const onShownRowRef = useRef(onShownRow);
+  onShownRowRef.current = onShownRow;
+  useEffect(() => {
+    onShownRowRef.current?.(shownData ? { data: shownData, row: shownRow } : null);
+  }, [shownData, shownRow]);
 
   if (!run) {
     return <p className="p-3 text-muted">{strings.query.empty(formatShortcut(runShortcut))}</p>;
   }
-
-  const sets = run.results.filter((r) => r.outcome.result);
-  const active = sets.find((r) => selected?.run === run.id && r.index === selected.index) ?? sets[0];
-  const result = active?.outcome.result;
-  const preferred: View = sets.length > 0 && !run.error && !run.cancelled ? "data" : "message";
-  const view = chosen?.run === run.id ? chosen.view : preferred;
   const views: { view: View; label: string }[] = [
     { view: "data", label: strings.query.dataTab },
     { view: "message", label: strings.query.messageTab },
@@ -130,7 +163,13 @@ export function ResultsPanel({ run }: { run: QueryRun | undefined }) {
                   "aria-labelledby": `${uid}-set-${active?.index}`,
                 })}
               >
-                <DataGrid data={result} sortable={false} />
+                <DataGrid
+                  data={result}
+                  sortable={false}
+                  onSelectRow={(row) => setPick({ data: result, row })}
+                  onToggleDetails={onToggleDetails}
+                  focusRequest={focusRequest}
+                />
               </div>
             ) : (
               <p className="p-3 text-sm text-text-2">{run.running ? strings.query.running : strings.query.noData}</p>

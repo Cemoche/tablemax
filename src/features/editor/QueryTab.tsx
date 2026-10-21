@@ -11,17 +11,19 @@ import { tip } from "../../lib/tooltip";
 import { autoLimitTexts, useAutoLimit, useAutoLimitOn } from "../../stores/autoLimit";
 import { useCatalog } from "../../stores/catalog";
 import { useChrome } from "../../stores/chrome";
+import { buildGridModel } from "../grid/editModel";
 import { MenuButton } from "../grid/MenuButton";
+import { RowDetailPanel } from "../grid/RowDetailPanel";
 import { ConfirmRunDialog } from "../safety/ConfirmRunDialog";
 import { useLiveEnv } from "../workspace/useLiveEnv";
-import { useQueryRuns } from "../../stores/queryRuns";
+import { runHasResults, useQueryRuns } from "../../stores/queryRuns";
 import { useSavedQueries } from "../../stores/savedQueries";
 import { useSettings } from "../../stores/settings";
 import { type Tab, type Workspace, sqlDialect, useWorkspaces } from "../../stores/workspaces";
 import { buildCompletionSource } from "./completion";
 import { ConfirmDialog, NameDialog } from "./Dialogs";
 import { runEditorCommand } from "./editorCommands";
-import { ResultsPanel } from "./ResultsPanel";
+import { ResultsPanel, type ShownRow } from "./ResultsPanel";
 import { type EditorSelection, type RunMode, SqlEditor, insertAtCursor } from "./SqlEditor";
 import { type Statement, delimiterAt, splitStatements, statementAt } from "./splitStatements";
 
@@ -354,6 +356,21 @@ export function QueryTab({ workspace, tab }: Props) {
     if (sid) void ipc.sqlCancel(sid)?.catch(() => {});
   };
 
+  // ---- Row details (#115): the window's one panel, showing the results grid's row, read-only. ----
+  const detailsOpen = useChrome((s) => s.rowDetailsOpen);
+  // Shown while the run has rows (or is running): no flicker on a re-run; none before a run
+  // or for statements without rows, where the toolbar's button is off too.
+  const detailsShown = detailsOpen && runHasResults(run);
+  const [shownRow, setShownRow] = useState<ShownRow | null>(null);
+  const detailsData = shownRow?.data ?? null;
+  const detailsModel = useMemo(
+    () => (detailsData ? buildGridModel(detailsData, null, undefined, false) : null),
+    [detailsData],
+  );
+  /** Bumped to put the focus back in the results grid (Escape in the row details). */
+  const [gridFocus, setGridFocus] = useState(0);
+  const toggleDetails = useCallback(() => useChrome.getState().toggleRowDetails(), []);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
@@ -474,9 +491,31 @@ export function QueryTab({ workspace, tab }: Props) {
             />
           </div>
           <div className="min-h-0 flex-1 basis-1/2 border-t border-border">
-            <ResultsPanel run={run} />
+            <ResultsPanel
+              run={run}
+              onShownRow={setShownRow}
+              onToggleDetails={toggleDetails}
+              focusRequest={gridFocus}
+            />
           </div>
         </div>
+        {/* Right of the editor and the results, as right of a table tab's grid. */}
+        {detailsShown && (
+          <RowDetailPanel
+            workspaceId={wsId}
+            object={null}
+            data={detailsData}
+            info={null}
+            model={detailsModel}
+            row={shownRow?.row ?? null}
+            onClose={() => useChrome.getState().setRowDetails(false)}
+            onEscape={() => {
+              // Back to the results grid; the editor when no grid is shown (the Message view).
+              if (detailsData) setGridFocus((n) => n + 1);
+              else viewRef.current?.focus();
+            }}
+          />
+        )}
       </div>
       {saveDialog && (
         <NameDialog
