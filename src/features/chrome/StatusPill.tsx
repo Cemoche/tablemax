@@ -99,8 +99,12 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
   const counted = state === "connected" && capabilitiesOf(workspace).throughput;
   const rate = useThroughput(workspace.id, counted);
   const rateText = rate === null ? null : formatRate(rate);
-  // In the name, not a live region: a number changing every second must not chatter.
-  const name = `${tagLabel}${s.tagSeparator}${text}${rateText ? `${s.tagSeparator}${s.rateLabel(rateText)}` : ""}`;
+  // The rate is in the name, not a live region. Screen readers re-announce a focused
+  // element whose name changes, so the name keeps the rate it had when the pill got focus
+  // until it loses it (the slot itself keeps moving).
+  const [focusedRate, setFocusedRate] = useState<{ text: string | null } | null>(null);
+  const nameRate = focusedRate ? focusedRate.text : rateText;
+  const name = `${tagLabel}${s.tagSeparator}${text}${nameRate ? `${s.tagSeparator}${s.rateLabel(nameRate)}` : ""}`;
 
   return (
     // The pill takes the free space; the wrapper's padding on its sides stays a drag area of
@@ -116,6 +120,8 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
         aria-expanded={open}
         {...(state === "error" && connectError ? tip(s.errorTitle(text, connectError)) : tipIfCut(text))}
         onClick={() => setOpen((o) => !o)}
+        onFocus={() => setFocusedRate({ text: rateText })}
+        onBlur={() => setFocusedRate(null)}
         className={`relative flex h-8.5 w-full min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full pl-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:focus-ring ${counted ? "pr-22" : "pr-4"} ${look}`}
       >
         <span

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
@@ -148,6 +148,26 @@ test("the throughput slot shows the live rate of the workspace, in its accessibl
   );
   expect(slot()).toHaveAttribute("aria-hidden");
   expect(pill().querySelector("[aria-live]")).toBeNull();
+});
+
+test("the accessible name holds still while the pill has focus (#112 review)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 1000, writtenPerSec: 234 });
+  render(<StatusPill workspace={ws()} />);
+  await within(pill()).findByText("1.2 KB/s");
+  const base = "LOCAL | PostgreSQL 16.4 : Demo : tablemax_demo : public.orders";
+  act(() => pill().focus());
+  expect(pill()).toHaveAccessibleName(`${base} | network 1.2 KB/s`);
+
+  // The number moves on screen; the name a screen reader would re-announce does not.
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 3_400_000, writtenPerSec: 0 });
+  expect(await within(pill()).findByText("3.4 MB/s", {}, { timeout: 3000 })).toBe(slot());
+  expect(pill()).toHaveAccessibleName(`${base} | network 1.2 KB/s`);
+
+  // Blur: the name catches up; focus again: the current value is read.
+  act(() => pill().blur());
+  expect(pill()).toHaveAccessibleName(`${base} | network 3.4 MB/s`);
+  act(() => pill().focus());
+  expect(pill()).toHaveAccessibleName(`${base} | network 3.4 MB/s`);
 });
 
 test("an idle connection reads 0 B/s (#112)", async () => {

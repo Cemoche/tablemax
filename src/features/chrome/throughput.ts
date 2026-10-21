@@ -25,15 +25,19 @@ export function formatRate(bytesPerSec: number): string {
 
 /**
  * The live network rate of workspace `workspaceId` (bytes/s, read + written) while
- * `enabled`, asked from the backend at once and then every second (#112). Null until the
- * backend has a rate, when it has none to give, or when the call fails: never a guess.
+ * `enabled`, asked from the backend at once and then every second (#112). Paused while the
+ * window is hidden (minimized): no call and no number then; shown again, it starts over
+ * blank. Null until the backend has a rate, when it has none to give, or when the call
+ * fails: never a guess.
  */
 export function useThroughput(workspaceId: string, enabled: boolean): number | null {
   const [rate, setRate] = useState<{ workspaceId: string; value: number | null } | null>(null);
   useEffect(() => {
     if (!enabled) return;
-    let alive = true;
-    const poll = async () => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    // Bumped by every stop: an answer to an older run is dropped.
+    let run = 0;
+    const poll = async (mine: number) => {
       let value: number | null = null;
       try {
         const r = await workspaceThroughput(workspaceId);
@@ -41,15 +45,27 @@ export function useThroughput(workspaceId: string, enabled: boolean): number | n
       } catch {
         value = null;
       }
-      if (alive) setRate({ workspaceId, value });
+      if (mine === run) setRate({ workspaceId, value });
     };
-    void poll();
-    const timer = setInterval(() => void poll(), THROUGHPUT_POLL_MS);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-      // A later enable starts blank, not with an old number.
+    const start = () => {
+      if (timer !== null) return;
+      const mine = run;
+      void poll(mine);
+      timer = setInterval(() => void poll(mine), THROUGHPUT_POLL_MS);
+    };
+    const stop = () => {
+      run += 1;
+      if (timer !== null) clearInterval(timer);
+      timer = null;
+      // A later start shows nothing until it has its own answer.
       setRate(null);
+    };
+    const onVisibility = () => (document.visibilityState === "hidden" ? stop() : start());
+    if (document.visibilityState !== "hidden") start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
     };
   }, [workspaceId, enabled]);
   // Only this workspace's own answer, and only while asked for.

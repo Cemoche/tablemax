@@ -92,3 +92,55 @@ test("useThroughput shows nothing when the call fails, and stops polling on unmo
   await vi.advanceTimersByTimeAsync(5 * THROUGHPUT_POLL_MS);
   expect(vi.mocked(ipc.workspaceThroughput).mock.calls.length).toBe(calls);
 });
+
+/** Sets `document.visibilityState` and fires `visibilitychange`, as a minimized window does. */
+function setVisibility(state: "hidden" | "visible") {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+test("useThroughput pauses while the window is hidden and restarts blank when it shows (#112 review)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 700, writtenPerSec: 0 });
+  try {
+    const { result } = renderHook(() => useThroughput("w1", true));
+    await act(async () => {});
+    expect(result.current).toBe(700);
+
+    // Hidden (minimized): no number, no more calls.
+    act(() => setVisibility("hidden"));
+    expect(result.current).toBeNull();
+    const calls = vi.mocked(ipc.workspaceThroughput).mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10 * THROUGHPUT_POLL_MS);
+    });
+    expect(vi.mocked(ipc.workspaceThroughput).mock.calls.length).toBe(calls);
+    expect(result.current).toBeNull();
+
+    // Shown again: blank until the backend answers, asked at once, then every second.
+    vi.mocked(ipc.workspaceThroughput).mockResolvedValueOnce(null);
+    act(() => setVisibility("visible"));
+    expect(result.current).toBeNull();
+    await act(async () => {});
+    expect(vi.mocked(ipc.workspaceThroughput).mock.calls.length).toBe(calls + 1);
+    expect(result.current).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(THROUGHPUT_POLL_MS);
+    });
+    expect(result.current).toBe(700);
+  } finally {
+    setVisibility("visible");
+  }
+});
+
+test("an answer that arrives after the window was hidden is dropped", async () => {
+  let answer: (v: { readPerSec: number; writtenPerSec: number }) => void = () => {};
+  vi.mocked(ipc.workspaceThroughput).mockReturnValueOnce(new Promise((r) => (answer = r)));
+  try {
+    const { result } = renderHook(() => useThroughput("w1", true));
+    act(() => setVisibility("hidden"));
+    await act(async () => answer({ readPerSec: 5, writtenPerSec: 5 }));
+    expect(result.current).toBeNull();
+  } finally {
+    setVisibility("visible");
+  }
+});
