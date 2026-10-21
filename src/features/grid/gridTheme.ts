@@ -106,6 +106,11 @@ export interface RowNumberColors {
   selectedFill: string;
   /** A selected row's number (`--row-selected-text`). */
   selectedText: string;
+  /**
+   * A failed row's number (`--danger-text`, #129): the row's red cue that stays on an
+   * inserted or deleted row, whose cells keep the fill's text.
+   */
+  failedText: string;
 }
 
 /** Colours of the row numbers and their font (missing tokens: the row's own). */
@@ -116,6 +121,7 @@ export function buildRowNumberColors(readVar: ReadVar = readCssVar): RowNumberCo
     text: readVar("--head-text"),
     selectedFill: readVar("--row-selected"),
     selectedText: readVar("--row-selected-text"),
+    failedText: readVar("--danger-text"),
   };
 }
 
@@ -145,7 +151,10 @@ export function buildRowThemes(readVar: ReadVar = readCssVar): RowThemes {
 }
 
 export interface EditThemes {
-  /** A cell with a pending value. */
+  /**
+   * A cell with a pending value; its FK indicator in the text that reads best on --modified
+   * (the accent text reads 2.5:1 there in dark, #129).
+   */
   edited: Partial<Theme>;
   /**
    * A cell with a pending value on a selected row (or a failed one, #129): it keeps
@@ -184,7 +193,7 @@ export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
   })();
   const text: Partial<Theme> = best ? { textDark: best, textMedium: best, textLight: best, linkColor: best } : {};
   return {
-    edited: only("bgCell", "--modified"),
+    edited: { ...only("bgCell", "--modified"), ...(best ? { linkColor: best } : {}) },
     // Glide fills a selected cell with the opaque accentLight over bgCell (a row selected by
     // its number, the active cell's range): --modified there too keeps the edit visible under
     // its readable text, while the row's accent and the --cell-focus ring show the selection.

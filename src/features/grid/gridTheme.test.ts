@@ -30,6 +30,7 @@ const vars: Record<string, string> = {
   "--cell-focus": "#f42",
   "--row-selected": "#06c",
   "--sel": "#464",
+  "--danger-text": "#d33",
   "--font-mono": '"JetBrains Mono", ui-monospace, monospace',
   "--font-ui": "system-ui, sans-serif",
   "--text-md": "13px",
@@ -81,6 +82,8 @@ test("row numbers: the interface font, the header's colours, and the selected ro
     text: "#333",
     selectedFill: "#06c",
     selectedText: "#999",
+    // A failed row's number (#129).
+    failedText: "#d33",
   });
   // Smaller than the data.
   expect(buildGridTheme(read, 13).markerFontStyle).toBe("11px");
@@ -214,8 +217,15 @@ test("link_and_failed_text_contrast: the FK indicator and a failed row's text re
       expect(contrastRatio(link, vars[bg]), `${name} link on ${bg}`).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(failed, vars[bg]), `${name} failed on ${bg}`).toBeGreaterThanOrEqual(4.5);
     }
-    // On a change fill the fill's text wins (DataGrid): a deleted row's indicator is its text.
+    // On a change fill the fill's text wins (DataGrid): a deleted row's indicator is its text,
+    // an edited cell's the text that reads best on --modified (dark: white, 5.1:1).
     const edit = buildEditThemes(read);
     expect(edit.deleted.linkColor, name).toBe(edit.deleted.textDark);
+    expect(edit.edited.linkColor, name).toBe(edit.editedOnAccent.textDark);
+    expect(contrastRatio(edit.edited.linkColor!, vars["--modified"]), `${name} link on --modified`).toBeGreaterThanOrEqual(4.5);
+    // A failed row's number, on the numbers column's --grid-head.
+    const numbers = buildRowNumberColors(read);
+    expect(numbers.failedText, name).toBe(vars["--danger-text"]);
+    expect(contrastRatio(numbers.failedText, vars["--grid-head"]), `${name} failed number`).toBeGreaterThanOrEqual(4.5);
   }
 });

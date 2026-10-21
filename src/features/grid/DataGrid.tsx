@@ -355,8 +355,15 @@ export function DataGrid({
     text: "",
     selectedFill: "",
     selectedText: "",
+    failed: () => false,
+    failedText: "",
   });
-  rowNumberStyle.current = { selected: (row) => highlighted.has(row), ...rowNumbers };
+  rowNumberStyle.current = {
+    selected: (row) => highlighted.has(row),
+    // A failed row's number is red (#129): its one cue on an inserted or deleted row.
+    failed: (row) => (editing?.model.rowError(row) ?? null) !== null,
+    ...rowNumbers,
+  };
   const renderers = useMemo(() => gridRenderers(() => rowNumberStyle.current), []);
   // What Glide's DataEditor adds to its core, which takes no other renderers.
   const imageWindowLoader = useMemo(() => new ImageWindowLoaderImpl(), []);

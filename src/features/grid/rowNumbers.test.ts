@@ -28,8 +28,10 @@ const marker = (row: number, markerKind: MarkerCell["markerKind"] = "number"): M
   checkboxStyle: "square",
 });
 
-const style = (selected: number[]): RowNumberStyle => ({
+const style = (selected: number[], failed: number[] = []): RowNumberStyle => ({
   selected: (r) => selected.includes(r),
+  failed: (r) => failed.includes(r),
+  failedText: "#AD2323",
   family: "system-ui, sans-serif",
   fill: "#F5F5F5",
   text: "#262626",
@@ -73,6 +75,19 @@ test("a selected row's number is white on the selected rows' fill", () => {
   const calls = draw(style([2]), 2);
   expect(calls[0]).toMatchObject({ op: "fillRect", args: [0, 52, 46, 26], fillStyle: "#0062CC" });
   expect(calls[1]).toMatchObject({ op: "fillText", fillStyle: "#FFFFFF", textAlign: "right" });
+});
+
+test("a failed row's number is red on the header fill; selected, it stays white (#129)", () => {
+  // Inserted, deleted or updated: the number is the row's only red cue on a change fill.
+  for (const bg of ["#FFFFFF", "#DAEBC2", "#F5A6B0"]) {
+    const calls = draw(style([], [2]), 2, marker(3), bg);
+    expect(calls[0]).toMatchObject({ op: "fillRect", fillStyle: "#F5F5F5" });
+    expect(calls[1]).toMatchObject({ op: "fillText", fillStyle: "#AD2323" });
+  }
+  expect(draw(style([2], [2]), 2)[1]).toMatchObject({ op: "fillText", fillStyle: "#FFFFFF" });
+  // Other rows keep the header's text; a missing token keeps it too.
+  expect(draw(style([], [2]), 1)[1].fillStyle).toBe("#262626");
+  expect(draw({ ...style([], [2]), failedText: "" }, 2)[1].fillStyle).toBe("#262626");
 });
 
 test("missing tokens: the row's own fill and textLight", () => {

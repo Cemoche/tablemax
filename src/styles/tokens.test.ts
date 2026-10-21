@@ -330,8 +330,9 @@ test("danger_fill_contrast: a destructive button's label reads 4.5:1 on --danger
  * The backgrounds under --accent-text, from its uses (#129): Breadcrumb links (--content,
  * hovered --seg-sel), Row detail "→ table" links (--side, hovered --seg-sel), Structure
  * foreign key links (--win), the grid's FK indicator (linkColor: --row-a, --row-b, and --sel
- * in a selected column, Glide's accentLight). On an edited cell, a deleted row or a selected
- * row the indicator takes that row's text colour (gridTheme.ts).
+ * in a selected column, Glide's accentLight). Elsewhere the indicator takes the text of what
+ * it sits on (gridTheme.ts): on an edited cell the text that reads best on --modified, on a
+ * deleted row that row's --text-2, on a selected row white.
  */
 const ACCENT_TEXT_BACKGROUNDS = ["--content", "--seg-sel", "--side", "--win", "--row-a", "--row-b", "--sel"];
 
