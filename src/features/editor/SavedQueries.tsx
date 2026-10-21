@@ -133,7 +133,7 @@ export function SavedQueries({ workspace }: { workspace: Workspace }) {
                     const anchor = keyboardMenuAnchor(e);
                     if (anchor) setMenu({ name: q.name, anchor, trigger: e.currentTarget });
                   }}
-                  className="flex h-6 w-full items-center gap-1.5 rounded-md px-1.5 text-left whitespace-nowrap text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
+                  className="flex h-6 w-full items-center gap-1.5 rounded-md px-1.5 text-left whitespace-nowrap text-text outline-none hover:bg-seg-sel focus-visible:focus-ring-inset"
                 >
                   <FileCode aria-hidden size={14} strokeWidth={1.5} className="shrink-0 text-text-2" />
                   <span className="min-w-0 truncate">{q.name}</span>

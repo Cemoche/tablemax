@@ -9,7 +9,7 @@ import { DataGrid } from "../grid/DataGrid";
 type View = "data" | "message";
 
 const tabClass = (selected: boolean) =>
-  `flex h-6 items-center rounded-md px-2.5 text-sm outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent ${
+  `flex h-6 items-center rounded-md px-2.5 text-sm outline-none focus-visible:focus-ring ${
     selected ? "bg-seg-sel text-text" : "text-text-2 hover:bg-seg-sel"
   }`;
 

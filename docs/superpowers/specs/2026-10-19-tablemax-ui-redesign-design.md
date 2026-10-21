@@ -440,6 +440,35 @@ Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E
 > `change_fill_text_contrast` (`gridTheme.test.ts`), placeholders (`DataGrid.test.tsx`),
 > champ modifié verrouillé (`RowDetailPanel.test.tsx`).
 
+> Amendement 2026-10-21 (#135) : un seul anneau de focus, à deux tons (décision de Cem) : un
+> contour `--accent` de 2 px et une bande de 1 px en nouveau `--focus-ring-inner`, #000000
+> (clair) / #FFFFFF (sombre), entre le contour et le contrôle. Utilitaires de
+> `src/index.css` : `focus-ring` (contour décalé de 1 px, la bande en `box-shadow` dans ce
+> décalage) et `focus-ring-inset` (contour à −2 px, bande en `box-shadow` inset de 3 px qui
+> se montre à l'intérieur : 1 px, 2 px sous la bordure d'un champ) pour les lignes, onglets,
+> boutons de barre et de menu et les champs dont le parent défile ou coupe (`overflow`). Les
+> ombres Tailwind du contrôle restent sous la bande. L'accent seul passe sous 3:1 sur
+> `--sel` (2,71 / 2,40), `--seg-sel` / `--tab` (2,93 clair), l'onglet actif sombre (1,70),
+> `--pill` sombre (2,98), `--accent-strong` (1,44 / 1,37) et le champ modifié sombre (1,52) ;
+> la bande lit au moins 3:1 sur chaque fond où l'anneau se pose (pire cas 3,62 clair et 5,40
+> sombre sur `--accent-strong`, 5,98 sur le `--modified` sombre, 6,69 sur l'onglet actif
+> sombre) et 5,23 / 3,93 contre l'accent. Le segment sélectionné de la barre du bas perd son
+> anneau blanc (la bande suffit sur son remplissage) ; les pastilles de couleur du formulaire
+> portent l'anneau sur toute la pastille (`has-[:focus-visible]`), hors de leur anneau coché ;
+> le champ du détail de ligne (bordure `--accent` à 1,52 sur `--modified` sombre), les
+> entrées surlignées des menus et les bords de redimensionnement (teinte `--accent/50` sous
+> 3:1) prennent l'anneau. Grille : Glide trace la cellule active en `--cell-focus` (rouge,
+> sous 3:1 sur `--sel`, les remplissages de modification et les lignes sélectionnées) ;
+> `drawCell` (aussi en lecture seule) ajoute la bande `--focus-ring-inner` juste à
+> l'intérieur (6,12 / 3,43 contre le rouge). Cases à cocher : nouveau `--accent-control`
+> #0062CC (clair) / #4A88FA (sombre), même teinte, 3:1 sur `--pill`, `--seg-sel`, `--side`,
+> `--filter-applied`, `--content` (pire cas 4,23 clair, 3,30 sombre ; coche blanche 5,80 /
+> 3,39). Tests : `focus_ring_contrast` et `checkbox_contrast` (`tokens.test.ts`, clair,
+> sombre média, sombre forcé), garde `src/styles/focusRing.test.ts` (pas de contour, `ring`
+> ni bordure d'une couleur sous une variante de focus ; tout `outline-none` porte l'anneau
+> ou figure dans `ALLOWED` avec sa raison ; pas de `accent-accent`), `gridTheme.test.ts` et
+> `DataGrid.test.tsx` (bande de la cellule active).
+
 ### 5.2 Dimensions (à 100 %)
 Barre du haut 52, pilules 34, boutons 28–32 ; colonne des connexions 80 ; barre latérale 262
 (min 240) ; en-tête de barre latérale 40 ; lignes d'arbre 24 ; onglets 38 (capsules 28) ;

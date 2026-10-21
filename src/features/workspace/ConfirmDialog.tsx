@@ -50,7 +50,7 @@ export function ConfirmDialog({
             type="button"
             autoFocus={initialFocus === "cancel"}
             onClick={onCancel}
-            className="rounded-sm border border-border px-3 py-1"
+            className="rounded-sm border border-border px-3 py-1 outline-none focus-visible:focus-ring"
           >
             {cancelLabel}
           </button>
@@ -58,7 +58,7 @@ export function ConfirmDialog({
             type="button"
             autoFocus={initialFocus === "confirm"}
             onClick={onConfirm}
-            className="rounded-sm bg-danger-strong px-3 py-1 text-danger-contrast"
+            className="rounded-sm bg-danger-strong px-3 py-1 text-danger-contrast outline-none focus-visible:focus-ring"
           >
             {confirmLabel}
           </button>

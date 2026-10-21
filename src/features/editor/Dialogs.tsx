@@ -76,7 +76,7 @@ function Modal({
   );
 }
 
-const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2";
+const btn = "rounded-sm border border-border px-3 py-1 hover:bg-surface-2 outline-none focus-visible:focus-ring";
 
 export function ConfirmDialog({
   title,
@@ -104,7 +104,7 @@ export function ConfirmDialog({
         </button>
         <button
           type="submit"
-          className={`rounded-sm px-3 py-1 ${danger ? "border border-danger text-danger-text hover:bg-surface-2" : "bg-accent-strong text-accent-contrast"}`}
+          className={`rounded-sm px-3 py-1 outline-none focus-visible:focus-ring ${danger ? "border border-danger text-danger-text hover:bg-surface-2" : "bg-accent-strong text-accent-contrast"}`}
         >
           {confirm}
         </button>
@@ -148,7 +148,7 @@ export function NameDialog({
         value={name}
         onChange={(e) => setName(e.target.value)}
         onFocus={(e) => e.currentTarget.select()}
-        className="w-full rounded-sm border border-border bg-bg px-2 py-1"
+        className="w-full rounded-sm border border-border bg-bg px-2 py-1 outline-none focus-visible:focus-ring"
       />
       {error && (
         <p id={errorId} role="alert" className="mt-2 text-danger-text">
@@ -162,7 +162,7 @@ export function NameDialog({
         <button
           type="submit"
           disabled={busy || !name.trim()}
-          className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast disabled:opacity-40"
+          className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast outline-none focus-visible:focus-ring disabled:opacity-40"
         >
           {confirm}
         </button>

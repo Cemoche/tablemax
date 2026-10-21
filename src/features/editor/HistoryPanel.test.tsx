@@ -245,5 +245,5 @@ test("Copy without a clipboard reports the failure", async () => {
 test("Clear history has a visible focus ring", async () => {
   setup();
   const clear = await screen.findByRole("button", { name: strings.history.clear });
-  expect(clear).toHaveClass("focus-visible:outline-2", "focus-visible:outline-solid", "focus-visible:outline-accent");
+  expect(clear).toHaveClass("outline-none", "focus-visible:focus-ring");
 });

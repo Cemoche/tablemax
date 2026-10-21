@@ -118,7 +118,7 @@ export function SafeModeMenu({ workspace }: { workspace: Workspace }) {
                 role="menuitemradio"
                 aria-checked={checked}
                 onClick={() => pick(level)}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-seg-sel focus-visible:bg-seg-sel"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-seg-sel focus-visible:bg-seg-sel focus-visible:focus-ring-inset"
               >
                 <Check aria-hidden size={14} className={checked ? "" : "invisible"} />
                 {level === null ? strings.safety.defaultOption(safeModeLabel(defaultSafeMode(envTag))) : safeModeLabel(level)}

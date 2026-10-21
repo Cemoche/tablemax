@@ -8,9 +8,9 @@ const p = strings.grid.pagePopover;
 export const popoverBox =
   "absolute bottom-full z-30 mb-1.5 rounded-lg border border-pill-border bg-pill p-2 text-sm text-text shadow-lg outline-none";
 export const popoverField =
-  "h-6 w-28 rounded-md border border-pill-border bg-search px-1.5 text-right font-mono text-sm text-text outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-1 focus-visible:outline-accent aria-invalid:border-danger";
+  "h-6 w-28 rounded-md border border-pill-border bg-search px-1.5 text-right font-mono text-sm text-text outline-none focus-visible:focus-ring-inset aria-invalid:border-danger";
 export const popoverButton =
-  "flex h-6 items-center justify-center rounded-md border border-pill-border bg-btn px-3 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:text-icon-dim disabled:hover:bg-btn";
+  "flex h-6 items-center justify-center rounded-md border border-pill-border bg-btn px-3 text-sm text-text outline-none hover:bg-seg-sel focus-visible:focus-ring disabled:text-icon-dim disabled:hover:bg-btn";
 
 /**
  * Escape and a press outside the popover (and its trigger, the `aria-haspopup="dialog"`

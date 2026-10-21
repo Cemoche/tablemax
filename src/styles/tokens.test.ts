@@ -56,6 +56,8 @@ const THEME_TOKENS = [
   "--accent",
   "--accent-strong",
   "--cell-focus",
+  "--focus-ring-inner",
+  "--accent-control",
   "--inserted",
   "--modified",
   "--deleted",
@@ -509,4 +511,95 @@ test("change_fills_distinct: the three change fills stand apart from each other,
       ).toBeGreaterThanOrEqual(10);
     }
   }
+});
+
+/**
+ * The backgrounds a CSS focus ring sits on or next to (#135), from the focusables: dialogs,
+ * popovers, palette, forms and panels (--content), the window and table tab notices (--win),
+ * the sidebar, filter bar and row detail (--side), the bottom bars (--bottom), buttons
+ * (--btn), pills, menus and popovers (--pill), fields (--search), tab capsules (--tab,
+ * --tab-sel), hovered or pressed rows and toolbar buttons (--seg-sel), selected rows and
+ * settings sections (--sel), an applied filter row (--filter-applied), a hovered connection
+ * group (--row-b), filled controls, the selected segment and highlighted menu rows
+ * (--accent-strong), the row detail's edited field (--modified), and the fills next to the
+ * status pill's ring: its connection tint (--swatch-N-tint; --pill while not connected) and
+ * the tag badge at its start (--tag-*-bg).
+ */
+const FOCUS_RING_BACKGROUNDS = [
+  "--content",
+  "--win",
+  "--side",
+  "--bottom",
+  "--btn",
+  "--pill",
+  "--search",
+  "--tab",
+  "--tab-sel",
+  "--seg-sel",
+  "--sel",
+  "--filter-applied",
+  "--row-b",
+  "--accent-strong",
+  "--modified",
+  ...[1, 2, 3, 4, 5, 6].map((n) => `--swatch-${n}-tint`),
+  ...["local", "dev", "staging", "prod"].map((t) => `--tag-${t}-bg`),
+];
+
+/**
+ * The fills under the grid's focused cell (#135): plain and zebra rows, a selected column
+ * (--sel, Glide's accentLight), a selected row (--row-selected = --accent-strong) and the
+ * three change fills.
+ */
+const GRID_FOCUS_BACKGROUNDS = ["--row-a", "--row-b", "--sel", "--accent-strong", "--inserted", "--modified", "--deleted"];
+
+test("focus_ring_contrast: the two-tone ring reaches 3:1 on every background, its bands 3:1 apart, in both themes (#135)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    const inner = v["--focus-ring-inner"];
+    expect(values(selector)["--focus-ring-inner"], `${selector} focus-ring-inner`).toMatch(/^#[0-9A-F]{6}$/i);
+    // The two bands stand apart: the ring reads as two tones, never as one blurred line.
+    expect(contrastRatio(v["--accent"], inner), `${selector} accent vs inner`).toBeGreaterThanOrEqual(3);
+    expect(contrastRatio(v["--cell-focus"], inner), `${selector} cell-focus vs inner`).toBeGreaterThanOrEqual(3);
+    // The inner band alone reaches 3:1 wherever the ring is drawn (the accent band too where it can).
+    for (const bg of FOCUS_RING_BACKGROUNDS) {
+      expect(contrastRatio(inner, v[bg]), `${selector} inner on ${bg}`).toBeGreaterThanOrEqual(3);
+    }
+    for (const bg of GRID_FOCUS_BACKGROUNDS) {
+      expect(contrastRatio(inner, v[bg]), `${selector} grid inner on ${bg}`).toBeGreaterThanOrEqual(3);
+    }
+  }
+  // The reason for the second band: the accent alone is under 3:1 on --sel (light 2.71, dark
+  // 2.40) and on the dark active tab (1.70); the red of the focused cell on the change fills.
+  const light = values(LIGHT);
+  const dark = { ...light, ...values(DARK_FORCED) };
+  expect(contrastRatio(light["--accent"], light["--sel"])).toBeLessThan(3);
+  expect(contrastRatio(dark["--accent"], dark["--sel"])).toBeLessThan(3);
+  expect(contrastRatio(dark["--accent"], dark["--tab-sel"])).toBeLessThan(3);
+  expect(contrastRatio(light["--cell-focus"], light["--deleted"])).toBeLessThan(3);
+  expect(contrastRatio(dark["--cell-focus"], dark["--modified"])).toBeLessThan(3);
+});
+
+/**
+ * The backgrounds under a native checkbox or radio (#135): the Columns popover (--pill, its
+ * hovered row --seg-sel), the filter bar (--side, an applied row --filter-applied) and the
+ * connection form's SSH box (--content).
+ */
+const CHECKBOX_BACKGROUNDS = ["--pill", "--seg-sel", "--side", "--filter-applied", "--content"];
+
+test("checkbox_contrast: a checked box (accent-color --accent-control) reads 3:1 on its backgrounds, its white mark 3:1 on it (#135)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    expect(values(selector)["--accent-control"], `${selector} accent-control`).toMatch(/^#[0-9A-F]{6}$/i);
+    for (const bg of CHECKBOX_BACKGROUNDS) {
+      expect(contrastRatio(v["--accent-control"], v[bg]), `${selector} accent-control on ${bg}`).toBeGreaterThanOrEqual(3);
+    }
+    expect(contrastRatio("#FFFFFF", v["--accent-control"]), `${selector} check mark`).toBeGreaterThanOrEqual(3);
+    // Still the accent: same hue.
+    expect(Math.abs(hue(v["--accent-control"]) - hue(v["--accent"])), `${selector} hue`).toBeLessThan(5);
+  }
+  // The reason for the token: the accent is 2.98:1 on the dark --pill and 2.93:1 on the light --seg-sel.
+  const light = values(LIGHT);
+  const dark = { ...light, ...values(DARK_FORCED) };
+  expect(contrastRatio(dark["--accent"], dark["--pill"])).toBeLessThan(3);
+  expect(contrastRatio(light["--accent"], light["--seg-sel"])).toBeLessThan(3);
 });

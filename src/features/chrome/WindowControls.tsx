@@ -9,7 +9,9 @@ import { toggleMaximize } from "./windowState";
 /** A window command that fails (no native window in a browser preview) is cosmetic. */
 const run = (call: () => Promise<void> | undefined) => () => void call()?.catch(() => {});
 
-const focusRing = "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent";
+const focusRing = "outline-none focus-visible:focus-ring";
+/** Flat caption buttons fill the bar's height: the ring goes inside them. */
+const focusRingInset = "outline-none focus-visible:focus-ring-inset";
 
 /**
  * The look of each platform (#104):
@@ -21,7 +23,7 @@ const focusRing = "outline-none focus-visible:outline-2 focus-visible:outline-so
 const STYLES = {
   windows: {
     group: "-mr-2.5 ml-1 flex shrink-0 self-stretch",
-    button: `flex w-11.5 self-stretch items-center justify-center text-icon hover:bg-seg-sel ${focusRing} focus-visible:-outline-offset-2`,
+    button: `flex w-11.5 self-stretch items-center justify-center text-icon hover:bg-seg-sel ${focusRingInset}`,
     close: "hover:bg-window-close hover:text-window-close-text",
     glyph: { size: 15, strokeWidth: 1.25 },
   },

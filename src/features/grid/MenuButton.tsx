@@ -33,7 +33,7 @@ interface Props {
 }
 
 const itemClass =
-  "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left whitespace-nowrap outline-none hover:bg-seg-sel focus-visible:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent";
+  "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left whitespace-nowrap outline-none hover:bg-seg-sel focus-visible:bg-seg-sel focus-visible:focus-ring-inset";
 
 /**
  * A button that opens a menu below it (WAI-ARIA menu button): the focus moves to the checked

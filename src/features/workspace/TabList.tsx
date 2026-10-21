@@ -69,7 +69,7 @@ export function TabList({ workspace }: { workspace: Workspace }) {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => (open ? close() : setOpen(true))}
-        className="flex size-7 items-center justify-center rounded-md text-icon outline-none hover:bg-tab focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
+        className="flex size-7 items-center justify-center rounded-md text-icon outline-none hover:bg-tab focus-visible:focus-ring"
       >
         <ChevronDown aria-hidden="true" size={16} />
       </button>
@@ -88,7 +88,7 @@ export function TabList({ workspace }: { workspace: Workspace }) {
             onKeyDown={onKeyDown}
             aria-controls={listId}
             aria-activedescendant={shown[hi] ? `${listId}-${shown[hi].id}` : undefined}
-            className="w-full rounded-t-lg border-b border-pill-border bg-search px-2 py-1 text-text"
+            className="w-full rounded-t-lg border-b border-pill-border bg-search px-2 py-1 text-text outline-none focus-visible:focus-ring-inset"
           />
           {shown.length === 0 ? (
             <p className="p-2 text-text-2">{strings.workspace.tabListEmpty}</p>

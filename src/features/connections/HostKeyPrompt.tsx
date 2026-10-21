@@ -43,14 +43,14 @@ export function HostKeyPrompt({ host, fingerprint, onTrust, onCancel }: Props) {
             type="button"
             autoFocus
             onClick={onCancel}
-            className="rounded-sm border border-border px-3 py-1"
+            className="rounded-sm border border-border px-3 py-1 outline-none focus-visible:focus-ring"
           >
             {strings.ssh.cancel}
           </button>
           <button
             type="button"
             onClick={onTrust}
-            className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast"
+            className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast outline-none focus-visible:focus-ring"
           >
             {strings.ssh.trust}
           </button>

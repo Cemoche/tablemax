@@ -19,7 +19,9 @@ import { tabDomId, tabPanelDomId } from "./tabDom";
 import { goBack, goForward, useCanNavigate } from "./navigation";
 
 const S = strings.workspace;
-const focusRing = "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent";
+const focusRing = "outline-none focus-visible:focus-ring";
+/** Tab capsules and the rename field fill the bar's height: the ring goes inside them. */
+const focusRingInset = "outline-none focus-visible:focus-ring-inset";
 const iconButton = `flex size-7 shrink-0 items-center justify-center rounded-md text-icon hover:bg-tab aria-disabled:text-icon-dim aria-disabled:hover:bg-transparent ${focusRing}`;
 
 /**
@@ -238,7 +240,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     onClick={() => activateTab(id, t.id)}
                     onDoubleClick={() => pinTab(id, t.id)}
                     onKeyDown={(e) => onTabKeyDown(e, t)}
-                    className={`flex h-full w-full min-w-0 items-center justify-center gap-1 rounded-full px-7 ${focusRing} focus-visible:-outline-offset-2`}
+                    className={`flex h-full w-full min-w-0 items-center justify-center gap-1 rounded-full px-7 ${focusRingInset}`}
                   >
                     <span
                       className={`min-w-0 truncate ${active ? "font-medium" : ""} ${
@@ -326,7 +328,7 @@ function RenameField({ tab, onDone }: { tab: Tab; onDone: (name: string | null, 
           }
         }}
         onBlur={() => finish(value.trim() ? value : null, false)}
-        className={`h-full w-full min-w-0 rounded-full bg-search px-3 text-center text-text ${focusRing} focus-visible:-outline-offset-2 aria-invalid:outline-danger`}
+        className={`h-full w-full min-w-0 rounded-full bg-search px-3 text-center text-text ${focusRingInset} aria-invalid:outline-danger`}
       />
       {invalid && (
         <span id={errorId} role="alert" className="sr-only">

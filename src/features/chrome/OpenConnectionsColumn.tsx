@@ -14,7 +14,7 @@ import { iconColorClass } from "./swatch";
 const C = strings.connectionsColumn;
 
 const focusRing =
-  "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent";
+  "outline-none focus-visible:focus-ring-inset";
 
 interface Props {
   /** True while the connections screen (not a workspace) is shown. */

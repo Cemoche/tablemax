@@ -12,7 +12,7 @@ import { ContextMenu, type MenuAnchor, restoreFocusOnClose } from "./ContextMenu
 const S = strings.sidebar;
 
 const iconButton =
-  "flex h-6.5 w-7 items-center justify-center text-icon outline-none hover:bg-seg-sel disabled:text-icon-dim focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent";
+  "flex h-6.5 w-7 items-center justify-center text-icon outline-none hover:bg-seg-sel disabled:text-icon-dim focus-visible:focus-ring-inset";
 
 /** Reloads the sidebar's lists and rebuilds the catalog (the toolbar's Reload minus the table page). */
 export function refreshSidebar(ws: Workspace) {
@@ -63,7 +63,7 @@ export function SidebarFooter({ workspace }: { workspace: Workspace }) {
         value={workspace.currentSchema ?? ""}
         disabled={workspace.schemas.length === 0}
         onChange={(e) => setSchema(workspace.id, e.target.value)}
-        className="h-6.5 min-w-0 flex-1 rounded-md border border-pill-border bg-btn px-1.5 font-mono text-sm text-text outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
+        className="h-6.5 min-w-0 flex-1 rounded-md border border-pill-border bg-btn px-1.5 font-mono text-sm text-text outline-none focus-visible:focus-ring"
       >
         {workspace.schemas.map((s) => (
           <option key={s} value={s}>

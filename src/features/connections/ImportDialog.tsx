@@ -15,8 +15,8 @@ type Step =
   | { step: "done"; count: number; warnings: ImportWarning[]; reloadFailed: boolean };
 
 const PILL = "rounded-sm border px-1 text-xs";
-const BUTTON = "rounded-sm border border-border px-3 py-1 disabled:opacity-50";
-const PRIMARY = "rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast disabled:opacity-50";
+const BUTTON = "rounded-sm border border-border px-3 py-1 outline-none focus-visible:focus-ring disabled:opacity-50";
+const PRIMARY = "rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast outline-none focus-visible:focus-ring disabled:opacity-50";
 
 function Warnings({ warnings }: { warnings: ImportWarning[] }) {
   if (warnings.length === 0) return null;
@@ -145,7 +145,7 @@ export function ImportDialog({ onClose }: Props) {
     return (
       <li key={item.index}>
         <label className="flex items-start gap-2 px-2 py-1 hover:bg-surface-2">
-          <input type="checkbox" checked={checked.has(item.index)} onChange={toggle} className="mt-1" />
+          <input type="checkbox" checked={checked.has(item.index)} onChange={toggle} className="mt-1 accent-accent-control outline-none focus-visible:focus-ring" />
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex items-center gap-2">
               <span className="min-w-0 truncate font-medium">{c.name}</span>
@@ -190,7 +190,7 @@ export function ImportDialog({ onClose }: Props) {
               aria-label={strings.import.password}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-sm border border-border bg-bg px-2 py-1"
+              className="w-full rounded-sm border border-border bg-bg px-2 py-1 outline-none focus-visible:focus-ring"
             />
             <span className="text-xs text-muted">{strings.import.passwordHint}</span>
           </label>

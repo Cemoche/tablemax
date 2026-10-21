@@ -70,7 +70,7 @@ export function ColumnsPopover({ columns, layoutKey, onClose }: Props) {
                   checked={on}
                   disabled={last}
                   onChange={() => toggle(name)}
-                  className="size-3.5 shrink-0 accent-accent outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="size-3.5 shrink-0 accent-accent-control outline-none focus-visible:focus-ring"
                 />
                 <span className="min-w-0 truncate font-mono">{name}</span>
               </label>

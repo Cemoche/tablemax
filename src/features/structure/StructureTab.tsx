@@ -99,7 +99,7 @@ function ForeignKeysTable({ info, workspaceId }: { info: TableInfo; workspaceId:
                   type="button"
                   aria-label={s.openReferenced(refName(fk))}
                   onClick={() => openTableTab(workspaceId, target)}
-                  className="text-accent-text underline"
+                  className="text-accent-text underline outline-none focus-visible:focus-ring"
                 >
                   {refName(fk)}
                 </button>
@@ -143,7 +143,7 @@ function DdlView({ ddl, dialect }: { ddl: string; dialect: Dialect }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-border p-2">
-        <button type="button" onClick={copy} className="rounded-sm border border-border px-2 py-1">
+        <button type="button" onClick={copy} className="rounded-sm border border-border px-2 py-1 outline-none focus-visible:focus-ring">
           {s.copy}
         </button>
         <span role="status" className="text-muted">
@@ -249,7 +249,7 @@ export function StructureTab({
               tabIndex={section === k ? 0 : -1}
               onClick={() => setSection(k)}
               onKeyDown={(e) => onTabKey(e, i)}
-              className={`border-b-2 px-3 py-2 ${
+              className={`border-b-2 px-3 py-2 outline-none focus-visible:focus-ring-inset ${
                 section === k ? "border-accent text-fg" : "border-transparent text-muted"
               }`}
             >
@@ -262,7 +262,7 @@ export function StructureTab({
           disabled={pending}
           aria-busy={pending}
           onClick={() => load(true)}
-          className="rounded-sm border border-border px-2 py-1 disabled:opacity-50"
+          className="rounded-sm border border-border px-2 py-1 outline-none focus-visible:focus-ring disabled:opacity-50"
         >
           {s.refresh}
         </button>

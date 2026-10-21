@@ -50,9 +50,9 @@ interface Props {
 
 const f = strings.filters;
 const field =
-  "h-6 min-w-0 rounded-md border border-pill-border bg-search px-1.5 text-sm text-text outline-none placeholder:text-text-2 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-1 focus-visible:outline-accent";
+  "h-6 min-w-0 rounded-md border border-pill-border bg-search px-1.5 text-sm text-text outline-none placeholder:text-text-2 focus-visible:focus-ring-inset";
 const button =
-  "flex h-6 min-w-6 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent aria-expanded:bg-seg-sel aria-disabled:text-icon-dim aria-disabled:hover:bg-btn";
+  "flex h-6 min-w-6 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:focus-ring aria-expanded:bg-seg-sel aria-disabled:text-icon-dim aria-disabled:hover:bg-btn";
 /** Which control of a row has the focus: Up / Down keep it on the same one. */
 type Field = "enabled" | "column" | "op" | "value" | "apply" | "remove" | "add";
 
@@ -443,7 +443,7 @@ export function FilterBar({
                 aria-keyshortcuts={ariaShortcut(shortcut("filters.toggle"))}
                 checked={!off.has(d.id)}
                 onChange={() => toggle(d.id)}
-                className="size-3.5 shrink-0 accent-accent outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="size-3.5 shrink-0 accent-accent-control outline-none focus-visible:focus-ring"
               />
               <select
                 data-field="column"

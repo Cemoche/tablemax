@@ -50,7 +50,7 @@ import {
   selectionBlock,
   withSelectedRow,
 } from "./gridSelection";
-import { markerFontSize, useGridTheme } from "./gridTheme";
+import { drawFocusInnerBand, markerFontSize, useGridTheme } from "./gridTheme";
 import { drawCenteredHeader } from "./headerLabels";
 import { type RowNumberStyle, gridRenderers, rowNumberWidth } from "./rowNumbers";
 import { QuickLook } from "./QuickLook";
@@ -461,11 +461,21 @@ export function DataGrid({
     [model, editThemes, rowThemes, highlighted],
   );
 
-  // Rows to delete are struck through; foreign key links get an indicator on the right.
+  /** The focused cell (display column, row): its two-tone ring's inner band (#135). */
+  const [focusCol, focusRow] = selection.current?.cell ?? [-1, -1];
+  const { focusInner } = g;
+  const lastCol = shownCols.length - 1;
+  const lastRow = (model ? model.rows.length : data.rows.length) - 1;
+
+  // Rows to delete are struck through; foreign key links get an indicator on the right; the
+  // focused cell gets the inner band of its ring (Glide strokes the --cell-focus one).
   const drawCell = useCallback<DrawCellCallback>(
     (args, drawContent) => {
       drawContent();
       const { ctx, rect, theme: t } = args;
+      if (focusInner && args.col === focusCol && args.row === focusRow) {
+        drawFocusInnerBand(ctx, rect, focusInner, args.col === lastCol, args.row === lastRow);
+      }
       const col = dataCol(args.col);
       if (editingRef.current?.linkAt(args.row, col)) {
         ctx.save();
@@ -488,7 +498,8 @@ export function DataGrid({
       ctx.stroke();
       ctx.restore();
     },
-    [model, dataCol],
+    // A new focused cell, a new callback: Glide redraws the cells with it.
+    [model, dataCol, focusInner, focusCol, focusRow, lastCol, lastRow],
   );
 
   // Stable (Glide re-creates the editor when this changes); reads the latest props by ref.
@@ -773,8 +784,8 @@ export function DataGrid({
           e.preventDefault();
           ed.onOpenLink(row, c);
         }}
+        drawCell={drawCell}
         {...(editing && {
-          drawCell,
           provideEditor,
           // Delete would clear the selected cells to "": NULL/empty are explicit menu choices.
           onDelete: () => false,

@@ -68,7 +68,7 @@ export function ResizeEdge({ side, width, min, max, label, setWidth, saveWidth }
       onKeyUp={(e) => {
         if (e.key === "ArrowLeft" || e.key === "ArrowRight") saveWidth();
       }}
-      className={`absolute inset-y-0 ${side === "right" ? "-right-1" : "-left-1"} z-10 w-2 cursor-col-resize outline-none hover:bg-accent/30 focus-visible:bg-accent/50`}
+      className={`absolute inset-y-0 ${side === "right" ? "-right-1" : "-left-1"} z-10 w-2 cursor-col-resize outline-none hover:bg-accent/30 focus-visible:focus-ring-inset`}
     />
   );
 }

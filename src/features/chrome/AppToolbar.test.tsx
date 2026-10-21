@@ -288,8 +288,8 @@ test("toolbar_is_keyboard_reachable", async () => {
   for (const b of enabled) {
     // A name for every control, and a visible focus ring.
     expect(b.getAttribute("aria-label") ?? b.textContent).toBeTruthy();
-    // (Tailwind 4: outline-none also sets the style to none, so the ring sets it back.)
-    expect(b.className).toContain("focus-visible:outline-solid");
+    // The shared two-tone ring (#135): inside the round toolbar buttons, outside the others.
+    expect(b.className).toMatch(/(^|\s)focus-visible:focus-ring(-inset)?(\s|$)/);
   }
 });
 

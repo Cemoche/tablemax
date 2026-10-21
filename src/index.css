@@ -32,6 +32,7 @@
   --color-btn: var(--btn);
   --color-filter-applied: var(--filter-applied);
   --color-cell-focus: var(--cell-focus);
+  --color-focus-ring-inner: var(--focus-ring-inner);
   --color-row-selected: var(--row-selected);
   --color-row-selected-text: var(--row-selected-text);
   --color-inserted: var(--inserted);
@@ -57,6 +58,7 @@
   --color-accent-strong: var(--accent-strong);
   --color-accent-contrast: var(--accent-contrast);
   --color-accent-text: var(--accent-text);
+  --color-accent-control: var(--accent-control);
   --color-danger: var(--danger);
   --color-danger-strong: var(--danger-strong);
   --color-danger-contrast: var(--danger-contrast);
@@ -119,6 +121,40 @@
   --text-lg: var(--text-lg);
   --radius-sm: var(--radius);
   --radius-md: var(--radius);
+}
+
+/* The focus ring (#135), the only one of the app, used under a focus variant
+   (`outline-none focus-visible:focus-ring`): two tones, so that one of them reaches 3:1 on
+   whatever the control sits on (tokens.test.ts, focus_ring_contrast). A 2 px --accent outline
+   and, between it and the control, a 1 px band of --focus-ring-inner (black in light, white
+   in dark), drawn by a box-shadow in the outline's offset. A control's own shadows
+   (Tailwind's shadow and ring layers) stay, under the band. */
+@utility focus-ring {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 1px var(--focus-ring-inner),
+    var(--tw-inset-shadow, 0 0 #0000),
+    var(--tw-inset-ring-shadow, 0 0 #0000),
+    var(--tw-ring-offset-shadow, 0 0 #0000),
+    var(--tw-ring-shadow, 0 0 #0000),
+    var(--tw-shadow, 0 0 #0000);
+}
+
+/* The same ring inside the control's edge: list rows, tabs, toolbar and menu items, fields
+   in a scrolling or clipping parent (an outer ring would be cut by an overflow-hidden or
+   scrolling parent, or overlap the next row). The outline covers the outer 2 px (a field's
+   1 px border with it); the inset band shows inside it, 1 px (2 px under a border). */
+@utility focus-ring-inset {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  box-shadow:
+    inset 0 0 0 3px var(--focus-ring-inner),
+    var(--tw-inset-shadow, 0 0 #0000),
+    var(--tw-inset-ring-shadow, 0 0 #0000),
+    var(--tw-ring-offset-shadow, 0 0 #0000),
+    var(--tw-ring-shadow, 0 0 #0000),
+    var(--tw-shadow, 0 0 #0000);
 }
 
 html,

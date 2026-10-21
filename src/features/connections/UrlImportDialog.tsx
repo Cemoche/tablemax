@@ -54,7 +54,7 @@ export function UrlImportDialog({ onResult, onCancel }: Props) {
             value={text}
             placeholder={strings.url.placeholder}
             onChange={(e) => setText(e.target.value)}
-            className="w-full rounded-sm border border-border bg-bg px-2 py-1 font-mono"
+            className="w-full rounded-sm border border-border bg-bg px-2 py-1 font-mono outline-none focus-visible:focus-ring"
           />
         </label>
         {parsed && "error" in parsed && (
@@ -74,13 +74,13 @@ export function UrlImportDialog({ onResult, onCancel }: Props) {
           </div>
         )}
         <div className="mt-3 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="rounded-sm border border-border px-3 py-1">
+          <button type="button" onClick={onCancel} className="rounded-sm border border-border px-3 py-1 outline-none focus-visible:focus-ring">
             {strings.url.cancel}
           </button>
           <button
             type="submit"
             disabled={!ok}
-            className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast disabled:opacity-50"
+            className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast outline-none focus-visible:focus-ring disabled:opacity-50"
           >
             {strings.url.open}
           </button>

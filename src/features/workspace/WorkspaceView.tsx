@@ -70,7 +70,7 @@ function Disconnected({ workspace, error }: { workspace: Workspace; error: strin
       <button
         type="button"
         onClick={() => requestConnect(workspace.id)}
-        className="rounded-sm border border-border px-3 py-1 hover:bg-surface-2"
+        className="rounded-sm border border-border px-3 py-1 hover:bg-surface-2 outline-none focus-visible:focus-ring"
       >
         {strings.session.reconnect}
       </button>
@@ -134,7 +134,7 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
               <button
                 type="button"
                 onClick={() => dismissNotice(id)}
-                className="shrink-0 rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2"
+                className="shrink-0 rounded-sm border border-border px-2 py-0.5 hover:bg-surface-2 outline-none focus-visible:focus-ring"
               >
                 {strings.workspace.dismissNotice}
               </button>

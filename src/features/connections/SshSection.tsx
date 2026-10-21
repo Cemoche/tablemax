@@ -70,7 +70,7 @@ export function SshSection({ ssh, stored, onChange, secret, onSecretChange }: Pr
       <label className="flex h-7 items-center gap-2 text-text">
         <input
           type="checkbox"
-          className="accent-accent"
+          className="accent-accent-control outline-none focus-visible:focus-ring"
           checked={enabled}
           onChange={(e) => {
             onSecretChange("");

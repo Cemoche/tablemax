@@ -184,7 +184,7 @@ export function RowDetailPanel(p: Props) {
         saveWidth={saveWidth}
       />
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-sep px-2">
-        <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-pill-border bg-search px-2 focus-within:outline-2 focus-within:outline-solid focus-within:-outline-offset-1 focus-within:outline-accent">
+        <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-pill-border bg-search px-2 focus-within:focus-ring-inset">
           <Search aria-hidden size={14} strokeWidth={1.6} className="shrink-0 text-icon-dim" />
           <input
             type="search"
@@ -201,7 +201,7 @@ export function RowDetailPanel(p: Props) {
           aria-label={strings.grid.rowDetailsClose}
           {...tip(strings.grid.rowDetailsClose)}
           onClick={p.onClose}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-icon outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-icon outline-none hover:bg-seg-sel focus-visible:focus-ring"
         >
           <X aria-hidden size={15} strokeWidth={1.6} />
         </button>
@@ -343,7 +343,7 @@ function Field({
                 aria-label={strings.grid.openReferencedIn(l.object.name)}
                 {...tip(strings.grid.openReferencedIn(l.object.name))}
                 onClick={() => onOpenLink(l)}
-                className="max-w-40 truncate rounded-sm px-1 text-xs text-accent-text hover:bg-surface-2"
+                className="max-w-40 truncate rounded-sm px-1 text-xs text-accent-text hover:bg-surface-2 outline-none focus-visible:focus-ring"
               >
                 {strings.grid.fkLinkButton(l.object.name)}
               </button>
@@ -363,7 +363,7 @@ function Field({
           setDraft(null);
           start.current = null;
         }}
-        className={`mt-1 block w-full resize-y rounded-sm border border-border px-2 py-1 font-mono outline-none focus:border-accent ${
+        className={`mt-1 block w-full resize-y rounded-sm border border-border px-2 py-1 font-mono outline-none focus-visible:focus-ring-inset ${
           cell.edited ? "bg-pending-edit" : "bg-surface"
         } ${editable || cell.edited ? "text-fg" : "text-muted"}`}
       />
@@ -375,7 +375,7 @@ function Field({
           <button
             type="button"
             onClick={onRetry}
-            className="shrink-0 rounded-sm border border-border px-1.5 text-fg hover:bg-surface-2"
+            className="shrink-0 rounded-sm border border-border px-1.5 text-fg hover:bg-surface-2 outline-none focus-visible:focus-ring"
           >
             {strings.grid.retry}
           </button>
@@ -392,7 +392,7 @@ function Field({
                 setDraft(null);
                 onAction(a);
               }}
-              className="rounded-sm border border-border px-1.5 text-xs hover:bg-surface-2"
+              className="rounded-sm border border-border px-1.5 text-xs hover:bg-surface-2 outline-none focus-visible:focus-ring"
             >
               {strings.grid.menu[a]}
             </button>
