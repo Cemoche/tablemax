@@ -53,6 +53,21 @@ test("Enter in a field is Go; bad numbers say why and change nothing", async () 
   expect(onGo).toHaveBeenCalledWith(0, 10);
 });
 
+test("the invalid field is described by its error; the other is not (Task 11)", async () => {
+  setup();
+  expect(offset()).not.toHaveAttribute("aria-describedby");
+  await userEvent.clear(offset());
+  await userEvent.type(offset(), "-3{Enter}");
+  expect(offset()).toHaveAccessibleDescription(p.offsetInvalid);
+  expect(limit()).not.toHaveAttribute("aria-describedby");
+  await userEvent.clear(offset());
+  await userEvent.type(offset(), "0");
+  await userEvent.clear(limit());
+  await userEvent.type(limit(), "0{Enter}");
+  expect(limit()).toHaveAccessibleDescription(p.limitInvalid(1, LIMIT_MAX));
+  expect(offset()).not.toHaveAttribute("aria-describedby");
+});
+
 test("a refused Go (changes pending) keeps the popover open", async () => {
   onGo.mockReturnValue(false);
   setup();

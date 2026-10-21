@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
 import { LIMIT_MAX, LIMIT_MIN } from "./usePagedTable";
 
@@ -66,6 +66,7 @@ export function PagePopover({ offset, limit, onGo, onClose }: Props) {
   const [offsetText, setOffsetText] = useState(String(offset));
   const [limitText, setLimitText] = useState(String(limit));
   const [error, setError] = useState<{ field: "offset" | "limit"; text: string } | null>(null);
+  const errorId = useId();
   useDismiss(ref, onClose);
   useEffect(() => {
     offsetRef.current?.focus();
@@ -107,6 +108,7 @@ export function PagePopover({ offset, limit, onGo, onClose }: Props) {
           inputMode="numeric"
           autoComplete="off"
           aria-invalid={error?.field === "offset" || undefined}
+          aria-describedby={error?.field === "offset" ? errorId : undefined}
           className={popoverField}
           value={offsetText}
           onChange={(e) => setOffsetText(e.target.value)}
@@ -119,13 +121,14 @@ export function PagePopover({ offset, limit, onGo, onClose }: Props) {
           inputMode="numeric"
           autoComplete="off"
           aria-invalid={error?.field === "limit" || undefined}
+          aria-describedby={error?.field === "limit" ? errorId : undefined}
           className={popoverField}
           value={limitText}
           onChange={(e) => setLimitText(e.target.value)}
         />,
       )}
       {error && (
-        <p role="alert" className="text-danger">
+        <p id={errorId} role="alert" className="text-danger">
           {error.text}
         </p>
       )}
