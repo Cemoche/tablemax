@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
 import { tip, tipIfCut } from "../../lib/tooltip";
 import type { ConnectionConfig } from "../../lib/types";
@@ -101,9 +101,21 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
   const rateText = rate === null ? null : formatRate(rate);
   // The rate is in the name, not a live region. Screen readers re-announce a focused
   // element whose name changes, so the name keeps the rate it had when the pill got focus
-  // until it loses it (the slot itself keeps moving).
-  const [focusedRate, setFocusedRate] = useState<{ text: string | null } | null>(null);
-  const nameRate = focusedRate ? focusedRate.text : rateText;
+  // until it loses it (the slot itself keeps moving). The snapshot belongs to one workspace:
+  // the pill is not remounted when the workspace changes, and a workspace that stops being
+  // counted (disconnected) names no rate at all.
+  const [focusedRate, setFocusedRate] = useState<{ workspaceId: string; text: string | null } | null>(
+    null,
+  );
+  const nameRate = counted
+    ? focusedRate?.workspaceId === workspace.id
+      ? focusedRate.text
+      : rateText
+    : null;
+  // Disconnected while focused: a later reconnect must not bring back the old snapshot.
+  useEffect(() => {
+    if (!counted) setFocusedRate(null);
+  }, [counted]);
   const name = `${tagLabel}${s.tagSeparator}${text}${nameRate ? `${s.tagSeparator}${s.rateLabel(nameRate)}` : ""}`;
 
   return (
@@ -120,7 +132,7 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
         aria-expanded={open}
         {...(state === "error" && connectError ? tip(s.errorTitle(text, connectError)) : tipIfCut(text))}
         onClick={() => setOpen((o) => !o)}
-        onFocus={() => setFocusedRate({ text: rateText })}
+        onFocus={() => setFocusedRate({ workspaceId: workspace.id, text: rateText })}
         onBlur={() => setFocusedRate(null)}
         className={`relative flex h-8.5 w-full min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full pl-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:focus-ring ${counted ? "pr-22" : "pr-4"} ${look}`}
       >

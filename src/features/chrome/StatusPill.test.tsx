@@ -170,6 +170,32 @@ test("the accessible name holds still while the pill has focus (#112 review)", a
   expect(pill()).toHaveAccessibleName(`${base} | network 3.4 MB/s`);
 });
 
+test("a focused pill never names the rate of another workspace (#112 review)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockImplementation(async (id) =>
+    id === "w1" ? { readPerSec: 1200, writtenPerSec: 0 } : null,
+  );
+  const { rerender } = render(<StatusPill workspace={ws()} />);
+  await within(pill()).findByText("1.2 KB/s");
+  act(() => pill().focus());
+  expect(pill()).toHaveAccessibleName(/\| network 1\.2 KB\/s$/);
+
+  // Same pill element, another workspace (AppToolbar does not remount it).
+  rerender(<StatusPill workspace={ws({ id: "w2" })} />);
+  await vi.waitFor(() => expect(ipc.workspaceThroughput).toHaveBeenCalledWith("w2"));
+  expect(pill()).toHaveFocus();
+  expect(pill()).toHaveAccessibleName("LOCAL | PostgreSQL 16.4 : Demo : tablemax_demo : public.orders");
+});
+
+test("a focused pill drops the rate from its name when the workspace disconnects (#112 review)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 1200, writtenPerSec: 0 });
+  const { rerender } = render(<StatusPill workspace={ws()} />);
+  await within(pill()).findByText("1.2 KB/s");
+  act(() => pill().focus());
+  rerender(<StatusPill workspace={ws({ status: "disconnected" })} />);
+  expect(pill()).toHaveFocus();
+  expect(pill()).toHaveAccessibleName(`LOCAL | ${s.disconnected("Demo")}`);
+});
+
 test("an idle connection reads 0 B/s (#112)", async () => {
   vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 0, writtenPerSec: 0 });
   render(<StatusPill workspace={ws()} />);
