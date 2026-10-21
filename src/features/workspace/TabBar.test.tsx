@@ -1,6 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { strings } from "../../lib/strings";
 import type { ObjectRef } from "../../lib/types";
 import { useChrome } from "../../stores/chrome";
@@ -259,9 +259,15 @@ test("back_forward_soft_disabled: off at the ends, they keep their tooltip and d
   const user = userEvent.setup();
   render(<TooltipLayer />);
   setup([q("a", "Query 1"), q("b", "Query 2")]);
+  // The store's navigate is what goBack / goForward call (no trail here): a spy, so the
+  // check fails if a press reaches them (navigate itself would refuse at the ends).
+  const real = useWorkspaces.getState().navigate;
+  onTestFinished(() => useWorkspaces.setState({ navigate: real }));
+  const navigate = vi.fn(() => false);
+  useWorkspaces.setState({ navigate });
   const back = screen.getByRole("button", { name: strings.workspace.back });
   const forward = screen.getByRole("button", { name: strings.workspace.forward });
-  const moved = () => ws().activeTabId !== "a" || ws().tabs.length !== 2;
+  const moved = () => navigate.mock.calls.length > 0 || ws().activeTabId !== "a";
   await expectSoftDisabled(user, back, strings.workspace.back, moved);
   await expectSoftDisabled(user, forward, strings.workspace.forward, moved);
 });

@@ -160,17 +160,45 @@ test("commit_group_soft_disabled: with nothing pending Discard, Preview and Comm
   await expectSoftDisabled(user, button(t.discard), t.discard, () => discard.mock.calls.length > 0);
   await expectSoftDisabled(user, button(t.preview), t.preview, () => useChrome.getState().previews.t1 !== undefined);
   await expectSoftDisabled(user, button(t.commit), t.commit, () => commit.mock.calls.length > 0);
-  // The commit's other reasons: its own commit running, the cell editor open.
+  // The commit's other reasons, with changes pending: its own commit running, an unknown
+  // outcome of the last one, the cell editor open.
   act(() => {
     usePendingChanges.getState().addInsert("t1", obj);
   });
-  act(() => usePendingChanges.setState({ editorOpen: { t1: true } }));
-  expect(button(t.commit)).toHaveAttribute("aria-disabled", "true");
-  await user.click(button(t.commit));
-  expect(commit).not.toHaveBeenCalled();
-  act(() => usePendingChanges.setState({ editorOpen: {} }));
+  const offWhile = async (on: () => void, off: () => void) => {
+    act(on);
+    expect(button(t.commit)).toHaveAttribute("aria-disabled", "true");
+    await user.click(button(t.commit));
+    expect(commit).not.toHaveBeenCalled();
+    act(off);
+    expect(button(t.commit)).not.toHaveAttribute("aria-disabled");
+  };
+  await offWhile(
+    () => usePendingChanges.setState({ committing: { t1: true } }),
+    () => usePendingChanges.setState({ committing: {} }),
+  );
+  const tab = () => usePendingChanges.getState().tabs.t1;
+  await offWhile(
+    () => usePendingChanges.setState((s) => ({ tabs: { ...s.tabs, t1: { ...tab(), outcomeUnknown: true } } })),
+    () => usePendingChanges.setState((s) => ({ tabs: { ...s.tabs, t1: { ...tab(), outcomeUnknown: false } } })),
+  );
+  await offWhile(
+    () => usePendingChanges.setState({ editorOpen: { t1: true } }),
+    () => usePendingChanges.setState({ editorOpen: {} }),
+  );
   await user.click(button(t.commit));
   expect(commit).toHaveBeenCalledTimes(1);
+});
+
+test("a press or a double press on an off toolbar button never moves nor maximizes the window (#110)", async () => {
+  const user = userEvent.setup();
+  setup();
+  const preview = screen.getByRole("button", { name: t.preview });
+  expect(preview).toHaveAttribute("aria-disabled", "true");
+  await user.click(preview);
+  await user.dblClick(preview);
+  expect(ipc.windowStartDrag).not.toHaveBeenCalled();
+  expect(ipc.windowToggleMaximize).not.toHaveBeenCalled();
 });
 
 test("toolbar_buttons_soft_disabled: Sidebar, Database and Reload off while disconnected, Row details outside a table tab (#110)", async () => {
@@ -180,6 +208,11 @@ test("toolbar_buttons_soft_disabled: Sidebar, Database and Reload off while disc
   const button = (name: string) => screen.getByRole("button", { name });
   await expectSoftDisabled(user, button(t.sidebar), t.sidebar, () => !useWorkspaces.getState().sidebarVisible);
   await expectSoftDisabled(user, button(t.database), t.database, () => useChrome.getState().paletteRequest !== null);
+  // Reload and Row details: their handlers also check the state (`reloadWorkspace` returns
+  // while disconnected, Row details needs a table tab), and neither has a store seam ahead of
+  // that check, so these two "does nothing" checks cannot fail by themselves. The click guard
+  // itself is proven in src/lib/softDisabled.test.tsx; here they check aria-disabled, the
+  // tooltip on hover and focus, and that the button is reachable.
   await expectSoftDisabled(user, button(t.reload), t.reload, () => Object.keys(useChrome.getState().reloads).length > 0);
   await expectSoftDisabled(user, button(t.rowDetails), t.rowDetails, () => useChrome.getState().rowDetailsOpen);
 });
@@ -221,15 +254,14 @@ test("commit_group_replaces_the_edit_strip: pending count, Cancel while committi
   await user.keyboard("{Enter}");
   await user.keyboard(" ");
   expect(commitSpy).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: t.discard })).toBeEnabled();
+  expect(screen.getByRole("button", { name: t.discard })).not.toHaveAttribute("aria-disabled");
   // A tab of another workspace committing never blocks this one.
   act(() => usePendingChanges.setState({ committingIn: { w2: "tX" } }));
-  expect(commit).toBeEnabled();
   expect(commit).not.toHaveAttribute("aria-disabled");
   expect(commit).toHaveAccessibleDescription(strings.grid.pendingCount(2));
   expect(commit).not.toHaveAttribute("data-tooltip", strings.grid.otherTabCommitting);
   act(() => usePendingChanges.setState({ committingIn: {} }));
-  expect(commit).toBeEnabled();
+  expect(commit).not.toHaveAttribute("aria-disabled");
   expect(commit).not.toHaveAttribute("data-tooltip", strings.grid.otherTabCommitting);
 });
 
