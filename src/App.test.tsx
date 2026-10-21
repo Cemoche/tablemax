@@ -447,6 +447,24 @@ describe("unsaved edits in the connection form are never dropped silently", () =
     expect(ipc.connectionSave).not.toHaveBeenCalled();
   });
 
+  test("Escape over the form in an app modal (Settings, the palette) closes only that modal (#118)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("option", { name: "Dev PG" });
+    await editRow(user, "Dev PG");
+    await user.keyboard("{Control>},{/Control}");
+    await screen.findByRole("dialog", { name: strings.settings.title });
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: strings.settings.title })).toBeNull();
+    expect(nameField()).toHaveValue("Dev PG");
+    await user.keyboard("{Control>}p{/Control}");
+    await screen.findByRole("dialog", { name: strings.palette.label });
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: strings.palette.label })).toBeNull();
+    expect(nameField()).toHaveValue("Dev PG");
+    expect(discardDialog()).toBeNull();
+  });
+
   test("the form kept behind a workspace ignores Escape (#118)", async () => {
     vi.mocked(ipc.sessionLoad).mockResolvedValue(JSON.stringify(session));
     const user = userEvent.setup();

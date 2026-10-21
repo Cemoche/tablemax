@@ -123,7 +123,7 @@ export function ConnectionForm({
    * The field whose suggestion list may be open: the webview shows it on typing, ↓ / ↑ or a
    * click, and closes it on Escape in its default action, after the page's listeners. No
    * API tells whether it is open, so its first Escape is left to it (one Escape too many when
-   * nothing matched); Enter, Tab, Escape and leaving the field end it.
+   * nothing matched); Enter, Escape and leaving the field end it.
    */
   const suggesting = useRef<HTMLInputElement | null>(null);
   const items = useConnections((s) => s.items);
@@ -317,9 +317,10 @@ export function ConnectionForm({
         onKeyDown={(e) => {
           if (!suggests(e.target)) return;
           if (e.key === "ArrowDown" || e.key === "ArrowUp") suggesting.current = e.target;
-          else if (e.key === "Enter" || e.key === "Tab") suggesting.current = null;
+          else if (e.key === "Enter") suggesting.current = null;
         }}
         onBlur={(e) => {
+          // React types a bubbled blur's target as the form itself: widened to compare.
           if (suggesting.current === (e.target as EventTarget)) suggesting.current = null;
         }}
         className={formClass}
