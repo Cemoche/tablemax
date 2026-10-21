@@ -448,9 +448,16 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 > déduit du caractère tapé) et la webview ne connaît pas la disposition active. Vérifié
 > touche par touche pour us, fr, de, us(dvorak), il, gr, ru (valeurs xkeyboard-config,
 > `src/test/layouts.ts`) : chaque défaut a une touche, une touche ne vaut qu'une combinaison.
-> Conséquence voulue : sur une disposition non latine, une touche qui tape une ponctuation
-> ASCII suit ce caractère, pas sa position US (russe : Ctrl+/ = `Ctrl+Shift+\` ou la touche
-> ISO « / » ; hébreu : Ctrl+/ = la touche Q, crochets tels que tapés).
+> Provisoire sur les dispositions non latines (#131 : y garder les positions US, en retenant
+> l'écriture de la dernière lettre tapée) : une touche qui y tape une ponctuation ASCII suit
+> ce caractère, pas sa position US (russe : Ctrl+/ = `Ctrl+Shift+\` ou la touche ISO « / » ;
+> hébreu : Ctrl+/ = la touche Q, crochets tels que tapés). QWERTZ reste ainsi (Ctrl+/ =
+> Ctrl+Shift+7) ; sa touche « + » vaut Ctrl+] (onglet suivant) et non le zoom, c'est #132.
+> Ctrl+AltGr sous Linux (Ctrl seul, caractère d'AltGr) : sur la rangée des chiffres la touche
+> reste son chiffre (AZERTY Ctrl+AltGr+5 « [ » = Ctrl+5) ; ailleurs le caractère compte
+> (AZERTY Ctrl+AltGr+« ) » tape « ] » = Ctrl+], onglet suivant, au lieu de Ctrl+- avant).
+> L'enregistreur des réglages ignore les touches mortes : AZERTY Ctrl+^ et QWERTZ Ctrl+´
+> valent Ctrl+[ et Ctrl+= par position mais ne s'enregistrent pas.
 
 Règle : un raccourci n'existe que dans son contexte (grille, éditeur, barre de filtres) quand
 TablePlus le réutilise (⌘I, ⌘F, ⌘←) ; tous restent réassignables (registre existant) ; un
