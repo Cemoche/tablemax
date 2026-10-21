@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Columns2, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
+import { softDisabled } from "../../lib/softDisabled";
 import { strings } from "../../lib/strings";
 import { tip, tipIfCut } from "../../lib/tooltip";
 import { usePendingChanges } from "../../stores/pendingChanges";
@@ -19,7 +20,7 @@ import { goBack, goForward, useCanNavigate } from "./navigation";
 
 const S = strings.workspace;
 const focusRing = "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent";
-const iconButton = `flex size-7 shrink-0 items-center justify-center rounded-md text-icon hover:bg-tab disabled:text-icon-dim disabled:hover:bg-transparent aria-disabled:text-icon-dim aria-disabled:hover:bg-transparent ${focusRing}`;
+const iconButton = `flex size-7 shrink-0 items-center justify-center rounded-md text-icon hover:bg-tab aria-disabled:text-icon-dim aria-disabled:hover:bg-transparent ${focusRing}`;
 
 /**
  * The tab bar (spec §2.3, 38 px): back / forward through the workspace's history, the tabs as
@@ -141,12 +142,13 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
 
   return (
     <div className="flex h-[38px] shrink-0 items-center gap-1 border-b border-sep bg-win px-1.5">
+      {/* Off at the ends of the history, but still hovered and focused for their tooltip
+          (#110): WebKitGTK may give a native disabled button no hover event. */}
       <button
         type="button"
         aria-label={S.back}
         {...tip(S.back, backShortcut)}
-        disabled={!can.back}
-        onClick={() => goBack(id)}
+        {...softDisabled(!can.back, () => goBack(id))}
         className={iconButton}
       >
         <ChevronLeft aria-hidden="true" size={16} />
@@ -155,8 +157,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
         type="button"
         aria-label={S.forward}
         {...tip(S.forward, forwardShortcut)}
-        disabled={!can.forward}
-        onClick={() => goForward(id)}
+        {...softDisabled(!can.forward, () => goForward(id))}
         className={iconButton}
       >
         <ChevronRight aria-hidden="true" size={16} />
@@ -215,10 +216,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                     aria-label={S.closeTab(t.title)}
                     {...tip(busy ? strings.grid.closeWhileCommitting : S.closeTab(t.title))}
                     // Still hovered for its reason while a commit runs; does nothing (review #109).
-                    aria-disabled={busy || undefined}
-                    onClick={() => {
-                      if (!busy) closeTab(id, t.id);
-                    }}
+                    {...softDisabled(busy, () => closeTab(id, t.id))}
                     className={`absolute left-1.5 z-10 flex size-5 items-center justify-center rounded-full text-icon aria-disabled:opacity-40 ${
                       active
                         ? // A lone tab spans the bar, its × on hover or focus only (#103, #104).
@@ -269,7 +267,7 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
           );
         })}
       </div>
-      <button type="button" aria-label={S.split} aria-disabled="true" {...tip(S.splitSoon)} className={iconButton}>
+      <button type="button" aria-label={S.split} {...softDisabled(true)} {...tip(S.splitSoon)} className={iconButton}>
         <Columns2 aria-hidden="true" size={16} />
       </button>
       <TabList workspace={workspace} />
