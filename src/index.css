@@ -55,9 +55,11 @@
   --color-accent: var(--accent);
   --color-accent-strong: var(--accent-strong);
   --color-accent-contrast: var(--accent-contrast);
+  --color-accent-text: var(--accent-text);
   --color-danger: var(--danger);
   --color-danger-strong: var(--danger-strong);
   --color-danger-contrast: var(--danger-contrast);
+  --color-danger-text: var(--danger-text);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-env-local: var(--env-local);

@@ -326,12 +326,82 @@ test("danger_fill_contrast: a destructive button's label reads 4.5:1 on --danger
   expect(contrastRatio(onDanger, values(DARK_FORCED)["--danger"])).toBeLessThan(4.5);
 });
 
-test("danger_text_contrast: --danger as text (errors) reads 4.5:1 on the content, dialogs and sidebar (#128)", () => {
+/**
+ * The backgrounds under --accent-text, from its uses (#129): Breadcrumb links (--content,
+ * hovered --seg-sel), Row detail "→ table" links (--side, hovered --seg-sel), Structure
+ * foreign key links (--win), the grid's FK indicator (linkColor: --row-a, --row-b, and --sel
+ * in a selected column, Glide's accentLight). On an edited cell, a deleted row or a selected
+ * row the indicator takes that row's text colour (gridTheme.ts).
+ */
+const ACCENT_TEXT_BACKGROUNDS = ["--content", "--seg-sel", "--side", "--win", "--row-a", "--row-b", "--sel"];
+
+/**
+ * The backgrounds under --danger-text, from its uses (#129):
+ * - --content (= --surface): dialogs, palette, settings panes, connection form, results and
+ *   pending changes panels, cell editor overlay, safe mode alert;
+ * - --win (= --bg): table tab notices, disconnected workspace, Structure and Index tabs, the
+ *   toolbar's safe mode button;
+ * - --side: sidebar (failed object row, history, saved queries), filter bar, row detail;
+ * - --filter-applied: a filter row's reading on an applied row;
+ * - --pill: filter SQL preview, page popover;
+ * - --btn: query Cancel, history Clear, SSL Browse buttons;
+ * - --seg-sel (= --surface-2): those buttons, dialog danger buttons, sidebar rows and toolbar
+ *   buttons hovered or expanded;
+ * - --row-a, --row-b, --sel: a failed row in the grid (a selected column paints --sel).
+ *   On a change fill (edited cell, inserted or deleted row) the fill's own text wins.
+ */
+const DANGER_TEXT_BACKGROUNDS = [
+  "--content",
+  "--win",
+  "--side",
+  "--filter-applied",
+  "--pill",
+  "--btn",
+  "--seg-sel",
+  "--row-a",
+  "--row-b",
+  "--sel",
+];
+
+test("accent_as_text_contrast: --accent-text reads 4.5:1 on every background it sits on, in both themes (#129)", () => {
   for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
     const v = { ...values(LIGHT), ...values(selector) };
-    // --surface (dialogs) is an alias of --content.
-    for (const bg of ["--content", "--side", "--win", "--row-a", "--row-b", "--search", "--bottom"]) {
-      expect(contrastRatio(v["--danger"], v[bg]), `${selector} danger on ${bg}`).toBeGreaterThanOrEqual(4.5);
+    expect(values(selector)["--accent-text"], `${selector} accent-text`).toMatch(/^#[0-9A-F]{6}$/i);
+    for (const bg of ACCENT_TEXT_BACKGROUNDS) {
+      expect(contrastRatio(v["--accent-text"], v[bg]), `${selector} accent-text on ${bg}`).toBeGreaterThanOrEqual(4.5);
     }
+    // Still the accent: same hue as --accent.
+    expect(Math.abs(hue(v["--accent-text"]) - hue(v["--accent"])), `${selector} hue`).toBeLessThan(5);
+  }
+  // The reason for the token: the §5.1 accent is 4.02:1 (light) / 4.24:1 (dark) on --content.
+  for (const selector of [LIGHT, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    expect(contrastRatio(v["--accent"], v["--content"]), selector).toBeLessThan(4.5);
+  }
+});
+
+test("danger_as_text_contrast: --danger-text reads 4.5:1 on every background it sits on, in both themes (#129)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    expect(values(selector)["--danger-text"], `${selector} danger-text`).toMatch(/^#[0-9A-F]{6}$/i);
+    for (const bg of DANGER_TEXT_BACKGROUNDS) {
+      expect(contrastRatio(v["--danger-text"], v[bg]), `${selector} danger-text on ${bg}`).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(Math.abs(hue(v["--danger-text"]) - hue(v["--danger"])), `${selector} hue`).toBeLessThan(5);
+    // --danger stays for borders and outlines (aria-invalid fields, the dialog danger
+    // button's border): 3:1, non-text, on the fields and surfaces they edge.
+    for (const bg of ["--content", "--search", "--pill"]) {
+      expect(contrastRatio(v["--danger"], v[bg]), `${selector} danger border on ${bg}`).toBeGreaterThanOrEqual(3);
+    }
+  }
+  // The reason for the token (#128): --danger is under 4.5:1 on dark --btn, --pill,
+  // --seg-sel and --sel, and on light --seg-sel and --sel.
+  const dark = { ...values(LIGHT), ...values(DARK_FORCED) };
+  for (const bg of ["--btn", "--pill", "--seg-sel", "--sel"]) {
+    expect(contrastRatio(dark["--danger"], dark[bg]), `dark danger on ${bg}`).toBeLessThan(4.5);
+  }
+  const light = values(LIGHT);
+  for (const bg of ["--seg-sel", "--sel"]) {
+    expect(contrastRatio(light["--danger"], light[bg]), `light danger on ${bg}`).toBeLessThan(4.5);
   }
 });

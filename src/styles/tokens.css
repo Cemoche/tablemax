@@ -51,6 +51,10 @@
   /* A deeper accent under white text (#103): selected rows, filled controls. White reads
      5.8:1 on it, 4.0:1 on --accent. */
   --accent-strong: #0062CC;
+  /* The accent as a text colour (#129): links, the grid's FK indicator. --accent reads
+     4.02:1 (light) / 4.24:1 (dark) on --content; this one, same hue, reads 4.67:1 (light) /
+     4.63:1 (dark) on --sel, the hardest background it sits on. */
+  --accent-text: #0057B5;
   --cell-focus: #FF4245;
   --inserted: #DAEBC2;
   --modified: #FFE18E;
@@ -112,6 +116,11 @@
   /* The fill of a destructive button under its label (#128): --danger keeps the hue but
      white reads 2.78:1 on it in dark. --danger-contrast reads 5.6:1 (light) / 5.1:1 (dark). */
   --danger-strong: #C62828;
+  /* --danger as a text colour (#129): error messages, a failed row, destructive labels.
+     --danger is under 4.5:1 on --seg-sel / --sel (and dark --btn / --pill); this one, same
+     hue, reads 4.66:1 (light) / 4.62:1 (dark) on --sel, the hardest background. --danger
+     stays for borders and outlines. */
+  --danger-text: #AD2323;
   --success: #2e7d32;
   --warning: #b26a00;
   --env-local: #2e7d32;
@@ -185,6 +194,7 @@
     --filter-applied: #232D3F;
     --accent: #3A7BF6;
     --accent-strong: #2B63D9;
+    --accent-text: #92B6FA;
     --cell-focus: #FF4245;
     --inserted: #558C3A;
     --modified: #8B6826;
@@ -234,6 +244,7 @@
     --sql-selection: #003F84;
     --danger: #ff6b6b;
     --danger-strong: #CC3333;
+    --danger-text: #FF9999;
     --success: #4cc38a;
     --warning: #f0b429;
     --env-local: #4cc38a;
@@ -273,6 +284,7 @@
   --filter-applied: #232D3F;
   --accent: #3A7BF6;
   --accent-strong: #2B63D9;
+  --accent-text: #92B6FA;
   --cell-focus: #FF4245;
   --inserted: #558C3A;
   --modified: #8B6826;
@@ -322,6 +334,7 @@
   --sql-selection: #003F84;
   --danger: #ff6b6b;
   --danger-strong: #CC3333;
+  --danger-text: #FF9999;
   --success: #4cc38a;
   --warning: #f0b429;
   --env-local: #4cc38a;
