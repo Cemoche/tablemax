@@ -264,3 +264,19 @@ test("Alt+← / Alt+→ go back and forward in the workspace's tab history, not 
   });
   expect(activeId()).toBe("c");
 });
+
+test("the active tab controls the tab content, a tabpanel named by the tab (Task 11)", () => {
+  const tab = screen.getByRole("tab", { name: "Query 1" });
+  const panel = screen.getByRole("tabpanel", { name: "Query 1" });
+  expect(tab).toHaveAttribute("aria-controls", panel.id);
+  expect(panel).toHaveAttribute("data-tab-content");
+});
+
+test("with no tab the content is no tabpanel", () => {
+  cleanup();
+  render(<WorkspaceView workspace={{ ...workspace, tabs: [], activeTabId: null, mru: [] }} />);
+  const content = screen.getByLabelText(strings.workspace.tabContentLabel);
+  expect(content).toHaveAttribute("data-tab-content");
+  expect(content).not.toHaveAttribute("role");
+  expect(content).not.toHaveAttribute("aria-labelledby");
+});

@@ -14,6 +14,7 @@ import {
   restoreFocusOnClose,
 } from "../sidebar/ContextMenu";
 import { TabList } from "./TabList";
+import { tabDomId, tabPanelDomId } from "./tabDom";
 import { goBack, goForward, useCanNavigate } from "./navigation";
 
 const S = strings.workspace;
@@ -51,10 +52,8 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
    * keyboard or the menu ("active"), a tab after its rename by Enter or Escape.
    */
   const refocus = useRef<string | null>(null);
-  const domId = useId();
-  const tabDomId = (tabId: string) => `${domId}-tab-${tabId}`;
   const tabButton = (tabId: string | null) =>
-    tabId ? (document.getElementById(tabDomId(tabId)) as HTMLElement | null) : null;
+    tabId ? (document.getElementById(tabDomId(id, tabId)) as HTMLElement | null) : null;
 
   // The active tab scrolls into view (a shortcut or the tab list may pick a hidden one).
   useLayoutEffect(() => {
@@ -232,8 +231,9 @@ export function TabBar({ workspace }: { workspace: Workspace }) {
                   <button
                     type="button"
                     role="tab"
-                    id={tabDomId(t.id)}
+                    id={tabDomId(id, t.id)}
                     aria-selected={active}
+                    aria-controls={active ? tabPanelDomId(id) : undefined}
                     tabIndex={active ? 0 : -1}
                     aria-keyshortcuts="Delete F2 Shift+F10"
                     {...tipIfCut(t.title)}

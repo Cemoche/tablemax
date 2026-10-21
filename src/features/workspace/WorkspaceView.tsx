@@ -10,6 +10,7 @@ import { TableDataTab } from "../grid/TableDataTab";
 import { Sidebar, useSidebarShortcuts } from "../sidebar/Sidebar";
 import { TabBar } from "./TabBar";
 import { TabSwitcher } from "./TabSwitcher";
+import { tabDomId, tabPanelDomId } from "./tabDom";
 import { useNavigationShortcuts } from "./navigation";
 
 /**
@@ -140,9 +141,13 @@ export function WorkspaceView({ workspace, connectError = null }: Props) {
             </div>
           )}
           <TabSwitcher workspace={workspace} />
+          {/* The active tab's panel, named by the tab (aria-labelledby wins over aria-label). */}
           <div
             data-tab-content=""
             tabIndex={-1}
+            id={tabPanelDomId(id)}
+            role={active ? "tabpanel" : undefined}
+            aria-labelledby={active ? tabDomId(id, active.id) : undefined}
             aria-label={strings.workspace.tabContentLabel}
             className="min-h-0 flex-1 overflow-auto outline-none"
           >
