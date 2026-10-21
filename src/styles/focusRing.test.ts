@@ -46,6 +46,10 @@ test("ringsWithoutStyle finds an outline width without its style", () => {
 });
 
 test("focus_ring_visible: every outline-none focus ring also sets outline-solid", () => {
-  const bad = sources("src").flatMap((f) => ringsWithoutStyle(readFileSync(f, "utf8")).map((m) => `${f}: ${m}`));
+  const files = sources("src");
+  // The scan must see the app, not an empty or wrong directory.
+  expect(files.length).toBeGreaterThan(100);
+  expect(files).toContain(join("src", "features", "palette", "CommandPalette.tsx"));
+  const bad = files.flatMap((f) => ringsWithoutStyle(readFileSync(f, "utf8")).map((m) => `${f}: ${m}`));
   expect(bad).toEqual([]);
 });
