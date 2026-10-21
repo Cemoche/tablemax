@@ -114,8 +114,13 @@ Screenshots: `<pass>-pill.png`, `<pass>-pill-prod-960.png`
 ## 4. Connections screen and form
 
 - [ ] Start with no session: welcome pane on the left (our icon, "TableMax", version,
-      **Create connection…**, **Import connections…**), the list on the right. Light: grey
-      pane, white list; dark: both dark, told apart by the separator.
+      **Create connection…**, **Import connections…**, **Open SQLite file…**), the list on
+      the right. Light: grey pane, white list; dark: both dark, told apart by the separator.
+- [ ] **Open SQLite file…** (#117): the native picker shows "SQLite databases" (`.sqlite`,
+      `.sqlite3`, `.db`, `.db3`) and "All files". Cancel: nothing changes. Pick
+      `demo.sqlite`: a new connection's form (SQLite, the path, the file's name), nothing
+      in the list yet; Connect saves it and opens the workspace. Pick a text file renamed
+      `.db`: the connect error shows over the form. Back on the unsaved form asks first.
 - [ ] Rows about 52 px: driver tile `Pg` / `My` / `Ma` / `SL` with white letters, colour dot
       (visible for all six colours, the pale ones in light too), name, tag badge, monospace
       subtitle `local : localhost:5432 : db` (a SQLite row shows its path).
