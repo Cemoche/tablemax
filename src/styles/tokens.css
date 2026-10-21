@@ -109,6 +109,9 @@
   --sql-selection: #FFEA84;
   /* Not in §5.1: status colors, kept until the components using them are redone. */
   --danger: #c62828;
+  /* The fill of a destructive button under its label (#128): --danger keeps the hue but
+     white reads 2.78:1 on it in dark. --danger-contrast reads 5.6:1 (light) / 5.1:1 (dark). */
+  --danger-strong: #C62828;
   --success: #2e7d32;
   --warning: #b26a00;
   --env-local: #2e7d32;
@@ -120,6 +123,7 @@
   --row-selected: var(--accent-strong);
   --row-selected-text: #FFFFFF;
   --accent-contrast: #FFFFFF;
+  --danger-contrast: #FFFFFF;
   /* Engine tiles of the connection list (#88): our own colours, one per engine, the same
      in both themes; the monogram reads at least 4.5:1 on its tile. */
   --driver-pg: #2F5D8C;
@@ -229,6 +233,7 @@
     --sql-current: #30363F;
     --sql-selection: #003F84;
     --danger: #ff6b6b;
+    --danger-strong: #CC3333;
     --success: #4cc38a;
     --warning: #f0b429;
     --env-local: #4cc38a;
@@ -316,6 +321,7 @@
   --sql-current: #30363F;
   --sql-selection: #003F84;
   --danger: #ff6b6b;
+  --danger-strong: #CC3333;
   --success: #4cc38a;
   --warning: #f0b429;
   --env-local: #4cc38a;

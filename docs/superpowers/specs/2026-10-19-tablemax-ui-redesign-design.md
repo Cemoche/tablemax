@@ -349,6 +349,20 @@ Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E
 > aucun fond `--accent` opaque dans `src/`) et `accent_text_contrast` (`tokens.test.ts`, clair,
 > sombre média, sombre forcé).
 
+> Amendement 2026-10-21 (#128) : même règle pour le rouge. Nouveau `--danger-strong` #C62828
+> (clair, la valeur de `--danger`) / #CC3333 (sombre, même teinte), fond d'un bouton
+> destructif sous son libellé, avec `--danger-contrast` #FFFFFF (deux thèmes) : 5,62:1 /
+> 5,14:1, contre 2,78:1 pour du blanc sur `--danger` sombre (#ff6b6b). Seul utilisateur : le
+> bouton de confirmation de `ConfirmDialog` (Discard, Delete…), sans état survol ni pressé
+> propre. `--danger` reste pour le texte d'erreur, les bordures, anneaux et icônes ; comme
+> texte il fait ≥ 4,5:1 sur `--content` (= `--surface`, dialogues), `--side`, `--win`,
+> `--row-a/b`, `--search`, `--bottom` (5,62 / 6,01 sur `--content`), mais pas sur `--btn`
+> sombre (4,49:1), `--pill` sombre (4,23:1), `--seg-sel` (survol : 4,10:1 clair / 4,04:1
+> sombre) ni `--sel` (3,79 / 3,40) : à traiter avec #129. Tests : `danger_fill_guard`
+> (`src/styles/accentText.test.ts`, aucun fond `--danger` opaque dans `src/`),
+> `danger_fill_contrast` et `danger_text_contrast` (`tokens.test.ts`, clair, sombre média,
+> sombre forcé).
+
 ### 5.2 Dimensions (à 100 %)
 Barre du haut 52, pilules 34, boutons 28–32 ; colonne des connexions 80 ; barre latérale 262
 (min 240) ; en-tête de barre latérale 40 ; lignes d'arbre 24 ; onglets 38 (capsules 28) ;
