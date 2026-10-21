@@ -218,6 +218,31 @@ export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
   };
 }
 
+/**
+ * The inner band of the focused cell's two-tone ring (#135). Glide strokes its ring in
+ * `accentColor` (--cell-focus) on the cell's edge pixels (columns x and x + width, rows y and
+ * y + height; one pixel in on the last column / row); this draws `color`
+ * (--focus-ring-inner) on the next pixels in, so the ring reads 3:1 on every fill under it
+ * (the red alone is under 3:1 on --sel, the change fills and the selected rows).
+ */
+export function drawFocusInnerBand(
+  ctx: CanvasRenderingContext2D,
+  rect: { x: number; y: number; width: number; height: number },
+  color: string,
+  lastCol: boolean,
+  lastRow: boolean,
+): void {
+  /** The band's right and bottom pixels. */
+  const right = rect.x + rect.width - (lastCol ? 2 : 1);
+  const bottom = rect.y + rect.height - (lastRow ? 2 : 1);
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rect.x + 1.5, rect.y + 1.5, right - rect.x - 1, bottom - rect.y - 1);
+  ctx.restore();
+}
+
 /** The families after the first one of a CSS font-family list (the web font's fallbacks). */
 function fallbackFamilies(list: string): string {
   const i = list.indexOf(",");
@@ -294,6 +319,8 @@ export function useGridTheme(readVar: ReadVar = readCssVar, fontSize?: number) {
       rowNumbers: buildRowNumberColors(readVar),
       header: headerFont(readVar),
       edit: buildEditThemes(readVar),
+      /** The focused cell's inner band (`drawFocusInnerBand`); "" draws none. */
+      focusInner: readVar("--focus-ring-inner"),
       fontSize: size,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

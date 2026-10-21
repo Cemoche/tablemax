@@ -3,7 +3,15 @@ import { readFileSync } from "node:fs";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { contrastRatio } from "../../lib/contrast";
-import { buildEditThemes, buildGridTheme, buildRowNumberColors, buildRowThemes, headerFont, useGridTheme } from "./gridTheme";
+import {
+  buildEditThemes,
+  buildGridTheme,
+  buildRowNumberColors,
+  buildRowThemes,
+  drawFocusInnerBand,
+  headerFont,
+  useGridTheme,
+} from "./gridTheme";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -271,4 +279,37 @@ test("change_fill_text_contrast: every text the grid draws on a change fill read
       expect(contrastRatio(selected[key]!, selectedFill), `${name} selected ${key}`).toBeGreaterThanOrEqual(4.5);
     }
   }
+});
+
+/** A canvas context that records its stroked rectangles. */
+function strokes() {
+  const rects: { style: string; width: number; rect: number[] }[] = [];
+  const ctx = {
+    strokeStyle: "",
+    lineWidth: 0,
+    save: vi.fn(),
+    restore: vi.fn(),
+    setLineDash: vi.fn(),
+    strokeRect(x: number, y: number, w: number, h: number) {
+      rects.push({ style: ctx.strokeStyle, width: ctx.lineWidth, rect: [x, y, w, h] });
+    },
+  };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, rects };
+}
+
+test("focus_ring_two_tone: the focused cell's inner band runs 1 px inside Glide's --cell-focus ring (#135)", () => {
+  // Glide strokes the ring on the cell's edge pixels: x and x + width, y and y + height
+  // (x + width - 1 / y + height - 1 on the last column / row). The band takes the next ones in.
+  const { ctx, rects } = strokes();
+  drawFocusInnerBand(ctx, { x: 100, y: 50, width: 160, height: 24 }, "#000000", false, false);
+  expect(rects).toEqual([{ style: "#000000", width: 1, rect: [101.5, 51.5, 158, 22] }]);
+  // Last column and last row: the ring comes in by one pixel there, the band too.
+  const last = strokes();
+  drawFocusInnerBand(last.ctx, { x: 100, y: 50, width: 160, height: 24 }, "#ffffff", true, true);
+  expect(last.rects).toEqual([{ style: "#ffffff", width: 1, rect: [101.5, 51.5, 157, 21] }]);
+});
+
+test("useGridTheme gives the focus ring's inner band (--focus-ring-inner, #135)", () => {
+  const { result } = renderHook(() => useGridTheme((n) => ({ ...vars, "--focus-ring-inner": "#000000" })[n] ?? ""));
+  expect(result.current.focusInner).toBe("#000000");
 });

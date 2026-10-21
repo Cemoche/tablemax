@@ -86,6 +86,7 @@ const TOKENS: Record<string, string> = {
   "--deleted": "#8f2f31",
   "--text-2": "#afafaf",
   "--deleted-text": "#cccccc",
+  "--focus-ring-inner": "#ffffff",
 };
 beforeAll(() => {
   for (const [k, v] of Object.entries(TOKENS)) document.documentElement.style.setProperty(k, v);
@@ -782,4 +783,67 @@ test("focusRequest: each new value puts the focus in the grid, never the value i
   expect(focus).not.toHaveBeenCalled();
   view.rerender(<DataGrid data={data} editing={editing()} focusRequest={4} />);
   expect(focus).toHaveBeenCalledOnce();
+});
+
+/** Draws `cell` through the grid's drawCell; the rectangles it strokes and whether the content was drawn. */
+function drawAt(col: number, row: number, rect = { x: 100, y: 50, width: 160, height: 24 }) {
+  const rects: number[][] = [];
+  const styles: string[] = [];
+  const ctx = {
+    strokeStyle: "",
+    lineWidth: 1,
+    font: "",
+    textAlign: "",
+    textBaseline: "",
+    fillStyle: "",
+    save: vi.fn(),
+    restore: vi.fn(),
+    setLineDash: vi.fn(),
+    fillText: vi.fn(),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    stroke: vi.fn(),
+    strokeRect(x: number, y: number, w: number, h: number) {
+      rects.push([x, y, w, h]);
+      styles.push(ctx.strokeStyle);
+    },
+  };
+  const content = vi.fn();
+  const args = { ctx, rect, col, row, theme: editor!.theme, cell: editor!.getCellContent([col, row]) };
+  editor!.drawCell!(args as unknown as Parameters<NonNullable<DataEditorProps["drawCell"]>>[0], content);
+  return { rects, styles, content };
+}
+
+const at = (col: number, row: number): GridSelection => ({
+  columns: CompactSelection.empty(),
+  rows: CompactSelection.empty(),
+  current: { cell: [col, row], range: { x: col, y: row, width: 1, height: 1 }, rangeStack: [] },
+});
+
+test("focus_ring_two_tone: the focused cell gets the --focus-ring-inner band inside Glide's ring, read-only or editable (#135)", () => {
+  // An editable grid's selection follows the tab's selected row: give it the focused one.
+  const grid = (row: number | null, ed: boolean) => (
+    <DataGrid data={data} editing={ed ? { ...editing(), selectedRow: row } : undefined} sortable={false} />
+  );
+  for (const ed of [false, true]) {
+    const view = render(grid(null, ed));
+    // No cell yet: nothing but the content.
+    expect(drawAt(1, 1).rects).toEqual([]);
+    view.rerender(grid(1, ed));
+    act(() => editor!.onGridSelectionChange!(at(1, 1)));
+    const focused = drawAt(1, 1);
+    expect(focused.content).toHaveBeenCalled();
+    // Column 1 of 3, row 1 of 3: not the last ones.
+    expect(focused.rects).toEqual([[101.5, 51.5, 158, 22]]);
+    expect(focused.styles).toEqual(["#ffffff"]);
+    // Other cells: no band.
+    expect(drawAt(0, 1).rects).toEqual([]);
+    expect(drawAt(1, 0).rects).toEqual([]);
+    // The last column and row: Glide's ring comes in one pixel there, the band too.
+    view.rerender(grid(2, ed));
+    act(() => editor!.onGridSelectionChange!(at(2, 2)));
+    expect(drawAt(2, 2).rects).toEqual([[101.5, 51.5, 157, 21]]);
+    view.unmount();
+  }
 });
