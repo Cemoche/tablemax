@@ -2,9 +2,9 @@
 //! server by every network connection of the workspace (browse, SQL sessions, cancel
 //! requests), shown as a rate in the status pill.
 //!
-//! Bytes are counted where the app owns the byte stream: the SSH tunnel's forwarding loop
-//! (`ssh::tunnel`) or the loopback relay that direct connections dial (`relay`). Both
-//! forward with [`pump`], which wraps the server side in [`Counted`]. Counting costs one
+//! Bytes are counted where the app owns the byte stream, by wrapping the server side in
+//! [`Counted`]: the SSH tunnel's forwarding loop (`ssh::tunnel`, through [`pump`]), the
+//! PostgreSQL driver's own stream and the MySQL one-shot relays (`relay`). Counting costs one
 //! relaxed atomic add per read or write call (never per byte), with no lock and no
 //! allocation; the rate is only computed when asked ([`RateWindow::sample`], polled by
 //! the pill while it shows the workspace). Only byte counts are kept, never content.
