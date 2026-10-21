@@ -126,6 +126,22 @@ test("closing a tab with pending changes asks to discard them", async () => {
   expect(usePendingChanges.getState().count("t1")).toBe(0);
 });
 
+test("after Ctrl+W → Discard the focus goes to the tab now shown; Cancel gives it back (Task 11)", async () => {
+  usePendingChanges.getState().addInsert("t1", object);
+  render(<View />);
+  const users = screen.getByRole("tab", { name: "users" });
+  act(() => users.focus());
+  await userEvent.keyboard("{Control>}w{/Control}");
+  await userEvent.click(await screen.findByRole("button", { name: strings.grid.discardCancel }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await waitFor(() => expect(users).toHaveFocus());
+  await userEvent.keyboard("{Control>}w{/Control}");
+  await userEvent.click(await screen.findByRole("button", { name: strings.grid.discardOk }));
+  expect(current().tabs.map((t) => t.id)).toEqual(["q1"]);
+  // The closed tab took its opener along: the shown tab's content has the focus, not <body>.
+  await waitFor(() => expect(document.activeElement).toHaveAttribute("data-tab-content"));
+});
+
 test("Ctrl+S does nothing while the grid's cell editor is open", async () => {
   usePendingChanges.getState().addInsert("t1", object);
   usePendingChanges.getState().setEditorOpen("t1", true);
