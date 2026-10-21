@@ -261,9 +261,10 @@ middle (`1–300 of 1,250 rows`, `415 rows`, or `1 of 415 rows selected`), **Fil
 **Settings** (`Ctrl+,`, or the button at the bottom of the open connections column) has
 five sections: **General** (system title bar, version), **Table** (page size, exact count
 threshold), **Editor** (Auto LIMIT), **Fonts & Themes** (System / Light / Dark, **Interface
-size** 90 % to 130 %, data and editor font sizes, editor font) and **Keymap**, where every
-shortcut below can be changed (**Change**, then press the new combination; one already in
-use is refused) or reset.
+size** 90 % to 130 %, data and editor font sizes, editor font) and **Keymap**, where the
+shortcuts below can be changed (**Change**, then press the new combination; one already in
+use is refused) or reset. The grid's plain keys are fixed: `Enter` (Quick Look), `Space`
+(row details), `Delete` (delete rows), `Esc` and `Ctrl+click`.
 
 The defaults, on Linux and Windows. On macOS `Ctrl` is `⌘` and `Alt` is `⌥`, except
 `Ctrl+Tab`, `Ctrl+Shift+Tab` and `Ctrl+Space`, which stay `Ctrl`; the other macOS
@@ -280,7 +281,7 @@ differences are in the last column.
 | | `Ctrl+W` | Close the tab | |
 | | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab, most recent first | |
 | | `Ctrl+]` / `Ctrl+[`, `Ctrl+PageDown` / `Ctrl+PageUp` | Next / previous tab in bar order | |
-| | `Ctrl+1` … `Ctrl+9` | Go to tab 1 … 9 | |
+| | `Ctrl+1`, `Ctrl+2`, `Ctrl+3`, `Ctrl+4`, `Ctrl+5`, `Ctrl+6`, `Ctrl+7`, `Ctrl+8`, `Ctrl+9` | Go to tab 1 … 9 | |
 | | `Ctrl+Shift+]` / `Ctrl+Shift+[`, `Ctrl+Shift+PageDown` / `Ctrl+Shift+PageUp` | Next / previous open connection | |
 | | `Alt+←` / `Alt+→` | Back (the foreign key trail first) / forward | |
 | | `Ctrl+0` | Show or hide the sidebar | |
@@ -293,10 +294,10 @@ differences are in the last column.
 | | `Ctrl+Shift+Backspace` | Discard the pending changes (asks first) | |
 | | `Ctrl+Shift+P` | Preview the SQL of the pending changes | |
 | | `Ctrl+Space`, `Space` in the grid | Show or hide the row details | |
-| | `Alt+1` / `Alt+2` / `Alt+3` | Data / Structure / Index | also `⌘⌥[` / `⌘⌥]` |
-| | `Alt+R` | Reload this table's data | `⌥⌘R` |
+| | `Alt+1` / `Alt+2` / `Alt+3` | Data / Structure / Index | also `⌘+⌥+[` / `⌘+⌥+]` |
+| | `Alt+R` | Reload this table's data | `⌘+⌥+R` |
 | | `Ctrl+F` | Show or hide the filter bar | |
-| | `Alt+F` | Columns | `⌘⌥F` |
+| | `Alt+F` | Columns | `⌘+⌥+F` |
 | | `Ctrl+I` | Add a row | |
 | Table grid | `Enter` / `Alt+Enter` | Quick Look / edit the cell | |
 | | `Ctrl+Shift+C` | Copy the selected cells | |
@@ -308,7 +309,7 @@ differences are in the last column.
 | | `Ctrl+I` / `Ctrl+Shift+I` | Add a condition after this one / remove it | |
 | | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Apply all, joined by AND / by OR | |
 | | `Ctrl+↑` / `Ctrl+↓` | Previous / next condition | |
-| | `Alt+C` / `Alt+O` | Jump to the column / the operator | `⌘←` / `⌘→` |
+| | `Alt+C` / `Alt+O` | Jump to the column / the operator | `⌘+←` / `⌘+→` |
 | | `Esc` | Hide the bar | |
 | SQL tabs | `Ctrl+S` | Save the query | |
 | SQL editor | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Run the current statement (or the selection) / all | |
