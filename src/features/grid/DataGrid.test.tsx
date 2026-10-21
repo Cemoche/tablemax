@@ -82,7 +82,7 @@ const TOKENS: Record<string, string> = {
   "--modified": "#ffe18e",
   "--cell-text": "#262626",
   "--danger-text": "#ff9999",
-  "--inserted": "#558c3a",
+  "--inserted": "#2e5020",
   "--deleted": "#8f2f31",
   "--text-2": "#afafaf",
   "--deleted-text": "#cccccc",
@@ -636,7 +636,7 @@ test("a failed row reads in --danger-text; on a change fill (inserted, deleted, 
   // …but the edited cell keeps --modified under the text that reads on it.
   expect(editor!.getCellContent([2, 2]).themeOverride).toMatchObject({ bgCell: "#ffe18e", textDark: "#262626" });
   // An inserted or deleted row keeps its fill's text: red is under 4.5:1 on those fills.
-  expect(editor!.getRowThemeOverride!(0)).toMatchObject({ bgCell: "#558c3a", textDark: "#262626" });
+  expect(editor!.getRowThemeOverride!(0)).toMatchObject({ bgCell: "#2e5020", textDark: "#262626" });
   expect(editor!.getRowThemeOverride!(1)).toMatchObject({ bgCell: "#8f2f31", textDark: "#cccccc", linkColor: "#cccccc" });
   // The cue every failed row keeps: its number in --danger-text.
   const marker = editor!.renderers!.find((r) => r.kind === InnerGridCellKind.Marker)!;

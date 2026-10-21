@@ -408,12 +408,18 @@ test("danger_as_text_contrast: --danger-text reads 4.5:1 on every background it 
   }
 });
 
-/** CIE L*a*b* of a #RRGGBB colour (D65). */
-function lab(hex: string): [number, number, number] {
-  const [r, g, b] = [0, 1, 2].map((i) => {
+type Rgb = [number, number, number];
+
+/** Linear RGB (0–1) of a #RRGGBB colour. */
+function linear(hex: string): Rgb {
+  return [0, 1, 2].map((i) => {
     const c = parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16) / 255;
     return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
+  }) as Rgb;
+}
+
+/** CIE L*a*b* (D65) of a linear RGB colour. */
+function labOf([r, g, b]: Rgb): Rgb {
   const f = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
   const x = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
   const y = f(0.2126 * r + 0.7152 * g + 0.0722 * b);
@@ -421,10 +427,33 @@ function lab(hex: string): [number, number, number] {
   return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
 }
 
-/** CIE76 colour difference ΔE*ab of two #RRGGBB colours (about 2.3: just noticeable). */
-function deltaE(a: string, b: string): number {
-  const [p, q] = [lab(a), lab(b)];
+/** CIE76 colour difference ΔE*ab of two linear RGB colours. */
+function deltaELinear(a: Rgb, b: Rgb): number {
+  const [p, q] = [labOf(a), labOf(b)];
   return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+}
+
+/** CIE76 colour difference ΔE*ab of two #RRGGBB colours (about 2.3: just noticeable). */
+const deltaE = (a: string, b: string) => deltaELinear(linear(a), linear(b));
+
+/** Machado, Oliveira & Fernandes 2009, severity 1.0, applied in linear RGB. */
+const CVD: Record<string, number[][]> = {
+  protan: [
+    [0.152286, 1.052583, -0.204868],
+    [0.114503, 0.786281, 0.099216],
+    [-0.003882, -0.048116, 1.051998],
+  ],
+  deutan: [
+    [0.367322, 0.860646, -0.227968],
+    [0.280085, 0.672501, 0.047413],
+    [-0.01182, 0.04294, 0.968881],
+  ],
+};
+
+/** `hex` as seen with the colour vision deficiency `kind`, in linear RGB. */
+function simulate(hex: string, kind: string): Rgb {
+  const c = linear(hex);
+  return CVD[kind].map((row) => Math.min(1, Math.max(0, row[0] * c[0] + row[1] * c[1] + row[2] * c[2]))) as Rgb;
 }
 
 /**
@@ -436,6 +465,7 @@ function deltaE(a: string, b: string): number {
  */
 const CHANGE_FILL_TEXTS: Record<string, string[]> = {
   "--inserted": ["--cell-text", "--text"],
+  // The grid draws white on the dark --modified (the best text, gridTheme.ts); --cell-text reads too.
   "--modified": ["--cell-text", "--text"],
   "--deleted": ["--deleted-text", "--text"],
 };
@@ -469,6 +499,14 @@ test("change_fills_distinct: the three change fills stand apart from each other,
       for (const other of [...FILLS.slice(i + 1), "--row-a", "--row-b", "--sel", "--row-selected"]) {
         expect(deltaE(v[fill], row(other)), `${selector} ${fill} vs ${other}`).toBeGreaterThanOrEqual(20);
       }
+    }
+    // Inserted (green) and edited (amber) stay apart for red-green colour blindness too: a
+    // luminance gap, not the hue alone (#136 review: dark #43702E fell to ΔE 4.1 protan).
+    for (const kind of Object.keys(CVD)) {
+      expect(
+        deltaELinear(simulate(v["--inserted"], kind), simulate(v["--modified"], kind)),
+        `${selector} inserted vs modified, ${kind}`,
+      ).toBeGreaterThanOrEqual(10);
     }
   }
 });
