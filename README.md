@@ -314,6 +314,7 @@ differences are in the last column.
 | | `Alt+C` / `Alt+O` | Jump to the column / the operator | `⌘+←` / `⌘+→` |
 | | `Esc` | Hide the bar | |
 | SQL tabs | `Ctrl+S` | Save the query | |
+| | `Space`, `Ctrl+Space` in the results grid | Show or hide the row details | |
 | SQL editor | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Run the current statement (or the selection) / all | |
 | | `Ctrl+I`, `Ctrl+Shift+F` | Format (Beautify) | |
 | | `Ctrl+/` | Comment or uncomment the lines | |

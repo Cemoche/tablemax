@@ -127,7 +127,8 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > selected ») pendant le chargement de la page ou après un échec.
 
 > Amendement 2026-10-21 (#115) : le panneau montre aussi la ligne sélectionnée des résultats
-> d'un onglet SQL (remplace « pas de panneau sur les résultats d'un onglet SQL » ci-dessus).
+> d'un onglet SQL (remplace « pas de panneau sur les résultats d'un onglet SQL » ci-dessus,
+> et « le bouton y est désactivé », désormais seulement sans jeu de résultats).
 > Même composant, même interrupteur pour la fenêtre (ouvert dans un onglet de table, il l'est
 > dans un onglet SQL et inversement), même largeur, recherche, JSON indenté, NULL comme la
 > grille. Placé à droite de l'éditeur et des résultats (comme à droite de la grille d'un
