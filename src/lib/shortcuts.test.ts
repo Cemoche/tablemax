@@ -2,10 +2,13 @@ import { renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { DEFAULT_KEYMAP, type KeymapActionId, effectiveShortcuts, isValidShortcut } from "./keymapRegistry";
 import {
+  __setNonLatinLayoutForTests,
+  installLayoutTracker,
   isModalOpen,
   keyPressOf,
   matchCombination,
   matchShortcut,
+  nonLatinLayout,
   typesCharacter,
   useShortcut,
 } from "./shortcuts";
@@ -89,7 +92,8 @@ test("keyPressOf names a keydown as the matching reads it", () => {
   expect(name({ code: "KeyW", key: "z" })).toEqual({ key: "Z", shift: false });
   expect(name({ code: "KeyW", key: "ц" })).toEqual({ key: "W", shift: false });
   expect(name({ code: "KeyM", key: "," })).toEqual({ key: ",", shift: false });
-  expect(name({ code: "KeyW", key: "'" })).toEqual({ key: "W", shift: false });
+  // A letter position typing ASCII that names no shortcut: no name on a Latin layout (#131).
+  expect(name({ code: "KeyW", key: "'" })).toEqual({ key: "", shift: false });
   expect(name({ code: "Semicolon", key: "m" })).toEqual({ key: "M", shift: false });
   expect(name({ code: "Digit1", key: "&" })).toEqual({ key: "1", shift: false });
   expect(name({ code: "Comma", key: ";" })).toEqual({ key: ";", shift: false });
@@ -101,6 +105,16 @@ test("keyPressOf names a keydown as the matching reads it", () => {
   expect(name({ code: "F5", key: "F5" })).toEqual({ key: "F5", shift: false });
   expect(name({ code: "Enter", key: "Enter", shiftKey: true })).toEqual({ key: "Enter", shift: true });
   expect(name({ code: "IntlBackslash", key: "<" })).toEqual({ key: "", shift: false });
+  // On a non-Latin layout (#131): punctuation and letter positions by US position; a Latin
+  // letter typed is still that letter.
+  __setNonLatinLayoutForTests(true);
+  expect(name({ code: "KeyW", key: "'" })).toEqual({ key: "W", shift: false });
+  expect(name({ code: "KeyQ", key: "/" })).toEqual({ key: "Q", shift: false });
+  expect(name({ code: "Slash", key: "." })).toEqual({ key: "/", shift: false });
+  expect(name({ code: "Backslash", key: "/", shiftKey: true })).toEqual({ key: "\\", shift: true });
+  expect(name({ code: "BracketLeft", key: "}", shiftKey: true })).toEqual({ key: "[", shift: true });
+  expect(name({ code: "KeyW", key: "W", shiftKey: true })).toEqual({ key: "W", shift: true });
+  expect(name({ code: "Digit7", key: "?", shiftKey: true })).toEqual({ key: "7", shift: true });
 });
 
 test("modifiers must match exactly", () => {
@@ -330,38 +344,65 @@ const DEFAULT_SPECS = [
 ];
 const LAYOUT_NAMES = Object.keys(LAYOUTS) as LayoutName[];
 
-/** The presses of `layout` that match `spec`, as "Ctrl+Shift+Digit7 (/)", sorted. */
+/** Types `layout`'s letter at KeyA, as a user does: the tracker learns the layout's script (#131). */
+function typeLetterOf(layout: LayoutName): void {
+  installLayoutTracker();
+  window.dispatchEvent(key({ code: "KeyA", key: LAYOUTS[layout].KeyA[0] }));
+}
+
+/** The layouts whose letters are not Latin: punctuation by US position there (#131). */
+const NON_LATIN: readonly LayoutName[] = ["il", "gr", "ru"];
+
+/** The presses of `layout` that match `spec`, as "Ctrl+Shift+Digit7 (/)", sorted, after a letter typed. */
 function whereIs(layout: LayoutName, spec: string): string[] {
+  typeLetterOf(layout);
   return presses(layout)
     .filter((p) => matchCombination(key(p), spec))
     .map(describePress)
     .sort();
 }
 
-test("every default combination has a key on every layout (#105)", () => {
+test("typing a letter tells a non-Latin layout from a Latin one (#131)", () => {
+  for (const layout of LAYOUT_NAMES) {
+    typeLetterOf(layout);
+    expect(nonLatinLayout(), layout).toBe(NON_LATIN.includes(layout));
+  }
+});
+
+test("every default combination has a key on every layout (#105, #131)", () => {
   platform("Linux x86_64");
   for (const layout of LAYOUT_NAMES) {
     for (const spec of DEFAULT_SPECS) expect(whereIs(layout, spec), `${layout} ${spec}`).not.toEqual([]);
   }
 });
 
-test("a key press matches one combination at most, on every layout (#105)", () => {
+/** Runs `check` for every layout with the tracker in both states (a stale state included, #131). */
+function eachLayoutAndState(check: (layout: LayoutName, state: string) => void): void {
+  for (const nonLatin of [false, true]) {
+    __setNonLatinLayoutForTests(nonLatin);
+    for (const layout of LAYOUT_NAMES) check(layout, nonLatin ? "non-Latin" : "Latin");
+  }
+  __setNonLatinLayoutForTests(false);
+}
+
+test("a key press matches one combination at most, on every layout (#105, #131)", () => {
   platform("Linux x86_64");
-  for (const layout of LAYOUT_NAMES) {
+  eachLayoutAndState((layout, state) => {
     for (const p of presses(layout)) {
       const matched = DEFAULT_SPECS.filter((spec) => matchCombination(key(p), spec));
-      expect(matched.length, `${layout} ${describePress(p)}: ${matched.join(", ")}`).toBeLessThanOrEqual(1);
+      expect(matched.length, `${layout} ${state} ${describePress(p)}: ${matched.join(", ")}`).toBeLessThanOrEqual(1);
     }
-  }
+  });
 });
 
-test("no Ctrl+Alt press (AltGr on Windows) matches a default off macOS (#102, #105)", () => {
+test("no Ctrl+Alt press (AltGr on Windows) matches a default off macOS (#102, #105, #131)", () => {
   platform("Linux x86_64");
-  for (const layout of LAYOUT_NAMES) {
+  eachLayoutAndState((layout, state) => {
     for (const p of presses(layout).filter((q) => q.ctrlKey && q.altKey)) {
-      expect(DEFAULT_SPECS.filter((spec) => matchCombination(key(p), spec)), `${layout} ${describePress(p)}`).toEqual([]);
+      const matched = DEFAULT_SPECS.filter((spec) => matchCombination(key(p), spec));
+      expect(matched, `${layout} ${state} ${describePress(p)}`).toEqual([]);
     }
-  }
+  });
   // AltGr on Linux (no Ctrl, no Alt) gives a plain character: no shortcut.
   expect(DEFAULT_SPECS.some((spec) => matchCombination(key({ code: "Digit5", key: "[" }), spec))).toBe(false);
   // Ctrl+AltGr on Linux reports Ctrl alone with the AltGr character. On AZERTY's digit row
@@ -376,16 +417,16 @@ test("no Ctrl+Alt press (AltGr on Windows) matches a default off macOS (#102, #1
   expect(matchCombination(minus, "Mod+-")).toBe(false);
 });
 
-test("the recorder names every press as the matching reads it, on every layout (#105)", () => {
+test("the recorder names every press as the matching reads it, on every layout (#105, #131)", () => {
   platform("Linux x86_64");
-  for (const layout of LAYOUT_NAMES) {
+  eachLayoutAndState((layout, state) => {
     for (const p of presses(layout)) {
       const { key: k, shift } = keyPressOf(key(p));
       const spec = [p.ctrlKey && "Mod", p.altKey && "Alt", shift && "Shift", k].filter(Boolean).join("+");
       if (k === "" || !isValidShortcut(spec)) continue;
-      expect(matchCombination(key(p), spec), `${layout} ${describePress(p)} as ${spec}`).toBe(true);
+      expect(matchCombination(key(p), spec), `${layout} ${state} ${describePress(p)} as ${spec}`).toBe(true);
     }
-  }
+  });
 });
 
 test("punctuation follows the character the layout types; positions fill in (#105)", () => {
@@ -425,21 +466,100 @@ test("punctuation follows the character the layout types; positions fill in (#10
   expect(whereIs("dvorak", "Mod+Shift+=")).toEqual(["Ctrl+Shift+BracketRight (+)"]);
   expect(whereIs("dvorak", "Mod+-")).toEqual(["Ctrl+Quote (-)"]);
   expect(whereIs("dvorak", "Mod+W")).toEqual(["Ctrl+Comma (w)"]);
-  // Hebrew: the Q and W positions type "/" and "'": "/" is a shortcut character, "'" is not,
-  // so that key is W by position. Brackets as typed ("[" is at QWERTY's "]").
+  // Dvorak's "'" key (KeyQ) types nothing a shortcut names: no Ctrl+Q there (Q is KeyX) (#131).
+  expect(whereIs("dvorak", "Mod+Q")).toEqual(["Ctrl+KeyX (q)"]);
+  expect(whereIs("dvorak", "Mod+Shift+Q")).toEqual(["Ctrl+Shift+KeyX (Q)"]);
+  // Non-Latin layouts (after a letter typed, #131): letters and punctuation by US position,
+  // as browsers and GTK apps do; the keycaps carry the US legends.
+  // Hebrew: "/" on the Slash key (not Q, which types "/"), brackets not swapped.
   expect(whereIs("il", "Mod+W")).toEqual(["Ctrl+KeyW (')"]);
-  expect(whereIs("il", "Mod+/")).toEqual(["Ctrl+KeyQ (/)"]);
-  expect(whereIs("il", "Mod+,")).toEqual(["Ctrl+Comma (ת)", "Ctrl+Quote (,)"]);
-  expect(whereIs("il", "Mod+[")).toEqual(["Ctrl+BracketRight ([)"]);
-  expect(whereIs("il", "Mod+Shift+[")).toEqual(["Ctrl+Shift+BracketRight ({)"]);
+  expect(whereIs("il", "Mod+Q")).toEqual(["Ctrl+KeyQ (/)"]);
+  expect(whereIs("il", "Mod+/")).toEqual(["Ctrl+Slash (.)"]);
+  expect(whereIs("il", "Mod+,")).toEqual(["Ctrl+Comma (ת)"]);
+  expect(whereIs("il", "Mod+[")).toEqual(["Ctrl+BracketLeft (])"]);
+  expect(whereIs("il", "Mod+]")).toEqual(["Ctrl+BracketRight ([)"]);
+  expect(whereIs("il", "Mod+Shift+[")).toEqual(["Ctrl+Shift+BracketLeft (})"]);
   expect(whereIs("il", "Mod+T")).toEqual(["Ctrl+KeyT (א)"]);
-  // Greek and Russian: letters by position; Russian "/" is Shift+\ (or the ISO key).
+  // Greek: as US; its Q key (";") is Q.
   expect(whereIs("gr", "Mod+W")).toEqual(["Ctrl+KeyW (ς)"]);
   expect(whereIs("gr", "Mod+/")).toEqual(["Ctrl+Slash (/)"]);
+  expect(whereIs("gr", "Mod+Q")).toEqual(["Ctrl+KeyQ (;)"]);
+  expect(whereIs("gr", "Mod+;")).toEqual(["Ctrl+Semicolon (Dead)"]);
+  // Russian: "/" on the Slash key (it types "."), "," on the Comma key, Shift+\ is Shift+\.
   expect(whereIs("ru", "Mod+W")).toEqual(["Ctrl+KeyW (ц)"]);
-  expect(whereIs("ru", "Mod+/")).toEqual(["Ctrl+IntlBackslash (/)", "Ctrl+Shift+Backslash (/)"]);
-  expect(whereIs("ru", "Mod+,")).toEqual(["Ctrl+Comma (б)", "Ctrl+Shift+Slash (,)"]);
+  expect(whereIs("ru", "Mod+/")).toEqual(["Ctrl+Slash (.)"]);
+  expect(whereIs("ru", "Mod+.")).toEqual(["Ctrl+Period (ю)"]);
+  expect(whereIs("ru", "Mod+,")).toEqual(["Ctrl+Comma (б)"]);
   expect(whereIs("ru", "Mod+[")).toEqual(["Ctrl+BracketLeft (х)"]);
+  expect(whereIs("ru", "Mod+]")).toEqual(["Ctrl+BracketRight (ъ)"]);
+  expect(whereIs("ru", "Mod+Shift+\\")).toEqual(["Ctrl+Shift+Backslash (/)"]);
+});
+
+test("QWERTZ Ctrl+AltGr+Q (\"@\") is no Ctrl+Q (#131)", () => {
+  platform("Linux x86_64");
+  typeLetterOf("de");
+  const at = key({ code: "KeyQ", key: "@", ctrlKey: true });
+  expect(keyPressOf(at)).toEqual({ key: "", shift: false });
+  expect(matchCombination(at, "Mod+Q")).toBe(false);
+});
+
+test("the tracker learns the script from plain letter presses only (#131)", () => {
+  installLayoutTracker();
+  const press = (init: KeyboardEventInit & { altGraph?: boolean }) => {
+    const { altGraph = false, ...rest } = init;
+    const e = key(rest);
+    Object.defineProperty(e, "getModifierState", { value: (k: string) => k === "AltGraph" && altGraph });
+    window.dispatchEvent(e);
+    return nonLatinLayout();
+  };
+  expect(nonLatinLayout()).toBe(false);
+  expect(press({ code: "KeyA", key: "ф" })).toBe(true);
+  expect(press({ code: "KeyA", key: "a" })).toBe(false);
+  // Ctrl+letter keeps the layout's letter (GTK): it counts.
+  expect(press({ code: "KeyW", key: "ц", ctrlKey: true })).toBe(true);
+  expect(press({ code: "KeyW", key: "z", ctrlKey: true })).toBe(false);
+  // Shift (Hebrew's Shift level types Latin capitals), Alt, AltGr and Meta do not count.
+  __setNonLatinLayoutForTests(true);
+  expect(press({ code: "KeyA", key: "A", shiftKey: true })).toBe(true);
+  expect(press({ code: "KeyA", key: "a", altKey: true })).toBe(true);
+  expect(press({ code: "KeyA", key: "a", altGraph: true })).toBe(true);
+  expect(press({ code: "KeyA", key: "a", metaKey: true })).toBe(true);
+  // Only the letter positions, and only a letter typed there.
+  expect(press({ code: "Semicolon", key: "m" })).toBe(true);
+  expect(press({ code: "Digit2", key: "é" })).toBe(true);
+  expect(press({ code: "KeyQ", key: "'" })).toBe(true);
+  expect(press({ code: "KeyM", key: "," })).toBe(true);
+  expect(press({ code: "BracketLeft", key: "Dead" })).toBe(true);
+  expect(press({ code: "KeyE", key: "Dead" })).toBe(true);
+  // Latin beyond ASCII is Latin (Turkish "ı", German "ß"); Greek, Hebrew, Cyrillic are not.
+  expect(press({ code: "KeyI", key: "ı" })).toBe(false);
+  expect(press({ code: "KeyT", key: "τ" })).toBe(true);
+  expect(press({ code: "KeyE", key: "ß" })).toBe(false);
+  expect(press({ code: "KeyT", key: "א" })).toBe(true);
+});
+
+test("the tracker is installed once", () => {
+  installLayoutTracker();
+  const add = vi.spyOn(window, "addEventListener");
+  installLayoutTracker();
+  expect(add).not.toHaveBeenCalled();
+});
+
+test("a letter typed switches punctuation between typed character and US position (#131)", () => {
+  platform("Linux x86_64");
+  const handler = vi.fn();
+  renderHook(() => useShortcut("Mod+/", handler));
+  const slash = () => window.dispatchEvent(key({ code: "Slash", key: ".", ctrlKey: true, cancelable: true }));
+  // Russian Slash key types "." : read as Ctrl+. until a Russian letter is typed.
+  slash();
+  expect(handler).not.toHaveBeenCalled();
+  window.dispatchEvent(key({ code: "KeyF", key: "а" }));
+  slash();
+  expect(handler).toHaveBeenCalledTimes(1);
+  // Back to a Latin layout: a Latin letter typed, the typed character counts again.
+  window.dispatchEvent(key({ code: "KeyF", key: "f" }));
+  slash();
+  expect(handler).toHaveBeenCalledTimes(1);
 });
 
 test("a shortcut character typed with Shift keeps Shift for itself (#105)", () => {
