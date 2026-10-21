@@ -1,4 +1,4 @@
-import { FileDown, Plus } from "lucide-react";
+import { FileDown, FolderOpen, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import appMark from "../../../assets/icon/tablemax.svg";
 import * as ipc from "../../lib/ipc";
@@ -10,6 +10,8 @@ interface Props {
   onCreate: () => void;
   /** Import connections…: the TablePlus export import. */
   onImport: () => void;
+  /** Open SQLite file…: the SQLite file picker, then a new connection's form on the file (#117). */
+  onOpenSqlite: () => void;
 }
 
 const action =
@@ -17,10 +19,9 @@ const action =
 
 /**
  * The left pane of the connections screen (spec §2.4): the app's own mark, name and version,
- * then its actions. Open SQLite file… is not there: the app has no SQLite file picker yet
- * (a SQLite connection is created in the form, with the file path).
+ * then its actions: Create connection…, Import connections…, Open SQLite file….
  */
-export function WelcomePane({ onCreate, onImport }: Props) {
+export function WelcomePane({ onCreate, onImport, onOpenSqlite }: Props) {
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
@@ -51,6 +52,10 @@ export function WelcomePane({ onCreate, onImport }: Props) {
         <button type="button" className={action} onClick={onImport} {...tip(strings.connections.importHint)}>
           <FileDown aria-hidden className="size-4 shrink-0 text-icon" />
           {strings.connections.importConnections}
+        </button>
+        <button type="button" className={action} onClick={onOpenSqlite} {...tip(strings.connections.openSqliteHint)}>
+          <FolderOpen aria-hidden className="size-4 shrink-0 text-icon" />
+          {strings.connections.openSqlite}
         </button>
       </div>
     </section>

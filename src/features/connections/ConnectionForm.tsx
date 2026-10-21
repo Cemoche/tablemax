@@ -51,6 +51,11 @@ import { flowTarget, useConnectFlow } from "./useConnectFlow";
 interface Props {
   /** null = new connection. */
   connection: ConnectionConfig | null;
+  /**
+   * A new connection's starting values (Open SQLite file…, #117), shown as unsaved edits
+   * over a blank form: nothing is stored before Save or Connect. Ignored with `connection`.
+   */
+  draft?: ConnectionConfig;
   /** Called with the saved config and the typed DB / SSH secrets (null when untouched). */
   onConnect: (cfg: ConnectionConfig, password: string | null, sshSecret: string | null) => void;
   onSaved?: (cfg: ConnectionConfig) => void;
@@ -94,6 +99,7 @@ function suggests(el: EventTarget | null): el is HTMLInputElement {
  */
 export function ConnectionForm({
   connection,
+  draft,
   onConnect,
   onSaved,
   onDeleted,
@@ -101,9 +107,14 @@ export function ConnectionForm({
   onDirtyChange,
   active = true,
 }: Props) {
-  const [cfg, setCfg] = useState<ConnectionConfig>(normalize(connection ?? blankConnection()));
-  /** What the draft is compared with to tell unsaved edits: as loaded, or as last saved. */
-  const [baseline, setBaseline] = useState<ConnectionConfig>(cfg);
+  /** What the form starts from: the connection, else the draft, else a blank one. */
+  const initial = () => normalize(connection ?? draft ?? blankConnection());
+  const [cfg, setCfg] = useState<ConnectionConfig>(initial);
+  /**
+   * What the draft is compared with to tell unsaved edits: as loaded, or as last saved
+   * (a blank one under a `draft`, so that it counts as unsaved).
+   */
+  const [baseline, setBaseline] = useState<ConnectionConfig>(() => normalize(connection ?? blankConnection()));
   const [password, setPassword] = useState("");
   const [sshSecret, setSshSecret] = useState("");
   /**
@@ -131,10 +142,10 @@ export function ConnectionForm({
   const remove = useConnections((s) => s.remove);
   const colorName = `${useId()}-color`;
 
+  // `draft` is fixed for the form's life (the app remounts the form for each opening).
   useEffect(() => {
-    const loaded = normalize(connection ?? blankConnection());
-    setCfg(loaded);
-    setBaseline(loaded);
+    setCfg(initial());
+    setBaseline(normalize(connection ?? blankConnection()));
     setPassword("");
     setSshSecret("");
     setSslPicked(sslModePicked(connection, false));

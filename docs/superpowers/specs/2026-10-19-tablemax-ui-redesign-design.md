@@ -190,7 +190,8 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > Amendement 2026-10-21 (#88) : écran des connexions = volet d'accueil à gauche (260 px,
 > `--side` : icône de l'app `assets/icon/tablemax.svg`, nom, version, **Create connection…**
 > et **Import connections…** ; pas d'**Open SQLite file…**, l'app n'a pas de sélecteur de
-> fichier SQLite — une SQLite se crée dans le formulaire avec son chemin) et la liste à
+> fichier SQLite — une SQLite se crée dans le formulaire avec son chemin ; ajouté par #117,
+> voir plus bas) et la liste à
 > droite. Le formulaire s'ouvre à la place de la liste (bouton ← pour revenir), par `+` /
 > `Ctrl+N`, Create connection…, le menu d'une ligne (Connect, Edit… ; clic droit,
 > Shift+F10) ou Edit de la pastille ; un clic sur une ligne la sélectionne, Entrée ou un
@@ -239,6 +240,25 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > dialogue des connexions prennent leur Échap (`preventDefault`), pour que le formulaire
 > derrière ne réagisse pas à la même frappe ; dans la question de confirmation, une touche
 > maintenue n'agit qu'une fois (ses répétitions ne l'annulent pas).
+
+> Amendement 2026-10-21 (#117) : le volet d'accueil a son troisième bouton, **Open SQLite
+> file…** (après Import connections…, infobulle « Pick a SQLite database file: a new
+> connection on it, ready to connect »), aussi dans la palette (`>` Open SQLite file…, sans
+> raccourci). Il ouvre le sélecteur natif depuis Rust (`file_pick`, nouveau but `sqlite` :
+> filtre « SQLite databases » `*.sqlite`, `*.sqlite3`, `*.db`, `*.db3` par défaut, puis « All
+> files » ; sous GTK ce dernier vaut `*.*`, un fichier sans extension se tape au clavier) ;
+> aucune permission Tauri ajoutée (`core:default`). Le fichier choisi remplit le formulaire
+> d'une **nouvelle** connexion (moteur SQLite, chemin, nom = nom du fichier sans extension),
+> non enregistrée : **Connect** l'enregistre puis ouvre le workspace, comme toute nouvelle
+> connexion ; rien n'est écrit avant ce clic (ou Save). Pas de connexion temporaire non
+> enregistrée : un workspace est lié à une connexion enregistrée (`workspace_open` la relit
+> dans `app.db`, comme les sessions SQL, l'historique, le safe mode, la restauration de
+> session et l'en-tête), l'ouverture directe demanderait de refaire ce lien. Ce brouillon
+> compte comme une modification non enregistrée (question « Discard changes to this
+> connection? » en le quittant) ; depuis la palette, un formulaire déjà modifié est
+> demandé avant le sélecteur. Annuler le sélecteur ne fait rien ; son échec s'affiche sur
+> l'écran des connexions ; un fichier absent, illisible ou qui n'est pas une base SQLite
+> donne l'erreur de connexion habituelle au-dessus du formulaire, qui reste.
 
 ### 2.5 Éditeur SQL
 - Barre de 36 px sous l'onglet : « No limit ⌄ » (LIMIT automatique), « Beautify », « Run Current

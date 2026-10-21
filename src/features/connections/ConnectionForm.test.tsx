@@ -7,6 +7,7 @@ import type { ConnectionConfig } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
 import { TooltipLayer } from "../chrome/TooltipLayer";
 import { ConnectionForm } from "./ConnectionForm";
+import { sqliteFileDraft } from "./connectionDraft";
 
 vi.mock("../../lib/ipc");
 
@@ -105,6 +106,35 @@ test("Connect saves then hands the saved config to onConnect", async () => {
   render(<ConnectionForm connection={saved} onConnect={onConnect} />);
   await user.click(screen.getByRole("button", { name: "Connect" }));
   await waitFor(() => expect(onConnect).toHaveBeenCalledWith(saved, null, null));
+});
+
+test("a draft (Open SQLite file…) fills a new connection's form, unsaved; Connect saves then connects (#117)", async () => {
+  const user = userEvent.setup();
+  const onConnect = vi.fn();
+  const onDirty = vi.fn();
+  const stored = { ...sqliteFileDraft("/data/app.db"), id: "s1" };
+  vi.mocked(ipc.connectionSave).mockResolvedValue(stored);
+  render(
+    <ConnectionForm
+      connection={null}
+      draft={sqliteFileDraft("/data/app.db")}
+      onConnect={onConnect}
+      onDirtyChange={onDirty}
+    />,
+  );
+  expect(screen.getByRole("heading", { name: strings.form.newTitle })).toBeInTheDocument();
+  expect(screen.getByLabelText(strings.form.driver)).toHaveValue("sqlite");
+  expect(screen.getByLabelText(strings.form.name)).toHaveValue("app");
+  expect(screen.getByLabelText(strings.form.sqlitePath)).toHaveValue("/data/app.db");
+  // Nothing is stored yet: the draft is an unsaved new connection.
+  expect(ipc.connectionSave).not.toHaveBeenCalled();
+  expect(onDirty).toHaveBeenLastCalledWith(true);
+  await user.click(screen.getByRole("button", { name: strings.form.connect }));
+  await waitFor(() => expect(onConnect).toHaveBeenCalledWith(stored, null, null));
+  const [sent, password, sshSecret] = lastSaved();
+  expect(sent).toMatchObject({ id: "", name: "app", kind: "sqlite", sqlitePath: "/data/app.db" });
+  expect([password, sshSecret]).toEqual([null, null]);
+  expect(onDirty).toHaveBeenLastCalledWith(false);
 });
 
 test("sqlite never uses a password and switching back restores keyring mode", async () => {

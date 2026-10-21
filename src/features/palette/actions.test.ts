@@ -35,6 +35,7 @@ const ctx = (w: Workspace | null, over: Partial<ActionCtx> = {}): ActionCtx => (
   tab: w?.tabs.find((t) => t.id === w.activeTabId) ?? null,
   newConnection: vi.fn(),
   showConnections: vi.fn(),
+  openSqliteFile: vi.fn(),
   pickSchema: vi.fn(),
   pickDatabase: vi.fn(),
   ...over,
@@ -49,8 +50,8 @@ beforeEach(() => {
 
 test("an action whose when() is false is hidden", () => {
   const t = strings.palette.action;
-  // Without a workspace only "New connection" and "Show connections" remain.
-  expect(titles(ctx(null))).toEqual([t.newConnection, t.showConnections]);
+  // Without a workspace only "New connection", "Show connections" and "Open SQLite file…" remain.
+  expect(titles(ctx(null))).toEqual([t.newConnection, t.showConnections, t.openSqliteFile]);
   // "Change database" is PostgreSQL only.
   expect(titles(ctx(ws()))).toContain(t.changeDatabase);
   expect(titles(ctx(ws({ dialect: "sqlite" })))).not.toContain(t.changeDatabase);
@@ -153,6 +154,16 @@ test("Open history shows the sidebar on its History tab, in any connected worksp
   expect(useWorkspaces.getState().sidebarVisible).toBe(true);
   expect(useSidebar.getState().segments.w1).toBe("history");
   expect(titles(ctx(ws({ status: "disconnected" })))).not.toContain(t.openHistory);
+});
+
+test("Open SQLite file… is in the palette, available anywhere, without a shortcut (#117)", () => {
+  const c = ctx(null);
+  const action = visibleActions(c).find((a) => a.title === strings.palette.action.openSqliteFile);
+  expect(action?.id).toBe("connection.openSqliteFile");
+  expect(isKeymapActionId("connection.openSqliteFile")).toBe(false);
+  action?.run(c);
+  expect(c.openSqliteFile).toHaveBeenCalled();
+  expect(titles(ctx(ws()))).toContain(strings.palette.action.openSqliteFile);
 });
 
 test("Show connections is connection.open's entry, available anywhere (#119)", () => {

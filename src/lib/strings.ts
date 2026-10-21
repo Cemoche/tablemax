@@ -26,6 +26,8 @@ export const strings = {
     create: "Create connection…",
     importConnections: "Import connections…",
     importHint: "Import connections from a TablePlus export",
+    openSqlite: "Open SQLite file…",
+    openSqliteHint: "Pick a SQLite database file: a new connection on it, ready to connect",
     back: "Back to the connections",
     discardTitle: "Discard changes to this connection?",
     discardMessage: (name: string) =>
@@ -901,6 +903,7 @@ export const strings = {
       previousTab: "Previous tab",
       newConnection: "New connection",
       showConnections: "Show connections",
+      openSqliteFile: "Open SQLite file…",
       changeSchema: "Change schema…",
       changeDatabase: "Change database…",
       format: "Format query",

@@ -51,6 +51,22 @@ export const normalize = (c: ConnectionConfig): ConnectionConfig => {
   return noPassword ? { ...out, passwordMode: "none" } : out;
 };
 
+/**
+ * Open SQLite file… (#117): a new, unsaved SQLite connection on `path`, named after the
+ * file without its extension. The form shows it; nothing is stored until Save or Connect.
+ */
+export function sqliteFileDraft(path: string): ConnectionConfig {
+  const file = path.split(/[\\/]/).pop() ?? "";
+  const dot = file.lastIndexOf(".");
+  const blank = blankConnection();
+  return normalize({
+    ...blank,
+    ...driverPatch(blank, "sqlite"),
+    name: dot > 0 ? file.slice(0, dot) : file,
+    sqlitePath: path,
+  });
+}
+
 /** The changes of switching `c` to the `kind` driver. */
 export const driverPatch = (c: ConnectionConfig, kind: DriverKind): Partial<ConnectionConfig> => ({
   kind,

@@ -13,6 +13,8 @@ export interface ActionCtx {
   newConnection: () => void;
   /** Shows the connection list, its search focused (App, as Ctrl+Shift+K). */
   showConnections: () => void;
+  /** Open SQLite file…: the SQLite file picker, then a new connection's form on the file (App, #117). */
+  openSqliteFile: () => void;
   /** Switch the palette to the schema / database sub-list (it stays open). */
   pickSchema: () => void;
   pickDatabase: () => void;
@@ -72,6 +74,8 @@ export const ACTIONS: Action[] = [
   { id: "connection.new", title: t.newConnection, run: (c) => c.newConnection() },
   // #119: the connection list by name, with Ctrl+Shift+K shown.
   { id: "connection.open", title: t.showConnections, run: (c) => c.showConnections() },
+  // #117: the welcome pane's Open SQLite file…, from anywhere (no shortcut).
+  { id: "connection.openSqliteFile", title: t.openSqliteFile, run: (c) => c.openSqliteFile() },
   {
     id: "schema.change",
     title: t.changeSchema,

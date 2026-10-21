@@ -7,6 +7,7 @@ import {
   normalize,
   rebaseDraft,
   sameDraft,
+  sqliteFileDraft,
   sslModePicked,
   withSslMode,
   withUrlImport,
@@ -132,4 +133,15 @@ test("rebaseDraft: untouched fields take the stored value, edited ones stay", ()
   expect(rebaseDraft(draft, baseline, stored)).toEqual({ ...stored, host: "b" });
   // An edit that puts back the stored value is kept as is.
   expect(rebaseDraft({ ...baseline, safeMode: "off" }, baseline, stored).safeMode).toBe("off");
+});
+
+test("sqliteFileDraft: a new SQLite connection on the file, named after it without its extension (#117)", () => {
+  const d = sqliteFileDraft("/home/u/data/app.sqlite3");
+  expect(d).toMatchObject({ id: "", name: "app", kind: "sqlite", sqlitePath: "/home/u/data/app.sqlite3" });
+  expect(d.passwordMode).toBe("none");
+  expect(d.ssh).toBeNull();
+  expect(sqliteFileDraft("C:\\data\\shop.db").name).toBe("shop");
+  expect(sqliteFileDraft("/x/archive.tar.db").name).toBe("archive.tar");
+  expect(sqliteFileDraft("/x/noext").name).toBe("noext");
+  expect(sqliteFileDraft("/x/.hidden").name).toBe(".hidden");
 });
