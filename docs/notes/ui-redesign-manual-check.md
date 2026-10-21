@@ -147,6 +147,12 @@ Screenshots: `<pass>-pill.png`, `<pass>-pill-prod-960.png`
       to the list.
 - [ ] Focus: a saved connection opens on Name, a new one on Driver; ← returns the focus to
       the selected row.
+- [ ] Escape (#118): on a clean form, from Name, a select, a checkbox or after a click on
+      the page, the list comes back at once, focus on the selected row (else the search). On
+      an edited form it asks "Discard changes to this connection?"; Escape there keeps the
+      form and its edits. Escape with Import from URL…, Delete's question, a Test prompt, an
+      open select popup or a shown tooltip closes only that. In Group (with suggestions):
+      type a letter, the first Escape closes the suggestions, the second the form.
 - [ ] From a workspace: `Ctrl+Shift+K` shows the list with its search focused (also from the
       SQL editor, where the line is not deleted); `Ctrl+N` opens a blank form.
 - [ ] Toolbar safe mode changed while that connection's form has edits: back on the form,
