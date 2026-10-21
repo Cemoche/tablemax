@@ -208,33 +208,49 @@ test("checkbox_accent: native checkboxes and radios take --accent-control, never
 // back to the browser's ring, which the scans above cannot see. Every <button>, <input> (not
 // hidden), <select>, <textarea>, <a href> and element with a tabIndex other than -1 must draw
 // the shared ring, through its className: literals, and constants of the file or of a module
-// it imports (`${btn}`, `{field}`), resolved like textColor.test.ts does.
+// it imports (`${btn}`, `{field}`), resolved like textColor.test.ts does. A name defined more
+// than once (two `const btn`, two `button:` style keys) must hold the ring in every definition.
+// Lenient on purpose: a ring in one branch of a ternary (`${on ? ringed : plain}`) passes.
 
 /**
  * String constants of a source text by name: `const x = "…"` (or a template), and the string
  * properties of its objects (`button: \`…\``, read for `style.button`) under `.button`.
  */
-function constants(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
+/** Every definition of each name (a name may be defined more than once: each one counts). */
+type Scope = Record<string, string[]>;
+
+function constants(text: string): Scope {
+  const out: Scope = {};
+  const add = (name: string, value: string) => (out[name] ??= []).push(value);
   // A constant, or a function of a few arguments returning one (`const tab = (on) => \`…\``).
   const value = /(?:^|\n)\s*(?:export )?const (\w+)\s*=\s*(?:\([^()]*\)\s*=>\s*)?("(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)/g;
-  for (const m of text.matchAll(value)) out[m[1]] = m[2].slice(1, -1);
-  for (const m of text.matchAll(/\n\s*(\w+):\s*("(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`),/g)) out[`.${m[1]}`] ??= m[2].slice(1, -1);
+  for (const m of text.matchAll(value)) add(m[1], m[2].slice(1, -1));
+  for (const m of text.matchAll(/\n\s*(\w+):\s*("(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`),/g)) add(`.${m[1]}`, m[2].slice(1, -1));
   return out;
 }
 
-/** `expr` with the names of `scope` replaced by their values, a few levels deep (constants built from constants). */
-function resolve(expr: string, scope: Record<string, string>): string {
-  let out = expr;
-  for (let i = 0; i < 4; i++) {
-    out = out.replace(/\.([A-Za-z_]\w*)\b/g, (m, name) => (scope[`.${name}`] !== undefined ? ` ${scope[`.${name}`]} ` : m));
-    out = out.replace(/\b[A-Za-z_]\w*\b/g, (name) => (scope[name] !== undefined ? ` ${scope[name]} ` : name));
-  }
-  return out;
+/** Does a class string draw the shared ring under a focus variant? */
+const ringed = (classes: string) =>
+  classes.split(/[\s"'`{}$(),?:]+|\s/).some((t) => SHARED_RING.test(t)) || /\S*focus\S*:focus-ring(?:-inset)?\b/.test(classes);
+
+/**
+ * `expr` with the names of `scope` replaced by their values, a few levels deep (constants
+ * built from constants). A name with several definitions stands for one without the ring if
+ * there is one: the element passes only when every definition draws it.
+ */
+function resolve(expr: string, scope: Scope, depth = 0): string {
+  if (depth > 4) return expr;
+  const pick = (values: string[]) => {
+    const resolved = values.map((v) => resolve(v, scope, depth + 1));
+    return ` ${resolved.find((v) => !ringed(v)) ?? resolved[0]} `;
+  };
+  return expr
+    .replace(/\.([A-Za-z_]\w*)\b/g, (m, name) => (scope[`.${name}`] ? pick(scope[`.${name}`]) : m))
+    .replace(/\b[A-Za-z_]\w*\b/g, (name) => (scope[name] ? pick(scope[name]) : name));
 }
 
 /** The constants a file sees: its own, then those it imports from relative modules (resolved there). */
-function scopeOf(text: string, file: string, depth = 0): Record<string, string> {
+function scopeOf(text: string, file: string, depth = 0): Scope {
   const scope = constants(text);
   if (depth > 2) return scope;
   for (const im of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*"(\.[^"]+)"/g)) {
@@ -242,7 +258,7 @@ function scopeOf(text: string, file: string, depth = 0): Record<string, string> 
     if (!from) continue;
     const theirs = scopeOf(readFileSync(from, "utf8"), from, depth + 1);
     for (const name of im[1].split(",").map((n) => n.replace(/^type\s+/, "").trim()))
-      if (theirs[name] !== undefined) scope[name] ??= resolve(theirs[name], theirs);
+      if (theirs[name]) (scope[name] ??= []).push(...theirs[name].map((v) => resolve(v, theirs)));
   }
   return scope;
 }
@@ -281,7 +297,11 @@ function attr(tag: string, name: string): string | null {
   return null;
 }
 
-/** Components that hand their className to a focusable element: their call sites are scanned. */
+/**
+ * Components that hand their className to a focusable element: their call sites are scanned.
+ * Not scanned: dotted components (`<Command.Input>`), `contentEditable` elements and
+ * `<summary>` (none draws a ring today; the outline-none scan above still sees their classes).
+ */
 const FORWARDING = ["MenuButton"];
 
 /** The focusable elements of a TSX text whose className does not draw the shared ring. */
@@ -303,8 +323,7 @@ function unringedFocusables(source: string, file: string): string[] {
       (name === "a" && attr(tag, "href") !== null) ||
       tabStop;
     if (!focusable) continue;
-    const classes = resolve(attr(tag, "className") ?? "", scope);
-    if (!classes.split(/[\s"'`{}$(),?:]+|\s/).some((t) => SHARED_RING.test(t)) && !/\S*focus\S*:focus-ring(?:-inset)?\b/.test(classes))
+    if (!ringed(resolve(attr(tag, "className") ?? "", scope)))
       out.push(`line ${text.slice(0, m.index).split("\n").length}: ${tag.replace(/\s+/g, " ").slice(0, 90)}`);
   }
   return out;
@@ -361,6 +380,13 @@ test("unringedFocusables finds focusables without the shared ring, through const
   const tab = 'const tab = (on: boolean) =>\n  `px-2 outline-none focus-visible:focus-ring ${on ? "a" : "b"}`;\n';
   expect(unringedFocusables(`${tab}<button className={tab(v === w)} />`, f)).toEqual([]);
   expect(unringedFocusables("// <select> values\n/* <button> */ const a = 1;", f)).toEqual([]);
+  // A name defined twice must be ringed in both: two style keys, two constants.
+  const styles = (second: string) =>
+    `const STYLES = {\n  a: {\n    button: "outline-none focus-visible:focus-ring",\n  },\n  b: {\n    button: "${second}",\n  },\n};\n`;
+  expect(unringedFocusables(`${styles("px-2")}<button className={style.button} />`, f)).toHaveLength(1);
+  expect(unringedFocusables(`${styles("outline-none focus-visible:focus-ring-inset")}<button className={style.button} />`, f)).toEqual([]);
+  const twice = 'const btn = "outline-none focus-visible:focus-ring";\nfunction X() {\n  const btn = "px-2";\n}\n';
+  expect(unringedFocusables(`${twice}<button className={btn} />`, f)).toHaveLength(1);
   // Not focusable: hidden inputs, links without href, tabIndex -1, other elements.
   expect(unringedFocusables('<input type="hidden" name="x" />', f)).toEqual([]);
   expect(unringedFocusables('<a className="x">x</a>', f)).toEqual([]);
@@ -373,6 +399,11 @@ test("focus_ring_everywhere: every focusable element draws the shared ring, or U
   const files = appSources().filter((f) => f.endsWith(".tsx"));
   // The scan resolves the shared style modules (formStyles, toolbarStyles…).
   expect(files).toContain(join("src", "features", "connections", "ConnectionForm.tsx"));
+  // Both platforms' caption buttons (`STYLES.windows.button`, `STYLES.linux.button`) are read, both ringed.
+  const controls = join("src", "features", "chrome", "WindowControls.tsx");
+  const buttons = scopeOf(readFileSync(controls, "utf8"), controls)[".button"];
+  expect(buttons).toHaveLength(2);
+  for (const b of buttons) expect(ringed(resolve(b, scopeOf(readFileSync(controls, "utf8"), controls))), b).toBe(true);
   const bad = files.flatMap((f) =>
     unringedFocusables(readFileSync(f, "utf8"), f)
       .filter((m) => !UNRINGED_ALLOWED.some((a) => a.file === f && m.includes(a.has)))
