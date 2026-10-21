@@ -85,7 +85,8 @@ const SPECS = {
   // macOS, matched by physical key like Alt+1 / Alt+2).
   "grid.viewIndex": { scope: "tableTab", defaultShortcut: "Alt+3" },
   // #90: Ctrl++ (Shift+= on US / AZERTY) and the numpad's + / − too. AZERTY's "-" is the
-  // Digit6 key, which matches tab.goto6 by position (layout-aware punctuation is #105).
+  // Digit6 key, which stays tab.goto6 (the digit row is digits, #105): Ctrl+- is the ")" key
+  // there (the Minus position) and the keypad's −.
   "font.increase": { scope: "global", defaultShortcut: "Mod+=", alternates: ["Mod+Shift+=", "Mod+NumpadAdd"] },
   "font.decrease": { scope: "global", defaultShortcut: "Mod+-", alternates: ["Mod+NumpadSubtract"] },
   "database.open": { scope: "global", defaultShortcut: "Mod+K" },

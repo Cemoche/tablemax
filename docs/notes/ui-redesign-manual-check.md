@@ -423,8 +423,10 @@ meaning.
       Copy row says "Also used by Preview the SQL of pending changes…", and the file is
       unchanged.
 - [ ] AZERTY layout: `Ctrl+W` (key labelled W) closes, `Ctrl+Z` does not; `Ctrl+&`,
-      `Ctrl+é`… go to tabs; `Ctrl+Shift+=` ("+") enlarges; `Ctrl+-` (the 6 key) goes to tab 6
-      (known, #105). AltGr+E in the grid types nothing and starts no edit; in an edited cell
+      `Ctrl+é`… go to tabs; `Ctrl+Shift+=` ("+") enlarges; Ctrl + the "-" key (6) goes to
+      tab 6 (by design, #105: `Ctrl+)` and the keypad's − shrink); `Ctrl+,` (the key labelled
+      ",") opens Settings, `Ctrl+;` no longer does; `Ctrl+!` and `Ctrl+Shift+:` comment in the
+      editor. AltGr+E in the grid types nothing and starts no edit; in an edited cell
       AltGr+E types €.
 - [ ] A non-Latin layout (Russian or Greek): `Ctrl` + the key at QWERTY's W closes the tab.
 

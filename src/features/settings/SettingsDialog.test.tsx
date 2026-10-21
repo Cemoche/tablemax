@@ -474,6 +474,21 @@ test("recording follows the layout's letter, and the physical key on a non-Latin
   expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Shift+7" } });
 });
 
+test("recording names punctuation as the layout types it, Shift included in the character (#105)", async () => {
+  await setupKeymap();
+  const key = (init: KeyboardEventInit) =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+  // Dvorak: the key at QWERTY's Z types ";".
+  await userEvent.click(changeButton(paletteLabel));
+  await act(async () => key({ code: "KeyZ", key: ";", ctrlKey: true }));
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+;" } });
+  expect(shortcutOf(paletteLabel)).toBe("Ctrl+;");
+  // QWERTZ: Ctrl+Shift+7 types "/": that is Ctrl+/, the comment's key, refused.
+  await userEvent.click(changeButton(paletteLabel));
+  await act(async () => key({ code: "Digit7", key: "/", ctrlKey: true, shiftKey: true }));
+  expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["editor.comment"]))).toBeInTheDocument();
+});
+
 test("a combination used by another action is refused with its label and saves nothing", async () => {
   await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));

@@ -1,6 +1,15 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { isModalOpen, matchCombination, matchShortcut, shortcutKeyOf, typesCharacter, useShortcut } from "./shortcuts";
+import { DEFAULT_KEYMAP, type KeymapActionId, effectiveShortcuts, isValidShortcut } from "./keymapRegistry";
+import {
+  isModalOpen,
+  keyPressOf,
+  matchCombination,
+  matchShortcut,
+  typesCharacter,
+  useShortcut,
+} from "./shortcuts";
+import { LAYOUTS, type LayoutName, describePress, presses } from "../test/layouts";
 
 // Tests simulate the platform by spying on `navigator.platform` (lib/platform's isMac reads
 // it, unless `navigator.userAgentData.platform` is present, which jsdom lacks).
@@ -39,8 +48,10 @@ test("letters follow the layout: e.key when it is a Latin letter", () => {
   // Shift: e.key is uppercase and still matches.
   expect(matchShortcut(key({ code: "KeyZ", key: "W", ctrlKey: true, shiftKey: true }), "Mod+Shift+W")).toBe(true);
   expect(matchShortcut(key({ code: "KeyF", key: "F", ctrlKey: true, shiftKey: true }), "Mod+Shift+F")).toBe(true);
-  // A letter position that types punctuation (AZERTY's M position types ",") is no letter.
+  // A letter position that types a shortcut character (AZERTY's M position types ",") is
+  // that character's, not the letter's (#105).
   expect(matchShortcut(key({ code: "KeyM", key: ",", ctrlKey: true }), "Mod+M")).toBe(false);
+  expect(matchShortcut(key({ code: "KeyM", key: ",", ctrlKey: true }), "Mod+,")).toBe(true);
   // A synthetic event with no key falls back on the position.
   expect(matchShortcut(key({ code: "KeyK", ctrlKey: true }), "Mod+K")).toBe(true);
 });
@@ -57,7 +68,7 @@ test("on a non-Latin layout (Cyrillic, Greek) letters match by physical key", ()
   expect(matchShortcut(key({ code: "KeyE", key: "Dead", altKey: true }), "Alt+E")).toBe(true);
 });
 
-test("digits, punctuation and named keys match by position", () => {
+test("digits and named keys by position; letters and typed punctuation beat positions", () => {
   platform("Linux x86_64");
   // AZERTY: the digit row types "&é\"'(" without Shift.
   expect(matchShortcut(key({ code: "Digit1", key: "&", ctrlKey: true }), "Mod+1")).toBe(true);
@@ -73,16 +84,23 @@ test("digits, punctuation and named keys match by position", () => {
   expect(matchShortcut(key({ code: "Comma", key: "w", ctrlKey: true }), "Mod+,")).toBe(false);
 });
 
-test("shortcutKeyOf names a keydown as the matching reads it", () => {
-  expect(shortcutKeyOf({ code: "KeyW", key: "z" })).toBe("Z");
-  expect(shortcutKeyOf({ code: "KeyW", key: "ц" })).toBe("W");
-  expect(shortcutKeyOf({ code: "KeyM", key: "," })).toBe("");
-  expect(shortcutKeyOf({ code: "Semicolon", key: "m" })).toBe("M");
-  expect(shortcutKeyOf({ code: "Digit1", key: "&" })).toBe("1");
-  expect(shortcutKeyOf({ code: "Comma", key: ";" })).toBe(",");
-  expect(shortcutKeyOf({ code: "F5", key: "F5" })).toBe("F5");
-  expect(shortcutKeyOf({ code: "Enter", key: "Enter" })).toBe("Enter");
-  expect(shortcutKeyOf({ code: "IntlBackslash", key: "<" })).toBe("");
+test("keyPressOf names a keydown as the matching reads it", () => {
+  const name = (init: KeyboardEventInit) => keyPressOf(key(init));
+  expect(name({ code: "KeyW", key: "z" })).toEqual({ key: "Z", shift: false });
+  expect(name({ code: "KeyW", key: "ц" })).toEqual({ key: "W", shift: false });
+  expect(name({ code: "KeyM", key: "," })).toEqual({ key: ",", shift: false });
+  expect(name({ code: "KeyW", key: "'" })).toEqual({ key: "W", shift: false });
+  expect(name({ code: "Semicolon", key: "m" })).toEqual({ key: "M", shift: false });
+  expect(name({ code: "Digit1", key: "&" })).toEqual({ key: "1", shift: false });
+  expect(name({ code: "Comma", key: ";" })).toEqual({ key: ";", shift: false });
+  expect(name({ code: "Period", key: ":" })).toEqual({ key: ".", shift: false });
+  expect(name({ code: "BracketLeft", key: "Dead" })).toEqual({ key: "[", shift: false });
+  expect(name({ code: "KeyZ", key: "W", shiftKey: true })).toEqual({ key: "W", shift: true });
+  expect(name({ code: "NumpadEnter", key: "Enter" })).toEqual({ key: "Enter", shift: false });
+  expect(name({ code: "NumpadDivide", key: "/" })).toEqual({ key: "", shift: false });
+  expect(name({ code: "F5", key: "F5" })).toEqual({ key: "F5", shift: false });
+  expect(name({ code: "Enter", key: "Enter", shiftKey: true })).toEqual({ key: "Enter", shift: true });
+  expect(name({ code: "IntlBackslash", key: "<" })).toEqual({ key: "", shift: false });
 });
 
 test("modifiers must match exactly", () => {
@@ -301,4 +319,150 @@ test("typesCharacter: text, not shortcuts; AltGr symbols are text (#102)", () =>
   expect(typesCharacter(ev({ key: "{", code: "Digit5", altKey: true }), true)).toBe(true);
   expect(typesCharacter(ev({ key: "f", code: "KeyF", ctrlKey: true }), true)).toBe(false);
   expect(typesCharacter(ev({ key: "ƒ", code: "KeyF", metaKey: true, altKey: true }), true)).toBe(false);
+});
+
+// #105: every layout of src/test/layouts.ts (xkeyboard-config values), pressed with every
+// key and every chord the defaults use.
+
+/** The default combinations off macOS (each action's default and alternates). */
+const DEFAULT_SPECS = [
+  ...new Set((Object.keys(DEFAULT_KEYMAP) as KeymapActionId[]).flatMap((id) => effectiveShortcuts(id, {}, false))),
+];
+const LAYOUT_NAMES = Object.keys(LAYOUTS) as LayoutName[];
+
+/** The presses of `layout` that match `spec`, as "Ctrl+Shift+Digit7 (/)", sorted. */
+function whereIs(layout: LayoutName, spec: string): string[] {
+  return presses(layout)
+    .filter((p) => matchCombination(key(p), spec))
+    .map(describePress)
+    .sort();
+}
+
+test("every default combination has a key on every layout (#105)", () => {
+  platform("Linux x86_64");
+  for (const layout of LAYOUT_NAMES) {
+    for (const spec of DEFAULT_SPECS) expect(whereIs(layout, spec), `${layout} ${spec}`).not.toEqual([]);
+  }
+});
+
+test("a key press matches one combination at most, on every layout (#105)", () => {
+  platform("Linux x86_64");
+  for (const layout of LAYOUT_NAMES) {
+    for (const p of presses(layout)) {
+      const matched = DEFAULT_SPECS.filter((spec) => matchCombination(key(p), spec));
+      expect(matched.length, `${layout} ${describePress(p)}: ${matched.join(", ")}`).toBeLessThanOrEqual(1);
+    }
+  }
+});
+
+test("no Ctrl+Alt press (AltGr on Windows) matches a default off macOS (#102, #105)", () => {
+  platform("Linux x86_64");
+  for (const layout of LAYOUT_NAMES) {
+    for (const p of presses(layout).filter((q) => q.ctrlKey && q.altKey)) {
+      expect(DEFAULT_SPECS.filter((spec) => matchCombination(key(p), spec)), `${layout} ${describePress(p)}`).toEqual([]);
+    }
+  }
+  // AltGr on Linux (no Ctrl, no Alt) gives a plain character: no shortcut.
+  expect(DEFAULT_SPECS.some((spec) => matchCombination(key({ code: "Digit5", key: "[" }), spec))).toBe(false);
+  // Ctrl+AltGr on Linux reports Ctrl alone with the AltGr character. On AZERTY's digit row
+  // the key stays its digit: Ctrl+AltGr+5 ("[") is Ctrl+5, tab 5, not Ctrl+[.
+  const digit = key({ code: "Digit5", key: "[", ctrlKey: true });
+  expect(matchCombination(digit, "Mod+5")).toBe(true);
+  expect(matchCombination(digit, "Mod+[")).toBe(false);
+  // Off the digit row the AltGr character counts: Ctrl+AltGr+")" ("]") is Ctrl+], next tab
+  // (before #105 it was Ctrl+-, font smaller, by position).
+  const minus = key({ code: "Minus", key: "]", ctrlKey: true });
+  expect(matchCombination(minus, "Mod+]")).toBe(true);
+  expect(matchCombination(minus, "Mod+-")).toBe(false);
+});
+
+test("the recorder names every press as the matching reads it, on every layout (#105)", () => {
+  platform("Linux x86_64");
+  for (const layout of LAYOUT_NAMES) {
+    for (const p of presses(layout)) {
+      const { key: k, shift } = keyPressOf(key(p));
+      const spec = [p.ctrlKey && "Mod", p.altKey && "Alt", shift && "Shift", k].filter(Boolean).join("+");
+      if (k === "" || !isValidShortcut(spec)) continue;
+      expect(matchCombination(key(p), spec), `${layout} ${describePress(p)} as ${spec}`).toBe(true);
+    }
+  }
+});
+
+test("punctuation follows the character the layout types; positions fill in (#105)", () => {
+  platform("Linux x86_64");
+  // US: every key where it always was.
+  expect(whereIs("us", "Mod+,")).toEqual(["Ctrl+Comma (,)"]);
+  expect(whereIs("us", "Mod+/")).toEqual(["Ctrl+Slash (/)"]);
+  expect(whereIs("us", "Mod+Shift+[")).toEqual(["Ctrl+Shift+BracketLeft ({)"]);
+  expect(whereIs("us", "Mod+Shift+=")).toEqual(["Ctrl+Shift+Equal (+)"]);
+  // AZERTY: "," is the key labelled ","; ";" is its own; "/" is the "!" key by position or
+  // Shift+":" (Shift belongs to the character); "-" stays tab 6 on the digit row, and Ctrl+-
+  // is the ")" key by position (and the keypad's −).
+  expect(whereIs("fr", "Mod+,")).toEqual(["Ctrl+KeyM (,)"]);
+  expect(whereIs("fr", "Mod+;")).toEqual(["Ctrl+Comma (;)"]);
+  expect(whereIs("fr", "Mod+/")).toEqual(["Ctrl+Shift+Period (/)", "Ctrl+Slash (!)"]);
+  expect(whereIs("fr", "Mod+6")).toEqual(["Ctrl+Digit6 (-)"]);
+  expect(whereIs("fr", "Mod+-")).toEqual(["Ctrl+Minus ())"]);
+  expect(whereIs("fr", "Mod+NumpadSubtract")).toEqual(["Ctrl+NumpadSubtract (-)"]);
+  expect(whereIs("fr", "Mod+=")).toEqual(["Ctrl+Equal (=)"]);
+  expect(whereIs("fr", "Mod+Shift+=")).toEqual(["Ctrl+Shift+Equal (+)"]);
+  expect(whereIs("fr", "Mod+[")).toEqual(["Ctrl+BracketLeft (Dead)"]);
+  expect(whereIs("fr", "Mod+]")).toEqual(["Ctrl+BracketRight ($)"]);
+  expect(whereIs("fr", "Mod+W")).toEqual(["Ctrl+KeyZ (w)"]);
+  // QWERTZ: "-" is the "-" key ("ß" keeps it by position); "/" and "=" are Shift+7 / Shift+0.
+  expect(whereIs("de", "Mod+-")).toEqual(["Ctrl+Minus (ß)", "Ctrl+Slash (-)"]);
+  expect(whereIs("de", "Mod+/")).toEqual(["Ctrl+Shift+Digit7 (/)"]);
+  expect(whereIs("de", "Mod+=")).toEqual(["Ctrl+Equal (Dead)", "Ctrl+Shift+Digit0 (=)"]);
+  expect(whereIs("de", "Mod+]")).toEqual(["Ctrl+BracketRight (+)"]);
+  expect(whereIs("de", "Mod+Z")).toEqual(["Ctrl+KeyY (z)"]);
+  // Dvorak: every punctuation where Dvorak types it, Shift chords included.
+  expect(whereIs("dvorak", "Mod+,")).toEqual(["Ctrl+KeyW (,)"]);
+  expect(whereIs("dvorak", "Mod+/")).toEqual(["Ctrl+BracketLeft (/)"]);
+  expect(whereIs("dvorak", "Mod+[")).toEqual(["Ctrl+Minus ([)"]);
+  expect(whereIs("dvorak", "Mod+]")).toEqual(["Ctrl+Equal (])"]);
+  expect(whereIs("dvorak", "Mod+Shift+[")).toEqual(["Ctrl+Shift+Minus ({)"]);
+  expect(whereIs("dvorak", "Mod+=")).toEqual(["Ctrl+BracketRight (=)"]);
+  expect(whereIs("dvorak", "Mod+Shift+=")).toEqual(["Ctrl+Shift+BracketRight (+)"]);
+  expect(whereIs("dvorak", "Mod+-")).toEqual(["Ctrl+Quote (-)"]);
+  expect(whereIs("dvorak", "Mod+W")).toEqual(["Ctrl+Comma (w)"]);
+  // Hebrew: the Q and W positions type "/" and "'": "/" is a shortcut character, "'" is not,
+  // so that key is W by position. Brackets as typed ("[" is at QWERTY's "]").
+  expect(whereIs("il", "Mod+W")).toEqual(["Ctrl+KeyW (')"]);
+  expect(whereIs("il", "Mod+/")).toEqual(["Ctrl+KeyQ (/)"]);
+  expect(whereIs("il", "Mod+,")).toEqual(["Ctrl+Comma (ת)", "Ctrl+Quote (,)"]);
+  expect(whereIs("il", "Mod+[")).toEqual(["Ctrl+BracketRight ([)"]);
+  expect(whereIs("il", "Mod+Shift+[")).toEqual(["Ctrl+Shift+BracketRight ({)"]);
+  expect(whereIs("il", "Mod+T")).toEqual(["Ctrl+KeyT (א)"]);
+  // Greek and Russian: letters by position; Russian "/" is Shift+\ (or the ISO key).
+  expect(whereIs("gr", "Mod+W")).toEqual(["Ctrl+KeyW (ς)"]);
+  expect(whereIs("gr", "Mod+/")).toEqual(["Ctrl+Slash (/)"]);
+  expect(whereIs("ru", "Mod+W")).toEqual(["Ctrl+KeyW (ц)"]);
+  expect(whereIs("ru", "Mod+/")).toEqual(["Ctrl+IntlBackslash (/)", "Ctrl+Shift+Backslash (/)"]);
+  expect(whereIs("ru", "Mod+,")).toEqual(["Ctrl+Comma (б)", "Ctrl+Shift+Slash (,)"]);
+  expect(whereIs("ru", "Mod+[")).toEqual(["Ctrl+BracketLeft (х)"]);
+});
+
+test("a shortcut character typed with Shift keeps Shift for itself (#105)", () => {
+  platform("Linux x86_64");
+  const slash = key({ code: "Digit7", key: "/", ctrlKey: true, shiftKey: true }); // QWERTZ
+  expect(keyPressOf(slash)).toEqual({ key: "/", shift: false });
+  expect(matchCombination(slash, "Mod+/")).toBe(true);
+  expect(matchCombination(slash, "Mod+Shift+/")).toBe(false);
+  expect(matchCombination(slash, "Mod+Shift+7")).toBe(false);
+  // A US shifted symbol is Shift + its key's character ("{" is Shift+[).
+  expect(keyPressOf(key({ code: "Minus", key: "{", shiftKey: true }))).toEqual({ key: "[", shift: true });
+  // Not on the digit row: there it is the digit (Russian Shift+7 types "?").
+  expect(keyPressOf(key({ code: "Digit7", key: "?", shiftKey: true }))).toEqual({ key: "7", shift: true });
+  // macOS: ⌘⇧[ reports "{".
+  platform("MacIntel");
+  expect(matchCombination(key({ code: "BracketLeft", key: "{", metaKey: true, shiftKey: true }), "Mod+Shift+[")).toBe(true);
+});
+
+test("the keypad's Enter is Enter (#122)", () => {
+  platform("Linux x86_64");
+  const e = key({ code: "NumpadEnter", key: "Enter", ctrlKey: true });
+  expect(matchCombination(e, "Mod+Enter")).toBe(true);
+  expect(matchCombination(key({ code: "NumpadEnter", key: "Enter", ctrlKey: true, shiftKey: true }), "Mod+Shift+Enter")).toBe(true);
+  // The keypad's other keys keep no name: Ctrl + keypad "/" is no comment.
+  expect(matchCombination(key({ code: "NumpadDivide", key: "/", ctrlKey: true }), "Mod+/")).toBe(false);
 });

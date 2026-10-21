@@ -26,7 +26,7 @@ import {
   scalePercent,
 } from "./bounds";
 import { formatShortcut, isMac } from "../../lib/platform";
-import { shortcutKeyOf } from "../../lib/shortcuts";
+import { keyPressOf } from "../../lib/shortcuts";
 
 const S = strings.settings;
 const focusRing = "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent";
@@ -194,18 +194,19 @@ const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)$/;
 
 /**
  * The canonical spec of a keydown ("Mod+Shift+K"), its key named as the shortcuts match it
- * (`shortcutKeyOf`: a letter as the layout types it, digits and other keys by position);
+ * (`keyPressOf`: the character the layout types when it names a shortcut, else the
+ * position; Shift that typed a punctuation character is that character's, not a modifier);
  * Mod is Ctrl on Linux/Windows and Meta on macOS (Ctrl stays Ctrl there). A key with no
  * name in the grammar yields a spec without a key (the caller reports it as invalid).
  */
 function specFromEvent(e: KeyboardEvent, mac: boolean): string {
-  const key = shortcutKeyOf(e);
+  const { key, shift } = keyPressOf(e);
   const mods: string[] = [];
   if (mac ? e.metaKey : e.ctrlKey) mods.push("Mod");
   if (mac ? e.ctrlKey : false) mods.push("Ctrl");
   if (!mac && e.metaKey) mods.push("Meta");
   if (e.altKey) mods.push("Alt");
-  if (e.shiftKey) mods.push("Shift");
+  if (shift) mods.push("Shift");
   return [...mods, key].join("+");
 }
 

@@ -321,6 +321,11 @@ differences are in the last column.
 A shortcut acts only where it belongs: in a text field or the editor, keys such as
 `Ctrl+←`, `Ctrl+I` or `Space` keep their usual text meaning.
 
+Letters and punctuation follow the character your layout types, and the digit row stays
+digits: on QWERTZ `Ctrl+/` is `Ctrl+Shift+7`; on AZERTY `Ctrl+,` is the "," key and
+`Ctrl+-` is the ")" key or the keypad's − (the "-" key is `Ctrl+6`). The keypad's Enter
+works as Enter.
+
 ## Test databases
 
 Host tools needed by `pnpm test:rust`: `docker compose` (v2), `openssl` and `ssh-keygen`

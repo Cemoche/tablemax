@@ -555,7 +555,8 @@ export function DataGrid({
     // The key still reaches the window's shortcuts.
     const raw = e.rawEvent as unknown as KeyboardEvent | undefined;
     if (raw && !e.ctrlKey && !e.metaKey && e.key.length === 1 && !typesCharacter(raw)) e.cancel();
-    if (plain && code === "Enter") {
+    // The keypad's Enter is Enter too (#105, #122).
+    if (plain && (code === "Enter" || code === "NumpadEnter")) {
       const cur = selectionRef.current.current?.cell;
       const row = cur?.[1] ?? selectedRows()[0];
       if (row === undefined || !take()) return;

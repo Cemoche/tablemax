@@ -427,6 +427,38 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 > jamais réécrite. Open Anything : objets (tables, onglets, connexions) par défaut, actions
 > quand la saisie commence par `>`, lignes de 40 px, entrée « Show connections » (#119).
 
+> Amendement 2026-10-21 (#105) : une touche se nomme par le caractère que la disposition
+> tape dessus quand ce caractère peut nommer un raccourci, sinon par sa position (`e.code`).
+> Règle (`keyPressOf`, `src/lib/shortcuts.ts`, la même pour l'enregistreur des réglages) :
+> 1. touches nommées (Entrée, Tab, flèches, F1–F12, + / − du pavé) par position ; l'Entrée
+>    du pavé est Entrée (#122) ; les autres touches du pavé n'ont pas de nom ;
+> 2. une lettre latine tapée (`e.key`) est cette lettre (#102) ;
+> 3. un caractère de raccourci tapé (`` , . / ; - = [ ] \ ` ``) est ce caractère : la touche « , »
+>    d'AZERTY est Ctrl+,, la touche « / » de Dvorak Ctrl+/ ; si Shift l'a tapé (QWERTZ
+>    Shift+7 = « / »), Shift appartient au caractère, pas au raccourci (Ctrl+Shift+7 = Ctrl+/).
+>    Sur la rangée des chiffres, sans Shift, la touche reste son chiffre : le « - » AZERTY
+>    est Ctrl+6 (onglet 6, comme les navigateurs) ; Ctrl+- y est la touche « ) » (position
+>    `Minus`) et le − du pavé ;
+> 4. avec Shift, un symbole décalé US (`< > ? : _ + { } | ~`) est Shift + le caractère de sa
+>    touche US (« { » = Shift+[), hors rangée des chiffres ;
+> 5. sinon la position : chiffre de la rangée, lettre de la position (lettre non latine,
+>    touche morte, ou caractère sans raccourci : la touche « ' » de l'hébreu est W),
+>    caractère US d'une position de ponctuation (la touche « ! » d'AZERTY est « / »).
+> Pas de table par disposition : `keyCode` n'apporte rien de plus sous Linux (WebKitGTK le
+> déduit du caractère tapé) et la webview ne connaît pas la disposition active. Vérifié
+> touche par touche pour us, fr, de, us(dvorak), il, gr, ru (valeurs xkeyboard-config,
+> `src/test/layouts.ts`) : chaque défaut a une touche, une touche ne vaut qu'une combinaison.
+> Provisoire sur les dispositions non latines (#131 : y garder les positions US, en retenant
+> l'écriture de la dernière lettre tapée) : une touche qui y tape une ponctuation ASCII suit
+> ce caractère, pas sa position US (russe : Ctrl+/ = `Ctrl+Shift+\` ou la touche ISO « / » ;
+> hébreu : Ctrl+/ = la touche Q, crochets tels que tapés). QWERTZ reste ainsi (Ctrl+/ =
+> Ctrl+Shift+7) ; sa touche « + » vaut Ctrl+] (onglet suivant) et non le zoom, c'est #132.
+> Ctrl+AltGr sous Linux (Ctrl seul, caractère d'AltGr) : sur la rangée des chiffres la touche
+> reste son chiffre (AZERTY Ctrl+AltGr+5 « [ » = Ctrl+5) ; ailleurs le caractère compte
+> (AZERTY Ctrl+AltGr+« ) » tape « ] » = Ctrl+], onglet suivant, au lieu de Ctrl+- avant).
+> L'enregistreur des réglages ignore les touches mortes : AZERTY Ctrl+^ et QWERTZ Ctrl+´
+> valent Ctrl+[ et Ctrl+= par position mais ne s'enregistrent pas.
+
 Règle : un raccourci n'existe que dans son contexte (grille, éditeur, barre de filtres) quand
 TablePlus le réutilise (⌘I, ⌘F, ⌘←) ; tous restent réassignables (registre existant) ; un
 conflit avec un raccourci courant du bureau GNOME (Ctrl+Alt+flèches) est évité.
