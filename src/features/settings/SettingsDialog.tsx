@@ -48,11 +48,26 @@ const SECTIONS: SectionId[] = ["general", "table", "editor", "fonts", "keymap"];
 /** The Keymap groups, in this order: where a shortcut acts. */
 const SCOPES: ShortcutScope[] = ["global", "tableTab", "filterBar", "queryTab", "editor", "connectionList"];
 
-/** One line of a section: the label column (right-aligned), then the control and its notes. */
-function Row({ label, labelFor, labelId, children }: { label: string; labelFor?: string; labelId?: string; children: ReactNode }) {
+/**
+ * One line of a section: the label column (right-aligned; empty for a note under the line
+ * above), then the control and its notes.
+ */
+function Row({
+  label,
+  labelFor,
+  labelId,
+  children,
+}: {
+  label?: string;
+  labelFor?: string;
+  labelId?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="grid grid-cols-[11rem_minmax(0,1fr)] items-start gap-x-4">
-      {labelFor ? (
+      {label === undefined ? (
+        <span aria-hidden="true" />
+      ) : labelFor ? (
         <label htmlFor={labelFor} className="pt-1 text-right text-text-2">
           {label}
         </label>
@@ -378,7 +393,7 @@ function FontsSection() {
       <Group>
         <NumberField field="dataFontSize" label={S.dataFontSize} describedBy={`${sizeId}-keys`} />
         <NumberField field="editorFontSize" label={S.editorFontSize} describedBy={`${sizeId}-keys`} />
-        <Row label="">
+        <Row>
           <p id={`${sizeId}-keys`} className={hint}>
             {S.fontSizeKeysHint(increase, decrease)}
           </p>
@@ -501,7 +516,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   onCloseRef.current = onClose;
   const domId = useId();
   const tabId = (s: SectionId) => `${domId}-tab-${s}`;
-  const panelId = `${domId}-panel`;
+  const panelId = (s: SectionId) => `${domId}-panel-${s}`;
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -526,7 +541,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
     if (e.key !== "Tab") return;
-    const items = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
+    // The hidden sections stay mounted (their drafts survive a switch): skip them.
+    const items = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []).filter(
+      (el) => !el.closest("[hidden]"),
+    );
     if (items.length === 0) return;
     const first = items[0];
     const last = items[items.length - 1];
@@ -597,7 +615,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 type="button"
                 role="tab"
                 aria-selected={section === s}
-                aria-controls={section === s ? panelId : undefined}
+                aria-controls={panelId(s)}
                 tabIndex={section === s ? 0 : -1}
                 onClick={() => setSection(s)}
                 onKeyDown={onTabKeyDown}
@@ -607,14 +625,20 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </button>
             ))}
           </div>
-          <div
-            id={panelId}
-            role="tabpanel"
-            aria-labelledby={tabId(section)}
-            className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-y-auto px-6 py-5"
-          >
-            <SectionContent section={section} version={version} />
-          </div>
+          {/* Every section stays mounted, the others hidden: a draft (even an invalid one,
+              kept so it can be fixed) survives a switch. */}
+          {SECTIONS.map((s) => (
+            <div
+              key={s}
+              id={panelId(s)}
+              role="tabpanel"
+              aria-labelledby={tabId(s)}
+              hidden={section !== s}
+              className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-y-auto px-6 py-5"
+            >
+              <SectionContent section={s} version={version} />
+            </div>
+          ))}
         </div>
       </div>
     </div>

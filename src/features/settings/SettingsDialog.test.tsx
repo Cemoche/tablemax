@@ -59,8 +59,20 @@ test("settings_sections_and_fields: General, Table, Editor, Fonts & Themes and K
   expect(panel()).toHaveAccessibleName(SEC.table);
   expect(within(panel()).getByLabelText(strings.settings.pageSize)).toHaveValue(String(DEFAULT_SETTINGS.pageSize));
   expect(within(panel()).getByLabelText(strings.settings.exactCount)).toBeInTheDocument();
-  // Only the shown section is in the document.
+  // Every section stays mounted (drafts survive a switch); the others are hidden, each
+  // tab controlling its own panel.
+  const panels = document.querySelectorAll('[role="tabpanel"]');
+  expect(panels).toHaveLength(5);
+  expect([...panels].filter((p) => !(p as HTMLElement).hidden)).toEqual([panel()]);
+  for (const t of tabs) {
+    const own = document.getElementById(t.getAttribute("aria-controls") ?? "");
+    expect(own).toHaveAttribute("role", "tabpanel");
+    expect(own).toHaveAttribute("aria-labelledby", t.id);
+  }
   expect(screen.queryByRole("checkbox", { name: strings.settings.systemTitleBar })).toBeNull();
+  expect(
+    screen.getByRole("checkbox", { name: strings.settings.systemTitleBar, hidden: true }).closest("[hidden]"),
+  ).not.toBeNull();
 
   await openSection(SEC.editor);
   expect(within(panel()).getByRole("checkbox", { name: strings.settings.autoLimit })).toBeInTheDocument();
@@ -88,6 +100,34 @@ test("settings_sections_and_fields: General, Table, Editor, Fonts & Themes and K
   expect(within(group("editor")).getByText(strings.keymap["editor.run"])).toBeInTheDocument();
   expect(within(group("connectionList")).getByText(strings.keymap["connections.search"])).toBeInTheDocument();
   expect(within(group("global")).queryByText(strings.keymap["editor.run"])).toBeNull();
+});
+
+test("an invalid draft and its error survive a section switch", async () => {
+  setup();
+  await openSection(SEC.table);
+  const input = screen.getByLabelText(strings.settings.pageSize);
+  await userEvent.clear(input);
+  await userEvent.type(input, "6000");
+  await openSection(SEC.fonts);
+  await openSection(SEC.table);
+  expect(screen.getByLabelText(strings.settings.pageSize)).toHaveValue("6000");
+  expect(screen.getByLabelText(strings.settings.pageSize)).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByText(strings.settings.range(50, 5000))).toBeVisible();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+});
+
+test("Tab never lands in a hidden section", async () => {
+  setup();
+  const dialog = screen.getByRole("dialog");
+  for (let i = 0; i < 30; i++) {
+    await userEvent.tab();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect((document.activeElement as HTMLElement).closest("[hidden]")).toBeNull();
+  }
+  for (let i = 0; i < 10; i++) {
+    await userEvent.tab({ shift: true });
+    expect((document.activeElement as HTMLElement).closest("[hidden]")).toBeNull();
+  }
 });
 
 test("the section list moves with the arrow keys, Home and End", async () => {
