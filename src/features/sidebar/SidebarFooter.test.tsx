@@ -52,6 +52,18 @@ test("the ⌄ menu: New SQL query and Refresh; Escape closes it and gives the fo
   expect(useWorkspaces.getState().workspaces[0].tabs).toHaveLength(1);
 });
 
+test("a second click on ⌄ closes its menu (Task 11)", async () => {
+  render(<SidebarFooter workspace={ws} />);
+  const more = screen.getByRole("button", { name: S.more });
+  await userEvent.click(more);
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  await userEvent.click(more);
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(more).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(more);
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+});
+
 test("the schema picker is off when the connection lists no schema", () => {
   render(<SidebarFooter workspace={{ ...ws, schemas: [], currentSchema: null }} />);
   expect(screen.getByRole("combobox", { name: S.schema })).toBeDisabled();

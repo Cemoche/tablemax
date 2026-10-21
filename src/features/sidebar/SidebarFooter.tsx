@@ -75,6 +75,7 @@ export function SidebarFooter({ workspace }: { workspace: Workspace }) {
         <ContextMenu
           label={S.more}
           anchor={menu}
+          trigger={more}
           items={[
             ...(sqlEditor ? [{ label: S.newQuery, run: newQuery }] : []),
             { label: S.refresh, run: () => refreshSidebar(workspace) },
