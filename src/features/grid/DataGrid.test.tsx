@@ -402,6 +402,9 @@ test("Enter in a table tab asks the tab for its Quick Look (with the table's col
   );
   press("Enter", "Enter");
   expect(onQuickLook).toHaveBeenCalledWith(1, 2);
+  // The keypad's Enter too (#105, #122).
+  expect(press("Enter", "NumpadEnter").cancel).toHaveBeenCalled();
+  expect(onQuickLook).toHaveBeenCalledTimes(2);
 });
 
 test("space_toggles_row_detail: Space in the grid toggles the row details; Ctrl+Space is left to the tab", () => {
