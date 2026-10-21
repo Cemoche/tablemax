@@ -438,6 +438,21 @@ conflit avec un raccourci courant du bureau GNOME (Ctrl+Alt+flèches) est évit�
 | Échap | ferme le popover, la barre de filtres vide ou annule l'édition en cours |
 | changement d'onglet | conserve le focus et les raccourcis de l'onglet (panneau de détail #79, complétion) |
 
+> Amendement 2026-10-21 (#110) : un bouton désactivé qui porte une info-bulle (`tip()`) est
+> `aria-disabled="true"` (helper `softDisabled` de `src/lib/softDisabled.ts`), pas `disabled`
+> natif : WebKitGTK peut ne donner aucun survol ni focus à un bouton `disabled`, et son
+> info-bulle ne s'afficherait jamais. Il reste survolable et atteignable au clavier (Tab), son
+> info-bulle s'affiche au survol et au focus, il paraît désactivé (`aria-disabled:` à côté de
+> `disabled:`, curseur flèche) ; un clic, Enter ou Espace ne font rien (pas de soumission, pas
+> de propagation). Concerne Back / Forward, Prev / Next, Discard / Preview / Commit, Sidebar,
+> Database, Reload, Row details, le × d'onglet et de tuile, Split et Export. Restent en
+> `disabled` natif : les états passagers (Run Current et son menu « ⌄ » pendant l'exécution,
+> + Row pendant un commit, Delete du formulaire pendant un test, un enregistrement ou une
+> connexion), le menu du mode sans échec quand sa connexion enregistrée n'existe plus (cas
+> limite), les contrôles natifs (`<select>` du schéma) et les boutons sans info-bulle (Show
+> all des colonnes, Edit / Reconnect du popover de connexion, Clear de l'historique, Undo
+> des changements en attente, Refresh de la structure, boutons des dialogues).
+
 ### 5.5 Précisions (relecture du 2026-10-19)
 - **Palettes** : l'action existante `palette.all` (aujourd'hui Ctrl+K) devient Open Anything et
   passe à **Ctrl+P** (garde son identifiant, donc les réassignations des utilisateurs) : objets

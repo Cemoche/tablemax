@@ -78,8 +78,8 @@ Screenshots: `<pass>-themes.png`
 - [ ] Safe mode menu: levels, "Default (by environment)" checked; the icon is a closed lock
       for a production connection.
 - [ ] Database button (`Ctrl+K`) lists databases / schemas.
-- [ ] Tab through the toolbar: every button reachable, visible focus ring, disabled buttons
-      skipped; tooltips show on focus too.
+- [ ] Tab through the toolbar: every button reachable, visible focus ring; off buttons
+      (aria-disabled, #110) are reached too and show their tooltip; tooltips show on focus too.
 - [ ] With the discard dialog open, press and double-click on the dimmed overlay: the window
       neither moves nor maximizes.
 - [ ] (Windows build, if any) flat 46 px caption buttons over the toolbar's height; close
@@ -437,8 +437,9 @@ Result / notes:
 - [ ] Leaving the control hides it at once; a click hides it until the pointer leaves.
 - [ ] Hover a disabled control with a reason (Commit while another tab commits): tooltip
       and screen reader text give the reason; Enter, Space and a click do nothing.
-- [ ] Plain disabled buttons (Back at the start, Prev on page 1): note whether their
-      tooltip shows (known: #110).
+- [ ] Off buttons (#110: Back at the start, Prev on page 1, Discard / Preview / Commit with
+      nothing pending, Reload while disconnected): dimmed, arrow cursor, tooltip on hover and
+      on Tab focus; a click, Enter and Space do nothing.
 - [ ] Hand cursor on buttons, tabs, menu items, sidebar rows, selects and checkboxes; arrow
       on disabled ones and on Export; the grid keeps its own cursors.
 

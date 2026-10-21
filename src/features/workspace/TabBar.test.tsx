@@ -1,6 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { strings } from "../../lib/strings";
 import type { ObjectRef } from "../../lib/types";
 import { useChrome } from "../../stores/chrome";
@@ -8,6 +8,8 @@ import { useGridViews } from "../../stores/gridViews";
 import { usePendingChanges } from "../../stores/pendingChanges";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Tab, type Workspace, useWorkspaces } from "../../stores/workspaces";
+import { expectSoftDisabled } from "../../test/softDisabled";
+import { TooltipLayer } from "../chrome/TooltipLayer";
 import { CloseConfirm } from "./CloseConfirm";
 import { TabBar } from "./TabBar";
 
@@ -236,21 +238,38 @@ test("closing a tab with pending changes from the menu still asks first", async 
   expect(useWorkspaces.getState().closeRequest).toMatchObject({ tabId: "t", count: 1 });
 });
 
-test("back_forward_navigation: the arrows walk the history and are disabled at its ends", async () => {
+test("back_forward_navigation: the arrows walk the history and are off at its ends", async () => {
   setup([q("a", "Query 1"), q("b", "Query 2")]);
   const back = screen.getByRole("button", { name: strings.workspace.back });
   const forward = screen.getByRole("button", { name: strings.workspace.forward });
-  expect(back).toBeDisabled();
-  expect(forward).toBeDisabled();
+  expect(back).toHaveAttribute("aria-disabled", "true");
+  expect(forward).toHaveAttribute("aria-disabled", "true");
   expect(back).toHaveAttribute("data-tooltip", strings.workspace.back);
   expect(back).toHaveAttribute("data-tooltip-key", "Alt+←");
   await userEvent.click(tab("Query 2"));
-  expect(back).toBeEnabled();
+  expect(back).not.toHaveAttribute("aria-disabled");
   await userEvent.click(back);
   expect(ws().activeTabId).toBe("a");
-  expect(forward).toBeEnabled();
+  expect(forward).not.toHaveAttribute("aria-disabled");
   await userEvent.click(forward);
   expect(ws().activeTabId).toBe("b");
+});
+
+test("back_forward_soft_disabled: off at the ends, they keep their tooltip and do nothing (#110)", async () => {
+  const user = userEvent.setup();
+  render(<TooltipLayer />);
+  setup([q("a", "Query 1"), q("b", "Query 2")]);
+  // The store's navigate is what goBack / goForward call (no trail here): a spy, so the
+  // check fails if a press reaches them (navigate itself would refuse at the ends).
+  const real = useWorkspaces.getState().navigate;
+  onTestFinished(() => useWorkspaces.setState({ navigate: real }));
+  const navigate = vi.fn(() => false);
+  useWorkspaces.setState({ navigate });
+  const back = screen.getByRole("button", { name: strings.workspace.back });
+  const forward = screen.getByRole("button", { name: strings.workspace.forward });
+  const moved = () => navigate.mock.calls.length > 0 || ws().activeTabId !== "a";
+  await expectSoftDisabled(user, back, strings.workspace.back, moved);
+  await expectSoftDisabled(user, forward, strings.workspace.forward, moved);
 });
 
 test("back first goes back along the foreign key trail of the active table tab", async () => {
@@ -258,10 +277,10 @@ test("back first goes back along the foreign key trail of the active table tab",
   setup([{ id: "t", kind: "table", object: users, title: "users", preview: false }]);
   act(() => useGridViews.setState({ trails: { t: [{ object: orders, view: { page: 0, sort: null, filters: [] } }] } }));
   const back = screen.getByRole("button", { name: strings.workspace.back });
-  expect(back).toBeEnabled();
+  expect(back).not.toHaveAttribute("aria-disabled");
   await userEvent.click(back);
   expect(ws().tabs[0]).toMatchObject({ object: orders, title: "orders" });
-  expect(back).toBeDisabled();
+  expect(back).toHaveAttribute("aria-disabled", "true");
 });
 
 test("the split button is disabled and says why", () => {

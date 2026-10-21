@@ -5,6 +5,7 @@ import { type KeymapActionId, effectiveShortcut, effectiveShortcuts } from "../.
 import { ariaShortcut, formatShortcut } from "../../lib/platform";
 import { readRawCondition } from "../../lib/quickFilter";
 import { matchCombination } from "../../lib/shortcuts";
+import { softDisabled } from "../../lib/softDisabled";
 import { strings } from "../../lib/strings";
 import { tip } from "../../lib/tooltip";
 import type { Dialect, Filter, FilterCombine, FilterOp, WherePreview } from "../../lib/types";
@@ -606,10 +607,9 @@ export function FilterBar({
         <button
           type="button"
           className={button}
-          aria-disabled="true"
+          {...softDisabled(true)}
           {...tip(f.exportUnavailable)}
           aria-describedby={`${uid}-export`}
-          onClick={(e) => e.preventDefault()}
         >
           {f.export}
         </button>

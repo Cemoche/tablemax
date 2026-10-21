@@ -3,6 +3,7 @@ import { type KeyboardEvent, type RefObject, useEffect, useRef, useState } from 
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { ariaShortcut, formatShortcut } from "../../lib/platform";
 import type { ShortcutOptions } from "../../lib/shortcuts";
+import { softDisabled } from "../../lib/softDisabled";
 import { strings } from "../../lib/strings";
 import { tip } from "../../lib/tooltip";
 import { useChrome } from "../../stores/chrome";
@@ -84,7 +85,7 @@ interface Props {
 
 /** 26 px controls of the 42 px bar (spec §5.2), the toolbar's look. */
 const control =
-  "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:text-icon-dim disabled:hover:bg-btn aria-expanded:bg-seg-sel";
+  "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:text-icon-dim disabled:hover:bg-btn aria-disabled:text-icon-dim aria-disabled:hover:bg-btn aria-expanded:bg-seg-sel";
 const ICON = { size: 15, strokeWidth: 1.6, "aria-hidden": true } as const;
 /**
  * Filters: filled with the deeper accent while its bar is open (white reads 4.5:1 on
@@ -215,6 +216,8 @@ function DataControls({
   const pageRef = useRef<HTMLButtonElement>(null);
   const [pageOpen, setPageOpen] = useState(false);
   const { filters, columns, paging } = data;
+  // Off at the first / last page or while loading, but still hovered and focused for their
+  // tooltip (#110): WebKitGTK may give a native disabled button no hover event.
   const pageButton = (label: string, action: KeymapActionId, spec: string, enabled: boolean, onClick: () => void) => (
     <button
       type="button"
@@ -222,8 +225,7 @@ function DataControls({
       {...tip(label, formatShortcut(spec))}
       aria-keyshortcuts={keys(spec)}
       className={`${control} w-7 px-0`}
-      disabled={!enabled || paging.disabled}
-      onClick={onClick}
+      {...softDisabled(!enabled || paging.disabled, onClick)}
     >
       {action === "grid.previousPage" ? <ChevronLeft {...ICON} /> : <ChevronRight {...ICON} />}
     </button>
