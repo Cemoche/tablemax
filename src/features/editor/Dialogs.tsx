@@ -104,7 +104,7 @@ export function ConfirmDialog({
         </button>
         <button
           type="submit"
-          className={`rounded-sm px-3 py-1 ${danger ? "border border-danger text-danger hover:bg-surface-2" : "bg-accent-strong text-accent-contrast"}`}
+          className={`rounded-sm px-3 py-1 ${danger ? "border border-danger text-danger-text hover:bg-surface-2" : "bg-accent-strong text-accent-contrast"}`}
         >
           {confirm}
         </button>
@@ -151,7 +151,7 @@ export function NameDialog({
         className="w-full rounded-sm border border-border bg-bg px-2 py-1"
       />
       {error && (
-        <p id={errorId} role="alert" className="mt-2 text-danger">
+        <p id={errorId} role="alert" className="mt-2 text-danger-text">
           {error}
         </p>
       )}

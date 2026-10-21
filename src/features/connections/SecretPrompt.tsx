@@ -43,7 +43,7 @@ export function SecretPrompt({ kind, connectionName, error, onSubmit, onCancel }
           onChange={(e) => setSecret(e.target.value)}
           className="w-full rounded-sm border border-border bg-bg px-2 py-1"
         />
-        {error && <p className="mt-2 text-danger">{error}</p>}
+        {error && <p className="mt-2 text-danger-text">{error}</p>}
         <div className="mt-3 flex justify-end gap-2">
           <button type="button" onClick={onCancel} className="rounded-sm border border-border px-3 py-1">
             {strings.secretPrompt.cancel}

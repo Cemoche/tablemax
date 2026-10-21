@@ -55,7 +55,7 @@ export function FilterSqlPreview({ state, onClose }: { state: SqlPreviewState; o
     >
       {state.status === "loading" && <p role="status">{f.sqlLoading}</p>}
       {state.status === "error" && (
-        <p role="alert" className="text-danger">
+        <p role="alert" className="text-danger-text">
           {state.message}
         </p>
       )}

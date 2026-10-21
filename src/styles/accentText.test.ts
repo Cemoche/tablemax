@@ -7,8 +7,9 @@ import { expect, test } from "vitest";
 // (white 2.78:1 in dark): a destructive button with a label uses --danger-strong (#128).
 // An opaque --accent or --danger fill is refused whatever the text colour (the text may come
 // from another string, a `cn()` argument or an inherited colour); both tokens stay for tints
-// (`bg-accent/30`), focus rings, borders, icons and (danger) text. A future fill without
-// text goes to ALLOWED with its reason.
+// (`bg-accent/30`), focus rings, borders and outlines (text uses --accent-text /
+// --danger-text: textColor.test.ts, #129). A future fill without text goes to ALLOWED with
+// its reason.
 // Read as text, like focusRing.test.ts: class strings, inline styles and CSS in the sources.
 
 function sources(dir: string): string[] {

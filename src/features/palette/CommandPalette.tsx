@@ -237,7 +237,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnec
         </p>
       )}
       {catalogError && (
-        <p role="alert" className="px-2 py-1 text-danger">
+        <p role="alert" className="px-2 py-1 text-danger-text">
           {`${strings.palette.loadFailed}: ${catalogError}`}
         </p>
       )}
@@ -396,7 +396,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnec
             {body}
             {empty && !subError && <p className="px-2 py-3 text-muted">{strings.palette.empty}</p>}
             {subError && (
-              <p role="alert" className="px-2 py-1 text-danger">
+              <p role="alert" className="px-2 py-1 text-danger-text">
                 {subError}
               </p>
             )}

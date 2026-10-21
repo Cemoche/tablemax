@@ -53,7 +53,7 @@ export function UrlImportDialog({ onResult, onCancel }: Props) {
           />
         </label>
         {parsed && "error" in parsed && (
-          <p role="alert" className="mt-2 text-danger">
+          <p role="alert" className="mt-2 text-danger-text">
             {parsed.error}
           </p>
         )}

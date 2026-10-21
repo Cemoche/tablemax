@@ -56,7 +56,7 @@ export function FileField({ id, label, name, purpose, value, placeholder, onChan
           placeholder={placeholder ?? strings.ssl.noFile}
         />
         {error && (
-          <span role="alert" className="max-w-40 shrink-0 truncate text-xs text-danger" {...tip(error)}>
+          <span role="alert" className="max-w-40 shrink-0 truncate text-xs text-danger-text" {...tip(error)}>
             {error}
           </span>
         )}

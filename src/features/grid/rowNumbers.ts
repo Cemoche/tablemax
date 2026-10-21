@@ -39,13 +39,18 @@ export interface RowNumberStyle {
   selectedFill: string;
   /** Number colour on a selected row (`--row-selected-text`); empty: `text`. */
   selectedText: string;
+  /** Has display row `row` a change that failed to apply? */
+  failed: (row: number) => boolean;
+  /** Number colour of a failed row (`--danger-text`, #129), unless selected; empty: `text`. */
+  failedText: string;
 }
 
 /**
  * Glide's row marker renderer with the numbers right-aligned in the interface font, smaller
  * than the data (`markerFontStyle`), in the column header's colours on every row: no zebra,
  * and an inserted or deleted row's tint never reaches its number (#103). A selected row's
- * number is white on the selected rows' fill. Other marker kinds draw as Glide does.
+ * number is white on the selected rows' fill, a failed row's red (#129). Other marker kinds
+ * draw as Glide does.
  */
 export function rowNumberRenderer(style: () => RowNumberStyle): Renderer {
   const draw: Renderer["draw"] = (args, cell) => {
@@ -68,7 +73,8 @@ export function rowNumberRenderer(style: () => RowNumberStyle): Renderer {
       ctx.fillStyle = fill;
       ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
     }
-    ctx.fillStyle = (selected && s.selectedText) || s.text || theme.textLight;
+    ctx.fillStyle =
+      (selected && s.selectedText) || (!selected && s.failed(row) && s.failedText) || s.text || theme.textLight;
     ctx.font = font;
     ctx.textAlign = "right";
     ctx.fillText(

@@ -206,13 +206,13 @@ export function ImportDialog({ onClose }: Props) {
         {state.step === "done" && (
           <>
             <p role="status">{strings.import.done(state.count)}</p>
-            {state.reloadFailed && <p className="mt-2 text-danger">{strings.connections.loadFailed}</p>}
+            {state.reloadFailed && <p className="mt-2 text-danger-text">{strings.connections.loadFailed}</p>}
             <Warnings warnings={state.warnings} />
           </>
         )}
 
         {error && (
-          <p role="alert" className="mt-2 text-danger">
+          <p role="alert" className="mt-2 text-danger-text">
             {error.message}
           </p>
         )}

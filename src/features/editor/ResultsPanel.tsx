@@ -155,7 +155,7 @@ export function ResultsPanel({ run }: { run: QueryRun | undefined }) {
             {run.running && <p className="text-text-2">{strings.query.running}</p>}
             {run.cancelled && <p className="text-text-2">{strings.query.cancelled}</p>}
             {run.error && (
-              <p role="alert" className="break-words text-danger">
+              <p role="alert" className="break-words text-danger-text">
                 {run.error.index === null
                   ? strings.query.failedNoIndex(run.error.message)
                   : strings.query.failed(run.error.index + 1, run.error.message)}

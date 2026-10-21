@@ -409,7 +409,7 @@ function TableDataView({
             </div>
           )}
           {t.error && (
-            <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger">
+            <div role="alert" className="flex items-center gap-3 border-b border-border p-3 text-danger-text">
               <div className="min-w-0 flex-1">
                 <p className="font-semibold">{strings.grid.loadFailed}</p>
                 <p className="break-words">{t.error.message}</p>
@@ -434,7 +434,7 @@ function TableDataView({
             </div>
           )}
           {e.failure && (
-            <div role="alert" className="border-b border-border px-3 py-1 text-sm text-danger">
+            <div role="alert" className="border-b border-border px-3 py-1 text-sm text-danger-text">
               <p className="break-words">{e.failure}</p>
               {/* Only a rolled-back commit wrote nothing; an unknown outcome says so itself. */}
               {!e.outcomeUnknown && <p className="text-muted">{strings.grid.nothingWritten}</p>}
@@ -443,7 +443,7 @@ function TableDataView({
           {copy.notice && (
             <div
               role={copy.notice.error ? "alert" : "status"}
-              className={`flex items-center gap-2 border-b border-border px-3 py-1 text-sm ${copy.notice.error ? "text-danger" : "text-muted"}`}
+              className={`flex items-center gap-2 border-b border-border px-3 py-1 text-sm ${copy.notice.error ? "text-danger-text" : "text-muted"}`}
             >
               <span className="min-w-0 flex-1 break-words">{copy.notice.text}</span>
               <button

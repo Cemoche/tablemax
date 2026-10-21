@@ -357,9 +357,9 @@ export function ObjectSidebar({ workspace }: { workspace: Workspace }) {
         onChange={setQuery}
         withOptions
       />
-      {error && <p className="px-3 py-1 text-danger">{error}</p>}
+      {error && <p className="px-3 py-1 text-danger-text">{error}</p>}
       {notice && (
-        <p role="alert" className="px-3 py-1 text-danger">
+        <p role="alert" className="px-3 py-1 text-danger-text">
           {notice}
         </p>
       )}
@@ -680,7 +680,7 @@ function Tree({ apiRef, rows, rowHeight, fontSize, selectedKey, onToggle, onTogg
           {...common}
           aria-label={row.label}
           {...tipIfCut(row.label)}
-          className={`${rowClass(false)} cursor-default pl-14 font-sans ${row.failed ? "text-danger" : "text-text-2"}`}
+          className={`${rowClass(false)} cursor-default pl-14 font-sans ${row.failed ? "text-danger-text" : "text-text-2"}`}
         >
           <span className="min-w-0 truncate">{row.label}</span>
         </div>

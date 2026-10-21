@@ -66,7 +66,7 @@ function Disconnected({ workspace, error }: { workspace: Workspace; error: strin
     <div className="flex flex-col items-start gap-2 p-5">
       <p className="font-semibold">{strings.session.disconnected}</p>
       <p className="text-muted">{strings.session.disconnectedHint}</p>
-      {error && <p className="text-danger">{error}</p>}
+      {error && <p className="text-danger-text">{error}</p>}
       <button
         type="button"
         onClick={() => requestConnect(workspace.id)}

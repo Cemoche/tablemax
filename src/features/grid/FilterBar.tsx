@@ -541,7 +541,7 @@ export function FilterBar({
                       reading.kind === "bound" ? f.rawRead.boundHint : reading.kind === "sql" ? f.rawRead.sqlHint : reading.message
                     } ${f.rawRead.applyNote}`,
                   )}
-                  className={`shrink-0 text-xs ${reading.kind === "error" ? "text-danger" : "text-text"}`}
+                  className={`shrink-0 text-xs ${reading.kind === "error" ? "text-danger-text" : "text-text"}`}
                 >
                   <span aria-hidden="true">
                     {reading.kind === "bound" ? f.rawRead.bound : reading.kind === "sql" ? f.rawRead.sql : f.rawRead.error}
@@ -585,7 +585,7 @@ export function FilterBar({
               </button>
             </div>
             {errors[d.id] && (
-              <p role="alert" className="pb-1 pl-6 text-danger">
+              <p role="alert" className="pb-1 pl-6 text-danger-text">
                 {errors[d.id]}
               </p>
             )}

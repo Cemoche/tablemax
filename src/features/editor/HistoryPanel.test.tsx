@@ -80,7 +80,7 @@ test("lists the connection's history with relative date, duration, rows and erro
   expect(within(items[0]).getByText(strings.history.duration(5))).toBeInTheDocument();
   expect(within(items[0]).getByText(strings.history.rows(1))).toBeInTheDocument();
   const err = within(items[1]).getByText("relation boom missing");
-  expect(err).toHaveClass("text-danger");
+  expect(err).toHaveClass("text-danger-text");
   expect(within(items[1]).getByText(relativeTime(NOW - 120_000, NOW))).toBeInTheDocument();
 });
 

@@ -139,7 +139,7 @@ function NumberField({ field, label, describedBy }: { field: NumericSettingKey; 
         onBlur={commit}
       />
       {invalid && (
-        <p id={`${id}-error`} className="text-danger">
+        <p id={`${id}-error`} className="text-danger-text">
           {S.range(min, max)}
         </p>
       )}
@@ -182,7 +182,7 @@ function FontFamilyField() {
         onBlur={commit}
       />
       {invalid && (
-        <p id={`${id}-error`} className="text-danger">
+        <p id={`${id}-error`} className="text-danger-text">
           {S.fontFamilyInvalid}
         </p>
       )}
@@ -323,12 +323,12 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
         </span>
       </div>
       {error && (
-        <p role="alert" className="text-danger">
+        <p role="alert" className="text-danger-text">
           {error}
         </p>
       )}
       {collision && !error && (
-        <p role="status" className="text-sm text-danger">
+        <p role="status" className="text-sm text-danger-text">
           {S.shortcutCollision(strings.keymap[collision])}
         </p>
       )}
@@ -598,7 +598,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         {error && (
-          <p role="alert" className="shrink-0 border-b border-sep px-4 py-2 text-danger">
+          <p role="alert" className="shrink-0 border-b border-sep px-4 py-2 text-danger-text">
             {S.saveFailed(error)}
           </p>
         )}

@@ -183,6 +183,9 @@ test("cancel button calls sqlCancel while running and disappears on batchFinishe
   expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
   await runAll();
   const cancel = await screen.findByRole("button", { name: "Cancel" });
+  // Red, without text-text (a later rule in the CSS, it would win, #129).
+  expect(cancel).toHaveClass("text-danger-text");
+  expect(cancel).not.toHaveClass("text-text");
   await userEvent.click(cancel);
   expect(ipc.sqlCancel).toHaveBeenCalledWith("s1");
   act(() => emit({ event: "batchFinished", data: { cancelled: true } }));

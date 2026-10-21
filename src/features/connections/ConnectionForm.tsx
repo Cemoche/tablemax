@@ -34,6 +34,7 @@ import {
   buttonClass,
   fieldClass,
   formClass,
+  iconButtonBaseClass,
   iconButtonClass,
   inlineLabelClass,
   labelClass,
@@ -269,7 +270,7 @@ export function ConnectionForm({
             <button
               ref={deleteButton}
               type="button"
-              className={`${iconButtonClass} text-danger`}
+              className={`${iconButtonBaseClass} text-danger-text`}
               aria-label={strings.form.delete}
               {...tip(strings.form.delete)}
               disabled={busy !== null}
@@ -480,7 +481,7 @@ export function ConnectionForm({
         {notice && (
           <p
             role="status"
-            className={`flex min-h-7 items-center text-sm ${notice.tone === "ok" ? "text-success" : "text-danger"}`}
+            className={`flex min-h-7 items-center text-sm ${notice.tone === "ok" ? "text-success" : "text-danger-text"}`}
           >
             {notice.text}
           </p>
