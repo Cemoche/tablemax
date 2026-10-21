@@ -3,7 +3,8 @@ import { useEffect, useRef } from "react";
 /**
  * For a modal dialog: remembers the element that had the focus when the dialog rendered
  * (before its own autofocus moves it) and focuses it again when the dialog unmounts, if it is
- * still connected, enabled and not inside a hidden subtree. A dialog whose closing already
+ * still connected, not natively disabled and not inside a hidden subtree (an `aria-disabled`
+ * opener, #110, still takes it back: it is focusable, and better than `<body>`). A dialog whose closing already
  * decides where the focus goes (the grid commit confirmation) runs its own effect after this
  * cleanup in the same commit, so its choice wins.
  */

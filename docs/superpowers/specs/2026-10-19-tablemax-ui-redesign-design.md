@@ -446,8 +446,12 @@ conflit avec un raccourci courant du bureau GNOME (Ctrl+Alt+flèches) est évit�
 > `disabled:`, curseur flèche) ; un clic, Enter ou Espace ne font rien (pas de soumission, pas
 > de propagation). Concerne Back / Forward, Prev / Next, Discard / Preview / Commit, Sidebar,
 > Database, Reload, Row details, le × d'onglet et de tuile, Split et Export. Restent en
-> `disabled` natif les états passagers (Run pendant l'exécution, + Row pendant un commit,
-> Delete du formulaire pendant un test) et les contrôles natifs (`<select>` du schéma).
+> `disabled` natif : les états passagers (Run Current et son menu « ⌄ » pendant l'exécution,
+> + Row pendant un commit, Delete du formulaire pendant un test, un enregistrement ou une
+> connexion), le menu du mode sans échec quand sa connexion enregistrée n'existe plus (cas
+> limite), les contrôles natifs (`<select>` du schéma) et les boutons sans info-bulle (Show
+> all des colonnes, Edit / Reconnect du popover de connexion, Clear de l'historique, Undo
+> des changements en attente, Refresh de la structure, boutons des dialogues).
 
 ### 5.5 Précisions (relecture du 2026-10-19)
 - **Palettes** : l'action existante `palette.all` (aujourd'hui Ctrl+K) devient Open Anything et

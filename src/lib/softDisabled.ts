@@ -9,7 +9,11 @@ import type { MouseEvent } from "react";
  * bubbling, as a native disabled button. Style it with `aria-disabled:` variants next to
  * `disabled:`; the global cursor rule (`src/styles/interaction.css`) already shows the arrow.
  *
- * Shortcuts bound to the same action must guard themselves: this only covers the button.
+ * Limits: it guards `onClick` only.
+ * - Spread it after any `onClick` of the element's own, or that one replaces the guard.
+ * - An `onKeyDown`, `onMouseDown` or `onPointerDown` that activates the button is not
+ *   guarded: give the button no such handler, or check `off` in it.
+ * - Shortcuts bound to the same action must guard themselves: this covers the button only.
  */
 export function softDisabled<E extends HTMLElement = HTMLButtonElement>(
   off: boolean,
