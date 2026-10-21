@@ -27,6 +27,7 @@ import type {
   SshAuth,
   SslMode,
   TableInfo,
+  Throughput,
   WherePreview,
   WorkspaceInfo,
 } from "./types";
@@ -60,7 +61,7 @@ test("WorkspaceInfo, RowCount and ConnectionConfig fixtures", () => {
   const info: WorkspaceInfo = JSON.parse(
     '{"workspaceId":"w","connectionId":"c","dialect":"sqlite","serverVersion":"3","database":null,' +
       '"capabilities":{"sqlEditor":true,"gridEditing":true,"routines":true,"ddl":true,"foreignKeys":true,' +
-      '"documents":false,"databaseSwitch":false}}',
+      '"documents":false,"databaseSwitch":false,"throughput":false}}',
   );
   expect(info.dialect).toBe("sqlite");
   const caps: Capabilities = info.capabilities;
@@ -72,6 +73,7 @@ test("WorkspaceInfo, RowCount and ConnectionConfig fixtures", () => {
     foreignKeys: true,
     documents: false,
     databaseSwitch: false,
+    throughput: false,
   });
   const docs: WorkspaceInfo = { ...info, dialect: null, capabilities: { ...caps, documents: true } };
   expect(docs.dialect).toBeNull();
@@ -310,4 +312,12 @@ test("WherePreview", () => {
   const w: WherePreview = JSON.parse(`{"sql":"WHERE \\"note\\" = ?","display":"WHERE \\"note\\" = 'a'"}`);
   expect(Object.keys(w)).toEqual(["sql", "display"]);
   expect(w.display).toBe(`WHERE "note" = 'a'`);
+});
+
+test("Throughput (workspace_throughput, #112)", () => {
+  // Mirrors the Rust serde test in manager.rs (`exec_event_serde_shape`).
+  const rate: Throughput | null = JSON.parse('{"readPerSec":1200,"writtenPerSec":34}');
+  expect(rate).toEqual({ readPerSec: 1200, writtenPerSec: 34 });
+  const none: Throughput | null = JSON.parse("null");
+  expect(none).toBeNull();
 });

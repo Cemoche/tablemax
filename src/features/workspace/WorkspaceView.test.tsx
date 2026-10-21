@@ -159,6 +159,7 @@ const NO_SQL: Capabilities = {
   foreignKeys: false,
   documents: true,
   databaseSwitch: false,
+  throughput: false,
 };
 
 test("without the SQL editor capability there is no new SQL tab: no button, no Mod+T", () => {

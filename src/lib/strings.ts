@@ -1026,6 +1026,11 @@ export const strings = {
     disconnected: (name: string) => `${name} : disconnected`,
     /** Tooltip of a failed connection: the text, then why. */
     errorTitle: (text: string, message: string) => `${text}\n${message}`,
+    /** Network throughput units (1 KB = 1000 B), smallest first. */
+    rateUnits: ["B/s", "KB/s", "MB/s", "GB/s"],
+    rate: (value: string, unit: string) => `${value} ${unit}`,
+    /** The throughput in the pill's accessible name. */
+    rateLabel: (rate: string) => `network ${rate}`,
   },
   connectionPopover: {
     label: "Connection details",
