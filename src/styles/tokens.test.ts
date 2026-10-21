@@ -521,7 +521,9 @@ test("change_fills_distinct: the three change fills stand apart from each other,
  * --tab-sel), hovered or pressed rows and toolbar buttons (--seg-sel), selected rows and
  * settings sections (--sel), an applied filter row (--filter-applied), a hovered connection
  * group (--row-b), filled controls, the selected segment and highlighted menu rows
- * (--accent-strong), and the row detail's edited field (--modified).
+ * (--accent-strong), the row detail's edited field (--modified), and the fills next to the
+ * status pill's ring: its connection tint (--swatch-N-tint; --pill while not connected) and
+ * the tag badge at its start (--tag-*-bg).
  */
 const FOCUS_RING_BACKGROUNDS = [
   "--content",
@@ -539,6 +541,8 @@ const FOCUS_RING_BACKGROUNDS = [
   "--row-b",
   "--accent-strong",
   "--modified",
+  ...[1, 2, 3, 4, 5, 6].map((n) => `--swatch-${n}-tint`),
+  ...["local", "dev", "staging", "prod"].map((t) => `--tag-${t}-bg`),
 ];
 
 /**

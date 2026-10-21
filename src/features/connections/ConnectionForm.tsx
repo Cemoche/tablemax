@@ -427,6 +427,8 @@ export function ConnectionForm({
                 <label
                   key={s}
                   // The ring goes around the whole swatch, outside its checked ring (a box-shadow too).
+                  // `has-[:focus-visible]` has no fallback without `:has()`: WebKitGTK 2.42 or later
+                  // (TabBar relies on `:has()` already).
                   className="relative flex size-6 items-center justify-center rounded-full has-[:focus-visible]:focus-ring"
                   {...tip(strings.form.colorLabel(i + 1))}
                 >

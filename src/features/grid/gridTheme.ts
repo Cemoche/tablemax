@@ -224,6 +224,9 @@ export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
  * y + height; one pixel in on the last column / row); this draws `color`
  * (--focus-ring-inner) on the next pixels in, so the ring reads 3:1 on every fill under it
  * (the red alone is under 3:1 on --sel, the change fills and the selected rows).
+ * A cell partly scrolled out of view: Glide clamps its ring to the viewport (a few pixels of
+ * slack) while the band stays on the cell's own edges, so the band may show one side short
+ * or fall outside; the canvas clips it, nothing else (#135 review, accepted).
  */
 export function drawFocusInnerBand(
   ctx: CanvasRenderingContext2D,
