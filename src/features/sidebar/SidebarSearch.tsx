@@ -4,6 +4,7 @@ import { strings } from "../../lib/strings";
 import { tip } from "../../lib/tooltip";
 import { useShallow } from "zustand/react/shallow";
 import { type MatchMode, useSidebar } from "../../stores/sidebar";
+import { moveMenuFocus } from "./ContextMenu";
 
 const S = strings.sidebar;
 const MODES: MatchMode[] = ["contains", "startsWith", "endsWith"];
@@ -100,10 +101,12 @@ function SearchOptions() {
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const els = [...(menu.current?.querySelectorAll<HTMLElement>("[role^='menuitem']") ?? [])];
-    const i = els.indexOf(document.activeElement as HTMLElement);
-    if (e.key === "ArrowDown") els[(i + 1) % els.length]?.focus();
-    else if (e.key === "ArrowUp") els[(i - 1 + els.length) % els.length]?.focus();
-    else if (e.key === "Escape") close(true);
+    if (moveMenuFocus(e.key, els)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === "Escape") close(true);
     else if (e.key === "Tab") close(false);
     else return;
     e.preventDefault();

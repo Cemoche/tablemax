@@ -50,6 +50,17 @@ test("the options menu works from the keyboard and Escape gives the focus back",
   expect(options).toHaveFocus();
 });
 
+test("the options menu takes Home / End like the other sidebar menus (Task 11)", async () => {
+  render(<Box withOptions />);
+  screen.getByRole("button", { name: S.searchOptions }).focus();
+  await userEvent.keyboard("{Enter}{End}");
+  expect(screen.getByRole("menuitemcheckbox", { name: S.showViews })).toHaveFocus();
+  await userEvent.keyboard("{Home}");
+  expect(screen.getByRole("menuitemradio", { name: S.match.contains })).toHaveFocus();
+  await userEvent.keyboard("{ArrowUp}");
+  expect(screen.getByRole("menuitemcheckbox", { name: S.showViews })).toHaveFocus();
+});
+
 test("no options button without withOptions", () => {
   render(<Box />);
   expect(screen.queryByRole("button", { name: S.searchOptions })).toBeNull();
