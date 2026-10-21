@@ -144,7 +144,7 @@ export function ConnectionList({ items, selectedId, onSelect, onOpen, onEdit, on
         onDoubleClick={() => onOpen(c)}
         onKeyDown={(e) => onRowKey(e, c)}
         onContextMenu={(e) => onRowMenu(e, c)}
-        className={`mx-2 flex h-13 cursor-default items-center gap-3 rounded-lg px-2.5 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${
+        className={`mx-2 flex h-13 cursor-default items-center gap-3 rounded-lg px-2.5 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent ${
           selected ? "bg-sel" : "hover:bg-row-b"
         }`}
       >
@@ -183,7 +183,7 @@ export function ConnectionList({ items, selectedId, onSelect, onOpen, onEdit, on
           onClick={onNew}
           aria-label={strings.connections.new}
           {...tip(strings.connections.new, newKey)}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md border border-pill-border bg-pill text-icon outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-accent"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md border border-pill-border bg-pill text-icon outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
         >
           <Plus aria-hidden className="size-4" />
         </button>
@@ -204,7 +204,7 @@ export function ConnectionList({ items, selectedId, onSelect, onOpen, onEdit, on
                 focusRow(visible[0]);
               }
             }}
-            className="h-7 w-full rounded-md border border-pill-border bg-search pr-2 pl-7 text-text outline-none placeholder:text-text-2 focus-visible:outline-2 focus-visible:outline-accent"
+            className="h-7 w-full rounded-md border border-pill-border bg-search pr-2 pl-7 text-text outline-none placeholder:text-text-2 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
           />
         </div>
       </div>
@@ -229,7 +229,7 @@ export function ConnectionList({ items, selectedId, onSelect, onOpen, onEdit, on
                   aria-controls={boxId}
                   aria-label={strings.connections.groupToggle(label)}
                   onClick={() => toggle(key)}
-                  className="mx-2 flex h-7 w-[calc(100%-1rem)] items-center gap-1 rounded-md px-1.5 text-left text-text-2 outline-none hover:bg-row-b focus-visible:outline-2 focus-visible:outline-accent"
+                  className="mx-2 flex h-7 w-[calc(100%-1rem)] items-center gap-1 rounded-md px-1.5 text-left text-text-2 outline-none hover:bg-row-b focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
                 >
                   {open ? <ChevronDown aria-hidden className="size-3.5" /> : <ChevronRight aria-hidden className="size-3.5" />}
                   <span className="min-w-0 flex-1 truncate font-medium">{label}</span>

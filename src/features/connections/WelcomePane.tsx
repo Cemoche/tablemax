@@ -13,7 +13,7 @@ interface Props {
 }
 
 const action =
-  "flex h-8 w-full items-center gap-2 rounded-md px-3 text-left text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-accent";
+  "flex h-8 w-full items-center gap-2 rounded-md px-3 text-left text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent";
 
 /**
  * The left pane of the connections screen (spec §2.4): the app's own mark, name and version,
