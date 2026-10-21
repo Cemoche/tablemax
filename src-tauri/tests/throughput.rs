@@ -141,7 +141,7 @@ async fn assert_counted(url: &str, kind: DriverKind, big_value_sql: &str, sleep_
     assert!(rate.read_per_sec >= BIG / 4, "{kind:?}: {rate:?}");
     assert!(rate.written_per_sec > 0, "{kind:?}: {rate:?}");
 
-    // A SQL session dials the same relay: its bytes count too.
+    // A SQL session's connection is counted into the same workspace traffic.
     let sid = mgr.open_sql_session(id).await.unwrap();
     tokio::time::sleep(RATE_WINDOW + Duration::from_millis(200)).await;
     mgr.workspace_throughput(id).unwrap();
@@ -227,18 +227,32 @@ async fn postgres_verify_full_on_the_counted_stream() {
 }
 
 /// MySQL TLS through the one-shot relay: verified against the connection's host, not the
-/// relay's loopback address.
+/// relay's loopback address, and a wrong name still fails with the certificate error.
 #[tokio::test]
 async fn mysql_verify_full_through_the_relay() {
     use tablemax_lib::driver::tls::SslMode;
+    use tablemax_lib::error::ErrorKind;
     let dir = tempfile::tempdir().unwrap();
     let mgr = Arc::new(manager(&dir));
     let (mut cfg, pw) = config(&mysql_urls()[0], DriverKind::MySql);
     cfg.host = "localhost".into();
     cfg.ssl = common::ssl(SslMode::VerifyFull, Some("ca.pem"));
-    let saved = mgr.save_connection(cfg, pw, None).await.unwrap();
+    let saved = mgr.save_connection(cfg.clone(), pw.clone(), None).await.unwrap();
     let ws = mgr.open_workspace(&saved.id, None, None, None).await.unwrap();
     let sid = mgr.open_sql_session(&ws.workspace_id).await.unwrap();
     run(&mgr, &sid, "SELECT 1").await;
     mgr.close_workspace(&ws.workspace_id).await.unwrap();
+
+    // The test certificate has no IP:127.0.0.1 SAN: a wrong name keeps failing with the
+    // certificate error through the relay (and the case above passing shows the name
+    // checked is the connection's host, not the relay's 127.0.0.1).
+    cfg.id.clear();
+    cfg.host = "127.0.0.1".into();
+    let saved = mgr.save_connection(cfg, pw, None).await.unwrap();
+    let e = mgr
+        .open_workspace(&saved.id, None, None, None)
+        .await
+        .expect_err("wrong name");
+    assert_eq!(e.kind, ErrorKind::Connection, "{}", e.message);
+    assert!(e.message.contains("not valid for name"), "{}", e.message);
 }

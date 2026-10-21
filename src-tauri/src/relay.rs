@@ -10,8 +10,8 @@
 //!   opened just for it: a listener on `127.0.0.1:0` that accepts exactly one connection,
 //!   closes at once, and forwards that connection byte for byte (TLS stays end to end).
 //!   It is never an open forwarder: once the driver's connection is in, nothing else can
-//!   reach the server through it, and a listener nobody dials closes after
-//!   [`CONNECT_TIMEOUT`].
+//!   reach the server through it; a listener nobody dials closes when its [`OneShot`] is
+//!   dropped (the driver gave up), or at the latest after [`CONNECT_TIMEOUT`].
 //!
 //! When the relay cannot reach the server, the driver only sees its local connection
 //! close, so the relay keeps the reason ([`OneShot::take_failure`]).
@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::net::{TcpListener, TcpSocket, TcpStream, lookup_host};
+use tokio::sync::oneshot;
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::traffic::{Traffic, pump};
@@ -52,36 +53,56 @@ fn unreachable(host: &str, port: u16, why: impl std::fmt::Display) -> AppError {
     )
 }
 
+/// One TCP connection to `addr`: keepalive on with the system's timing (tokio-postgres'
+/// default), no Nagle delay.
+async fn connect_one(addr: SocketAddr) -> std::io::Result<TcpStream> {
+    let socket = if addr.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+    socket.set_keepalive(true)?;
+    let stream = socket.connect(addr).await?;
+    stream.set_nodelay(true)?;
+    Ok(stream)
+}
+
+/// `attempt` within [`CONNECT_TIMEOUT`], its failure said as "cannot connect to host:port".
+async fn bounded(
+    host: &str,
+    port: u16,
+    attempt: impl Future<Output = std::io::Result<TcpStream>>,
+) -> AppResult<TcpStream> {
+    match tokio::time::timeout(CONNECT_TIMEOUT, attempt).await {
+        Ok(Ok(stream)) => Ok(stream),
+        Ok(Err(e)) => Err(unreachable(host, port, e)),
+        Err(_) => Err(unreachable(host, port, "connection timed out")),
+    }
+}
+
 /// Connects to `host:port`, trying each address in turn like the drivers do, within
-/// [`CONNECT_TIMEOUT`]. Keepalive on with the system's timing (tokio-postgres' default),
-/// no Nagle delay.
+/// [`CONNECT_TIMEOUT`].
 pub async fn connect_server(host: &str, port: u16) -> AppResult<TcpStream> {
-    let attempt = async {
+    bounded(host, port, async {
         let mut last = None;
         for addr in lookup_host((host, port)).await? {
-            let socket = if addr.is_ipv4() {
-                TcpSocket::new_v4()?
-            } else {
-                TcpSocket::new_v6()?
-            };
-            socket.set_keepalive(true)?;
-            match socket.connect(addr).await {
-                Ok(stream) => {
-                    stream.set_nodelay(true)?;
-                    return Ok(stream);
-                }
+            match connect_one(addr).await {
+                Ok(stream) => return Ok(stream),
                 Err(e) => last = Some(e),
             }
         }
         Err(last.unwrap_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotFound, "no address found")
         }))
-    };
-    match tokio::time::timeout(CONNECT_TIMEOUT, attempt).await {
-        Ok(Ok(stream)) => Ok(stream),
-        Ok(Err(e)) => Err(unreachable(host, port, e)),
-        Err(_) => Err(unreachable(host, port, "connection timed out")),
-    }
+    })
+    .await
+}
+
+/// Connects to `addr`, the address a session already reached (`host` names it in errors):
+/// a cancel request must go to that very server, not to whatever `host` resolves to now
+/// (round-robin DNS).
+pub async fn connect_addr(host: &str, addr: SocketAddr) -> AppResult<TcpStream> {
+    bounded(host, addr.port(), connect_one(addr)).await
 }
 
 type Failure = Arc<Mutex<Option<AppError>>>;
@@ -90,6 +111,8 @@ type Failure = Arc<Mutex<Option<AppError>>>;
 pub struct OneShot {
     local_addr: SocketAddr,
     failure: Failure,
+    /// Dropped with the `OneShot`: a listener still waiting closes at once.
+    _cancel: oneshot::Sender<()>,
 }
 
 impl OneShot {
@@ -104,10 +127,17 @@ impl OneShot {
             .map_err(io_err)?;
         let local_addr = listener.local_addr().map_err(io_err)?;
         let failure = Failure::default();
-        tokio::spawn(relay_one(listener, route.clone(), failure.clone()));
+        let (cancel, cancelled) = oneshot::channel();
+        tokio::spawn(relay_one(
+            listener,
+            route.clone(),
+            failure.clone(),
+            cancelled,
+        ));
         Ok(OneShot {
             local_addr,
             failure,
+            _cancel: cancel,
         })
     }
 
@@ -125,11 +155,23 @@ impl OneShot {
     }
 }
 
-async fn relay_one(listener: TcpListener, route: Route, failure: Failure) {
-    let accepted = tokio::time::timeout(CONNECT_TIMEOUT, listener.accept()).await;
-    // One connection only: nothing else is accepted, whatever happens next.
+async fn relay_one(
+    listener: TcpListener,
+    route: Route,
+    failure: Failure,
+    cancelled: oneshot::Receiver<()>,
+) {
+    let accepted = tokio::select! {
+        // A connection already queued wins over a drop that came after it.
+        biased;
+        a = tokio::time::timeout(CONNECT_TIMEOUT, listener.accept()) => a.ok().and_then(Result::ok),
+        // The `OneShot` was dropped: its driver no longer needs it.
+        _ = cancelled => None,
+    };
+    // One connection only: nothing else is accepted, whatever happens next. An accepted
+    // connection keeps being forwarded after its `OneShot` is dropped.
     drop(listener);
-    let Ok(Ok((mut sock, _))) = accepted else {
+    let Some((mut sock, _)) = accepted else {
         return;
     };
     let _ = sock.set_nodelay(true);
@@ -255,6 +297,67 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(refused, "nothing listens once the wait is over");
+    }
+
+    /// A `OneShot` dropped before anyone dials it (the driver's future was dropped)
+    /// stops listening at once, not after the timeout.
+    #[tokio::test]
+    async fn dropping_a_one_shot_closes_its_listener() {
+        let (server, accepted) = doubling_server().await;
+        let traffic = Arc::new(Traffic::default());
+        let hop = OneShot::open(&route(server.port(), &traffic))
+            .await
+            .unwrap();
+        let addr = hop.local_addr();
+        drop(hop);
+        let mut refused = false;
+        for _ in 0..50 {
+            if TcpStream::connect(addr).await.is_err() {
+                refused = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(refused, "nothing listens once the OneShot is dropped");
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// Dropping the `OneShot` after its connection was accepted does not cut it.
+    #[tokio::test]
+    async fn dropping_a_one_shot_keeps_its_connection() {
+        let (server, _) = doubling_server().await;
+        let traffic = Arc::new(Traffic::default());
+        let hop = OneShot::open(&route(server.port(), &traffic))
+            .await
+            .unwrap();
+        let mut c = TcpStream::connect(hop.local_addr()).await.unwrap();
+        let mut two = [0u8; 2];
+        c.write_all(b"a").await.unwrap();
+        c.read_exact(&mut two).await.unwrap();
+        drop(hop);
+        c.write_all(b"b").await.unwrap();
+        c.read_exact(&mut two).await.unwrap();
+        assert_eq!(&two, b"bb");
+    }
+
+    #[tokio::test]
+    async fn connect_addr_dials_that_address() {
+        let (server, accepted) = doubling_server().await;
+        let s = connect_addr("db.example", server).await.unwrap();
+        assert_eq!(s.peer_addr().unwrap(), server);
+        drop(s);
+        let closed = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let gone = closed.local_addr().unwrap();
+        drop(closed);
+        let e = connect_addr("db.example", gone).await.unwrap_err();
+        assert!(
+            e.message
+                .starts_with(&format!("cannot connect to db.example:{}: ", gone.port())),
+            "{}",
+            e.message
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

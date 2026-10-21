@@ -356,6 +356,16 @@ fn counted(cfg: &ConnectionConfig) -> bool {
         && (ssh_of(cfg).is_some() || !cfg.host.starts_with('/'))
 }
 
+/// What a workspace on `cfg` offers: its driver's capabilities, `throughput` only when
+/// its bytes are actually counted ([`counted`]), so the pill never keeps a slot that
+/// would stay blank.
+fn workspace_capabilities(cfg: &ConnectionConfig) -> Capabilities {
+    Capabilities {
+        throughput: counted(cfg),
+        ..driver::capabilities(cfg.kind)
+    }
+}
+
 fn connect_params(
     cfg: &ConnectionConfig,
     password: Option<String>,
@@ -953,7 +963,7 @@ impl SessionManager {
             workspace_id: uuid::Uuid::new_v4().to_string(),
             connection_id: config.id.clone(),
             dialect: browse.sql().ok().map(|s| s.dialect()),
-            capabilities: driver::capabilities(config.kind),
+            capabilities: workspace_capabilities(&config),
             server_version: browse.base().server_version(),
             database,
         };
@@ -1841,7 +1851,7 @@ impl SessionManager {
             workspace_id: workspace_id.to_string(),
             connection_id,
             dialect: fresh.sql().ok().map(|s| s.dialect()),
-            capabilities: driver::capabilities(r.config.kind),
+            capabilities: workspace_capabilities(&r.config),
             server_version: fresh.base().server_version(),
             database: Some(database.to_string()),
         })
@@ -3955,5 +3965,30 @@ mod tests {
                 e.message
             );
         }
+    }
+
+    /// A PostgreSQL Unix-socket directory has no network: its workspace says so, so the
+    /// pill keeps no slot that would stay blank (#112).
+    #[test]
+    fn throughput_capability_follows_what_is_counted() {
+        let pg = cfg(DriverKind::Postgres, PasswordMode::None);
+        assert!(workspace_capabilities(&pg).throughput);
+        assert!(workspace_capabilities(&cfg(DriverKind::MySql, PasswordMode::None)).throughput);
+        assert!(!workspace_capabilities(&cfg(DriverKind::Sqlite, PasswordMode::None)).throughput);
+        let mut socket = pg.clone();
+        socket.host = "/var/run/postgresql".into();
+        let caps = workspace_capabilities(&socket);
+        assert!(!caps.throughput);
+        assert_eq!(
+            caps,
+            Capabilities {
+                throughput: false,
+                ..driver::capabilities(DriverKind::Postgres)
+            }
+        );
+        // Through SSH the tunnel counts, whatever the host looks like.
+        let mut tunneled = socket.clone();
+        tunneled.ssh = Some(ssh(SshAuth::Password));
+        assert!(workspace_capabilities(&tunneled).throughput);
     }
 }
