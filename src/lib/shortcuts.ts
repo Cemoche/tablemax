@@ -104,16 +104,6 @@ export function keyPressOf(e: Pick<KeyboardEvent, "key" | "code" | "shiftKey">):
   return { key: POSITION_CHARS.get(code) ?? "", shift };
 }
 
-/**
- * The key part of the canonical spec for a keydown (`"W"`, `"1"`, `"/"`, `"Enter"`, `"F5"`),
- * by the rules of `keyPressOf`: whatever it returns, `matchCombination` matches (with Shift
- * as `keyPressOf` counts it). Empty when the grammar has no name for the key (the Settings
- * recorder reports it as invalid).
- */
-export function shortcutKeyOf(e: Pick<KeyboardEvent, "key" | "code"> & { shiftKey?: boolean }): string {
-  return keyPressOf({ key: e.key, code: e.code, shiftKey: e.shiftKey ?? false }).key;
-}
-
 /** The key part of a spec in canonical form (a letter uppercase, "esc" → "Escape"). */
 function specKey(key: string): string {
   if (key.length === 1) return key.toUpperCase();

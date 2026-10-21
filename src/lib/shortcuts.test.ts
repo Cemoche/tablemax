@@ -6,7 +6,6 @@ import {
   keyPressOf,
   matchCombination,
   matchShortcut,
-  shortcutKeyOf,
   typesCharacter,
   useShortcut,
 } from "./shortcuts";
@@ -69,7 +68,7 @@ test("on a non-Latin layout (Cyrillic, Greek) letters match by physical key", ()
   expect(matchShortcut(key({ code: "KeyE", key: "Dead", altKey: true }), "Alt+E")).toBe(true);
 });
 
-test("digits, punctuation and named keys match by position", () => {
+test("digits and named keys by position; letters and typed punctuation beat positions", () => {
   platform("Linux x86_64");
   // AZERTY: the digit row types "&é\"'(" without Shift.
   expect(matchShortcut(key({ code: "Digit1", key: "&", ctrlKey: true }), "Mod+1")).toBe(true);
@@ -85,21 +84,23 @@ test("digits, punctuation and named keys match by position", () => {
   expect(matchShortcut(key({ code: "Comma", key: "w", ctrlKey: true }), "Mod+,")).toBe(false);
 });
 
-test("shortcutKeyOf names a keydown as the matching reads it", () => {
-  expect(shortcutKeyOf({ code: "KeyW", key: "z" })).toBe("Z");
-  expect(shortcutKeyOf({ code: "KeyW", key: "ц" })).toBe("W");
-  expect(shortcutKeyOf({ code: "KeyM", key: "," })).toBe(",");
-  expect(shortcutKeyOf({ code: "KeyW", key: "'" })).toBe("W");
-  expect(shortcutKeyOf({ code: "Semicolon", key: "m" })).toBe("M");
-  expect(shortcutKeyOf({ code: "Digit1", key: "&" })).toBe("1");
-  expect(shortcutKeyOf({ code: "Comma", key: ";" })).toBe(";");
-  expect(shortcutKeyOf({ code: "Period", key: ":" })).toBe(".");
-  expect(shortcutKeyOf({ code: "BracketLeft", key: "Dead" })).toBe("[");
-  expect(shortcutKeyOf({ code: "NumpadEnter", key: "Enter" })).toBe("Enter");
-  expect(shortcutKeyOf({ code: "NumpadDivide", key: "/" })).toBe("");
-  expect(shortcutKeyOf({ code: "F5", key: "F5" })).toBe("F5");
-  expect(shortcutKeyOf({ code: "Enter", key: "Enter" })).toBe("Enter");
-  expect(shortcutKeyOf({ code: "IntlBackslash", key: "<" })).toBe("");
+test("keyPressOf names a keydown as the matching reads it", () => {
+  const name = (init: KeyboardEventInit) => keyPressOf(key(init));
+  expect(name({ code: "KeyW", key: "z" })).toEqual({ key: "Z", shift: false });
+  expect(name({ code: "KeyW", key: "ц" })).toEqual({ key: "W", shift: false });
+  expect(name({ code: "KeyM", key: "," })).toEqual({ key: ",", shift: false });
+  expect(name({ code: "KeyW", key: "'" })).toEqual({ key: "W", shift: false });
+  expect(name({ code: "Semicolon", key: "m" })).toEqual({ key: "M", shift: false });
+  expect(name({ code: "Digit1", key: "&" })).toEqual({ key: "1", shift: false });
+  expect(name({ code: "Comma", key: ";" })).toEqual({ key: ";", shift: false });
+  expect(name({ code: "Period", key: ":" })).toEqual({ key: ".", shift: false });
+  expect(name({ code: "BracketLeft", key: "Dead" })).toEqual({ key: "[", shift: false });
+  expect(name({ code: "KeyZ", key: "W", shiftKey: true })).toEqual({ key: "W", shift: true });
+  expect(name({ code: "NumpadEnter", key: "Enter" })).toEqual({ key: "Enter", shift: false });
+  expect(name({ code: "NumpadDivide", key: "/" })).toEqual({ key: "", shift: false });
+  expect(name({ code: "F5", key: "F5" })).toEqual({ key: "F5", shift: false });
+  expect(name({ code: "Enter", key: "Enter", shiftKey: true })).toEqual({ key: "Enter", shift: true });
+  expect(name({ code: "IntlBackslash", key: "<" })).toEqual({ key: "", shift: false });
 });
 
 test("modifiers must match exactly", () => {
@@ -363,6 +364,16 @@ test("no Ctrl+Alt press (AltGr on Windows) matches a default off macOS (#102, #1
   }
   // AltGr on Linux (no Ctrl, no Alt) gives a plain character: no shortcut.
   expect(DEFAULT_SPECS.some((spec) => matchCombination(key({ code: "Digit5", key: "[" }), spec))).toBe(false);
+  // Ctrl+AltGr on Linux reports Ctrl alone with the AltGr character. On AZERTY's digit row
+  // the key stays its digit: Ctrl+AltGr+5 ("[") is Ctrl+5, tab 5, not Ctrl+[.
+  const digit = key({ code: "Digit5", key: "[", ctrlKey: true });
+  expect(matchCombination(digit, "Mod+5")).toBe(true);
+  expect(matchCombination(digit, "Mod+[")).toBe(false);
+  // Off the digit row the AltGr character counts: Ctrl+AltGr+")" ("]") is Ctrl+], next tab
+  // (before #105 it was Ctrl+-, font smaller, by position).
+  const minus = key({ code: "Minus", key: "]", ctrlKey: true });
+  expect(matchCombination(minus, "Mod+]")).toBe(true);
+  expect(matchCombination(minus, "Mod+-")).toBe(false);
 });
 
 test("the recorder names every press as the matching reads it, on every layout (#105)", () => {
