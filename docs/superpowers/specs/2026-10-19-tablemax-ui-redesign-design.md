@@ -339,6 +339,20 @@ Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E
 > coloré), seulement sans sélection (la sélection s'exécute alors), et plus de bande de ligne
 > active ; rien au-delà de 200 000 caractères (le texte est redécoupé à chaque frappe).
 
+> Amendement 2026-10-21 (#107) : règle — un texte posé sur un fond d'accent (blanc,
+> `--accent-contrast`) l'est toujours sur `--accent-strong` (5,8:1 clair / 5,4:1 sombre),
+> jamais sur `--accent` (4,0:1 / 3,9:1). Concerné : lignes survolées ou au focus des menus
+> contextuels (barre latérale, grille) et du menu d'options de la recherche latérale, élément
+> sélectionné de la palette (Open Anything), élément surligné de `TabList`, boutons
+> principaux des dialogues (éditeur, clé d'hôte, secret, import, import d'URL), complétion
+> sélectionnée de l'éditeur SQL. Un libellé secondaire à 70 % (raccourci, type) devient opaque
+> sur la ligne surlignée (blanc à 70 % sur `--accent-strong` : 3,4:1). `--accent` reste pour
+> ce qui ne porte pas de texte : anneaux de focus, bordures, texte d'accent (liens), bord de
+> redimensionnement survolé, case à cocher SSH. Pas de jeton de survol : aucun bouton
+> principal ne change de fond au survol. Tests : `src/styles/accentText.test.ts` (aucune
+> classe ne combine un fond `--accent` et un texte clair, quelle que soit la variante) et
+> `accent_text_contrast` dans `tokens.test.ts` (clair, sombre média, sombre forcé).
+
 ### 5.2 Dimensions (à 100 %)
 Barre du haut 52, pilules 34, boutons 28–32 ; colonne des connexions 80 ; barre latérale 262
 (min 240) ; en-tête de barre latérale 40 ; lignes d'arbre 24 ; onglets 38 (capsules 28) ;
