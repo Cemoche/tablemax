@@ -35,6 +35,10 @@ The UI follows the redesign spec `docs/superpowers/specs/2026-10-19-tablemax-ui-
   `--danger-text` too. `--accent` and `--danger` stay for tints (`bg-accent/30`), focus rings,
   borders and outlines (`src/styles/textColor.test.ts` checks it, #129). A new background
   under these texts goes into the lists of `tokens.test.ts`.
+- One base text colour per class string: Tailwind 4 orders same-property utilities by
+  name, so `.text-text` / `.text-icon` beat `.text-danger-text` whatever the class order.
+  A coloured variant of a shared style uses its colourless base (`btnBase`,
+  `buttonBaseClass`, `iconButtonBase`) plus one colour (`textColor.test.ts` checks it).
 - Canvas code (the grid) reads tokens at runtime: see `src/features/grid/gridTheme.ts`.
 - Focus rings: `outline-none focus-visible:outline-2 focus-visible:outline-solid
   focus-visible:outline-accent` (Tailwind 4 needs `outline-solid` after `outline-none`).
