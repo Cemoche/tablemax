@@ -59,6 +59,7 @@ const THEME_TOKENS = [
   "--inserted",
   "--modified",
   "--deleted",
+  "--deleted-text",
   ...["local", "dev", "staging", "prod"].flatMap((t) => [`--tag-${t}-bg`, `--tag-${t}-text`]),
   ...[1, 2, 3, 4, 5, 6].map((n) => `--swatch-${n}`),
 ];
@@ -332,7 +333,7 @@ test("danger_fill_contrast: a destructive button's label reads 4.5:1 on --danger
  * foreign key links (--win), the grid's FK indicator (linkColor: --row-a, --row-b, and --sel
  * in a selected column, Glide's accentLight). Elsewhere the indicator takes the text of what
  * it sits on (gridTheme.ts): on an edited cell the text that reads best on --modified, on a
- * deleted row that row's --text-2, on a selected row white.
+ * deleted row that row's --deleted-text (#136), on a selected row white.
  */
 const ACCENT_TEXT_BACKGROUNDS = ["--content", "--seg-sel", "--side", "--win", "--row-a", "--row-b", "--sel"];
 
@@ -404,5 +405,108 @@ test("danger_as_text_contrast: --danger-text reads 4.5:1 on every background it 
   const light = values(LIGHT);
   for (const bg of ["--seg-sel", "--sel"]) {
     expect(contrastRatio(light["--danger"], light[bg]), `light danger on ${bg}`).toBeLessThan(4.5);
+  }
+});
+
+type Rgb = [number, number, number];
+
+/** Linear RGB (0–1) of a #RRGGBB colour. */
+function linear(hex: string): Rgb {
+  return [0, 1, 2].map((i) => {
+    const c = parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  }) as Rgb;
+}
+
+/** CIE L*a*b* (D65) of a linear RGB colour. */
+function labOf([r, g, b]: Rgb): Rgb {
+  const f = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const x = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
+  const y = f(0.2126 * r + 0.7152 * g + 0.0722 * b);
+  const z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+  return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+}
+
+/** CIE76 colour difference ΔE*ab of two linear RGB colours. */
+function deltaELinear(a: Rgb, b: Rgb): number {
+  const [p, q] = [labOf(a), labOf(b)];
+  return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+}
+
+/** CIE76 colour difference ΔE*ab of two #RRGGBB colours (about 2.3: just noticeable). */
+const deltaE = (a: string, b: string) => deltaELinear(linear(a), linear(b));
+
+/** Machado, Oliveira & Fernandes 2009, severity 1.0, applied in linear RGB. */
+const CVD: Record<string, number[][]> = {
+  protan: [
+    [0.152286, 1.052583, -0.204868],
+    [0.114503, 0.786281, 0.099216],
+    [-0.003882, -0.048116, 1.051998],
+  ],
+  deutan: [
+    [0.367322, 0.860646, -0.227968],
+    [0.280085, 0.672501, 0.047413],
+    [-0.01182, 0.04294, 0.968881],
+  ],
+};
+
+/** `hex` as seen with the colour vision deficiency `kind`, in linear RGB. */
+function simulate(hex: string, kind: string): Rgb {
+  const c = linear(hex);
+  return CVD[kind].map((row) => Math.min(1, Math.max(0, row[0] * c[0] + row[1] * c[1] + row[2] * c[2]))) as Rgb;
+}
+
+/**
+ * The text drawn on each change fill (#136): the grid's cell text, NULL / EMPTY / DEFAULT
+ * placeholders and FK indicator on an inserted row (--cell-text) or a deleted row
+ * (--deleted-text, struck through), the text that reads best on an edited cell (--cell-text
+ * or white, gridTheme.ts), and --text in the pending changes panel's badges and the row
+ * detail panel's edited field.
+ */
+const CHANGE_FILL_TEXTS: Record<string, string[]> = {
+  "--inserted": ["--cell-text", "--text"],
+  // The grid draws white on the dark --modified (the best text, gridTheme.ts); --cell-text reads too.
+  "--modified": ["--cell-text", "--text"],
+  "--deleted": ["--deleted-text", "--text"],
+};
+
+test("change_fill_text_contrast: every text on the inserted, edited and deleted fills reads 4.5:1, in both themes (#136)", () => {
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    expect(values(selector)["--deleted-text"], `${selector} deleted-text`).toMatch(/^#[0-9A-F]{6}$/i);
+    for (const [fill, texts] of Object.entries(CHANGE_FILL_TEXTS)) {
+      for (const fg of texts) {
+        expect(contrastRatio(v[fg], v[fill]), `${selector} ${fg} on ${fill}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    // In a selected column Glide paints --sel (accentLight) under the row's text.
+    for (const fg of ["--cell-text", "--deleted-text"]) {
+      expect(contrastRatio(v[fg], v["--sel"]), `${selector} ${fg} on --sel`).toBeGreaterThanOrEqual(4.5);
+    }
+    // A deleted row stays dimmer than the others (with its strike-through), still readable.
+    expect(contrastRatio(v["--deleted-text"], v["--deleted"]), `${selector} deleted text dimmer`).toBeLessThan(
+      contrastRatio(v["--cell-text"], v["--deleted"]),
+    );
+  }
+});
+
+test("change_fills_distinct: the three change fills stand apart from each other, the rows, --sel and the selected rows (#136)", () => {
+  const FILLS = ["--inserted", "--modified", "--deleted"];
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = { ...values(LIGHT), ...values(selector) };
+    const row = (t: string) => (t === "--row-selected" ? v["--accent-strong"] : v[t]);
+    for (const [i, fill] of FILLS.entries()) {
+      for (const other of [...FILLS.slice(i + 1), "--row-a", "--row-b", "--sel", "--row-selected"]) {
+        expect(deltaE(v[fill], row(other)), `${selector} ${fill} vs ${other}`).toBeGreaterThanOrEqual(20);
+      }
+    }
+    // Inserted (green) and edited (amber) stay apart for red-green colour blindness too: a
+    // luminance gap, not the hue alone (#136 review: dark #43702E fell to ΔE 4.1 protan).
+    for (const kind of Object.keys(CVD)) {
+      expect(
+        deltaELinear(simulate(v["--inserted"], kind), simulate(v["--modified"], kind)),
+        `${selector} inserted vs modified, ${kind}`,
+      ).toBeGreaterThanOrEqual(10);
+    }
   }
 });

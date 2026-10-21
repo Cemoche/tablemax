@@ -417,6 +417,29 @@ Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E
 > sélectionnée. Tests : `src/styles/textColor.test.ts` (gardes texte et conflit de couleurs),
 > `tokens.test.ts`, `gridTheme.test.ts`, `rowNumbers.test.ts`.
 
+> Amendement 2026-10-21 (#136) : tout texte posé sur un remplissage de modification lit
+> 4,5:1 (clair, sombre média, sombre forcé). Sombre : `--inserted` #558C3A → #2E5020 et
+> `--modified` #8B6826 → #7E5E22 (`--cell-text` 3,24 → 7,37 et 4,10 → 4,79 ; `--text` des
+> badges du panneau des modifications et du champ modifié du détail de ligne 8,21 / 5,34 ;
+> ce champ garde `--text` quand il est verrouillé, `--text-2` y lisant 2,73) ;
+> le clair ne change pas (11,99 / 11,83). Nouveau `--deleted-text` #474747 (clair) / #CCCCCC
+> (sombre) pour une ligne supprimée, toujours barrée : 4,85 / 4,99 sur `--deleted` (au lieu
+> de `--text-2`, 2,78 / 3,66), plus pâle que `--cell-text`. Grille : une ligne insérée
+> dessine données, NULL / EMPTY / DEFAULT et indicateur ↗ en `--cell-text`, une ligne
+> supprimée en `--deleted-text`, une cellule modifiée dans le texte le plus lisible sur
+> `--modified` (`--cell-text` en clair, blanc 5,98 en sombre) ; le `--placeholder` atténué
+> (moins de 3:1 sur ces remplissages) ne reste que sur les lignes simples. Colonne
+> sélectionnée (`--sel`) : 6,27 / 5,88 pour `--deleted-text`. Ligne sélectionnée : blanc sur
+> `--row-selected`, inchangé ; ligne en échec : règles du #129. Les remplissages restent
+> distincts (ΔE*ab CIE76 ≥ 20 entre eux et avec `--row-a`, `--row-b`, `--sel`,
+> `--row-selected` ; minimum clair 22,7 inséré / `--row-b`, sombre 33,1 inséré / `--sel`) ;
+> inséré et modifié se distinguent aussi en luminance (sombre 1,54:1) et restent à ΔE ≥ 10
+> en protanopie / deutéranopie simulées (Machado 2009, sévérité 1 ; sombre 13,8 / 20,7, clair
+> 25,4 / 27,2).
+> Tests : `change_fill_text_contrast` et `change_fills_distinct` (`tokens.test.ts`),
+> `change_fill_text_contrast` (`gridTheme.test.ts`), placeholders (`DataGrid.test.tsx`),
+> champ modifié verrouillé (`RowDetailPanel.test.tsx`).
+
 ### 5.2 Dimensions (à 100 %)
 Barre du haut 52, pilules 34, boutons 28–32 ; colonne des connexions 80 ; barre latérale 262
 (min 240) ; en-tête de barre latérale 40 ; lignes d'arbre 24 ; onglets 38 (capsules 28) ;

@@ -391,12 +391,15 @@ export function DataGrid({
   const getCellContent = useCallback(
     ([displayCol, row]: Item): GridCell => {
       const col = dataCol(displayCol);
-      // A placeholder is dim on a plain row; on a selected (accent) row it keeps the row's text colour.
-      const placeholderTheme = highlighted.has(row) ? placeholderOnAccent : mutedOverride;
+      // A placeholder is dim on a plain row; on a selected (accent) row, and on an inserted or
+      // deleted row's fill (#136: --placeholder is under 3:1 there), it keeps the row's text colour.
+      const r = model?.rows[row];
+      const onFill = r?.kind === "insert" || (r?.kind === "row" && r.deleted);
+      const placeholderTheme = highlighted.has(row) || onFill ? placeholderOnAccent : mutedOverride;
       if (model) {
         const cell = model.cell(row, col);
         const c: CellContent = cellContent(cell.value);
-        const rowInserted = model.rows[row]?.kind === "insert";
+        const rowInserted = r?.kind === "insert";
         // On a selected row the row's text is white, on a failed row --danger-text: an edited
         // cell keeps --modified with the text that reads on it (white on light --modified
         // would be 1.3:1, the dark --danger-text 2.5:1).

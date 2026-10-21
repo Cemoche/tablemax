@@ -152,8 +152,9 @@ export function buildRowThemes(readVar: ReadVar = readCssVar): RowThemes {
 
 export interface EditThemes {
   /**
-   * A cell with a pending value; its FK indicator in the text that reads best on --modified
-   * (the accent text reads 2.5:1 there in dark, #129).
+   * A cell with a pending value: its value, placeholder and FK indicator in the text that
+   * reads best on --modified (the accent text reads 2.5:1 there in dark, #129; the
+   * placeholder colour under 3:1, #136).
    */
   edited: Partial<Theme>;
   /**
@@ -162,9 +163,15 @@ export interface EditThemes {
    * row's white (or red) text for the one that reads best on --modified.
    */
   editedOnAccent: Partial<Theme>;
-  /** A row to insert. */
+  /**
+   * A row to insert: --inserted under --cell-text, which DataGrid also gives its DEFAULT /
+   * NULL placeholders (the dim --placeholder is under 3:1 on the fills, #136).
+   */
   inserted: Partial<Theme>;
-  /** A row to delete (its text is also struck through by DataGrid); its FK indicator too. */
+  /**
+   * A row to delete: --deleted under --deleted-text (#136), struck through by DataGrid; its
+   * placeholders and FK indicator in the same text.
+   */
   deleted: Partial<Theme>;
   /**
    * A row whose change failed to apply: its text in --danger-text (#129). DataGrid lays it
@@ -173,12 +180,18 @@ export interface EditThemes {
   failed: Partial<Theme>;
 }
 
-/** Overrides for pending changes (tokens --modified, --inserted, --deleted); a missing token overrides nothing. */
+/**
+ * Overrides for pending changes (tokens --modified, --inserted, --deleted and the text on
+ * them, 4.5:1 in both themes: tokens.test.ts, #136); a missing token overrides nothing.
+ */
 export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
   const only = (key: keyof Theme, token: string): Partial<Theme> => {
     const v = readVar(token);
     return v ? { [key]: v } : {};
   };
+  /** Every text the grid draws on a fill (data, placeholders, FK indicator) in `color`. */
+  const textIn = (color: string): Partial<Theme> =>
+    color ? { textDark: color, textMedium: color, textLight: color, linkColor: color } : {};
   const modified = readVar("--modified");
   const cellText = readVar("--cell-text") || readVar("--text");
   const onAccent = readVar("--row-selected-text");
@@ -191,15 +204,16 @@ export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
       return cellText;
     }
   })();
-  const text: Partial<Theme> = best ? { textDark: best, textMedium: best, textLight: best, linkColor: best } : {};
+  const text = textIn(best);
   return {
-    edited: { ...only("bgCell", "--modified"), ...(best ? { linkColor: best } : {}) },
+    edited: { ...only("bgCell", "--modified"), ...text },
     // Glide fills a selected cell with the opaque accentLight over bgCell (a row selected by
     // its number, the active cell's range): --modified there too keeps the edit visible under
     // its readable text, while the row's accent and the --cell-focus ring show the selection.
     editedOnAccent: { ...only("bgCell", "--modified"), ...only("accentLight", "--modified"), ...text },
-    inserted: only("bgCell", "--inserted"),
-    deleted: { ...only("bgCell", "--deleted"), ...only("textDark", "--text-2"), ...only("linkColor", "--text-2") },
+    // A new row has no FK indicator (nothing loaded to reference yet), but its colour follows anyway.
+    inserted: { ...only("bgCell", "--inserted"), ...textIn(cellText) },
+    deleted: { ...only("bgCell", "--deleted"), ...textIn(readVar("--deleted-text")) },
     failed: only("textDark", "--danger-text"),
   };
 }

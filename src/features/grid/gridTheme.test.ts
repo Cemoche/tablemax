@@ -123,12 +123,16 @@ test("pending-change themes read their tokens", () => {
     "--danger": "#e4",
     "--danger-text": "#e6",
     "--text-2": "#e5",
+    "--deleted-text": "#e7",
+    "--cell-text": "#e8",
   };
   const t = buildEditThemes((n) => vars[n] ?? "");
   expect(t.edited.bgCell).toBe("#e1");
-  expect(t.inserted.bgCell).toBe("#e2");
-  // A deleted row's FK indicator follows its text, not the accent on --deleted (#129).
-  expect(t.deleted).toEqual({ bgCell: "#e3", textDark: "#e5", linkColor: "#e5" });
+  // Each fill sets the text drawn on it: the data, placeholders and FK indicator (#129, #136).
+  const all = (c: string) => ({ textDark: c, textMedium: c, textLight: c, linkColor: c });
+  expect(t.inserted).toEqual({ bgCell: "#e2", ...all("#e8") });
+  // A deleted row: --deleted-text, not --text-2 (2.78:1 light, 3.66:1 dark on --deleted, #136).
+  expect(t.deleted).toEqual({ bgCell: "#e3", ...all("#e7") });
   // A failed row's text is --danger-text, not --danger (#129).
   expect(t.failed).toEqual({ textDark: "#e6" });
   // Missing tokens: no override rather than a hardcoded color.
@@ -227,5 +231,44 @@ test("link_and_failed_text_contrast: the FK indicator and a failed row's text re
     const numbers = buildRowNumberColors(read);
     expect(numbers.failedText, name).toBe(vars["--danger-text"]);
     expect(contrastRatio(numbers.failedText, vars["--grid-head"]), `${name} failed number`).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
+test("change_fill_text_contrast: every text the grid draws on a change fill reads 4.5:1, in every theme block (#136)", () => {
+  const light = tokenBlock(":root");
+  const blocks = [
+    ["light", light],
+    ["dark (media)", { ...light, ...tokenBlock(':root:not([data-theme="light"])') }],
+    ["dark (forced)", { ...light, ...tokenBlock(':root[data-theme="dark"]') }],
+  ] as const;
+  const TEXT_KEYS = ["textDark", "textMedium", "textLight", "linkColor"] as const;
+  for (const [name, vars] of blocks) {
+    const edit = buildEditThemes((n) => vars[n] ?? "");
+    // Inserted row, deleted row, edited cell; an edited cell on a selected or failed row.
+    // Placeholders (NULL / EMPTY / DEFAULT) take the fill's text on these rows (DataGrid).
+    for (const [kind, theme, fill] of [
+      ["inserted", edit.inserted, "--inserted"],
+      ["deleted", edit.deleted, "--deleted"],
+      ["edited", edit.edited, "--modified"],
+      ["editedOnAccent", edit.editedOnAccent, "--modified"],
+    ] as const) {
+      expect(theme.bgCell, `${name} ${kind}`).toBe(vars[fill]);
+      for (const key of TEXT_KEYS) {
+        const fg = theme[key];
+        expect(fg, `${name} ${kind} ${key}`).toBeTruthy();
+        expect(contrastRatio(fg!, theme.bgCell!), `${name} ${kind} ${key} on ${fill}`).toBeGreaterThanOrEqual(4.5);
+        // A selected column paints --sel (accentLight) under the same text, except on an
+        // edited cell of a selected row, which keeps --modified there.
+        const selFill = theme.accentLight ?? vars["--sel"];
+        expect(contrastRatio(fg!, selFill), `${name} ${kind} ${key} on the selected column`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    // A failed inserted / deleted row keeps its fill's text (DataGrid lays `failed` on plain rows only).
+    // A selected row (inserted, deleted or edited) is white on --row-selected.
+    const selected = buildRowThemes((n) => vars[n] ?? "").selected;
+    const selectedFill = vars["--accent-strong"];
+    for (const key of TEXT_KEYS) {
+      expect(contrastRatio(selected[key]!, selectedFill), `${name} selected ${key}`).toBeGreaterThanOrEqual(4.5);
+    }
   }
 });

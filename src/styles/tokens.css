@@ -56,9 +56,13 @@
      4.63:1 (dark) on --sel, the hardest background it sits on. */
   --accent-text: #0057B5;
   --cell-focus: #FF4245;
+  /* Change fills (#136): --cell-text (and --text) read at least 4.5:1 on --inserted and
+     --modified; a deleted row's text is --deleted-text, dimmer than --cell-text but 4.5:1 on
+     --deleted and on --sel (a selected column), --text-2 being 2.78:1 (light) / 3.66:1 (dark). */
   --inserted: #DAEBC2;
   --modified: #FFE18E;
   --deleted: #F5A6B0;
+  --deleted-text: #474747;
   --tag-local-bg: #E6E6E6;
   --tag-local-text: #4A4A4A;
   --tag-dev-bg: #DCE8FB;
@@ -196,9 +200,10 @@
     --accent-strong: #2B63D9;
     --accent-text: #92B6FA;
     --cell-focus: #FF4245;
-    --inserted: #558C3A;
-    --modified: #8B6826;
+    --inserted: #2E5020;
+    --modified: #7E5E22;
     --deleted: #8F2F31;
+    --deleted-text: #CCCCCC;
     --tag-local-bg: #3A3A3A;
     --tag-local-text: #D6D6D6;
     --tag-dev-bg: #173E73;
@@ -286,9 +291,10 @@
   --accent-strong: #2B63D9;
   --accent-text: #92B6FA;
   --cell-focus: #FF4245;
-  --inserted: #558C3A;
-  --modified: #8B6826;
+  --inserted: #2E5020;
+  --modified: #7E5E22;
   --deleted: #8F2F31;
+  --deleted-text: #CCCCCC;
   --tag-local-bg: #3A3A3A;
   --tag-local-text: #D6D6D6;
   --tag-dev-bg: #173E73;

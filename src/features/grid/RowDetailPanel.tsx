@@ -365,7 +365,7 @@ function Field({
         }}
         className={`mt-1 block w-full resize-y rounded-sm border border-border px-2 py-1 font-mono outline-none focus:border-accent ${
           cell.edited ? "bg-pending-edit" : "bg-surface"
-        } ${editable ? "text-fg" : "text-muted"}`}
+        } ${editable || cell.edited ? "text-fg" : "text-muted"}`}
       />
       {full?.s === "loading" && <p className="text-xs text-muted">{strings.grid.editorLoading}</p>}
       {partial && <p className="text-xs text-muted">{strings.grid.quickLook.partial}</p>}
