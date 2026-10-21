@@ -280,6 +280,9 @@ pub struct Capabilities {
     pub documents: bool,
     /// The workspace can move its connection to another database (PostgreSQL).
     pub database_switch: bool,
+    /// The bytes the workspace moves over the network are counted (`workspace_throughput`):
+    /// PostgreSQL, MySQL and MariaDB, direct or through SSH.
+    pub throughput: bool,
 }
 
 pub fn capabilities(kind: DriverKind) -> Capabilities {
@@ -291,13 +294,19 @@ pub fn capabilities(kind: DriverKind) -> Capabilities {
         foreign_keys: true,
         documents: false,
         database_switch: false,
+        throughput: true,
     };
     match kind {
         DriverKind::Postgres => Capabilities {
             database_switch: true,
             ..sql
         },
-        DriverKind::MySql | DriverKind::MariaDb | DriverKind::Sqlite => sql,
+        DriverKind::MySql | DriverKind::MariaDb => sql,
+        // A file: no network.
+        DriverKind::Sqlite => Capabilities {
+            throughput: false,
+            ..sql
+        },
         DriverKind::MongoDb => Capabilities {
             sql_editor: false,
             grid_editing: false,
@@ -306,6 +315,8 @@ pub fn capabilities(kind: DriverKind) -> Capabilities {
             foreign_keys: false,
             documents: true,
             database_switch: false,
+            // Not counted: the driver opens its own connections (several hosts, SRV).
+            throughput: false,
         },
     }
 }
@@ -359,6 +370,7 @@ mod tests {
             foreign_keys: true,
             documents: false,
             database_switch: false,
+            throughput: true,
         };
         assert_eq!(
             capabilities(DriverKind::Postgres),
@@ -367,9 +379,17 @@ mod tests {
                 ..sql_but_switch
             }
         );
-        for kind in [DriverKind::MySql, DriverKind::MariaDb, DriverKind::Sqlite] {
+        for kind in [DriverKind::MySql, DriverKind::MariaDb] {
             assert_eq!(capabilities(kind), sql_but_switch, "{kind:?}");
         }
+        // A file has no network traffic to count (#112).
+        assert_eq!(
+            capabilities(DriverKind::Sqlite),
+            Capabilities {
+                throughput: false,
+                ..sql_but_switch
+            }
+        );
         let only_documents = Capabilities {
             sql_editor: false,
             grid_editing: false,
@@ -378,6 +398,7 @@ mod tests {
             foreign_keys: false,
             documents: true,
             database_switch: false,
+            throughput: false,
         };
         assert_eq!(capabilities(DriverKind::MongoDb), only_documents);
         let wire = serde_json::to_value(capabilities(DriverKind::Postgres)).unwrap();
@@ -385,7 +406,8 @@ mod tests {
             wire,
             serde_json::json!({
                 "sqlEditor": true, "gridEditing": true, "routines": true, "ddl": true,
-                "foreignKeys": true, "documents": false, "databaseSwitch": true
+                "foreignKeys": true, "documents": false, "databaseSwitch": true,
+                "throughput": true
             })
         );
     }

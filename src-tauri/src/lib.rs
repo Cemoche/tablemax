@@ -121,6 +121,7 @@ pub fn run() {
             commands::import_tableplus_commit,
             commands::import_tableplus_discard,
             commands::workspace_close,
+            commands::workspace_throughput,
             commands::schemas_list,
             commands::objects_list,
             commands::table_page,
