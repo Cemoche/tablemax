@@ -5,6 +5,8 @@ import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { strings } from "../../lib/strings";
 import { useGridViews } from "../../stores/gridViews";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
+import { expectSoftDisabled } from "../../test/softDisabled";
+import { TooltipLayer } from "../chrome/TooltipLayer";
 import { type BottomBarData, TableBottomBar } from "./TableBottomBar";
 
 const g = strings.grid;
@@ -68,13 +70,56 @@ test("bottom_bar_layout: view switch, + Row, centered counter, Filters, Columns 
   hasTip(screen.getByRole("button", { name: strings.filters.button(0) }), g.filtersHint, "Ctrl+F");
   hasTip(screen.getByRole("button", { name: g.columns }), g.columnsHint, "Alt+F");
   hasTip(screen.getByRole("button", { name: g.prev }), g.prev, "Ctrl+←");
-  expect(screen.getByRole("button", { name: g.prev })).toBeDisabled();
-  expect(screen.getByRole("button", { name: g.next })).toBeEnabled();
+  expect(screen.getByRole("button", { name: g.prev })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("button", { name: g.next })).not.toHaveAttribute("aria-disabled");
   hasTip(screen.getByRole("tab", { name: g.view.data }), g.view.dataHint, "Alt+1");
   expect(screen.getByRole("tab", { name: g.view.data })).toHaveAttribute("aria-controls", ids.data);
   hasTip(screen.getByRole("tab", { name: g.view.index }), g.view.indexHint, "Alt+3");
   expect(screen.getByRole("tab", { name: g.view.index })).toHaveAttribute("aria-keyshortcuts", "Alt+3");
   expect(screen.getByRole("tab", { name: g.view.index })).toHaveAttribute("aria-controls", ids.index);
+});
+
+test("page_buttons_soft_disabled: Prev / Next off at the ends or while loading keep their tooltip and do nothing (#110)", async () => {
+  const user = userEvent.setup();
+  const d = data();
+  const { rerender } = render(
+    <>
+      <TooltipLayer />
+      <TableBottomBar view="data" onView={vi.fn()} panelIds={ids} data={d} />
+    </>,
+  );
+  const prev = screen.getByRole("button", { name: g.prev });
+  const next = screen.getByRole("button", { name: g.next });
+  const paged = () => vi.mocked(d.paging.onPrev).mock.calls.length + vi.mocked(d.paging.onNext).mock.calls.length > 0;
+  // Page 1: Prev is off; Next works.
+  await expectSoftDisabled(user, prev, g.prev, paged);
+  await user.click(next);
+  expect(d.paging.onNext).toHaveBeenCalledTimes(1);
+
+  // The last page: Next is off; Prev works.
+  const last = data({ paging: { ...d.paging, hasPrev: true, hasNext: false, onPrev: vi.fn(), onNext: vi.fn() } });
+  const ui = (x: BottomBarData) => (
+    <>
+      <TooltipLayer />
+      <TableBottomBar view="data" onView={vi.fn()} panelIds={ids} data={x} />
+    </>
+  );
+  rerender(ui(last));
+  await user.unhover(next);
+  const lastPaged = () => vi.mocked(last.paging.onNext).mock.calls.length > 0;
+  await expectSoftDisabled(user, next, g.next, lastPaged);
+  await user.click(prev);
+  expect(last.paging.onPrev).toHaveBeenCalledTimes(1);
+
+  // Loading: both are off.
+  const loading = data({ paging: { ...last.paging, hasPrev: true, hasNext: true, disabled: true, onPrev: vi.fn(), onNext: vi.fn() } });
+  rerender(ui(loading));
+  for (const b of [prev, next]) {
+    expect(b).toHaveAttribute("aria-disabled", "true");
+    await user.click(b);
+  }
+  expect(loading.paging.onPrev).not.toHaveBeenCalled();
+  expect(loading.paging.onNext).not.toHaveBeenCalled();
 });
 
 test("the Filters button says how many filters apply and whether the bar is open", () => {

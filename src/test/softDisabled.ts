@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 import { expect } from "vitest";
 
@@ -23,6 +23,7 @@ export async function expectSoftDisabled(
   expect(screen.queryByRole("tooltip")).toBeNull();
 
   // Keyboard focus reaches it (Tab), and shows its tooltip at once.
+  if (document.activeElement === button) act(() => button.blur());
   for (let i = 0; i < 80 && document.activeElement !== button; i++) await user.tab();
   expect(button).toHaveFocus();
   expect(screen.getByRole("tooltip")).toHaveTextContent(tooltip);

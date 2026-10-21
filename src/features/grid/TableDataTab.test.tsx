@@ -118,7 +118,7 @@ test("footer shows range with ≈ for estimates and pages forward", async () => 
   await waitFor(() =>
     expect(screen.getByTestId("footer-range")).toHaveTextContent("301–600 of ≈ 1,234,567 rows"),
   );
-  expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Previous page" })).not.toHaveAttribute("aria-disabled");
 });
 
 test("centre_text: the selected rows' count, else the row count (the range while the table spans pages)", async () => {
