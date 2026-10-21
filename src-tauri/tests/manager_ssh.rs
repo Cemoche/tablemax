@@ -268,6 +268,43 @@ async fn sql_sessions_and_cancel_use_the_tunnel() {
     );
 }
 
+/// Through SSH the tunnel counts the workspace's bytes (#112): the database protocol's
+/// bytes, browse connection and SQL sessions alike, never the SSH keepalives.
+#[tokio::test]
+async fn throughput_counts_the_tunnel_traffic() {
+    let fx = fixture();
+    let (cfg, pw) = pg_over_ssh(ssh_settings(SshAuth::Password, PasswordMode::Keyring));
+    let saved = fx
+        .mgr
+        .save_connection(cfg, pw, Some(SSH_PASSWORD.into()))
+        .await
+        .unwrap();
+    let ws = open_confirming(&fx, &saved.id, None, None).await;
+    let id = ws.workspace_id.as_str();
+    assert!(ws.capabilities.throughput);
+    assert_eq!(fx.mgr.workspace_throughput(id).unwrap(), None);
+    let tunnel = fx.mgr.workspace_tunnel(id).await.unwrap();
+    let before = tunnel.traffic().totals();
+
+    fx.mgr
+        .browse(id)
+        .await
+        .unwrap()
+        .execute("SELECT repeat('x', 300000)")
+        .await
+        .unwrap();
+    let sid = fx.mgr.open_sql_session(id).await.unwrap();
+    assert_select_one(&fx.mgr, &sid).await.unwrap();
+    let after = tunnel.traffic().totals();
+    assert!(after.read - before.read >= 300_000, "{before:?} {after:?}");
+    assert!(after.written > before.written, "{before:?} {after:?}");
+
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let rate = fx.mgr.workspace_throughput(id).unwrap().expect("a rate");
+    assert!(rate.read_per_sec >= 300_000 / 4, "{rate:?}");
+    fx.mgr.close_workspace(id).await.unwrap();
+}
+
 #[tokio::test]
 async fn mysql_and_mariadb_over_ssh_with_key_auth() {
     let fx = fixture();

@@ -5,6 +5,12 @@
 //! `host` is always the TLS/display name; `dial`, when set, is the TCP target
 //! (`hostaddr` + `port`). The cancel token keeps both and reuses the same TLS connector.
 //!
+//! Counted direct connection (`ConnectParams::counted_route`, #112): the driver opens the
+//! TCP stream itself (`relay::connect_server`), wraps it in `Counted` and hands it to
+//! `Config::connect_raw`; cancel requests open their own counted stream to the address the
+//! session reached (`CancelToken::cancel_query_raw`; not a new resolution, which could pick
+//! another server behind round-robin DNS). No listener is involved.
+//!
 //! The `Client` is `&self`-usable, so no mutex is needed and `canceller()` works while
 //! `execute` is in flight. The connection future runs on a tokio task; when it ends the
 //! session is flagged lost so later calls fail fast with `ConnectionLost`.
@@ -45,6 +51,7 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::tls::MakeTlsConnect;
 use tokio_postgres::types::{ToSql, Type};
 use tokio_postgres::{CancelToken, Client, Config, NoTls, SimpleQueryMessage, Socket};
+use tokio::net::TcpStream;
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use super::catalog::{Catalog, CatalogColumn, DbRoutine, RoutineKind, group_rows};
@@ -61,6 +68,8 @@ use super::{
     RowCount, Session, SessionBase, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::relay::{self, Route};
+use crate::traffic::Counted;
 use crate::value::{
     CellValue, MAX_RESULT_ROWS, bytes_value, decode_hex, float_value, int_value, json_cell,
     text_cell,
@@ -71,6 +80,8 @@ struct PgSession {
     cancel: CancelToken,
     /// The connector the session was opened with (`None` = `NoTls`), reused to cancel.
     tls: Option<MakeRustlsConnect>,
+    /// Set when the connection's bytes are counted: cancels are counted too.
+    route: Option<CountedCancel>,
     lost: Arc<AtomicBool>,
     conn_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     version: String,
@@ -81,17 +92,55 @@ struct PgSession {
 struct PgCanceller {
     token: CancelToken,
     tls: Option<MakeRustlsConnect>,
+    route: Option<CountedCancel>,
+}
+
+/// Where a counted session's cancel requests go: the server address the session itself
+/// reached, `route.host` staying the TLS name.
+#[derive(Clone)]
+struct CountedCancel {
+    route: Route,
+    addr: std::net::SocketAddr,
+}
+
+impl CountedCancel {
+    async fn stream(&self) -> AppResult<Counted<TcpStream>> {
+        let stream = relay::connect_addr(&self.route.host, self.addr).await?;
+        Ok(Counted::new(stream, self.route.traffic.clone()))
+    }
 }
 
 #[async_trait]
 impl Canceller for PgCanceller {
     async fn cancel(&self) -> AppResult<()> {
-        match &self.tls {
-            Some(tls) => self.token.cancel_query(tls.clone()).await,
-            None => self.token.cancel_query(NoTls).await,
-        }
-        .map_err(|e| AppError::new(ErrorKind::Connection, with_causes(&e)))
+        let res = match (&self.route, &self.tls) {
+            (Some(cancel), Some(tls)) => {
+                let stream = cancel.stream().await?;
+                let tls = MakeTlsConnect::<Counted<TcpStream>>::make_tls_connect(
+                    &mut tls.clone(),
+                    &cancel.route.host,
+                )
+                .unwrap_or_else(|never| match never {});
+                self.token.cancel_query_raw(stream, tls).await
+            }
+            (Some(cancel), None) => {
+                let stream = cancel.stream().await?;
+                self.token.cancel_query_raw(stream, NoTls).await
+            }
+            (None, Some(tls)) => self.token.cancel_query(tls.clone()).await,
+            (None, None) => self.token.cancel_query(NoTls).await,
+        };
+        res.map_err(|e| AppError::new(ErrorKind::Connection, with_causes(&e)))
     }
+}
+
+/// A new TCP connection to `route`'s server, its bytes counted, with the address reached.
+async fn counted_stream(route: &Route) -> AppResult<(Counted<TcpStream>, std::net::SocketAddr)> {
+    let stream = relay::connect_server(&route.host, route.port).await?;
+    let addr = stream
+        .peer_addr()
+        .map_err(|e| AppError::new(ErrorKind::Connection, e.to_string()))?;
+    Ok((Counted::new(stream, route.traffic.clone()), addr))
 }
 
 /// Maps a server error; `None` when the error did not come from the server.
@@ -154,6 +203,39 @@ where
     Ok((client, handle))
 }
 
+/// [`open_client`] on a counted stream of our own (`connect_raw`): TLS (per the config's
+/// SSL mode) runs over it with `route.host` as the server name. Also returns where the
+/// session's cancel requests must go.
+async fn open_counted_client<T>(
+    cfg: &Config,
+    route: &Route,
+    mut tls: T,
+    lost: Arc<AtomicBool>,
+) -> AppResult<(Client, tokio::task::JoinHandle<()>, CountedCancel)>
+where
+    T: MakeTlsConnect<Counted<TcpStream>>,
+    T::TlsConnect: Send,
+    T::Stream: Send + 'static,
+{
+    let (stream, addr) = counted_stream(route).await?;
+    let tls = tls
+        .make_tls_connect(&route.host)
+        .map_err(|e| AppError::new(ErrorKind::Connection, e.into().to_string()))?;
+    let (client, connection) = cfg
+        .connect_raw(stream, tls)
+        .await
+        .map_err(map_connect_err)?;
+    let handle = tokio::spawn(async move {
+        let _ = connection.await;
+        lost.store(true, Ordering::SeqCst);
+    });
+    let cancel = CountedCancel {
+        route: route.clone(),
+        addr,
+    };
+    Ok((client, handle, cancel))
+}
+
 fn pg_ssl_mode(mode: SslMode) -> PgSslMode {
     match mode {
         SslMode::Disable => PgSslMode::Disable,
@@ -197,10 +279,25 @@ pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> 
     // TCP connect only: the whole connect + startup is bounded by CONNECT_TIMEOUT below.
     cfg.connect_timeout(CONNECT_TIMEOUT);
     let lost = Arc::new(AtomicBool::new(false));
+    let route = p.counted_route();
     let opened = tokio::time::timeout(CONNECT_TIMEOUT, async {
-        let (client, handle) = match &tls {
-            Some(tls) => open_client(&cfg, tls.clone(), lost.clone()).await?,
-            None => open_client(&cfg, NoTls, lost.clone()).await?,
+        let (client, handle, cancel_to) = match (&route, &tls) {
+            (Some(r), Some(tls)) => {
+                let (c, h, to) = open_counted_client(&cfg, r, tls.clone(), lost.clone()).await?;
+                (c, h, Some(to))
+            }
+            (Some(r), None) => {
+                let (c, h, to) = open_counted_client(&cfg, r, NoTls, lost.clone()).await?;
+                (c, h, Some(to))
+            }
+            (None, Some(tls)) => {
+                let (c, h) = open_client(&cfg, tls.clone(), lost.clone()).await?;
+                (c, h, None)
+            }
+            (None, None) => {
+                let (c, h) = open_client(&cfg, NoTls, lost.clone()).await?;
+                (c, h, None)
+            }
         };
         // Stops the connection task if init fails or the deadline drops this future.
         let mut guard = AbortOnDrop(Some(handle));
@@ -214,16 +311,17 @@ pub async fn connect_postgres(p: &ConnectParams) -> AppResult<Arc<dyn Session>> 
             .await
             .map_err(map_err)?;
         let handle = guard.0.take().expect("connection task");
-        Ok::<_, AppError>((client, handle, row.get::<_, String>(0)))
+        Ok::<_, AppError>((client, handle, row.get::<_, String>(0), cancel_to))
     })
     .await;
-    let (client, handle, version) =
+    let (client, handle, version, cancel_to) =
         opened.map_err(|_| AppError::new(ErrorKind::Connection, "connection timed out"))??;
     let cancel = client.cancel_token();
     Ok(Arc::new(PgSession {
         client,
         cancel,
         tls,
+        route: cancel_to,
         lost,
         conn_task: Mutex::new(Some(handle)),
         version,
@@ -921,6 +1019,7 @@ impl SessionBase for PgSession {
         Arc::new(PgCanceller {
             token: self.cancel.clone(),
             tls: self.tls.clone(),
+            route: self.route.clone(),
         })
     }
 
@@ -1153,6 +1252,7 @@ mod tests {
             },
             dial: None,
             mongo: None,
+            traffic: None,
         };
         let start = Instant::now();
         let res = tokio::time::timeout(

@@ -6,6 +6,9 @@
 //! secret is sent: unknown keys are only trusted when the user confirmed the exact
 //! fingerprint; a changed or unverifiable key always blocks the connection.
 //!
+//! The bytes forwarded in each direction are counted into the tunnel's [`Traffic`] (the
+//! workspace's, #112): the database protocol's bytes, not the SSH overhead.
+//!
 //! Secrets (password, passphrase) never appear in `Debug` output or error messages.
 use std::borrow::Cow;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -24,6 +27,7 @@ use tokio::task::{JoinHandle, JoinSet};
 
 use super::known_hosts::{HostKeyVerdict, KnownHosts, preferred_host_key_algorithms};
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::traffic::{Traffic, pump};
 
 /// TCP connect + SSH key exchange must finish within this delay.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -270,12 +274,18 @@ pub struct SshTunnel {
     /// Accept loop; owns the per-connection forwarding tasks, aborted with it.
     accept: JoinHandle<()>,
     closed: AtomicBool,
+    traffic: Arc<Traffic>,
 }
 
 impl SshTunnel {
     /// Local end (`127.0.0.1:<port>`) to use as `ConnectParams.dial`.
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
+    }
+
+    /// The bytes forwarded through the tunnel (read = from the database server).
+    pub fn traffic(&self) -> &Arc<Traffic> {
+        &self.traffic
     }
 
     /// False once closed, or when the SSH session or the listener has ended.
@@ -310,6 +320,7 @@ async fn forward(
     peer: SocketAddr,
     remote_host: String,
     remote_port: u16,
+    traffic: Arc<Traffic>,
 ) {
     let channel = session
         .channel_open_direct_tcpip(
@@ -322,8 +333,7 @@ async fn forward(
     // Unreachable target: dropping `sock` closes it, so only this DB connection fails.
     let Ok(channel) = channel else { return };
     let _ = sock.set_nodelay(true);
-    let mut stream = channel.into_stream();
-    let _ = tokio::io::copy_bidirectional(&mut sock, &mut stream).await;
+    let _ = pump(&mut sock, channel.into_stream(), traffic).await;
 }
 
 async fn accept_loop(
@@ -331,13 +341,21 @@ async fn accept_loop(
     session: Arc<Handle<TunnelHandler>>,
     remote_host: String,
     remote_port: u16,
+    traffic: Arc<Traffic>,
 ) {
     let mut conns = JoinSet::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok((sock, peer)) => {
-                    conns.spawn(forward(session.clone(), sock, peer, remote_host.clone(), remote_port));
+                    conns.spawn(forward(
+                        session.clone(),
+                        sock,
+                        peer,
+                        remote_host.clone(),
+                        remote_port,
+                        traffic.clone(),
+                    ));
                 }
                 // Per-connection failures (e.g. too many open files): back off a little.
                 Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
@@ -348,12 +366,25 @@ async fn accept_loop(
 }
 
 /// Opens an SSH session to `target` and forwards a local port to
-/// `remote_host:remote_port` (resolved by the SSH server).
+/// `remote_host:remote_port` (resolved by the SSH server), counting into a traffic of its
+/// own ([`SshTunnel::traffic`]).
 pub async fn open_tunnel(
     target: &SshTarget,
     remote_host: &str,
     remote_port: u16,
     policy: &HostKeyPolicy,
+) -> AppResult<Arc<SshTunnel>> {
+    open_counted_tunnel(target, remote_host, remote_port, policy, Arc::default()).await
+}
+
+/// [`open_tunnel`], counting the forwarded bytes into `traffic` (a workspace's counter,
+/// which outlives a tunnel that dies and is reopened).
+pub async fn open_counted_tunnel(
+    target: &SshTarget,
+    remote_host: &str,
+    remote_port: u16,
+    policy: &HostKeyPolicy,
+    traffic: Arc<Traffic>,
 ) -> AppResult<Arc<SshTunnel>> {
     let creds = credentials(&target.auth).await?;
 
@@ -421,12 +452,14 @@ pub async fn open_tunnel(
         session.clone(),
         remote_host.to_string(),
         remote_port,
+        traffic.clone(),
     ));
     Ok(Arc::new(SshTunnel {
         local_addr,
         session,
         accept,
         closed: AtomicBool::new(false),
+        traffic,
     }))
 }
 

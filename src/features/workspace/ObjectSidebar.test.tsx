@@ -286,6 +286,7 @@ const NO_SQL: Capabilities = {
   foreignKeys: false,
   documents: true,
   databaseSwitch: false,
+  throughput: false,
 };
 
 test("without the capabilities: no routines, no CREATE and no SELECT script", async () => {

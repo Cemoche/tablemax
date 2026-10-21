@@ -177,6 +177,36 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > séparation ; un onglet seul prend toute la largeur, libellé centré, son × au survol ou au
 > focus clavier seulement.
 
+> Amendement 2026-10-21 (#112) : l'emplacement de droite de la pastille montre le débit réseau
+> du workspace actif, octets lus + écrits par seconde sur une fenêtre glissante de 2 s
+> (`0 B/s`, `999 B/s`, `1.2 KB/s`, `12 KB/s`, `3.4 MB/s` ; 1 KB = 1000 B ; une décimale sous 10,
+> entiers au-dessus ; au plus 8 caractères). Seulement une fois connecté, pour PostgreSQL,
+> MySQL et MariaDB, en direct comme à travers SSH (capacité `throughput`) ; rien pour SQLite
+> (pas de réseau) ni MongoDB (non compté). L'emplacement a une largeur fixe (`8ch`, aligné à
+> droite, chiffres tabulaires) réservée dès la connexion (`pr-22` sur la pastille) : la
+> pastille ne bouge jamais ; il reste vide tant que le backend n'a pas de mesure (la première
+> demande ne fait que poser une référence), jamais de chiffre inventé. La pastille interroge
+> `workspace_throughput` chaque seconde tant qu'elle montre ce workspace (rien pour les
+> workspaces en arrière-plan), et s'arrête tant que la fenêtre est cachée (réduite) : rien
+> n'est affiché alors, et au retour l'emplacement repart vide jusqu'à la première réponse.
+> Nom accessible « TAG | texte | network 1.2 KB/s » ; pas de région live (un chiffre qui
+> change chaque seconde ne doit pas bavarder) ; tant que la pastille a le focus, la partie
+> débit du nom reste celle du moment où elle l'a reçu (un lecteur d'écran relit un élément
+> focalisé dont le nom change), mise à jour à la perte du focus. `capabilities.throughput`
+> du workspace dit ce qui est réellement compté (faux pour un hôte PostgreSQL donné comme
+> répertoire de socket Unix : pas d'emplacement réservé qui resterait vide). Comptage côté Rust,
+> octets seulement (jamais de contenu) : à travers SSH, la boucle de transfert du tunnel ; en
+> direct, PostgreSQL ouvre lui-même son flux TCP compté et le passe à tokio-postgres
+> (`connect_raw`, annulation par `cancel_query_raw`), sans écoute locale ; mysql_async ne
+> pouvant recevoir de flux (et sur une socket Unix il saute TLS et envoie le mot de passe en
+> clair), chaque connexion MySQL / MariaDB (session, `KILL QUERY`, nouvel essai `Prefer`) passe
+> par un relais à un coup sur `127.0.0.1:0` qui accepte une seule connexion, ferme aussitôt
+> son écoute (aussitôt si le pilote abandonne avant de s'y connecter, au plus tard après
+> 10 s) : jamais de relais ouvert. Une annulation PostgreSQL vise l'adresse que la session a
+> jointe, pas une nouvelle résolution DNS. TLS reste
+> de bout en bout, vérifié contre l'hôte de la connexion. Si le serveur est injoignable,
+> l'erreur dit pourquoi (« cannot connect to hôte:port: … »).
+
 ### 2.4 Connexions (maquettes « Liste des connexions » et « Formulaire »)
 - Fenêtre d'accueil : à gauche logo, nom, version et trois boutons (Create connection…,
   Import connections…, Open SQLite file…) ; à droite `+`, recherche (`Ctrl+F`), connexions par

@@ -240,6 +240,8 @@ export function sqlCapabilities(dialect: Dialect): Capabilities {
     foreignKeys: true,
     documents: false,
     databaseSwitch: dialect === "postgres",
+    // A SQLite file has no network traffic.
+    throughput: dialect !== "sqlite",
   };
 }
 
@@ -252,6 +254,7 @@ export const documentCapabilities: Capabilities = {
   foreignKeys: false,
   documents: true,
   databaseSwitch: false,
+  throughput: false,
 };
 
 /**

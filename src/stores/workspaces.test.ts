@@ -7,7 +7,7 @@ import { useGridViews } from "./gridViews";
 import { usePendingChanges } from "./pendingChanges";
 import { useQueryRuns } from "./queryRuns";
 import { useChrome } from "./chrome";
-import { type Workspace, canNavigate, capabilitiesOf, useWorkspaces } from "./workspaces";
+import { type Workspace, canNavigate, capabilitiesOf, documentCapabilities, sqlCapabilities, useWorkspaces } from "./workspaces";
 
 vi.mock("../lib/ipc");
 
@@ -37,6 +37,7 @@ const PG_CAPS: Capabilities = {
   foreignKeys: true,
   documents: false,
   databaseSwitch: true,
+  throughput: true,
 };
 
 /** The backend's WorkspaceInfo; capabilities follow the dialect unless given. */
@@ -522,7 +523,11 @@ test("before its first connect a workspace has the SQL capabilities of its diale
   restore();
   expect(ws().capabilities).toBeUndefined();
   expect(capabilitiesOf(ws())).toEqual(PG_CAPS);
-  expect(capabilitiesOf({ ...ws(), dialect: "sqlite" })).toEqual({ ...PG_CAPS, databaseSwitch: false });
+  expect(capabilitiesOf({ ...ws(), dialect: "sqlite" })).toEqual({
+    ...PG_CAPS,
+    databaseSwitch: false,
+    throughput: false,
+  });
 });
 
 test("openWorkspace connects a disconnected workspace in place, keeping its tabs", async () => {
@@ -762,6 +767,7 @@ test("before its first connect a document workspace has the document capabilitie
     foreignKeys: false,
     documents: true,
     databaseSwitch: false,
+    throughput: false,
   });
 });
 
@@ -909,4 +915,14 @@ test("closing a table tab forgets its Data / Structure view", async () => {
   useChrome.getState().setTableView(t, "structure");
   s.closeTab(id, t);
   expect(useChrome.getState().tableViews[t]).toBeUndefined();
+});
+
+test("capability mirrors: throughput for PostgreSQL and MySQL, not SQLite or documents (#112)", () => {
+  // Mirror of `driver::capabilities` (`capabilities_per_kind` in Rust).
+  expect(sqlCapabilities("postgres").throughput).toBe(true);
+  expect(sqlCapabilities("mySql").throughput).toBe(true);
+  expect(sqlCapabilities("sqlite").throughput).toBe(false);
+  expect(documentCapabilities.throughput).toBe(false);
+  // A restored workspace (no capabilities yet) follows its dialect.
+  expect(capabilitiesOf({ dialect: "sqlite", capabilities: undefined }).throughput).toBe(false);
 });

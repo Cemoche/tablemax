@@ -17,7 +17,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::relay::Route;
 use crate::store::MongoSettings;
+use crate::traffic::Traffic;
 use crate::value::CellValue;
 use catalog::{Catalog, DbRoutine};
 use dml::ApplyOutcome;
@@ -72,6 +74,23 @@ pub struct ConnectParams {
     pub dial: Option<SocketAddr>,
     /// MongoDB-only settings (`None` for the other drivers).
     pub mongo: Option<MongoSettings>,
+    /// Counts the bytes of a direct connection (no `dial`) into the workspace's traffic
+    /// (#112; PostgreSQL, MySQL, MariaDB). Through a tunnel, the tunnel counts.
+    pub traffic: Option<Arc<Traffic>>,
+}
+
+impl ConnectParams {
+    /// The route to count, for a direct connection with a counter (see `relay`).
+    pub fn counted_route(&self) -> Option<Route> {
+        if self.dial.is_some() {
+            return None;
+        }
+        self.traffic.as_ref().map(|traffic| Route {
+            host: self.host.clone(),
+            port: self.port,
+            traffic: traffic.clone(),
+        })
+    }
 }
 
 impl std::fmt::Debug for ConnectParams {
@@ -88,6 +107,7 @@ impl std::fmt::Debug for ConnectParams {
             .field("ssl", &self.ssl)
             .field("dial", &self.dial)
             .field("mongo", &self.mongo)
+            .field("counted", &self.traffic.is_some())
             .finish()
     }
 }
@@ -280,6 +300,9 @@ pub struct Capabilities {
     pub documents: bool,
     /// The workspace can move its connection to another database (PostgreSQL).
     pub database_switch: bool,
+    /// The bytes the workspace moves over the network are counted (`workspace_throughput`):
+    /// PostgreSQL, MySQL and MariaDB, direct or through SSH.
+    pub throughput: bool,
 }
 
 pub fn capabilities(kind: DriverKind) -> Capabilities {
@@ -291,13 +314,19 @@ pub fn capabilities(kind: DriverKind) -> Capabilities {
         foreign_keys: true,
         documents: false,
         database_switch: false,
+        throughput: true,
     };
     match kind {
         DriverKind::Postgres => Capabilities {
             database_switch: true,
             ..sql
         },
-        DriverKind::MySql | DriverKind::MariaDb | DriverKind::Sqlite => sql,
+        DriverKind::MySql | DriverKind::MariaDb => sql,
+        // A file: no network.
+        DriverKind::Sqlite => Capabilities {
+            throughput: false,
+            ..sql
+        },
         DriverKind::MongoDb => Capabilities {
             sql_editor: false,
             grid_editing: false,
@@ -306,6 +335,8 @@ pub fn capabilities(kind: DriverKind) -> Capabilities {
             foreign_keys: false,
             documents: true,
             database_switch: false,
+            // Not counted: the driver opens its own connections (several hosts, SRV).
+            throughput: false,
         },
     }
 }
@@ -343,6 +374,7 @@ mod tests {
             ssl: SslConfig::default(),
             dial: None,
             mongo: None,
+            traffic: None,
         };
         let out = format!("{:?}", params);
         assert!(!out.contains("s3cret-value"));
@@ -359,6 +391,7 @@ mod tests {
             foreign_keys: true,
             documents: false,
             database_switch: false,
+            throughput: true,
         };
         assert_eq!(
             capabilities(DriverKind::Postgres),
@@ -367,9 +400,17 @@ mod tests {
                 ..sql_but_switch
             }
         );
-        for kind in [DriverKind::MySql, DriverKind::MariaDb, DriverKind::Sqlite] {
+        for kind in [DriverKind::MySql, DriverKind::MariaDb] {
             assert_eq!(capabilities(kind), sql_but_switch, "{kind:?}");
         }
+        // A file has no network traffic to count (#112).
+        assert_eq!(
+            capabilities(DriverKind::Sqlite),
+            Capabilities {
+                throughput: false,
+                ..sql_but_switch
+            }
+        );
         let only_documents = Capabilities {
             sql_editor: false,
             grid_editing: false,
@@ -378,6 +419,7 @@ mod tests {
             foreign_keys: false,
             documents: true,
             database_switch: false,
+            throughput: false,
         };
         assert_eq!(capabilities(DriverKind::MongoDb), only_documents);
         let wire = serde_json::to_value(capabilities(DriverKind::Postgres)).unwrap();
@@ -385,7 +427,8 @@ mod tests {
             wire,
             serde_json::json!({
                 "sqlEditor": true, "gridEditing": true, "routines": true, "ddl": true,
-                "foreignKeys": true, "documents": false, "databaseSwitch": true
+                "foreignKeys": true, "documents": false, "databaseSwitch": true,
+                "throughput": true
             })
         );
     }

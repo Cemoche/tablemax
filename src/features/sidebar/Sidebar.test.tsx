@@ -209,6 +209,7 @@ test("no New SQL query button for a connection without SQL", async () => {
           foreignKeys: false,
           documents: true,
           databaseSwitch: false,
+          throughput: false,
         },
       }),
     ],

@@ -1,11 +1,12 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { strings } from "../../lib/strings";
 import { tip, tipIfCut } from "../../lib/tooltip";
 import type { ConnectionConfig } from "../../lib/types";
 import { useConnections } from "../../stores/connections";
-import type { Workspace } from "../../stores/workspaces";
+import { type Workspace, capabilitiesOf } from "../../stores/workspaces";
 import { ConnectionPopover, engineLabel } from "./ConnectionPopover";
 import { tagClass, tintClass } from "./swatch";
+import { formatRate, useThroughput } from "./throughput";
 
 const s = strings.statusPill;
 
@@ -70,9 +71,11 @@ interface Props {
  * The center of the toolbar (#104): the connection's tag (`LOCAL`, `DEV`, `STAGING`, `PROD`)
  * then where the workspace is (`PostgreSQL 16.4 : SSH : Shop : shop : public.orders`) in
  * monospace on a tint of the connection's color, or its connection state. The tag never
- * shrinks (the text is cut with an ellipsis first). The right end keeps an empty slot for
- * the network throughput, which needs a byte counter from the backend (not built yet: no
- * number is shown, never a fake one). A click opens the connection popover.
+ * shrinks (the text is cut with an ellipsis first). On its right, while connected, the live
+ * network throughput of the workspace (#112: `1.2 KB/s`, counted by the backend) in a
+ * fixed-width slot reserved from the start, so the pill never shifts; nothing for SQLite or
+ * MongoDB, and nothing until the backend has a rate (never a guess). A click opens the
+ * connection popover.
  */
 export function StatusPill({ workspace, connectError = null, onEditConnection }: Props) {
   const cfg = useConnections((st) => st.items.find((c) => c.id === workspace.connectionId));
@@ -93,6 +96,27 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
             : s.disconnected(workspace.name);
   const tagLabel = s.tags[envTag] ?? s.tags.local;
   const look = state === "connected" ? tintClass(color) : STATE_CLASS[state].pill;
+  const counted = state === "connected" && capabilitiesOf(workspace).throughput;
+  const rate = useThroughput(workspace.id, counted);
+  const rateText = rate === null ? null : formatRate(rate);
+  // The rate is in the name, not a live region. Screen readers re-announce a focused
+  // element whose name changes, so the name keeps the rate it had when the pill got focus
+  // until it loses it (the slot itself keeps moving). The snapshot belongs to one workspace:
+  // the pill is not remounted when the workspace changes, and a workspace that stops being
+  // counted (disconnected) names no rate at all.
+  const [focusedRate, setFocusedRate] = useState<{ workspaceId: string; text: string | null } | null>(
+    null,
+  );
+  const nameRate = counted
+    ? focusedRate?.workspaceId === workspace.id
+      ? focusedRate.text
+      : rateText
+    : null;
+  // Disconnected while focused: a later reconnect must not bring back the old snapshot.
+  useEffect(() => {
+    if (!counted) setFocusedRate(null);
+  }, [counted]);
+  const name = `${tagLabel}${s.tagSeparator}${text}${nameRate ? `${s.tagSeparator}${s.rateLabel(nameRate)}` : ""}`;
 
   return (
     // The pill takes the free space; the wrapper's padding on its sides stays a drag area of
@@ -103,12 +127,14 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
         type="button"
         // "LOCAL | PostgreSQL …": the badge and the text read apart (an explicit name, since
         // name computation trims the spaces a visually hidden separator would carry).
-        aria-label={`${tagLabel}${s.tagSeparator}${text}`}
+        aria-label={name}
         aria-haspopup="dialog"
         aria-expanded={open}
         {...(state === "error" && connectError ? tip(s.errorTitle(text, connectError)) : tipIfCut(text))}
         onClick={() => setOpen((o) => !o)}
-        className={`relative flex h-8.5 w-full min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full px-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:focus-ring ${look}`}
+        onFocus={() => setFocusedRate({ workspaceId: workspace.id, text: rateText })}
+        onBlur={() => setFocusedRate(null)}
+        className={`relative flex h-8.5 w-full min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full pl-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:focus-ring ${counted ? "pr-22" : "pr-4"} ${look}`}
       >
         <span
           data-pill-tag=""
@@ -120,8 +146,16 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
         <span data-pill-text="" className="min-w-0 truncate">
           {text}
         </span>
-        {/* Network throughput: empty until the backend counts bytes (follow-up issue). */}
-        <span data-throughput-slot="" aria-hidden className="absolute right-4 font-sans text-xs" />
+        {counted && (
+          // Fixed width (8 characters, the longest rate), right-aligned, tabular figures.
+          <span
+            data-throughput-slot=""
+            aria-hidden
+            className="absolute right-4 w-[8ch] text-right text-xs tabular-nums"
+          >
+            {rateText}
+          </span>
+        )}
       </button>
       {open && (
         <ConnectionPopover

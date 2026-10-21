@@ -67,6 +67,7 @@ const NO_SQL: Capabilities = {
   foreignKeys: false,
   documents: true,
   databaseSwitch: false,
+  throughput: false,
 };
 
 test("capabilities decide: no SQL editor, no New SQL tab; no database switch, no Change database", () => {

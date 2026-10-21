@@ -74,6 +74,7 @@ const info = {
     foreignKeys: true,
     documents: false,
     databaseSwitch: true,
+    throughput: true,
   },
 };
 const passwordRequired = { kind: "auth", message: "password required" };

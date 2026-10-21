@@ -18,6 +18,11 @@
 //! (`ConnectParams.dial`) while `host` stays the DB host as seen from the SSH server
 //! (also the TLS name). A SQL session opened after the tunnel died reopens it.
 //!
+//! Traffic (#112): the bytes of every network connection of a PostgreSQL / MySQL / MariaDB
+//! workspace are counted into its [`Traffic`]: by the SSH tunnel that forwards them, or for
+//! a direct connection by the driver (`ConnectParams.traffic`, see `relay`).
+//! [`SessionManager::workspace_throughput`] turns the counts into a rate.
+//!
 //! Lost browse connection (any workspace): once the session reports it lost, a call on it
 //! saw `ConnectionLost`, or its tunnel died, the next `browse()` rebuilds it (once per
 //! loss, under the workspace's reconnect lock); reads (`on_browse`) retry once on the new
@@ -61,6 +66,7 @@ use crate::ssh::tunnel::{self, HostKeyPolicy, SshTunnel};
 use crate::store::{
     self, ConnectionConfig, ConnectionStore, PasswordMode, SshSettings, same_identity,
 };
+use crate::traffic::{RateWindow, Throughput, Traffic};
 use crate::value::{CellValue, MAX_EDIT_BYTES, filtered_count_cap};
 
 /// `changes_apply` while another commit of the same workspace is running.
@@ -153,6 +159,11 @@ struct Workspace {
     /// (the saved connection's identity, which guards the keyring on reconnect) and
     /// applied to the browse connection and to every SQL session opened afterwards.
     database: Option<String>,
+    /// Bytes moved by every network connection of the workspace (tunnel or drivers).
+    traffic: Arc<Traffic>,
+    /// The workspace's traffic is counted (see [`counted`]).
+    measured: bool,
+    rate: RateWindow,
 }
 
 /// Control flags of one `changes_apply`, installed in its workspace while it runs.
@@ -203,6 +214,7 @@ struct Reconnect {
     slot: TunnelSlot,
     /// The workspace's switched-to database; see [`Workspace::database`].
     database: Option<String>,
+    traffic: Arc<Traffic>,
 }
 
 impl Reconnect {
@@ -320,14 +332,38 @@ where
 }
 
 /// Connects with `cfg`, dialing `tunnel`'s local end when there is one (`host` stays
-/// the DB host as seen from the SSH server, which is also the TLS name).
+/// the DB host as seen from the SSH server, which is also the TLS name). A direct
+/// connection counts its bytes into `traffic` when given (through SSH the tunnel does).
 async fn connect(
     cfg: &ConnectionConfig,
     password: Option<String>,
     tunnel: Option<&SshTunnel>,
+    traffic: Option<&Arc<Traffic>>,
 ) -> AppResult<AnySession> {
     check_mongo_config(cfg)?;
-    driver::connect(&connect_params(cfg, password, tunnel)).await
+    let mut params = connect_params(cfg, password, tunnel);
+    if tunnel.is_none() && counted(cfg) {
+        params.traffic = traffic.cloned();
+    }
+    driver::connect(&params).await
+}
+
+/// Whether a workspace on `cfg` has its network bytes counted: PostgreSQL, MySQL and
+/// MariaDB (`Capabilities::throughput`), through SSH or over TCP. Not a PostgreSQL
+/// Unix-socket directory given as host: no network there.
+fn counted(cfg: &ConnectionConfig) -> bool {
+    driver::capabilities(cfg.kind).throughput
+        && (ssh_of(cfg).is_some() || !cfg.host.starts_with('/'))
+}
+
+/// What a workspace on `cfg` offers: its driver's capabilities, `throughput` only when
+/// its bytes are actually counted ([`counted`]), so the pill never keeps a slot that
+/// would stay blank.
+fn workspace_capabilities(cfg: &ConnectionConfig) -> Capabilities {
+    Capabilities {
+        throughput: counted(cfg),
+        ..driver::capabilities(cfg.kind)
+    }
 }
 
 fn connect_params(
@@ -346,6 +382,7 @@ fn connect_params(
         ssl: cfg.ssl.clone(),
         dial: tunnel.map(SshTunnel::local_addr),
         mongo: cfg.mongo.clone(),
+        traffic: None,
     }
 }
 
@@ -747,6 +784,7 @@ impl SessionManager {
         cfg: &ConnectionConfig,
         ssh_secret: Option<String>,
         accept_fingerprint: Option<String>,
+        traffic: Arc<Traffic>,
     ) -> AppResult<Option<Arc<SshTunnel>>> {
         let Some(ssh) = ssh_of(cfg) else {
             return Ok(None);
@@ -768,7 +806,7 @@ impl SessionManager {
                 },
                 accept_fingerprint,
             };
-            tunnel::open_tunnel(&target, &cfg.host, cfg.port, &policy).await
+            tunnel::open_counted_tunnel(&target, &cfg.host, cfg.port, &policy, traffic).await
         })
         .await
         .map(Some)
@@ -782,12 +820,13 @@ impl SessionManager {
         config: &ConnectionConfig,
         slot: &TunnelSlot,
         held_secret: Option<String>,
+        traffic: &Arc<Traffic>,
     ) -> AppResult<Option<Arc<SshTunnel>>> {
         if ssh_of(config).is_none() {
             return Ok(None);
         }
         let mut current = slot.lock().await;
-        self.revive_tunnel(workspace_id, config, &mut current, held_secret)
+        self.revive_tunnel(workspace_id, config, &mut current, held_secret, traffic)
             .await
             .map(Some)
     }
@@ -800,6 +839,7 @@ impl SessionManager {
         config: &ConnectionConfig,
         current: &mut Option<Arc<SshTunnel>>,
         held_secret: Option<String>,
+        traffic: &Arc<Traffic>,
     ) -> AppResult<Arc<SshTunnel>> {
         match current.as_ref() {
             None => return Err(workspace_not_found(workspace_id)),
@@ -808,7 +848,7 @@ impl SessionManager {
         }
         // The host key was confirmed when the workspace was opened: no new trust here.
         let fresh = self
-            .open_tunnel(config, held_secret, None)
+            .open_tunnel(config, held_secret, None, traffic.clone())
             .await?
             .ok_or_else(|| AppError::new(ErrorKind::Invalid, "no SSH settings"))?;
         if let Some(dead) = current.replace(fresh.clone()) {
@@ -836,7 +876,7 @@ impl SessionManager {
         let mut cfg = cfg.clone();
         if cfg.kind == DriverKind::Sqlite {
             // No password, no keyring, no tunnel, no stored identity to check.
-            let session = connect(&cfg, None, None).await?;
+            let session = connect(&cfg, None, None, None).await?;
             let version = session.base().server_version();
             let _ = session.base().close().await;
             return Ok(version);
@@ -863,10 +903,11 @@ impl SessionManager {
         }
         let cfg = &cfg;
         let password = self.resolve_password(cfg, password).await?;
+        // Not counted: nothing shows a test connection's traffic.
         let tunnel = self
-            .open_tunnel(cfg, ssh_secret, accept_fingerprint)
+            .open_tunnel(cfg, ssh_secret, accept_fingerprint, Arc::default())
             .await?;
-        let result = match connect(cfg, password, tunnel.as_deref()).await {
+        let result = match connect(cfg, password, tunnel.as_deref(), None).await {
             Ok(session) => {
                 let version = session.base().server_version();
                 let _ = session.base().close().await;
@@ -903,10 +944,12 @@ impl SessionManager {
             .and(ssh_secret.clone())
             .map(HeldSecret);
         let resolved = self.resolve_password(&config, password).await?;
+        let traffic = Arc::new(Traffic::default());
         let tunnel = self
-            .open_tunnel(&config, ssh_secret, accept_fingerprint)
+            .open_tunnel(&config, ssh_secret, accept_fingerprint, traffic.clone())
             .await?;
-        let browse = match connect(&config, resolved, tunnel.as_deref()).await {
+        let measured = counted(&config);
+        let browse = match connect(&config, resolved, tunnel.as_deref(), Some(&traffic)).await {
             Ok(browse) => browse,
             Err(e) => {
                 if let Some(t) = tunnel {
@@ -920,7 +963,7 @@ impl SessionManager {
             workspace_id: uuid::Uuid::new_v4().to_string(),
             connection_id: config.id.clone(),
             dialect: browse.sql().ok().map(|s| s.dialect()),
-            capabilities: driver::capabilities(config.kind),
+            capabilities: workspace_capabilities(&config),
             server_version: browse.base().server_version(),
             database,
         };
@@ -939,6 +982,9 @@ impl SessionManager {
                 table_info_gen: 0,
                 applying: None,
                 database: None,
+                traffic,
+                measured,
+                rate: RateWindow::default(),
             },
         );
         Ok(info)
@@ -987,6 +1033,23 @@ impl SessionManager {
         slot.lock().await.clone()
     }
 
+    /// Bytes per second moved by the workspace's network connections over the last
+    /// [`crate::traffic::RATE_WINDOW`] (byte counts only, never content). `None` when its
+    /// traffic is not counted (SQLite, MongoDB, a Unix-socket host) or no rate is known
+    /// yet: the first call only takes a reference, and so does a call after a long pause.
+    pub fn workspace_throughput(&self, workspace_id: &str) -> AppResult<Option<Throughput>> {
+        let mut st = self.state();
+        let ws = st
+            .workspaces
+            .get_mut(workspace_id)
+            .ok_or_else(|| workspace_not_found(workspace_id))?;
+        if !ws.measured {
+            return Ok(None);
+        }
+        let totals = ws.traffic.totals();
+        Ok(ws.rate.sample(std::time::Instant::now(), totals))
+    }
+
     /// The workspace's switched-to database (`None`: the connection's own).
     fn workspace_database(&self, workspace_id: &str) -> AppResult<Option<String>> {
         let st = self.state();
@@ -1010,6 +1073,7 @@ impl SessionManager {
             ssh_secret: ws.held_ssh_secret.as_ref().map(|p| p.0.clone()),
             slot: ws.tunnel.clone(),
             database: ws.database.clone(),
+            traffic: ws.traffic.clone(),
         })
     }
 
@@ -1108,13 +1172,19 @@ impl SessionManager {
         }
         let tunnel = match ssh_of(&r.config) {
             Some(_) => Some(
-                self.revive_tunnel(workspace_id, &r.config, &mut current, r.ssh_secret)
-                    .await?,
+                self.revive_tunnel(
+                    workspace_id,
+                    &r.config,
+                    &mut current,
+                    r.ssh_secret,
+                    &r.traffic,
+                )
+                .await?,
             ),
             None => None,
         };
         let password = self.resolve_password(&r.config, r.password).await?;
-        let fresh = connect(&cfg, password, tunnel.as_deref()).await?;
+        let fresh = connect(&cfg, password, tunnel.as_deref(), Some(&r.traffic)).await?;
         let old = {
             let mut st = self.state();
             st.workspaces.get_mut(workspace_id).map(|ws| {
@@ -1486,9 +1556,11 @@ impl SessionManager {
         }
         let password = self.resolve_password(&r.config, r.password).await?;
         let tunnel = self
-            .live_tunnel(workspace_id, &r.config, &r.slot, r.ssh_secret)
+            .live_tunnel(workspace_id, &r.config, &r.slot, r.ssh_secret, &r.traffic)
             .await?;
-        let session = sql_only(connect(&r.config, password, tunnel.as_deref()).await?).await?;
+        let session =
+            sql_only(connect(&r.config, password, tunnel.as_deref(), Some(&r.traffic)).await?)
+                .await?;
         self.register_sql_session(workspace_id, session).await
     }
 
@@ -1734,8 +1806,14 @@ impl SessionManager {
         let mut current = r.slot.lock().await;
         let tunnel = if ssh_of(&r.config).is_some() {
             Some(
-                self.revive_tunnel(workspace_id, &r.config, &mut current, r.ssh_secret)
-                    .await?,
+                self.revive_tunnel(
+                    workspace_id,
+                    &r.config,
+                    &mut current,
+                    r.ssh_secret,
+                    &r.traffic,
+                )
+                .await?,
             )
         } else {
             None
@@ -1743,7 +1821,7 @@ impl SessionManager {
         let password = self.resolve_password(&r.config, r.password).await?;
         let mut cfg = r.config.clone();
         cfg.database = Some(database.to_string());
-        let fresh = connect(&cfg, password, tunnel.as_deref()).await?;
+        let fresh = connect(&cfg, password, tunnel.as_deref(), Some(&r.traffic)).await?;
         let swapped = {
             let mut st = self.state();
             st.workspaces.get_mut(workspace_id).map(|ws| {
@@ -1773,7 +1851,7 @@ impl SessionManager {
             workspace_id: workspace_id.to_string(),
             connection_id,
             dialect: fresh.sql().ok().map(|s| s.dialect()),
-            capabilities: driver::capabilities(r.config.kind),
+            capabilities: workspace_capabilities(&r.config),
             server_version: fresh.base().server_version(),
             database: Some(database.to_string()),
         })
@@ -2487,7 +2565,20 @@ mod tests {
             info,
             serde_json::json!({"workspaceId": "w", "connectionId": "c", "dialect": "sqlite", "serverVersion": "3", "database": null,
                 "capabilities": {"sqlEditor": true, "gridEditing": true, "routines": true, "ddl": true,
-                    "foreignKeys": true, "documents": false, "databaseSwitch": false}})
+                    "foreignKeys": true, "documents": false, "databaseSwitch": false,
+                    "throughput": false}})
+        );
+        let rate = Throughput {
+            read_per_sec: 1200,
+            written_per_sec: 34,
+        };
+        assert_eq!(
+            serde_json::to_value(Some(rate)).unwrap(),
+            serde_json::json!({"readPerSec": 1200, "writtenPerSec": 34})
+        );
+        assert_eq!(
+            serde_json::to_value(None::<Throughput>).unwrap(),
+            serde_json::Value::Null
         );
     }
 
@@ -2655,6 +2746,9 @@ mod tests {
                 table_info_gen: 0,
                 applying: None,
                 database: None,
+                traffic: Default::default(),
+                measured: false,
+                rate: Default::default(),
             },
         );
         calls
@@ -2802,6 +2896,9 @@ mod tests {
                 table_info_gen: 0,
                 applying: None,
                 database: None,
+                traffic: Default::default(),
+                measured: false,
+                rate: Default::default(),
             },
         );
         fx.mgr.close_workspace("w-stub").await.unwrap();
@@ -2908,6 +3005,9 @@ mod tests {
                 table_info_gen: 0,
                 applying: None,
                 database: None,
+                traffic: Default::default(),
+                measured: false,
+                rate: Default::default(),
             },
         );
         calls
@@ -3757,5 +3857,138 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Invalid, "{}", err.message);
+    }
+
+    /// A connected stub workspace (no server) whose traffic goes to `traffic`.
+    fn counted_stub(traffic: Arc<Traffic>, measured: bool) -> Workspace {
+        let browse: Arc<dyn Session> = Arc::new(StubbornSession {
+            delay: Duration::ZERO,
+            cancel_delay: Duration::ZERO,
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
+        Workspace {
+            config: cfg(DriverKind::Postgres, PasswordMode::None),
+            held_password: None,
+            held_ssh_secret: None,
+            tunnel: Default::default(),
+            browse: AnySession::Sql(browse),
+            browse_tunnel: None,
+            browse_lost: false,
+            sql_sessions: Vec::new(),
+            table_info: HashMap::new(),
+            table_info_gen: 0,
+            applying: None,
+            database: None,
+            traffic,
+            measured,
+            rate: RateWindow::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn throughput_is_the_rate_of_the_workspace_traffic() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let fx = fixture();
+        let traffic = Arc::new(Traffic::default());
+        fx.mgr
+            .state()
+            .workspaces
+            .insert("w-net".into(), counted_stub(traffic.clone(), true));
+        assert_eq!(
+            fx.mgr.workspace_throughput("w-net").unwrap(),
+            None,
+            "the first call only takes a reference"
+        );
+
+        // 4 000 bytes to the server and 6 000 back, through a counted stream.
+        let (ours, mut server) = tokio::io::duplex(16 * 1024);
+        let mut counted = crate::traffic::Counted::new(ours, traffic.clone());
+        counted.write_all(&[1u8; 4000]).await.unwrap();
+        server.read_exact(&mut [0u8; 4000]).await.unwrap();
+        server.write_all(&[2u8; 6000]).await.unwrap();
+        counted.read_exact(&mut [0u8; 6000]).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        let rate = fx
+            .mgr
+            .workspace_throughput("w-net")
+            .unwrap()
+            .expect("a rate once the reference is old enough");
+        // Over at least 0.6 s, at most a few seconds on a slow runner.
+        assert!((500..=6_667).contains(&rate.written_per_sec), "{rate:?}");
+        assert!((1_000..=10_000).contains(&rate.read_per_sec), "{rate:?}");
+    }
+
+    #[tokio::test]
+    async fn uncounted_workspaces_have_no_throughput() {
+        let fx = fixture();
+        // SQLite: no network.
+        let ws = sqlite_ws(&fx).await;
+        assert!(!ws.capabilities.throughput);
+        assert_eq!(fx.mgr.workspace_throughput(&ws.workspace_id).unwrap(), None);
+        // A workspace whose bytes are not counted: never a number.
+        fx.mgr
+            .state()
+            .workspaces
+            .insert("w-direct".into(), counted_stub(Arc::default(), false));
+        fx.mgr.workspace_throughput("w-direct").unwrap();
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(fx.mgr.workspace_throughput("w-direct").unwrap(), None);
+        let e = fx.mgr.workspace_throughput("gone").unwrap_err();
+        assert_eq!(e.kind, ErrorKind::NotFound);
+    }
+
+    /// Direct connections are counted by the drivers (PostgreSQL on its own stream,
+    /// MySQL through a one-shot relay); when the server cannot be reached, the error says
+    /// why (mysql_async alone would only see the relay close its connection).
+    #[tokio::test]
+    async fn direct_workspace_reports_why_the_server_is_unreachable() {
+        let fx = fixture();
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = closed.local_addr().unwrap().port();
+        drop(closed);
+        for kind in [DriverKind::Postgres, DriverKind::MySql] {
+            let mut c = cfg(kind, PasswordMode::None);
+            c.host = "127.0.0.1".into();
+            c.port = port;
+            let saved = fx.mgr.save_connection(c, None, None).await.unwrap();
+            let e = fx
+                .mgr
+                .open_workspace(&saved.id, None, None, None)
+                .await
+                .unwrap_err();
+            assert_eq!(e.kind, ErrorKind::Connection, "{kind:?}: {}", e.message);
+            assert!(
+                e.message
+                    .starts_with(&format!("cannot connect to 127.0.0.1:{port}: ")),
+                "{kind:?}: {}",
+                e.message
+            );
+        }
+    }
+
+    /// A PostgreSQL Unix-socket directory has no network: its workspace says so, so the
+    /// pill keeps no slot that would stay blank (#112).
+    #[test]
+    fn throughput_capability_follows_what_is_counted() {
+        let pg = cfg(DriverKind::Postgres, PasswordMode::None);
+        assert!(workspace_capabilities(&pg).throughput);
+        assert!(workspace_capabilities(&cfg(DriverKind::MySql, PasswordMode::None)).throughput);
+        assert!(!workspace_capabilities(&cfg(DriverKind::Sqlite, PasswordMode::None)).throughput);
+        let mut socket = pg.clone();
+        socket.host = "/var/run/postgresql".into();
+        let caps = workspace_capabilities(&socket);
+        assert!(!caps.throughput);
+        assert_eq!(
+            caps,
+            Capabilities {
+                throughput: false,
+                ..driver::capabilities(DriverKind::Postgres)
+            }
+        );
+        // Through SSH the tunnel counts, whatever the host looks like.
+        let mut tunneled = socket.clone();
+        tunneled.ssh = Some(ssh(SshAuth::Password));
+        assert!(workspace_capabilities(&tunneled).throughput);
     }
 }

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
@@ -128,15 +128,132 @@ test("every tag has its label: LOCAL, DEV, STAGING, PROD (#104)", () => {
   }
 });
 
-test("the pill takes the free width; the throughput slot on its right stays empty (#104)", () => {
+test("the pill takes the free width (#104)", () => {
   render(<StatusPill workspace={ws()} />);
   // No cap any more: the pill fills its wrapper, whose padding stays a drag area.
   expect(pill().className).not.toMatch(/max-w-/);
   expect(pill().className).toContain("w-full");
-  const slot = pill().querySelector("[data-throughput-slot]");
-  expect(slot).not.toBeNull();
-  // No byte counter yet (follow-up issue): no number, never a fake one.
-  expect(slot?.textContent).toBe("");
+});
+
+const slot = () => pill().querySelector("[data-throughput-slot]") as HTMLElement | null;
+
+test("the throughput slot shows the live rate of the workspace, in its accessible name too (#112)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 1000, writtenPerSec: 234 });
+  render(<StatusPill workspace={ws()} />);
+  expect(await within(pill()).findByText("1.2 KB/s")).toBe(slot());
+  expect(ipc.workspaceThroughput).toHaveBeenCalledWith("w1");
+  // Part of the name (not a live region: a number changing every second must not chatter).
+  expect(pill()).toHaveAccessibleName(
+    "LOCAL | PostgreSQL 16.4 : Demo : tablemax_demo : public.orders | network 1.2 KB/s",
+  );
+  expect(slot()).toHaveAttribute("aria-hidden");
+  expect(pill().querySelector("[aria-live]")).toBeNull();
+});
+
+test("the accessible name holds still while the pill has focus (#112 review)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 1000, writtenPerSec: 234 });
+  render(<StatusPill workspace={ws()} />);
+  await within(pill()).findByText("1.2 KB/s");
+  const base = "LOCAL | PostgreSQL 16.4 : Demo : tablemax_demo : public.orders";
+  act(() => pill().focus());
+  expect(pill()).toHaveAccessibleName(`${base} | network 1.2 KB/s`);
+
+  // The number moves on screen; the name a screen reader would re-announce does not.
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 3_400_000, writtenPerSec: 0 });
+  expect(await within(pill()).findByText("3.4 MB/s", {}, { timeout: 3000 })).toBe(slot());
+  expect(pill()).toHaveAccessibleName(`${base} | network 1.2 KB/s`);
+
+  // Blur: the name catches up; focus again: the current value is read.
+  act(() => pill().blur());
+  expect(pill()).toHaveAccessibleName(`${base} | network 3.4 MB/s`);
+  act(() => pill().focus());
+  expect(pill()).toHaveAccessibleName(`${base} | network 3.4 MB/s`);
+});
+
+test("a focused pill never names the rate of another workspace (#112 review)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockImplementation(async (id) =>
+    id === "w1" ? { readPerSec: 1200, writtenPerSec: 0 } : null,
+  );
+  const { rerender } = render(<StatusPill workspace={ws()} />);
+  await within(pill()).findByText("1.2 KB/s");
+  act(() => pill().focus());
+  expect(pill()).toHaveAccessibleName(/\| network 1\.2 KB\/s$/);
+
+  // Same pill element, another workspace (AppToolbar does not remount it).
+  rerender(<StatusPill workspace={ws({ id: "w2" })} />);
+  await vi.waitFor(() => expect(ipc.workspaceThroughput).toHaveBeenCalledWith("w2"));
+  expect(pill()).toHaveFocus();
+  expect(pill()).toHaveAccessibleName("LOCAL | PostgreSQL 16.4 : Demo : tablemax_demo : public.orders");
+});
+
+test("a focused pill drops the rate from its name when the workspace disconnects (#112 review)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 1200, writtenPerSec: 0 });
+  const { rerender } = render(<StatusPill workspace={ws()} />);
+  await within(pill()).findByText("1.2 KB/s");
+  act(() => pill().focus());
+  rerender(<StatusPill workspace={ws({ status: "disconnected" })} />);
+  expect(pill()).toHaveFocus();
+  expect(pill()).toHaveAccessibleName(`LOCAL | ${s.disconnected("Demo")}`);
+});
+
+test("an idle connection reads 0 B/s (#112)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 0, writtenPerSec: 0 });
+  render(<StatusPill workspace={ws()} />);
+  expect(await within(pill()).findByText("0 B/s")).toBe(slot());
+});
+
+test("the slot has a fixed width reserved from the start: the pill never shifts (#112)", async () => {
+  // No rate yet (the backend's first answer only takes a reference): nothing shown.
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue(null);
+  render(<StatusPill workspace={ws()} />);
+  await vi.waitFor(() => expect(ipc.workspaceThroughput).toHaveBeenCalled());
+  const empty = slot();
+  expect(empty).not.toBeNull();
+  expect(empty?.textContent).toBe("");
+  expect(pill()).toHaveAccessibleName("LOCAL | PostgreSQL 16.4 : Demo : tablemax_demo : public.orders");
+  // Fixed width, right-aligned, tabular figures; the text keeps clear of it.
+  expect(empty?.className).toContain("absolute");
+  expect(empty?.className).toContain("w-[8ch]");
+  expect(empty?.className).toContain("text-right");
+  expect(empty?.className).toContain("tabular-nums");
+  expect(pill().className).toContain("pr-22");
+});
+
+test("SQLite has no network: no slot and no polling (#112)", async () => {
+  useConnections.setState({
+    items: [cfg({ kind: "sqlite", database: null, sqlitePath: "/home/u/data/demo.db" })],
+  });
+  const sqlite = ws({
+    dialect: "sqlite",
+    serverVersion: "3.46.0",
+    database: null,
+    currentSchema: "main",
+    activeTabId: "q1",
+    capabilities: {
+      sqlEditor: true,
+      gridEditing: true,
+      routines: true,
+      ddl: true,
+      foreignKeys: true,
+      documents: false,
+      databaseSwitch: false,
+      throughput: false,
+    },
+  });
+  render(<StatusPill workspace={sqlite} />);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(slot()).toBeNull();
+  expect(pill().className).not.toContain("pr-22");
+  expect(ipc.workspaceThroughput).not.toHaveBeenCalled();
+});
+
+test("no rate while connecting or disconnected (#112)", async () => {
+  vi.mocked(ipc.workspaceThroughput).mockResolvedValue({ readPerSec: 10, writtenPerSec: 0 });
+  const { rerender } = render(<StatusPill workspace={ws({ status: "connecting" })} />);
+  rerender(<StatusPill workspace={ws({ status: "disconnected" })} connectError="boom" />);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(slot()).toBeNull();
+  expect(ipc.workspaceThroughput).not.toHaveBeenCalled();
 });
 
 test("shortVersion keeps the version number", () => {

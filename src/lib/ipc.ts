@@ -23,6 +23,7 @@ import type {
   RowKey,
   Settings,
   TableInfo,
+  Throughput,
   WherePreview,
   WorkspaceInfo,
   HistoryEntry,
@@ -84,6 +85,10 @@ export const importTablePlusDiscard = (importId: string) =>
 
 export const workspaceClose = (workspaceId: string) =>
   invoke<void>("workspace_close", { workspaceId });
+
+/** Bytes/s over the last 2 s; null when not counted (SQLite, MongoDB) or not known yet. */
+export const workspaceThroughput = (workspaceId: string) =>
+  invoke<Throughput | null>("workspace_throughput", { workspaceId });
 
 export const schemasList = (workspaceId: string) =>
   invoke<string[]>("schemas_list", { workspaceId });

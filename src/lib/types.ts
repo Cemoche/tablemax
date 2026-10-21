@@ -351,6 +351,16 @@ export interface Capabilities {
   documents: boolean;
   /** The workspace can move to another database (PostgreSQL). */
   databaseSwitch: boolean;
+  /** Its network bytes are counted (`workspace_throughput`): PostgreSQL, MySQL, MariaDB. */
+  throughput: boolean;
+}
+
+/** Bytes per second moved by a workspace's connections (`workspace_throughput`, #112). */
+export interface Throughput {
+  /** Received from the server. */
+  readPerSec: number;
+  /** Sent to the server. */
+  writtenPerSec: number;
 }
 
 export interface WorkspaceInfo {

@@ -20,6 +20,7 @@ use crate::manager::{ExecEvent, SessionManager, WorkspaceInfo};
 use crate::saved_queries::SavedQuery;
 use crate::settings::{self, Settings};
 use crate::store::ConnectionConfig;
+use crate::traffic::Throughput;
 use crate::value::CellValue;
 
 #[tauri::command]
@@ -197,6 +198,16 @@ pub async fn workspace_close(
     workspace_id: String,
 ) -> AppResult<()> {
     state.close_workspace(&workspace_id).await
+}
+
+/// Bytes per second moved by the workspace's network connections (#112), polled by the
+/// status pill; `null` when not counted (SQLite, MongoDB) or not known yet. Counts only.
+#[tauri::command]
+pub async fn workspace_throughput(
+    state: State<'_, SessionManager>,
+    workspace_id: String,
+) -> AppResult<Option<Throughput>> {
+    state.workspace_throughput(&workspace_id)
 }
 
 #[tauri::command]

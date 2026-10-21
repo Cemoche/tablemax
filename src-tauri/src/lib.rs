@@ -7,6 +7,7 @@ pub mod history;
 pub mod import;
 pub mod manager;
 pub mod migrate;
+pub mod relay;
 pub mod safety;
 pub mod saved_queries;
 pub mod secrets;
@@ -14,6 +15,7 @@ pub mod session_state;
 pub mod settings;
 pub mod ssh;
 pub mod store;
+pub mod traffic;
 pub mod value;
 
 use std::sync::Arc;
@@ -119,6 +121,7 @@ pub fn run() {
             commands::import_tableplus_commit,
             commands::import_tableplus_discard,
             commands::workspace_close,
+            commands::workspace_throughput,
             commands::schemas_list,
             commands::objects_list,
             commands::table_page,

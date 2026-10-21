@@ -56,6 +56,10 @@
 //! whose rows come back in the text protocol like `execute`. Statement and variables are
 //! cleared afterwards.
 //!
+//! Counted direct connection (`ConnectParams::counted_route`, #112): mysql_async cannot be
+//! given a stream, so each connection (session, `KILL QUERY`, `Prefer` retry) dials a
+//! one-shot relay opened for it alone (see `try_conn` and `relay`).
+//!
 //! Sessions connect with CLIENT_FOUND_ROWS: an UPDATE reports the rows it matched, even
 //! those already holding the new value (same meaning as PostgreSQL and SQLite), which the
 //! exactly-one-row check of `apply` relies on. `apply` holds the connection lock from
@@ -90,6 +94,7 @@ use super::{
     RowCount, Session, SessionBase, StatementOutcome,
 };
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::relay::{OneShot, Route};
 use crate::value::{
     CellValue, MAX_RESULT_ROWS, bytes_value, float_value, int_value, json_cell, text_cell,
 };
@@ -159,6 +164,8 @@ struct MySession {
 
 struct MyCanceller {
     opts: Opts,
+    /// Set when the connection's bytes are counted: the KILL connection is counted too.
+    route: Option<Route>,
     conn_id: u32,
     /// A statement is in flight on the session.
     running: AtomicBool,
@@ -212,7 +219,7 @@ impl Canceller for MyCanceller {
         }
         let target = self.seq.load(Ordering::SeqCst);
         self.requested_seq.store(target, Ordering::SeqCst);
-        let mut conn = match open_conn(&self.opts).await {
+        let mut conn = match open_conn(&self.opts, self.route.as_ref()).await {
             Ok(c) => c,
             Err(e) => {
                 self.settle(target);
@@ -368,6 +375,8 @@ fn ssl_opts(ssl: &SslConfig, tls_name: Option<&str>) -> AppResult<Option<SslOpts
 fn build_opts(p: &ConnectParams) -> AppResult<Opts> {
     let (addr, port, tls_name) = match p.dial {
         Some(dial) => (dial.ip().to_string(), dial.port(), Some(p.host.as_str())),
+        // Counted: each connection dials its own relay (`try_conn`), the name stays.
+        None if p.traffic.is_some() => (p.host.clone(), p.port, Some(p.host.as_str())),
         None => (p.host.clone(), p.port, None),
     };
     Ok(OptsBuilder::default()
@@ -384,34 +393,62 @@ fn build_opts(p: &ConnectParams) -> AppResult<Opts> {
         .into())
 }
 
-/// Connects; the outer error is the timeout, the inner one the driver's.
-async fn try_conn(opts: &Opts) -> AppResult<Result<Conn, MyError>> {
-    tokio::time::timeout(CONNECT_TIMEOUT, Conn::new(opts.clone()))
-        .await
-        .map_err(|_| AppError::new(ErrorKind::Connection, "connection timed out"))
+/// Connects; the outer error is the timeout (or, counted, why the relay could not reach
+/// the server), the inner one the driver's.
+///
+/// Counted (`route`, #112): mysql_async dials TCP itself, so the connection goes through
+/// a one-shot relay opened for it alone (`relay::OneShot`: one connection accepted, then
+/// the listener closes).
+async fn try_conn(opts: &Opts, route: Option<&Route>) -> AppResult<Result<Conn, MyError>> {
+    let timed = |opts: Opts| async move {
+        tokio::time::timeout(CONNECT_TIMEOUT, Conn::new(opts))
+            .await
+            .map_err(|_| AppError::new(ErrorKind::Connection, "connection timed out"))
+    };
+    let Some(route) = route else {
+        return timed(opts.clone()).await;
+    };
+    let hop = OneShot::open(route).await?;
+    let local = hop.local_addr();
+    let via: Opts = OptsBuilder::from_opts(opts.clone())
+        .ip_or_hostname(local.ip().to_string())
+        .tcp_port(local.port())
+        .into();
+    let res = timed(via).await?;
+    if res.is_err()
+        && let Some(unreachable) = hop.take_failure()
+    {
+        return Err(unreachable);
+    }
+    Ok(res)
 }
 
-async fn open_conn(opts: &Opts) -> AppResult<Conn> {
-    try_conn(opts).await?.map_err(|e| map_err(&e, false))
+async fn open_conn(opts: &Opts, route: Option<&Route>) -> AppResult<Conn> {
+    try_conn(opts, route).await?.map_err(|e| map_err(&e, false))
 }
 
 /// Opens the session connection and returns it with the options that worked: under
 /// `Prefer`, a server without TLS support gets a second, cleartext attempt.
-async fn open_session_conn(opts: Opts, mode: SslMode) -> AppResult<(Conn, Opts)> {
-    match try_conn(&opts).await? {
+async fn open_session_conn(
+    opts: Opts,
+    mode: SslMode,
+    route: Option<&Route>,
+) -> AppResult<(Conn, Opts)> {
+    match try_conn(&opts, route).await? {
         Ok(conn) => Ok((conn, opts)),
         Err(MyError::Driver(DriverError::NoClientSslFlagFromServer)) if mode == SslMode::Prefer => {
             let plain: Opts = OptsBuilder::from_opts(opts)
                 .ssl_opts(None::<SslOpts>)
                 .into();
-            Ok((open_conn(&plain).await?, plain))
+            Ok((open_conn(&plain, route).await?, plain))
         }
         Err(e) => Err(map_err(&e, false)),
     }
 }
 
 pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
-    let (mut conn, opts) = open_session_conn(build_opts(p)?, p.ssl.mode).await?;
+    let route = p.counted_route();
+    let (mut conn, opts) = open_session_conn(build_opts(p)?, p.ssl.mode, route.as_ref()).await?;
     let version = match query_first_string(&mut conn, "SELECT VERSION()").await {
         Ok(v) => v,
         Err(e) => {
@@ -442,6 +479,7 @@ pub async fn connect_mysql(p: &ConnectParams) -> AppResult<Arc<dyn Session>> {
         lost: AtomicBool::new(false),
         canceller: Arc::new(MyCanceller {
             opts: cancel_opts,
+            route,
             conn_id,
             running: AtomicBool::new(false),
             seq: AtomicU64::new(0),
