@@ -12,10 +12,10 @@ export const labelClass = "truncate text-right text-text-2";
 /** A label inside the field column (Port next to Host, Tag next to the colours). */
 export const inlineLabelClass = "shrink-0 text-text-2";
 export const fieldClass =
-  "h-7 w-full min-w-0 rounded-md border border-pill-border bg-search px-2 text-text outline-none placeholder:text-text-2 focus-visible:outline-2 focus-visible:outline-accent read-only:text-text-2";
+  "h-7 w-full min-w-0 rounded-md border border-pill-border bg-search px-2 text-text outline-none placeholder:text-text-2 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent read-only:text-text-2";
 export const buttonClass =
-  "h-7 shrink-0 rounded-md border border-pill-border bg-btn px-3 text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50";
+  "h-7 shrink-0 rounded-md border border-pill-border bg-btn px-3 text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:opacity-50";
 export const primaryButtonClass =
-  "h-7 shrink-0 rounded-md bg-accent-strong px-3 text-accent-contrast outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50";
+  "h-7 shrink-0 rounded-md bg-accent-strong px-3 text-accent-contrast outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50";
 export const iconButtonClass =
-  "flex size-7 shrink-0 items-center justify-center rounded-md text-icon outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50";
+  "flex size-7 shrink-0 items-center justify-center rounded-md text-icon outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:opacity-50";

@@ -87,6 +87,14 @@ without any warranty. See [LICENSE](LICENSE) for the full text.
 
 ## Connections
 
+The connections screen shows a welcome pane (**Create connection…**, **Import
+connections…**) and the list of saved connections, filed in groups that fold. `Ctrl+F`
+searches the list (name, group, host, database, path); the arrow keys move through the
+rows, `Enter` or a double-click connects, right-click or `Shift+F10` opens **Connect** /
+**Edit…**. The form opens in place of the list (`+`, `Ctrl+N`, **Create connection…**,
+**Edit…**; **←** goes back, and unsaved edits are never dropped without asking). From an
+open connection, `Ctrl+Shift+K` shows the list again.
+
 - **SSL / TLS**: modes `disable`, `prefer`, `require` (encrypted, certificate not checked),
   `verify-ca` (chain checked, not the name; PostgreSQL only for now) and `verify-full`
   (chain and host name). Optional CA, client certificate and key files. New connections
@@ -112,36 +120,74 @@ without any warranty. See [LICENSE](LICENSE) for the full text.
 Passwords, SSH passwords and key passphrases live only in the system keyring (or are
 asked at each connect), never in `app.db`.
 
+## The main window
+
+- **Toolbar** (it is also the title bar; a setting brings back the system one): sidebar and
+  connection buttons; **Discard · Preview · Commit** for the pending changes of a table
+  tab; safe mode, database (`Ctrl+K`) and **SQL** (new SQL tab); in the middle the status
+  pill (tag badge such as `PROD`, engine and version, `SSH` through a tunnel, connection,
+  database, `schema.object`; click it for the connection details, **Edit**, **Reconnect**,
+  **Disconnect**); reload (`Ctrl+R`), **Open anything** (`Ctrl+P`) and the row details
+  panel. A `production` connection also shows `[PROD]` in the window title.
+- **Open connections**, the narrow column on the left: one tile per open connection, in
+  its colour (`Ctrl+Shift+[` / `Ctrl+Shift+]` switch); the settings button sits at its
+  bottom.
+- **Sidebar** (`Ctrl+0` shows or hides it; drag its edge to resize): **Items** (tables,
+  views and functions of the schema; a table or view's chevron lists its columns),
+  **Queries** (saved queries) and **History**, each with its search (`Ctrl+Shift+F`).
+  Single-click a table for a preview tab (*italic*, reused), double-click to keep it. At the
+  bottom: **+** (new SQL tab), **⌄** (New SQL query, Refresh) and the schema picker.
+- **Tabs**: capsules sharing the bar, back / forward arrows (`Alt+←` / `Alt+→`), the list of
+  all tabs (**⌄**). Right-click a tab for New tab / Close / Close others / Rename… (`F2`).
+- **Open anything** (`Ctrl+P`): tables, views, tabs and connections; type `>` first for
+  the actions (each with its shortcut).
+
 ## Table tabs
 
-Opening a table shows its rows in a grid (300 rows a page, row count in the footer).
-**Data | Structure** at the top of the tab switches between the rows and the table's
-structure (`Alt+1` / `Alt+2`, `⌥1` / `⌥2` on macOS).
+Opening a table shows its rows in a grid (300 rows a page). The bar under the grid holds
+**Data | Structure | Index** (`Alt+1` / `Alt+2` / `Alt+3`), **+ Row**, the count in the
+middle (`1–300 of 1,250 rows`, `415 rows`, or `1 of 415 rows selected`), **Filters**,
+**Columns** and the pager **‹ ⚙ ›** (⚙ sets the offset and the page size).
 
-- **Editing**: double-click a cell, press Enter or start typing. Right-click a cell or row
-  for **Set NULL**, **Set empty string** (text columns), **Set DEFAULT**, **Revert cell**,
-  **Duplicate row**, **Delete row** / **Restore row**; **+ Row** adds a row. Edits are not written
-  right away: changed cells, new rows and rows to delete are highlighted as **pending
-  changes**. Only tables with a primary key (or a unique index on `NOT NULL` columns) can
-  be edited; views, tables without such a key, generated and binary columns are read-only,
-  with the reason shown above the grid. SQL results are always read-only.
+- **Grid**: click a row number to select the row, `Shift`+click to extend, `Ctrl`+click to
+  add or remove a row; click a header to sort (ascending, descending, none), drag it to move
+  the column, double-click its right edge to fit the width. Right-click a header for Filter
+  with column, Hide column, Fit to content, Reset positions, Show all, Sort and Copy column
+  name. `Enter` shows the whole value of a cell (Quick Look, JSON indented).
+- **Editing**: double-click a cell, press `Alt+Enter` or start typing. Right-click a cell for
+  **Set value** (NULL, EMPTY, DEFAULT for new rows), **Revert cell**, copies, **Quick
+  filter**, **Add row**, **Duplicate**, **Delete** / **Restore**. Edits are not written right
+  away: changed cells, new rows and rows to delete are highlighted as **pending changes**.
+  Only tables with a primary key (or a unique index on `NOT NULL` columns) can be edited;
+  views, tables without such a key, generated and binary columns are read-only, with the
+  reason shown above the grid. SQL results are always read-only.
 - **Pending changes** panel (below the grid): one line per change with its SQL (`UPDATE` /
-  `INSERT` / `DELETE`, values shown as literals) and an **Undo** button.
-- **Commit** (`Ctrl+S`, `⌘S` on macOS) writes all pending changes in one transaction,
-  values sent as bound parameters. Each `UPDATE` / `DELETE` must touch exactly one row:
-  if the row was deleted or its key changed since it was loaded, everything is rolled
-  back, nothing is written and the changes stay pending. Concurrent edits of other
-  columns are not detected: the last write wins (like other desktop clients). A commit
-  waiting for a row locked elsewhere gives up after 30 s (a normal failure, nothing
-  written) and can be cancelled meanwhile (**Cancel**, everything rolled back). If the
-  connection drops during a commit, the outcome is unknown: reload and check before
-  committing again. **Discard** drops them; closing a tab
-  or workspace that has some asks first. Paging, sorting, filtering, reloading and
-  following a foreign key wait until the pending changes are committed or discarded.
-- **Row details** (`Ctrl+I`, `⌘I`): the selected row as a form, with indented JSON and
-  long text loaded in full; edits there are pending changes too.
-- **Filters**: the quick bar above the grid takes conditions joined by `and`
-  (no `or`), for example `status = delivered and total > 100`:
+  `INSERT` / `DELETE`, values shown as literals) and an **Undo** button. **Preview**
+  (`Ctrl+Shift+P`) opens it.
+- **Commit** (`Ctrl+S`) writes all pending changes in one transaction, values sent as bound
+  parameters; the toolbar's Commit shows how many are pending. Each `UPDATE` / `DELETE` must
+  touch exactly one row: if the row was deleted or its key changed since it was loaded,
+  everything is rolled back, nothing is written and the changes stay pending. Concurrent
+  edits of other columns are not detected: the last write wins (like other desktop
+  clients). A commit waiting for a row locked elsewhere gives up after 30 s (a normal
+  failure, nothing written) and can be cancelled meanwhile (**Cancel**, everything rolled
+  back). If the connection drops during a commit, the outcome is unknown: reload and check
+  before committing again. **Discard** drops them (`Ctrl+Shift+Backspace` asks first);
+  closing a tab or workspace that has some asks first. Paging, sorting, filtering,
+  reloading and following a foreign key wait until the pending changes are committed or
+  discarded.
+- **Row details** (`Ctrl+Space`, or `Space` in the grid): a panel on the right with the
+  selected row's fields, a field search, indented JSON and long text loaded in full; edits
+  there are pending changes too. It stays open across tabs; drag its edge to resize.
+- **Filters** (`Ctrl+F` or **Filters**): a bar above the grid, one line per condition: a
+  checkbox, the column (or **Any column**, or **Raw SQL**), the operator, the value,
+  **Apply** (this condition alone), **−** and **+**. **Apply All** applies every ticked
+  condition, joined by AND, or by OR from its **⌄** menu (`Ctrl+Enter` /
+  `Ctrl+Shift+Enter`). The bar's footer has **SQL**, which shows the `WHERE` clause with
+  the values written in (display only: the page always sends them as parameters; **Copy**
+  copies it), **Clear** and the bar's shortcuts. `Esc` hides the bar and keeps what is
+  typed. A **Raw SQL** condition reads the quick syntax first, for example
+  `status = delivered and total > 100`:
   - `col = value` (also `!=`, `<>`, `<`, `>`, `<=`, `>=`), `col is null`, `col is not null`;
   - `col in (a, b, c)`, `col not in (…)`, `col between 1 and 10`, `col not between …`;
   - `col like 'A%'`, `col not like …`, `col ilike …`, `col contains text`,
@@ -151,57 +197,53 @@ structure (`Alt+1` / `Alt+2`, `⌥1` / `⌥2` on macOS).
   - quote values with `'…'` or `"…"` (the quote doubled escapes it: `'O''Brien'`), and
     columns with `"…"` or `` `…` ``; a keyword used as a value must be quoted (`'and'`).
 
-  **Filters** opens the builder: one row per condition (column or **Any column**,
-  operator, value), the same operators plus **Raw SQL**, a condition typed as is (only
-  there is your text inserted in the query). The quick bar and the builder show the same
-  filters; conditions the bar cannot write are marked **advanced**. With filters, the
-  count is exact up to 500,000 rows, then shown as `500,000+`.
-- **Foreign keys**: a cell that references a row has a `↗` marker. `Ctrl+click`
-  (`⌘+click`) it, or right-click → **Open referenced row** (or the `→ table` button in
-  the row details), to show the referenced table filtered on that row in the same tab. The
-  trail above the grid (`orders › customers (id = 42)`) goes back to any earlier table
-  exactly as it was (filters, sort, page); `Alt+←` goes back one step.
-- **Copy**: `Ctrl+C` copies the selected cells as TSV; right-click → **Copy as TSV /
-  CSV / JSON / SQL INSERT** copies the selection with its column names (shown values,
-  pending edits included; new rows not committed yet are left out).
+  Anything else is sent as SQL as typed (only there is your text inserted in the query);
+  the line says how it was read. With filters, the count is exact up to 500,000 rows, then
+  shown as `500,000+`.
+- **Columns** (`Alt+F`): tick the columns to show; widths, order and hidden columns are
+  kept per table for the session.
+- **Foreign keys**: a cell that references a row has a `↗` marker. `Ctrl+click` it, or
+  right-click → **Open referenced row** (or the `→ table` button in the row details), to
+  show the referenced table filtered on that row in the same tab. The trail above the grid
+  (`orders › customers (id = 42)`) goes back to any earlier table exactly as it was
+  (filters, sort, page); `Alt+←` goes back one step.
+- **Copy**: `Ctrl+C` or `Ctrl+Shift+C` copies the selected cells as TSV; right-click →
+  **Copy rows** / **Copy rows as** TSV, CSV, CSV with a header, JSON, Markdown or SQL
+  `INSERT`, or **Copy selected cells** (shown values, pending edits included).
 - **Structure** (read-only): **Columns** (type, nullable, default, auto-increment or
-  generated, comment; primary and foreign key columns marked), **Indexes** (columns,
-  unique / primary, definition), **Foreign keys** (columns → referenced table and columns,
-  `ON UPDATE` / `ON DELETE`; the table name opens it in a new tab) and **DDL** (highlighted,
-  **Copy** button). **Refresh** reloads it from the database.
-
-| Shortcut | Action |
-|---|---|
-| `Alt+1` / `Alt+2` | Data / Structure |
-| `Ctrl+S` | Commit the pending changes |
-| `Ctrl+I` | Show or hide the row details |
-| `Ctrl+click` | Follow a foreign key |
-| `Alt+←` | Back along the foreign key trail |
-| `Ctrl+C` | Copy the selected cells (TSV) |
-| `Ctrl+T` / `Ctrl+W` | New query tab / close the tab |
-
-On macOS, `Ctrl` is `⌘` and `Alt` is `⌥` (`Ctrl+T` / `Ctrl+W` stay `Ctrl`).
+  generated, comment; primary and foreign key columns marked), **Foreign keys** (columns →
+  referenced table and columns, `ON UPDATE` / `ON DELETE`; the table name opens it in a new
+  tab) and **DDL** (highlighted, **Copy** button). **Index** lists the indexes (columns,
+  unique, type and condition of a partial index; MySQL gives no type or condition).
+  **Refresh** reloads them from the database.
 
 ## SQL editor
 
-- **Shortcuts** (`Ctrl` is `Cmd` on macOS): `Ctrl+Enter` run the statement under the
-  cursor (or the selection), `Ctrl+Shift+Enter` run all, `Ctrl+Shift+F` format,
-  `Ctrl+/` comment, `Ctrl+S` save the query, `Ctrl+Shift+H` history, `Ctrl+K` / `Ctrl+P`
-  command palette, `Ctrl+T` new SQL tab, `Ctrl+W` close tab, `Ctrl+Tab` recent tabs.
-- **History** (right panel): every statement run on a connection, newest first (the last
-  1,000 are kept), with a search box. Click inserts the SQL at the cursor, double-click
-  replaces the editor content. Statements containing the word `IDENTIFIED` or `PASSWORD`
-  (`CREATE/ALTER USER … IDENTIFIED BY`, `SET PASSWORD`, PostgreSQL `… PASSWORD '…'`) are
-  never recorded. It may still hold other values you typed: "Clear history" erases it
-  for the connection (deleted rows are overwritten in `app.db`), and it is deleted with
-  the connection.
+- **Toolbar** above the editor: **No limit ⌄** (add a `LIMIT` to `SELECT` queries, the
+  value comes from the settings), **Beautify** (`Ctrl+I`, also `Ctrl+Shift+F`: the
+  selection or all of it), **Save**, and **Run Current** (`Ctrl+Enter`: the statement under
+  the cursor, or the selection) with its **⌄** for **Run All** (`Ctrl+Shift+Enter`). The
+  statement Run Current would run has a tinted background.
+- **Results**: **Data** (the rows, one **Result N** tab per result set when there are
+  several, with the row count and the time) and **Message** (one line per statement: rows
+  returned or changed, errors, cancel). An error or a cancel shows Message.
+- **Completion**: table and column names as you type; `Ctrl+Space` asks for it.
+- **History** (sidebar, **History**): every statement run on a connection, newest first (the
+  last 1,000 are kept), with a search box. A click opens it in a new SQL tab; right-click for
+  Run, Copy, Insert into SQL editor and Delete. Statements containing the word
+  `IDENTIFIED` or `PASSWORD` (`CREATE/ALTER USER … IDENTIFIED BY`, `SET PASSWORD`,
+  PostgreSQL `… PASSWORD '…'`) are never recorded. It may still hold other values you
+  typed: "Clear history" erases it for the connection (deleted rows are overwritten in
+  `app.db`), and it is deleted with the connection.
 - **Session restore**: open workspaces and tabs come back after a restart, disconnected
-  until you activate them. The text of each SQL tab is kept as typed, like an unsaved
-  document, so whatever you typed there (a password included) is stored in `app.db`.
-  On Linux and macOS `app.db` and the saved queries are readable by your user only.
-- **Saved queries** (left panel, per connection): `Ctrl+S` asks for a name the first time,
-  then overwrites; the tab takes the name and shows a dot while it differs from the saved
-  file. Open, rename and delete from the panel.
+  until you activate them (`Ctrl+Shift+R` connects the one shown). The text of each SQL tab
+  is kept as typed, like an unsaved document, so whatever you typed there (a password
+  included) is stored in `app.db`. On Linux and macOS `app.db` and the saved queries are
+  readable by your user only.
+- **Saved queries** (sidebar, **Queries**, per connection): `Ctrl+S` asks for a name the
+  first time, then overwrites; the tab takes the name and shows a dot while it differs from
+  the saved file. A click opens it (or its open tab); right-click for Run, Copy, Insert into
+  SQL editor, Rename… and Delete.
 - **MySQL / MariaDB `DELIMITER`**: a `DELIMITER //` line changes the statement delimiter
   like in the mysql client and is not sent to the server. Without it, the `BEGIN … END`
   body of `CREATE PROCEDURE/FUNCTION/TRIGGER/EVENT` is still sent as one statement.
@@ -213,6 +255,71 @@ On macOS, `Ctrl` is `⌘` and `Alt` is `⌥` (`Ctrl+T` / `Ctrl+W` stay `Ctrl`).
   bodies (`AS $$ … $$`, MySQL 9 JavaScript routines), and anything at all while the
   session's client character set is `big5`, `cp932`, `gb18030`, `gbk` or `sjis` (run
   `SET NAMES utf8mb4` to go back).
+
+## Settings and keyboard shortcuts
+
+**Settings** (`Ctrl+,`, or the button at the bottom of the open connections column) has
+five sections: **General** (system title bar, version), **Table** (page size, exact count
+threshold), **Editor** (Auto LIMIT), **Fonts & Themes** (System / Light / Dark, **Interface
+size** 90 % to 130 %, data and editor font sizes, editor font) and **Keymap**, where the
+shortcuts below can be changed (**Change**, then press the new combination; one already in
+use is refused) or reset. The grid's plain keys are fixed: `Enter` (Quick Look), `Space`
+(row details), `Delete` (delete rows), `Esc` and `Ctrl+click`.
+
+The defaults, on Linux and Windows. On macOS `Ctrl` is `⌘` and `Alt` is `⌥`, except
+`Ctrl+Tab`, `Ctrl+Shift+Tab` and `Ctrl+Space`, which stay `Ctrl`; the other macOS
+differences are in the last column.
+
+| Where | Shortcut | Action | macOS |
+|---|---|---|---|
+| Everywhere | `Ctrl+P` | Open anything (`>` for actions) | |
+| | `Ctrl+K` | Open a database or schema | |
+| | `Ctrl+Shift+K` | Show the connection list | |
+| | `Ctrl+N` | New connection | |
+| | `Ctrl+,` | Settings | |
+| | `Ctrl+T` / `Ctrl+E` | New SQL tab / open the SQL editor (new SQL tab) | |
+| | `Ctrl+W` | Close the tab | |
+| | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab, most recent first | |
+| | `Ctrl+]` / `Ctrl+[`, `Ctrl+PageDown` / `Ctrl+PageUp` | Next / previous tab in bar order | |
+| | `Ctrl+1`, `Ctrl+2`, `Ctrl+3`, `Ctrl+4`, `Ctrl+5`, `Ctrl+6`, `Ctrl+7`, `Ctrl+8`, `Ctrl+9` | Go to tab 1 … 9 | |
+| | `Ctrl+Shift+]` / `Ctrl+Shift+[`, `Ctrl+Shift+PageDown` / `Ctrl+Shift+PageUp` | Next / previous open connection | |
+| | `Alt+←` / `Alt+→` | Back (the foreign key trail first) / forward | |
+| | `Ctrl+0` | Show or hide the sidebar | |
+| | `Ctrl+Shift+F` | Search the sidebar (in the editor: format) | |
+| | `Ctrl+Shift+H` | Show the query history | |
+| | `Ctrl+R` | Reload the sidebar and the table data | |
+| | `Ctrl+Shift+R` | Connect the disconnected connection shown | |
+| | `Ctrl+=` (`Ctrl+Shift+=`, `Ctrl+Num +`) / `Ctrl+-` (`Ctrl+Num −`) | Larger / smaller data and editor fonts | |
+| Table tabs | `Ctrl+S` | Commit the pending changes | |
+| | `Ctrl+Shift+Backspace` | Discard the pending changes (asks first) | |
+| | `Ctrl+Shift+P` | Preview the SQL of the pending changes | |
+| | `Ctrl+Space`, `Space` in the grid | Show or hide the row details | |
+| | `Alt+1` / `Alt+2` / `Alt+3` | Data / Structure / Index | also `⌘+⌥+[` / `⌘+⌥+]` |
+| | `Alt+R` | Reload this table's data | `⌘+⌥+R` |
+| | `Ctrl+F` | Show or hide the filter bar | |
+| | `Alt+F` | Columns | `⌘+⌥+F` |
+| | `Ctrl+I` | Add a row | |
+| Table grid | `Enter` / `Alt+Enter` | Quick Look / edit the cell | |
+| | `Ctrl+Shift+C` | Copy the selected cells | |
+| | `Ctrl+D` | Duplicate the selected rows | |
+| | `Ctrl+Backspace`, `Delete` | Delete the selected rows | |
+| | `Ctrl+←` / `Ctrl+→` | Previous / next page | |
+| | `Ctrl+click` | Follow a foreign key | |
+| Filter bar | `Ctrl+B` | Turn the condition on or off | |
+| | `Ctrl+I` / `Ctrl+Shift+I` | Add a condition after this one / remove it | |
+| | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Apply all, joined by AND / by OR | |
+| | `Ctrl+↑` / `Ctrl+↓` | Previous / next condition | |
+| | `Alt+C` / `Alt+O` | Jump to the column / the operator | `⌘+←` / `⌘+→` |
+| | `Esc` | Hide the bar | |
+| SQL tabs | `Ctrl+S` | Save the query | |
+| SQL editor | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Run the current statement (or the selection) / all | |
+| | `Ctrl+I`, `Ctrl+Shift+F` | Format (Beautify) | |
+| | `Ctrl+/` | Comment or uncomment the lines | |
+| | `Ctrl+Space` | Show completions | |
+| Connection list | `Ctrl+F` | Search the list | |
+
+A shortcut acts only where it belongs: in a text field or the editor, keys such as
+`Ctrl+←`, `Ctrl+I` or `Space` keep their usual text meaning.
 
 ## Test databases
 

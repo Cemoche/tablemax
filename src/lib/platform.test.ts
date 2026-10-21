@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { KEYMAP_ACTIONS } from "./keymap";
-import { currentPlatform, formatShortcut, isMac, isModKey, isWindows } from "./platform";
+import { currentPlatform, formatShortcut, isLinux, isMac, isModKey, isWindows } from "./platform";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -99,5 +99,22 @@ test("Windows detection: navigator.platform, userAgentData and the user agent (#
   expect(isWindows("", "")).toBe(false);
   vi.stubGlobal("navigator", { platform: "", userAgentData: { platform: "Windows" }, userAgent: "" });
   expect(isWindows()).toBe(true);
+  vi.unstubAllGlobals();
+});
+
+test("Linux detection: the desktop, not Android; the user agent only without a platform (Task 11)", () => {
+  expect(isLinux("Linux x86_64", "Mozilla/5.0 (X11; Linux x86_64)")).toBe(true);
+  // userAgentData.platform says "Linux".
+  expect(isLinux("Linux", "")).toBe(true);
+  expect(isLinux("", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15")).toBe(true);
+  // Android reports a Linux platform: it is not the desktop.
+  expect(isLinux("Linux armv8l", "Mozilla/5.0 (Linux; Android 14)")).toBe(false);
+  expect(isLinux("Android", "")).toBe(false);
+  // A platform that is not Linux wins over the user agent.
+  expect(isLinux("MacIntel", "Mozilla/5.0 (X11; Linux x86_64)")).toBe(false);
+  expect(isLinux("Win32", "")).toBe(false);
+  expect(isLinux("", "")).toBe(false);
+  vi.stubGlobal("navigator", { platform: "", userAgentData: { platform: "Linux" }, userAgent: "" });
+  expect(isLinux()).toBe(true);
   vi.unstubAllGlobals();
 });

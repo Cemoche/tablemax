@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export interface MenuEntry {
   label: string;
@@ -48,19 +48,36 @@ export function keyboardMenuAnchor(e: KeyboardEvent<HTMLElement>): MenuAnchor | 
 }
 
 /**
+ * Menu keys shared by the sidebar's menus: ↓ / ↑ move the focus through `items`, wrapping,
+ * Home / End go to the ends. True when the key was one of them (the caller prevents it).
+ */
+export function moveMenuFocus(key: string, items: HTMLElement[]): boolean {
+  const i = items.indexOf(document.activeElement as HTMLElement);
+  if (key === "ArrowDown") items[(i + 1) % items.length]?.focus();
+  else if (key === "ArrowUp") items[(i - 1 + items.length) % items.length]?.focus();
+  else if (key === "Home") items[0]?.focus();
+  else if (key === "End") items[items.length - 1]?.focus();
+  else return false;
+  return true;
+}
+
+/**
  * A small context menu of the sidebar: focus on the first item, arrows (wrapping), Home /
- * End, Escape and any press outside close it; it stays inside the window.
+ * End, Escape and any press outside close it; it stays inside the window. A press on
+ * `trigger` (the button that opened it, which toggles it itself) does not count as outside.
  */
 export function ContextMenu({
   label,
   anchor,
   items,
   onClose,
+  trigger,
 }: {
   label: string;
   anchor: MenuAnchor;
   items: MenuItem[];
   onClose: (reason: MenuCloseReason) => void;
+  trigger?: RefObject<HTMLElement | null>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState(anchor);
@@ -84,7 +101,9 @@ export function ContextMenu({
       if (e.key === "Escape") closeRef.current("escape");
     };
     const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) closeRef.current("outside");
+      const target = e.target as Node;
+      if (ref.current?.contains(target) || trigger?.current?.contains(target)) return;
+      closeRef.current("outside");
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onDown);
@@ -92,18 +111,15 @@ export function ContextMenu({
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onDown);
     };
-  }, []);
+  }, []); // `trigger` is a ref, read at press time
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const els = [...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
-    const i = els.indexOf(document.activeElement as HTMLElement);
-    if (e.key === "ArrowDown") els[(i + 1) % els.length]?.focus();
-    else if (e.key === "ArrowUp") els[(i - 1 + els.length) % els.length]?.focus();
-    else if (e.key === "Home") els[0]?.focus();
-    else if (e.key === "End") els[els.length - 1]?.focus();
-    else if (e.key === "Tab") onClose("tab");
-    else return;
-    e.preventDefault();
+    if (moveMenuFocus(e.key, els)) e.preventDefault();
+    else if (e.key === "Tab") {
+      e.preventDefault();
+      onClose("tab");
+    }
   };
 
   return (

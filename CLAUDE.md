@@ -13,10 +13,12 @@ Any global rule about Azure DevOps, Ticky, `develop` or Husky hooks does not app
 
 - `src/` — React frontend (rules: `src/CLAUDE.md`).
 - `src-tauri/` — Rust backend and Tauri app (rules: `src-tauri/CLAUDE.md`).
-- `docs/superpowers/specs/` — design spec: `2026-10-16-tablemax-design.md` (goals, non-goals, anti-goals).
+- `docs/superpowers/specs/` — design spec: `2026-10-16-tablemax-design.md` (goals, non-goals, anti-goals);
+  UI redesign: `2026-10-19-tablemax-ui-redesign-design.md` (with dated amendments).
 - `docs/superpowers/plans/` — implementation plans, one per milestone (`### Task N` sections).
 - `docs/research/` — background research (TablePlus behaviour, `.tableplusconnection` format).
-- `docs/notes/` — plan follow-ups (`plan-NN-followups.md`), manual checks (`plan-NN-manual-check.md`), `team-setup.md`.
+- `docs/notes/` — plan follow-ups (`plan-NN-followups.md`), manual checks (`plan-NN-manual-check.md`),
+  the UI redesign's (`ui-redesign-followups.md`, `ui-redesign-manual-check.md`), `team-setup.md`.
 - `scripts/` — test stack (`test-dbs.sh`, `test-secrets.sh`), `demo-db.sh`, team tooling
   (`plan-to-issues.mjs`, `github-bootstrap.sh`, `check-no-secrets.sh`), release checks
   (`release-bump.sh`, `release-check-version.sh`, `release-smoke.sh`, `release-files.sh`) and their tests.
@@ -130,10 +132,11 @@ directly (`superpowers:test-driven-development`).
 ## Where to look
 
 - What to build and why: the spec, then the plan linked from the issue.
-- v1 is done: plans 1 to 5 and `2026-10-17-tablemax-team-setup.md` are merged in `main`.
+- v1 is done: plans 1 to 5 and `2026-10-17-tablemax-team-setup.md` are merged in `main`;
+  so is the UI redesign (`2026-10-19-tablemax-ui-redesign.md`, epic #77).
 - What is left: the open GitHub issues (follow-ups `status:ready`, post-v1 epics
   `status:triage`), on the board "TableMax" (user project #5 of `Cemoche`, field Stage).
-- Background of the follow-ups: `docs/notes/plan-0*-followups.md`.
+- Background of the follow-ups: `docs/notes/plan-0*-followups.md`, `docs/notes/ui-redesign-followups.md`.
 - Human onboarding and setup: `CONTRIBUTING.md`; team tooling status: `docs/notes/team-setup.md`.
 - Personal, untracked overrides: `CLAUDE.local.md`, `.claude/settings.local.json`.
 
