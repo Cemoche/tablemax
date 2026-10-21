@@ -125,6 +125,7 @@ pub fn params_from_url(url: &str, kind: DriverKind) -> ConnectParams {
         ssl: SslConfig::default(),
         dial: None,
         mongo: None,
+        traffic: None,
     }
 }
 

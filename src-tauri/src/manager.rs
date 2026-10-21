@@ -18,10 +18,10 @@
 //! (`ConnectParams.dial`) while `host` stays the DB host as seen from the SSH server
 //! (also the TLS name). A SQL session opened after the tunnel died reopens it.
 //!
-//! Traffic (#112): every network connection of a workspace dials a local end the app owns,
-//! where its bytes are counted into the workspace's [`Traffic`]: the SSH tunnel's, or for
-//! a direct PostgreSQL / MySQL / MariaDB connection a loopback [`Relay`] opened with the
-//! workspace. [`SessionManager::workspace_throughput`] turns the counts into a rate.
+//! Traffic (#112): the bytes of every network connection of a PostgreSQL / MySQL / MariaDB
+//! workspace are counted into its [`Traffic`]: by the SSH tunnel that forwards them, or for
+//! a direct connection by the driver (`ConnectParams.traffic`, see `relay`).
+//! [`SessionManager::workspace_throughput`] turns the counts into a rate.
 //!
 //! Lost browse connection (any workspace): once the session reports it lost, a call on it
 //! saw `ConnectionLost`, or its tunnel died, the next `browse()` rebuilds it (once per
@@ -55,7 +55,6 @@ use crate::driver::{
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::history::{self, HistoryEntry, NewHistoryEntry};
 use crate::import::{self, IMPORT_TTL, ImportPreview, ImportResult, LastPick, PendingImports};
-use crate::relay::Relay;
 use crate::safety::{self, SafeMode};
 use crate::saved_queries::{self, SavedQuery};
 use crate::secrets::{SecretKey, SecretKind, SecretStore};
@@ -160,11 +159,9 @@ struct Workspace {
     /// (the saved connection's identity, which guards the keyring on reconnect) and
     /// applied to the browse connection and to every SQL session opened afterwards.
     database: Option<String>,
-    /// Bytes moved by every network connection of the workspace (tunnel or relay).
+    /// Bytes moved by every network connection of the workspace (tunnel or drivers).
     traffic: Arc<Traffic>,
-    /// What direct connections dial (`None` through SSH, or when not counted).
-    relay: Option<Arc<Relay>>,
-    /// The workspace's traffic is counted: a tunnel or a relay carries all of it.
+    /// The workspace's traffic is counted (see [`counted`]).
     measured: bool,
     rate: RateWindow,
 }
@@ -218,7 +215,6 @@ struct Reconnect {
     /// The workspace's switched-to database; see [`Workspace::database`].
     database: Option<String>,
     traffic: Arc<Traffic>,
-    relay: Option<Arc<Relay>>,
 }
 
 impl Reconnect {
@@ -336,36 +332,28 @@ where
 }
 
 /// Connects with `cfg`, dialing `tunnel`'s local end when there is one (`host` stays
-/// the DB host as seen from the SSH server, which is also the TLS name), else `relay`'s.
+/// the DB host as seen from the SSH server, which is also the TLS name). A direct
+/// connection counts its bytes into `traffic` when given (through SSH the tunnel does).
 async fn connect(
     cfg: &ConnectionConfig,
     password: Option<String>,
     tunnel: Option<&SshTunnel>,
-    relay: Option<&Relay>,
+    traffic: Option<&Arc<Traffic>>,
 ) -> AppResult<AnySession> {
     check_mongo_config(cfg)?;
     let mut params = connect_params(cfg, password, tunnel);
-    let Some(relay) = relay.filter(|_| tunnel.is_none()) else {
-        return driver::connect(&params).await;
-    };
-    params.dial = Some(relay.local_addr());
-    // A failure left by an earlier connection is not this one's.
-    let _ = relay.take_failure();
-    driver::connect(&params).await.map_err(|e| match e.kind {
-        // The driver only saw the relay close its connection: say why.
-        ErrorKind::Connection | ErrorKind::ConnectionLost => relay.take_failure().unwrap_or(e),
-        _ => e,
-    })
+    if tunnel.is_none() && counted(cfg) {
+        params.traffic = traffic.cloned();
+    }
+    driver::connect(&params).await
 }
 
-/// The relay a direct connection of `cfg` dials so its bytes are counted, or `None` (no
-/// network, no count: SQLite, MongoDB, or a PostgreSQL Unix-socket directory as host).
-/// A relay that cannot listen is not an error: the connection goes direct, uncounted.
-async fn open_relay(cfg: &ConnectionConfig, traffic: &Arc<Traffic>) -> Option<Arc<Relay>> {
-    if !driver::capabilities(cfg.kind).throughput || cfg.host.starts_with('/') {
-        return None;
-    }
-    Relay::open(&cfg.host, cfg.port, traffic.clone()).await.ok()
+/// Whether a workspace on `cfg` has its network bytes counted: PostgreSQL, MySQL and
+/// MariaDB (`Capabilities::throughput`), through SSH or over TCP. Not a PostgreSQL
+/// Unix-socket directory given as host: no network there.
+fn counted(cfg: &ConnectionConfig) -> bool {
+    driver::capabilities(cfg.kind).throughput
+        && (ssh_of(cfg).is_some() || !cfg.host.starts_with('/'))
 }
 
 fn connect_params(
@@ -384,6 +372,7 @@ fn connect_params(
         ssl: cfg.ssl.clone(),
         dial: tunnel.map(SshTunnel::local_addr),
         mongo: cfg.mongo.clone(),
+        traffic: None,
     }
 }
 
@@ -949,13 +938,8 @@ impl SessionManager {
         let tunnel = self
             .open_tunnel(&config, ssh_secret, accept_fingerprint, traffic.clone())
             .await?;
-        let relay = match tunnel {
-            Some(_) => None,
-            None => open_relay(&config, &traffic).await,
-        };
-        let measured =
-            driver::capabilities(config.kind).throughput && (tunnel.is_some() || relay.is_some());
-        let browse = match connect(&config, resolved, tunnel.as_deref(), relay.as_deref()).await {
+        let measured = counted(&config);
+        let browse = match connect(&config, resolved, tunnel.as_deref(), Some(&traffic)).await {
             Ok(browse) => browse,
             Err(e) => {
                 if let Some(t) = tunnel {
@@ -989,7 +973,6 @@ impl SessionManager {
                 applying: None,
                 database: None,
                 traffic,
-                relay,
                 measured,
                 rate: RateWindow::default(),
             },
@@ -998,7 +981,7 @@ impl SessionManager {
     }
 
     /// Closes the workspace, its SQL sessions (cancelling running batches), its
-    /// browse connection, then its SSH tunnel or relay. Every close is attempted; the first
+    /// browse connection, then its SSH tunnel. Every close is attempted; the first
     /// error is returned.
     pub async fn close_workspace(&self, workspace_id: &str) -> AppResult<()> {
         let (ws, sessions) = {
@@ -1030,8 +1013,6 @@ impl SessionManager {
         if let Some(t) = ws.tunnel.lock().await.take() {
             t.close().await;
         }
-        // Stops listening; its connections are already closed.
-        drop(ws.relay);
         first_err.map_or(Ok(()), Err)
     }
 
@@ -1083,7 +1064,6 @@ impl SessionManager {
             slot: ws.tunnel.clone(),
             database: ws.database.clone(),
             traffic: ws.traffic.clone(),
-            relay: ws.relay.clone(),
         })
     }
 
@@ -1194,7 +1174,7 @@ impl SessionManager {
             None => None,
         };
         let password = self.resolve_password(&r.config, r.password).await?;
-        let fresh = connect(&cfg, password, tunnel.as_deref(), r.relay.as_deref()).await?;
+        let fresh = connect(&cfg, password, tunnel.as_deref(), Some(&r.traffic)).await?;
         let old = {
             let mut st = self.state();
             st.workspaces.get_mut(workspace_id).map(|ws| {
@@ -1569,7 +1549,7 @@ impl SessionManager {
             .live_tunnel(workspace_id, &r.config, &r.slot, r.ssh_secret, &r.traffic)
             .await?;
         let session =
-            sql_only(connect(&r.config, password, tunnel.as_deref(), r.relay.as_deref()).await?)
+            sql_only(connect(&r.config, password, tunnel.as_deref(), Some(&r.traffic)).await?)
                 .await?;
         self.register_sql_session(workspace_id, session).await
     }
@@ -1831,7 +1811,7 @@ impl SessionManager {
         let password = self.resolve_password(&r.config, r.password).await?;
         let mut cfg = r.config.clone();
         cfg.database = Some(database.to_string());
-        let fresh = connect(&cfg, password, tunnel.as_deref(), r.relay.as_deref()).await?;
+        let fresh = connect(&cfg, password, tunnel.as_deref(), Some(&r.traffic)).await?;
         let swapped = {
             let mut st = self.state();
             st.workspaces.get_mut(workspace_id).map(|ws| {
@@ -2757,7 +2737,6 @@ mod tests {
                 applying: None,
                 database: None,
                 traffic: Default::default(),
-                relay: None,
                 measured: false,
                 rate: Default::default(),
             },
@@ -2908,7 +2887,6 @@ mod tests {
                 applying: None,
                 database: None,
                 traffic: Default::default(),
-                relay: None,
                 measured: false,
                 rate: Default::default(),
             },
@@ -3018,7 +2996,6 @@ mod tests {
                 applying: None,
                 database: None,
                 traffic: Default::default(),
-                relay: None,
                 measured: false,
                 rate: Default::default(),
             },
@@ -3893,7 +3870,6 @@ mod tests {
             applying: None,
             database: None,
             traffic,
-            relay: None,
             measured,
             rate: RateWindow::default(),
         }
@@ -3940,7 +3916,7 @@ mod tests {
         let ws = sqlite_ws(&fx).await;
         assert!(!ws.capabilities.throughput);
         assert_eq!(fx.mgr.workspace_throughput(&ws.workspace_id).unwrap(), None);
-        // A workspace whose bytes no tunnel or relay carries: never a number.
+        // A workspace whose bytes are not counted: never a number.
         fx.mgr
             .state()
             .workspaces
@@ -3952,8 +3928,9 @@ mod tests {
         assert_eq!(e.kind, ErrorKind::NotFound);
     }
 
-    /// Direct connections go through the relay; when the server cannot be reached, the
-    /// error says why (the driver alone would only see the relay close its connection).
+    /// Direct connections are counted by the drivers (PostgreSQL on its own stream,
+    /// MySQL through a one-shot relay); when the server cannot be reached, the error says
+    /// why (mysql_async alone would only see the relay close its connection).
     #[tokio::test]
     async fn direct_workspace_reports_why_the_server_is_unreachable() {
         let fx = fixture();

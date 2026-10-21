@@ -290,6 +290,7 @@ mod tests {
             },
             dial: None,
             mongo: Some(m),
+            traffic: None,
         }
     }
 

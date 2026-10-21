@@ -17,7 +17,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::relay::Route;
 use crate::store::MongoSettings;
+use crate::traffic::Traffic;
 use crate::value::CellValue;
 use catalog::{Catalog, DbRoutine};
 use dml::ApplyOutcome;
@@ -72,6 +74,23 @@ pub struct ConnectParams {
     pub dial: Option<SocketAddr>,
     /// MongoDB-only settings (`None` for the other drivers).
     pub mongo: Option<MongoSettings>,
+    /// Counts the bytes of a direct connection (no `dial`) into the workspace's traffic
+    /// (#112; PostgreSQL, MySQL, MariaDB). Through a tunnel, the tunnel counts.
+    pub traffic: Option<Arc<Traffic>>,
+}
+
+impl ConnectParams {
+    /// The route to count, for a direct connection with a counter (see `relay`).
+    pub fn counted_route(&self) -> Option<Route> {
+        if self.dial.is_some() {
+            return None;
+        }
+        self.traffic.as_ref().map(|traffic| Route {
+            host: self.host.clone(),
+            port: self.port,
+            traffic: traffic.clone(),
+        })
+    }
 }
 
 impl std::fmt::Debug for ConnectParams {
@@ -88,6 +107,7 @@ impl std::fmt::Debug for ConnectParams {
             .field("ssl", &self.ssl)
             .field("dial", &self.dial)
             .field("mongo", &self.mongo)
+            .field("counted", &self.traffic.is_some())
             .finish()
     }
 }
@@ -354,6 +374,7 @@ mod tests {
             ssl: SslConfig::default(),
             dial: None,
             mongo: None,
+            traffic: None,
         };
         let out = format!("{:?}", params);
         assert!(!out.contains("s3cret-value"));
