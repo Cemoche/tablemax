@@ -110,8 +110,14 @@ export interface DataGridProps {
   onSortTo?: (column: string, dir: SortDir | null) => void;
   /** Header menu: Filter with column. */
   onFilterColumn?: (column: string) => void;
-  /** Space in the grid: show or hide the row details. */
+  /** Space and grid.rowDetails (Ctrl+Space) in the grid: show or hide the row details. */
   onToggleDetails?: () => void;
+  /**
+   * The selected row changed (the active cell's row, else the first selected row; null when
+   * nothing is selected), for a read-only grid's row details (#115). A table grid reports it
+   * through `editing.onSelect`.
+   */
+  onSelectRow?: (row: number | null) => void;
   /** Enter: Quick Look of a cell (the table's column). Absent: the grid shows it itself. */
   onQuickLook?: (row: number, col: number) => void;
   /** Delete / grid.deleteRows and grid.duplicateRows on the selected rows. */
@@ -238,6 +244,7 @@ export function DataGrid({
   onSortTo,
   onFilterColumn,
   onToggleDetails,
+  onSelectRow,
   onQuickLook,
   onRowsAction,
   onCopyCells,
@@ -281,6 +288,13 @@ export function DataGrid({
   if (editing) {
     const moved = withSelectedRow(selection, editing.selectedRow);
     if (moved !== selection) setSelection(moved);
+  }
+  // A read-only grid shows one result after another (a new run, another "Result N"): each
+  // starts with no selection, so a row selected in one never stands for a row of the next.
+  const [selectionData, setSelectionData] = useState(data);
+  if (!editing && selectionData !== data) {
+    setSelectionData(data);
+    setSelection(EMPTY_SELECTION);
   }
   const [headerMenu, setHeaderMenu] = useState<{ col: number; x: number; y: number } | null>(null);
   const [quickLook, setQuickLook] = useState<{ row: number; col: number } | null>(null);
@@ -522,6 +536,7 @@ export function DataGrid({
     selectionRef.current = s;
     setSelection(s);
     editingRef.current?.onSelect(selectedRowOf(s));
+    onSelectRow?.(selectedRowOf(s));
   };
 
   /** The selected cells, as the table's columns in display order (null: nothing selected). */
@@ -592,9 +607,11 @@ export function DataGrid({
       );
       return;
     }
-    if (plain && code === "Space") {
-      if (!onToggleDetails || !take()) return;
-      onToggleDetails();
+    // Space, and grid.rowDetails while the grid has the focus: in a SQL tab that is the only
+    // place it acts (the editor keeps Ctrl+Space for its completion, #115); in a table tab
+    // taking it here keeps the window's binding from toggling it a second time.
+    if (onToggleDetails && ((plain && code === "Space") || isAction("grid.rowDetails", e))) {
+      if (take()) onToggleDetails();
       return;
     }
     const remove = (plain && code === "Delete") || isAction("grid.deleteRows", e);
@@ -621,7 +638,7 @@ export function DataGrid({
 
   const keybindings = useMemo(
     () => ({
-      // Space shows the row details, Ctrl+Space too (window): never select a column.
+      // Space shows the row details, Ctrl+Space too (onKeyDown): never select a column.
       selectColumn: false,
       // Enter is Quick Look; Glide opens its cell editor on grid.setValue (Alt+Enter).
       activateCell: effectiveShortcuts("grid.setValue", keymap).map(glideHotkey).filter(Boolean).join("|"),
