@@ -268,6 +268,27 @@ test("nothing is editable while a commit runs", () => {
   expect(screen.queryByRole("button", { name: strings.grid.menu.setNull })).toBeNull();
 });
 
+test("an edited field stays in the readable text while locked (#136: --text-2 is under 4.5:1 on --modified)", () => {
+  const pending: PendingTab = {
+    edits: {
+      [JSON.stringify(key)]: { key, set: { note: { t: "text", v: "edited" } }, original: data().rows[0] },
+    },
+    inserts: [],
+    deletes: {},
+    errors: {},
+    error: null,
+    refusal: null,
+    outcomeUnknown: false,
+    object: obj,
+  };
+  renderPanel(data(), { pending, locked: true });
+  expect(field("note")).toHaveAttribute("readonly");
+  expect(field("note")).toHaveClass("bg-pending-edit", "text-fg");
+  expect(field("note")).not.toHaveClass("text-muted");
+  // A read-only field without an edit stays muted.
+  expect(field("total")).toHaveClass("text-muted");
+});
+
 test("cell actions come from the grid's menu rules", async () => {
   const { onAction } = renderPanel(data());
   const buttons = screen.getAllByRole("button", { name: strings.grid.menu.setNull });
