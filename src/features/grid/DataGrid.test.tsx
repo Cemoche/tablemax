@@ -81,6 +81,10 @@ const TOKENS: Record<string, string> = {
   "--placeholder": "#737373",
   "--modified": "#ffe18e",
   "--cell-text": "#262626",
+  "--danger-text": "#ff9999",
+  "--inserted": "#558c3a",
+  "--deleted": "#8f2f31",
+  "--text-2": "#afafaf",
 };
 beforeAll(() => {
   for (const [k, v] of Object.entries(TOKENS)) document.documentElement.style.setProperty(k, v);
@@ -551,6 +555,32 @@ test("an edited cell on a selected row keeps its edit colour with readable text 
     textDark: "#262626",
   });
   expect(editor!.getCellContent([1, 1]).themeOverride).toBeUndefined();
+});
+
+test("a failed row reads in --danger-text; on a change fill (inserted, deleted, edited) the fill's text wins (#129)", () => {
+  const ed = editing();
+  const model = ed.model;
+  // Row 0 inserted, row 1 deleted, row 2 updated (its "note" cell edited): all three failed.
+  const rows = [
+    { kind: "insert" as const, tempId: "t", values: {} },
+    { ...(model.rows[1] as Extract<(typeof model.rows)[number], { kind: "row" }>), deleted: true },
+    model.rows[2],
+  ];
+  const failing = {
+    ...model,
+    rows,
+    rowError: () => "boom",
+    cell: (r: number, c: number) => ({ ...model.cell(r, c), edited: r === 2 && c === 2 }),
+  };
+  render(<Selecting ed={{ ...ed, model: failing }} />);
+  // An updated row: its text in --danger-text…
+  expect(editor!.getRowThemeOverride!(2)).toMatchObject({ textDark: "#ff9999" });
+  // …but the edited cell keeps --modified under the text that reads on it.
+  expect(editor!.getCellContent([2, 2]).themeOverride).toMatchObject({ bgCell: "#ffe18e", textDark: "#262626" });
+  // An inserted or deleted row keeps its fill's text: red is under 4.5:1 on those fills.
+  expect(editor!.getRowThemeOverride!(0)).toMatchObject({ bgCell: "#558c3a" });
+  expect(editor!.getRowThemeOverride!(0)?.textDark).toBeUndefined();
+  expect(editor!.getRowThemeOverride!(1)).toMatchObject({ bgCell: "#8f2f31", textDark: "#afafaf", linkColor: "#afafaf" });
 });
 
 test("a whole-row selection marks its block, so a hidden column does not shrink it to one row (fix 2)", () => {

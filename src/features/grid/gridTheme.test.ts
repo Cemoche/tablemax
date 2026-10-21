@@ -25,6 +25,7 @@ const vars: Record<string, string> = {
   "--placeholder": "#666",
   "--grid-sep": "#777",
   "--accent": "#888",
+  "--accent-text": "#8a8",
   "--row-selected-text": "#999",
   "--cell-focus": "#f42",
   "--row-selected": "#06c",
@@ -49,7 +50,8 @@ test("reads the grid tokens", () => {
     // The active cell's border.
     accentColor: "#f42",
     accentFg: "#999",
-    linkColor: "#888",
+    // Links and the FK indicator are text: --accent-text, not the accent (#129).
+    linkColor: "#8a8",
   });
 });
 
@@ -116,13 +118,16 @@ test("pending-change themes read their tokens", () => {
     "--inserted": "#e2",
     "--deleted": "#e3",
     "--danger": "#e4",
+    "--danger-text": "#e6",
     "--text-2": "#e5",
   };
   const t = buildEditThemes((n) => vars[n] ?? "");
   expect(t.edited.bgCell).toBe("#e1");
   expect(t.inserted.bgCell).toBe("#e2");
-  expect(t.deleted).toEqual({ bgCell: "#e3", textDark: "#e5" });
-  expect(t.failed.textDark).toBe("#e4");
+  // A deleted row's FK indicator follows its text, not the accent on --deleted (#129).
+  expect(t.deleted).toEqual({ bgCell: "#e3", textDark: "#e5", linkColor: "#e5" });
+  // A failed row's text is --danger-text, not --danger (#129).
+  expect(t.failed).toEqual({ textDark: "#e6" });
   // Missing tokens: no override rather than a hardcoded color.
   expect(buildEditThemes(() => "").edited).toEqual({});
 });
@@ -193,4 +198,24 @@ test("an edited cell on a selected row keeps --modified and readable text, in bo
   // Tokens that cannot be compared (missing or not hex) fall back to --cell-text.
   expect(buildEditThemes((n) => (n === "--modified" ? "rgb(1 2 3)" : n === "--cell-text" ? "#111" : "")).editedOnAccent)
     .toMatchObject({ bgCell: "rgb(1 2 3)", textDark: "#111" });
+});
+
+test("link_and_failed_text_contrast: the FK indicator and a failed row's text read 4.5:1 on the grid's rows, in both themes (#129)", () => {
+  const light = tokenBlock(":root");
+  const dark = { ...light, ...tokenBlock(':root[data-theme="dark"]') };
+  for (const [name, vars] of [["light", light], ["dark", dark]] as const) {
+    const read = (n: string) => vars[n] ?? "";
+    const link = buildGridTheme(read).linkColor!;
+    const failed = buildEditThemes(read).failed.textDark!;
+    expect(link, name).toBe(vars["--accent-text"]);
+    expect(failed, name).toBe(vars["--danger-text"]);
+    // Plain and zebra rows, and a selected column's cells (Glide paints accentLight, --sel).
+    for (const bg of ["--row-a", "--row-b", "--sel"]) {
+      expect(contrastRatio(link, vars[bg]), `${name} link on ${bg}`).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(failed, vars[bg]), `${name} failed on ${bg}`).toBeGreaterThanOrEqual(4.5);
+    }
+    // On a change fill the fill's text wins (DataGrid): a deleted row's indicator is its text.
+    const edit = buildEditThemes(read);
+    expect(edit.deleted.linkColor, name).toBe(edit.deleted.textDark);
+  }
 });

@@ -36,8 +36,9 @@ export function headerFont(readVar: ReadVar = readCssVar): string {
  * Builds Glide's canvas theme from the design tokens (spec §5.1: grid tokens). Data in
  * `--font-mono` at `dataFontSize` (`monoFamily` replaces the token's family list while the
  * web font loads); headers medium at the interface size (their family is set per column:
- * see `headerFont`). `accentColor` is the active cell's border (`--cell-focus`); the accent
- * itself colours links, `--row-selected` the selected rows (`buildRowThemes`).
+ * see `headerFont`). `accentColor` is the active cell's border (`--cell-focus`); links (the FK
+ * indicator) are text in `--accent-text` (#129: the accent itself is under 4.5:1),
+ * `--row-selected` the selected rows (`buildRowThemes`).
  */
 export function buildGridTheme(
   readVar: ReadVar = readCssVar,
@@ -77,7 +78,7 @@ export function buildGridTheme(
     accentFg: onAccent,
     // Cells of a selection outside the highlighted rows (selected columns only).
     accentLight: sel,
-    linkColor: accent,
+    linkColor: v("--accent-text", accent),
     fontFamily: monoFamily ?? v("--font-mono", FALLBACK_MONO),
     baseFontStyle: `${dataFontSize}px`,
     headerFontStyle: `500 ${uiSize}`,
@@ -147,16 +148,19 @@ export interface EditThemes {
   /** A cell with a pending value. */
   edited: Partial<Theme>;
   /**
-   * A cell with a pending value on a selected row: it keeps --modified as its fill and its
-   * selection fill (the edit stays visible) and drops the row's white text for the one
-   * that reads best on --modified.
+   * A cell with a pending value on a selected row (or a failed one, #129): it keeps
+   * --modified as its fill and its selection fill (the edit stays visible) and drops the
+   * row's white (or red) text for the one that reads best on --modified.
    */
   editedOnAccent: Partial<Theme>;
   /** A row to insert. */
   inserted: Partial<Theme>;
-  /** A row to delete (its text is also struck through by DataGrid). */
+  /** A row to delete (its text is also struck through by DataGrid); its FK indicator too. */
   deleted: Partial<Theme>;
-  /** A row whose change failed to apply. */
+  /**
+   * A row whose change failed to apply: its text in --danger-text (#129). DataGrid lays it
+   * on plain rows only: on a change fill (inserted, deleted, edited) the fill's text wins.
+   */
   failed: Partial<Theme>;
 }
 
@@ -186,8 +190,8 @@ export function buildEditThemes(readVar: ReadVar = readCssVar): EditThemes {
     // its readable text, while the row's accent and the --cell-focus ring show the selection.
     editedOnAccent: { ...only("bgCell", "--modified"), ...only("accentLight", "--modified"), ...text },
     inserted: only("bgCell", "--inserted"),
-    deleted: { ...only("bgCell", "--deleted"), ...only("textDark", "--text-2") },
-    failed: only("textDark", "--danger"),
+    deleted: { ...only("bgCell", "--deleted"), ...only("textDark", "--text-2"), ...only("linkColor", "--text-2") },
+    failed: only("textDark", "--danger-text"),
   };
 }
 

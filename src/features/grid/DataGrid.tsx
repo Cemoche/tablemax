@@ -374,11 +374,12 @@ export function DataGrid({
         const cell = model.cell(row, col);
         const c: CellContent = cellContent(cell.value);
         const rowInserted = model.rows[row]?.kind === "insert";
-        // On a selected row the row's text is white: an edited cell keeps --modified with
-        // the text that reads on it (white on light --modified would be 1.3:1).
+        // On a selected row the row's text is white, on a failed row --danger-text: an edited
+        // cell keeps --modified with the text that reads on it (white on light --modified
+        // would be 1.3:1, the dark --danger-text 2.5:1).
         const editedTheme =
           cell.edited && !rowInserted
-            ? highlighted.has(row)
+            ? highlighted.has(row) || model.rowError(row) !== null
               ? editThemes.editedOnAccent
               : editThemes.edited
             : undefined;
@@ -424,7 +425,9 @@ export function DataGrid({
       const r = model?.rows[row];
       const change =
         r?.kind === "insert" ? editThemes.inserted : r?.kind === "row" && r.deleted ? editThemes.deleted : undefined;
-      const failed = r && model?.rowError(row) !== null ? editThemes.failed : undefined;
+      // A failed row's red text on plain rows only: on the inserted / deleted fills it would
+      // be under 4.5:1 (#129), so the fill keeps its text there.
+      const failed = !change && r && model?.rowError(row) !== null ? editThemes.failed : undefined;
       const selected = highlighted.has(row) ? rowThemes.selected : undefined;
       if (!change && !failed && !selected) return zebra;
       return { ...zebra, ...change, ...failed, ...selected };
