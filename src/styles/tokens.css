@@ -56,6 +56,17 @@
      4.63:1 (dark) on --sel, the hardest background it sits on. */
   --accent-text: #0057B5;
   --cell-focus: #FF4245;
+  /* The inner band of the two-tone focus ring (#135): the --accent outline (the grid's
+     --cell-focus) plus this band, black in light, white in dark. The accent alone is under
+     3:1 on some backgrounds (--sel, the dark active tab, the change fills); this band reads
+     at least 3:1 on every background a focusable sits on and 3:1 against both outer colours
+     (tokens.test.ts, focus_ring_contrast). Drawn by the `focus-ring` / `focus-ring-inset`
+     utilities of src/index.css and by the grid (DataGrid.tsx). */
+  --focus-ring-inner: #000000;
+  /* The accent-color of native checkboxes and radios (#135): 3:1 on every background they
+     sit on (--accent is 2.93:1 on the light --seg-sel, 2.98:1 on the dark --pill), same hue,
+     the white check mark 3:1 on it. */
+  --accent-control: #0062CC;
   /* Change fills (#136): --cell-text (and --text) read at least 4.5:1 on --inserted and
      --modified; a deleted row's text is --deleted-text, dimmer than --cell-text but 4.5:1 on
      --deleted and on --sel (a selected column), --text-2 being 2.78:1 (light) / 3.66:1 (dark). */
@@ -200,6 +211,8 @@
     --accent-strong: #2B63D9;
     --accent-text: #92B6FA;
     --cell-focus: #FF4245;
+    --focus-ring-inner: #FFFFFF;
+    --accent-control: #4A88FA;
     --inserted: #2E5020;
     --modified: #7E5E22;
     --deleted: #8F2F31;
@@ -291,6 +304,8 @@
   --accent-strong: #2B63D9;
   --accent-text: #92B6FA;
   --cell-focus: #FF4245;
+  --focus-ring-inner: #FFFFFF;
+  --accent-control: #4A88FA;
   --inserted: #2E5020;
   --modified: #7E5E22;
   --deleted: #8F2F31;
