@@ -433,6 +433,7 @@ meaning.
       editor and `Ctrl` + the "[" / "]" keycaps go to the previous / next tab. Hebrew: same,
       after a Hebrew letter (`Ctrl` + the Q keycap does not comment). Switch back to AZERTY,
       type a letter: `Ctrl+,` (the "," key) opens Settings again, `Ctrl+!` comments.
+- [ ] Hebrew: `Ctrl+W` closes the tab right after switching layout, before typing.
 
 Result / notes:
 

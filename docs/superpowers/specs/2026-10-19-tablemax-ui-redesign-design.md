@@ -493,22 +493,24 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 > active : un écouteur `keydown` de `window` en phase de capture (`installLayoutTracker`,
 > installé une fois par `useShortcut` et l'enregistreur, avant leurs propres écouteurs)
 > retient l'écriture de la dernière lettre tapée — une touche `KeyA`–`KeyZ` sans Shift (le
-> niveau Shift de l'hébreu tape des capitales latines), sans Alt, AltGr ni Meta (niveaux
-> variables), Ctrl compris (GTK garde la lettre de la disposition dans `e.key`) ; non latine
-> = `/^\p{L}$/u` hors `\p{Script=Latin}` (le « ı » turc reste latin) ; toute autre touche
-> laisse l'état tel quel. État non latin : les étapes 3 et 4 sont sautées, l'étape 5 nomme
-> par position (lettres comprises : la touche « / » de l'hébreu est Q). Russe : Ctrl+/ = la
-> touche « / » (qui tape « . »), Ctrl+, = la touche « , » ; hébreu : Ctrl+/ = la touche « / »
-> et non Q, Ctrl+[ / Ctrl+] à leurs positions US (plus inversés) ; grec : comme US, sa
-> touche Q (« ; ») est Q. État latin : la règle #105, sauf qu'une position de lettre qui tape
-> un caractère ASCII sans raccourci n'a plus de nom (la touche « ' » de Dvorak, KeyQ, et
-> QWERTZ Ctrl+AltGr+Q « @ » ne sont plus Ctrl+Q). L'enregistreur lit le même état au même
-> moment. Limites : juste après un changement de disposition, l'état reste celui de
-> l'ancienne jusqu'à la première lettre tapée (au démarrage : latin) ; en hébreu dans
-> l'état latin (avant toute lettre), la touche W (« ' ») n'a pas de nom, Ctrl+W y attend
-> donc une lettre hébraïque. Vérifié touche par touche pour les sept dispositions, dans les
-> deux états (une touche ne vaut qu'une combinaison, aller-retour de l'enregistreur), et
-> chaque défaut a une touche dans l'état que la disposition produit.
+> niveau Shift de l'hébreu tape des capitales latines), sans Alt ni AltGr (niveaux
+> variables), ni Meta (⌘ sur macOS : non vérifié ; la frappe simple suffit), Ctrl compris
+> (GTK garde la lettre de la disposition dans `e.key`) ; non latine = `/^\p{L}$/u` hors
+> `\p{Script=Latin}` (le « ı » turc reste latin) ; toute autre touche laisse l'état tel
+> quel. État non latin : les étapes 3 et 4 sont sautées, l'étape 5 nomme par position
+> (lettres comprises : la touche « / » de l'hébreu est Q). Russe : Ctrl+/ = la touche « / »
+> (qui tape « . »), Ctrl+, = la touche « , » ; hébreu : Ctrl+/ = la touche « / » et non Q,
+> Ctrl+[ / Ctrl+] à leurs positions US (plus inversés) ; grec : comme US, sa touche Q
+> (« ; ») est Q. État latin : la règle #105 inchangée (repli par position de l'étape 5
+> gardé : sans lui, Ctrl+W de l'hébreu n'aurait pas de touche avant la première lettre
+> hébraïque ; coût : la touche « ' » de Dvorak et QWERTZ Ctrl+AltGr+Q valent aussi Ctrl+Q).
+> L'enregistreur lit le même état au même moment. Limite : juste après un changement de
+> disposition, l'état reste celui de l'ancienne jusqu'à la première lettre tapée (au
+> démarrage : latin) ; par exemple sur Dvorak juste après le russe, Ctrl+, et Ctrl+/ n'ont
+> pas de touche avant qu'une lettre soit tapée. Vérifié touche par touche pour les sept
+> dispositions : dans les deux états, une touche ne vaut qu'une combinaison et
+> l'enregistreur fait l'aller-retour ; chaque défaut a une touche dans l'état latin du
+> démarrage et dans l'état que la disposition produit.
 
 Règle : un raccourci n'existe que dans son contexte (grille, éditeur, barre de filtres) quand
 TablePlus le réutilise (⌘I, ⌘F, ⌘←) ; tous restent réassignables (registre existant) ; un
