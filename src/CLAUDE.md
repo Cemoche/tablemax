@@ -1,8 +1,12 @@
 # Frontend rules (`src/`)
 
 Stack: React 19, TypeScript, Zustand 5 (stores in `src/stores/`), Tailwind 4, Glide Data
-Grid (canvas), CodeMirror 6. Feature code lives in `src/features/<area>/`
-(`connections`, `editor`, `grid`, `workspace`).
+Grid (canvas), CodeMirror 6, icons from `lucide-react` (plus our own SVGs). Feature code
+lives in `src/features/<area>/`: `chrome` (toolbar, status pill, window controls, open
+connections column, tooltips), `connections`, `editor`, `grid`, `palette` (Open anything),
+`safety`, `settings`, `sidebar`, `structure`, `workspace` (tab bar, tab content).
+The UI follows the redesign spec `docs/superpowers/specs/2026-10-19-tablemax-ui-redesign-design.md`
+(its dated amendments record what was built).
 
 ## Strings
 
@@ -13,13 +17,40 @@ Grid (canvas), CodeMirror 6. Feature code lives in `src/features/<area>/`
 
 ## Colors and theme
 
-- Colors only through the design tokens in `src/styles/tokens.css`, exposed to Tailwind
-  by the `@theme inline` block of `src/index.css` (`bg-surface`, `text-muted`,
-  `border-border`, `text-danger`, `bg-env-prod`, `bg-swatch-1`…). No hex, `rgb()` or
-  Tailwind palette colors (`blue-500`…) in components.
+- Colors only through the design tokens in `src/styles/tokens.css` (spec §5.1), exposed to
+  Tailwind by the `@theme inline` block of `src/index.css` (`bg-content`, `bg-side`,
+  `bg-pill`, `text-text-2`, `border-sep`, `bg-accent-strong`, `bg-swatch-3-tint`,
+  `text-swatch-3-icon`, `bg-tag-prod-bg`…; `bg-surface`, `text-muted`, `border-border` are
+  older aliases). No hex, `rgb()` or Tailwind palette colors (`blue-500`…) in components.
 - A new color = a token in `tokens.css` (dark and light values) + a `--color-*` line in
-  `src/index.css`.
+  `src/index.css`. Text tokens keep ≥ 4.5:1 on their backgrounds in both themes
+  (`src/styles/tokens.test.ts` checks the pairs it draws).
 - Canvas code (the grid) reads tokens at runtime: see `src/features/grid/gridTheme.ts`.
+- Focus rings: `outline-none focus-visible:outline-2 focus-visible:outline-solid
+  focus-visible:outline-accent` (Tailwind 4 needs `outline-solid` after `outline-none`).
+- Sizes follow spec §5.2 at 100 %; the interface size is the webview's native zoom
+  (`interfaceScale`), never CSS scaling.
+
+## Tooltips
+
+- No native `title`. A control declares its hint with `{...tip(label, shortcut)}` from
+  `src/lib/tooltip.ts` (one `TooltipLayer` shows it), or `tipIfCut(name)` for text that
+  may be truncated. The shortcut text comes from the live keymap
+  (`formatShortcut(useEffectiveShortcut(id))`), never written by hand.
+
+## Keyboard shortcuts
+
+- Every shortcut is an action of the registry `src/lib/keymapRegistry.ts`: id, scope
+  (`global`, `tableTab`, `queryTab`, `editor`, `filterBar`, `connectionList`), default,
+  alternates, macOS default. Bind it with `useAction(id, handler)` from `src/lib/keymap.ts`;
+  never match keys by hand for a reassignable shortcut.
+- A new action: its entry in the registry, its label in `strings.keymap`, its id at the end
+  of `src/lib/keymap-actions.json` **and** of `KEYMAP_ACTION_IDS` in
+  `src-tauri/src/settings.rs` (both sides test their list against that file). A §5.3 row is
+  pinned by `src/lib/shortcutParity.test.ts`.
+- No Ctrl+Alt default off macOS (it is AltGr there). A shortcut never steals a key from a
+  text field or the editor when that is not its scope; a focus region marked
+  `data-shortcut-scope` makes its scope's actions win inside it.
 
 ## IPC (frontend ↔ Rust)
 
