@@ -88,7 +88,7 @@ export interface SshSettings {
 }
 
 /** What file_pick picks a file for (commands.rs FilePurpose). */
-export type FilePurpose = "caCert" | "clientCert" | "clientKey" | "sshKey" | "tableplusExport";
+export type FilePurpose = "caCert" | "clientCert" | "clientKey" | "sshKey" | "tableplusExport" | "sqlite";
 
 export type MongoAuth = "default" | "scramSha1" | "scramSha256" | "plain";
 

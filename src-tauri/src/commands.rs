@@ -82,7 +82,7 @@ pub async fn ssh_hosts_list(state: State<'_, SessionManager>) -> AppResult<Vec<S
     state.ssh_hosts().await
 }
 
-/// What a file is picked for; decides the dialog's filter and starting folder.
+/// What a file is picked for; decides the dialog's filters and starting folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FilePurpose {
@@ -91,18 +91,31 @@ pub enum FilePurpose {
     ClientKey,
     SshKey,
     TableplusExport,
+    /// A SQLite database to open (the welcome pane's Open SQLite file…, #117).
+    Sqlite,
 }
 
-/// Dialog filter (`None` = any file) and whether the dialog starts in `~/.ssh`.
-fn picker_spec(purpose: FilePurpose) -> (Option<(&'static str, &'static [&'static str])>, bool) {
-    const CERTS: &[&str] = &["pem", "crt", "cer"];
+/// A dialog filter: its name and the extensions it shows (`"*"`: any file).
+type PickerFilter = (&'static str, &'static [&'static str]);
+
+/// Dialog filters (none = any file; the first one is the default) and whether the
+/// dialog starts in `~/.ssh`.
+fn picker_spec(purpose: FilePurpose) -> (&'static [PickerFilter], bool) {
+    const CERTS: &[PickerFilter] = &[("Certificates", &["pem", "crt", "cer"])];
     match purpose {
-        FilePurpose::CaCert | FilePurpose::ClientCert => (Some(("Certificates", CERTS)), false),
-        FilePurpose::ClientKey => (Some(("Private keys", &["pem", "key"])), false),
-        FilePurpose::SshKey => (None, true),
-        FilePurpose::TableplusExport => {
-            (Some(("TablePlus export", &["tableplusconnection"])), false)
-        }
+        FilePurpose::CaCert | FilePurpose::ClientCert => (CERTS, false),
+        FilePurpose::ClientKey => (&[("Private keys", &["pem", "key"])], false),
+        FilePurpose::SshKey => (&[], true),
+        FilePurpose::TableplusExport => (&[("TablePlus export", &["tableplusconnection"])], false),
+        // "*" is "*" for the XDG portal and "*.*" for GTK and Windows (rfd): under GTK a
+        // file without an extension is reached by typing its path.
+        FilePurpose::Sqlite => (
+            &[
+                ("SQLite databases", &["sqlite", "sqlite3", "db", "db3"]),
+                ("All files", &["*"]),
+            ],
+            false,
+        ),
     }
 }
 
@@ -155,10 +168,10 @@ pub async fn import_tableplus_commit(
 
 /// The native file picker, run off the async threads; `None` when cancelled.
 async fn pick_file(app: &AppHandle, purpose: FilePurpose) -> AppResult<Option<String>> {
-    let (filter, in_ssh_dir) = picker_spec(purpose);
+    let (filters, in_ssh_dir) = picker_spec(purpose);
     let mut dialog = app.dialog().file();
-    if let Some((name, extensions)) = filter {
-        dialog = dialog.add_filter(name, extensions);
+    for (name, extensions) in filters {
+        dialog = dialog.add_filter(*name, extensions);
     }
     if in_ssh_dir && let Ok(home) = app.path().home_dir() {
         let ssh = home.join(".ssh");
@@ -565,6 +578,7 @@ mod tests {
         assert_eq!(p("clientKey"), FilePurpose::ClientKey);
         assert_eq!(p("sshKey"), FilePurpose::SshKey);
         assert_eq!(p("tableplusExport"), FilePurpose::TableplusExport);
+        assert_eq!(p("sqlite"), FilePurpose::Sqlite);
     }
 
     #[test]
@@ -600,23 +614,43 @@ mod tests {
 
     #[test]
     fn picker_filters_per_purpose() {
-        let exts = |p| picker_spec(p).0.map(|(_, e)| e.to_vec());
-        assert_eq!(exts(FilePurpose::CaCert), Some(vec!["pem", "crt", "cer"]));
+        let filters = |p| {
+            picker_spec(p)
+                .0
+                .iter()
+                .map(|(name, e)| (*name, e.to_vec()))
+                .collect::<Vec<_>>()
+        };
+        let one = |p| {
+            let f = filters(p);
+            assert!(f.len() <= 1, "{f:?}");
+            f.into_iter().next().map(|(_, e)| e)
+        };
+        assert_eq!(one(FilePurpose::CaCert), Some(vec!["pem", "crt", "cer"]));
         assert_eq!(
-            exts(FilePurpose::ClientCert),
+            one(FilePurpose::ClientCert),
             Some(vec!["pem", "crt", "cer"])
         );
-        assert_eq!(exts(FilePurpose::ClientKey), Some(vec!["pem", "key"]));
-        assert_eq!(exts(FilePurpose::SshKey), None);
+        assert_eq!(one(FilePurpose::ClientKey), Some(vec!["pem", "key"]));
+        assert_eq!(one(FilePurpose::SshKey), None);
         assert_eq!(
-            exts(FilePurpose::TableplusExport),
+            one(FilePurpose::TableplusExport),
             Some(vec!["tableplusconnection"])
+        );
+        // #117: SQLite databases first (the dialog's default), then any file.
+        assert_eq!(
+            filters(FilePurpose::Sqlite),
+            vec![
+                ("SQLite databases", vec!["sqlite", "sqlite3", "db", "db3"]),
+                ("All files", vec!["*"]),
+            ]
         );
         assert!(
             picker_spec(FilePurpose::SshKey).1,
             "SSH keys start in ~/.ssh"
         );
         assert!(!picker_spec(FilePurpose::CaCert).1);
+        assert!(!picker_spec(FilePurpose::Sqlite).1);
     }
 }
 

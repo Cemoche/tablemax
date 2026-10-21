@@ -113,8 +113,8 @@ test("ConnectionConfig with ssl and ssh settings", () => {
   expect(auths).toContain(c.ssh?.auth);
   expect(c.ssh?.secretMode).toBe("ask");
   expect(c.ssl.keyFile).toBe("/k.pem");
-  const purposes: FilePurpose[] = ["caCert", "clientCert", "clientKey", "sshKey", "tableplusExport"];
-  expect(purposes).toHaveLength(5);
+  const purposes: FilePurpose[] = ["caCert", "clientCert", "clientKey", "sshKey", "tableplusExport", "sqlite"];
+  expect(purposes).toHaveLength(6);
   const kinds: ErrorKind[] = ["hostKeyUnknown", "hostKeyChanged"];
   expect(kinds).toHaveLength(2);
 });
