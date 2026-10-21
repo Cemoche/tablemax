@@ -226,7 +226,9 @@ middle (`1–300 of 1,250 rows`, `415 rows`, or `1 of 415 rows selected`), **Fil
   statement Run Current would run has a tinted background.
 - **Results**: **Data** (the rows, one **Result N** tab per result set when there are
   several, with the row count and the time) and **Message** (one line per statement: rows
-  returned or changed, errors, cancel). An error or a cancel shows Message.
+  returned or changed, errors, cancel). An error or a cancel shows Message. The row
+  details panel (`Space` or `Ctrl+Space` in the results grid, or the toolbar's right-panel
+  button) shows the selected row of the result set on screen, read-only.
 - **Completion**: table and column names as you type; `Ctrl+Space` asks for it.
 - **History** (sidebar, **History**): every statement run on a connection, newest first (the
   last 1,000 are kept), with a search box. A click opens it in a new SQL tab; right-click for
@@ -312,6 +314,7 @@ differences are in the last column.
 | | `Alt+C` / `Alt+O` | Jump to the column / the operator | `⌘+←` / `⌘+→` |
 | | `Esc` | Hide the bar | |
 | SQL tabs | `Ctrl+S` | Save the query | |
+| | `Space`, `Ctrl+Space` in the results grid | Show or hide the row details | |
 | SQL editor | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Run the current statement (or the selection) / all | |
 | | `Ctrl+I`, `Ctrl+Shift+F` | Format (Beautify) | |
 | | `Ctrl+/` | Comment or uncomment the lines | |

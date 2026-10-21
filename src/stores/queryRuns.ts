@@ -30,6 +30,15 @@ interface QueryRunsState {
   restore: (tabId: string, previous: QueryRun | undefined) => void;
 }
 
+/**
+ * A SQL tab's run has rows for the row details panel (#115): it returned a result set, or
+ * is still running (sets may come; the panel stays put meanwhile instead of flickering).
+ * The toolbar's Row details button and the tab's panel both follow it.
+ */
+export function runHasResults(run: QueryRun | undefined): boolean {
+  return run !== undefined && (run.running || run.results.some((r) => r.outcome.result !== null));
+}
+
 /** The last `QueryRun.id` given. */
 let lastRunId = 0;
 

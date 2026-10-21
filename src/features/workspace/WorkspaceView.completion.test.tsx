@@ -12,12 +12,21 @@ import { useQueryRuns } from "../../stores/queryRuns";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { tableInfo } from "../../test/tableInfo";
+import type { DataGridProps } from "../grid/DataGrid";
+import { strings } from "../../lib/strings";
 import { WorkspaceView } from "./WorkspaceView";
 
 // The real SQL tabs and editors (CodeMirror) and the real table tabs, with the canvas
 // grid stubbed: every switch below remounts the tab content as the app does.
 vi.mock("../../lib/ipc");
-vi.mock("../grid/DataGrid", () => ({ DataGrid: () => <div data-testid="grid" /> }));
+/** The props of the grid last rendered (a table tab's or the SQL results'). */
+let grid: DataGridProps | null = null;
+vi.mock("../grid/DataGrid", () => ({
+  DataGrid: (p: DataGridProps) => {
+    grid = p;
+    return <div data-testid="grid" />;
+  },
+}));
 vi.mock("../sidebar/Sidebar", () => ({ Sidebar: () => null, useSidebarShortcuts: () => {} }));
 // CodeMirror measures text ranges, which jsdom does not lay out.
 if (!Range.prototype.getClientRects) {
@@ -57,6 +66,7 @@ beforeEach(() => {
   useSettings.setState({ settings: DEFAULT_SETTINGS });
   useChrome.setState(useChrome.getInitialState());
   useQueryRuns.setState({ runs: {} });
+  grid = null;
   useCatalog.setState({ catalogs: {}, errors: {}, loading: {} });
   usePendingChanges.setState({
     tabs: {},
@@ -170,4 +180,56 @@ test("a SQL tab activated from the keyboard puts the focus in its editor, so Ctr
   await user.click(screen.getByRole("tab", { name: /Query 1/ }));
   await editor();
   expect(screen.getByRole("tab", { name: /Query 1/ })).toHaveFocus();
+});
+
+test("row_details_shared_across_tab_kinds (#115): one switch for table and SQL tabs; Ctrl+Space in the editor stays completion", async () => {
+  const user = userEvent.setup();
+  const shown = () => screen.queryByRole("complementary", { name: strings.grid.rowDetails }) !== null;
+  // Query 1 already ran and has a result set; Query 2 never ran.
+  useQueryRuns.setState({
+    runs: {
+      q1: {
+        id: 1,
+        running: false,
+        total: 1,
+        results: [{ index: 0, outcome: { result: page, rowsAffected: null, elapsedMs: 1 } }],
+        error: null,
+        cancelled: false,
+      },
+    },
+  });
+  render(<Live />);
+  const view = await editor();
+  expect(shown()).toBe(false);
+  // Opened from the results grid (Space / Ctrl+Space there).
+  await waitFor(() => expect(grid?.onToggleDetails).toBeTruthy());
+  act(() => grid!.onToggleDetails!());
+  expect(shown()).toBe(true);
+  // Ctrl+Space in the editor: completion only, the panel stays.
+  await completionOpens(view);
+  expect(shown()).toBe(true);
+
+  // The table tab shows it too; Ctrl+Space there closes it.
+  await user.click(screen.getByRole("tab", { name: /users/ }));
+  await waitFor(() => expect(grid?.editing).toBeTruthy());
+  expect(shown()).toBe(true);
+  await user.keyboard("{Control>} {/Control}");
+  expect(shown()).toBe(false);
+  // Back to the SQL tab: still closed.
+  await user.click(screen.getByRole("tab", { name: /Query 1/ }));
+  await editor();
+  expect(shown()).toBe(false);
+  // Opened here, it is open in the table tab.
+  act(() => grid!.onToggleDetails!());
+  await user.click(screen.getByRole("tab", { name: /users/ }));
+  await waitFor(() => expect(grid?.editing).toBeTruthy());
+  expect(shown()).toBe(true);
+  // A SQL tab without results shows none, and the switch stays on for the others.
+  await user.click(screen.getByRole("tab", { name: /Query 2/ }));
+  await editor();
+  expect(shown()).toBe(false);
+  expect(useChrome.getState().rowDetailsOpen).toBe(true);
+  await user.click(screen.getByRole("tab", { name: /Query 1/ }));
+  await editor();
+  expect(shown()).toBe(true);
 });

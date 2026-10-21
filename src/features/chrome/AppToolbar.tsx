@@ -12,6 +12,7 @@ import { useCatalog } from "../../stores/catalog";
 import { useChrome } from "../../stores/chrome";
 import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
+import { runHasResults, useQueryRuns } from "../../stores/queryRuns";
 import { useSettings } from "../../stores/settings";
 import { type Workspace, capabilitiesOf, useWorkspaces } from "../../stores/workspaces";
 import { focusActiveTab } from "../workspace/focusActiveTab";
@@ -152,8 +153,12 @@ function WorkspaceTools({
   const countId = useId();
   const reasonId = useId();
   const editorOpen = usePendingChanges((s) => (table ? s.editorOpen[table.id] === true : false));
-  // One panel for the window (#79), shown by table tabs: off where none is active.
-  const rowDetails = useChrome((s) => s.rowDetailsOpen) && table !== null;
+  // One panel for the window (#79), shown by table tabs and by SQL tabs whose run has rows
+  // (#115, `runHasResults`, as QueryTab shows it): off elsewhere.
+  // A disconnected workspace shows no tab content, so no panel either.
+  const queryRows = useQueryRuns((s) => connected && tab?.kind === "query" && runHasResults(s.runs[tab.id]));
+  const detailsOn = table !== null || queryRows;
+  const rowDetails = useChrome((s) => s.rowDetailsOpen) && detailsOn;
 
   const [connectionOpen, setConnectionOpen] = useState(false);
   const connectionButton = useRef<HTMLButtonElement>(null);
@@ -378,7 +383,7 @@ function WorkspaceTools({
           aria-label={t.rowDetails}
           {...detailsHint}
           aria-pressed={rowDetails}
-          {...softDisabled(table === null, () => table && useChrome.getState().toggleRowDetails())}
+          {...softDisabled(!detailsOn, () => useChrome.getState().toggleRowDetails())}
           className={iconButton}
         >
           <PanelRight aria-hidden {...ICON} />

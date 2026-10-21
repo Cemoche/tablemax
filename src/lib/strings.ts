@@ -817,7 +817,7 @@ export const strings = {
     "editor.format": "Format the query (SQL editor)",
     "editor.comment": "Comment or uncomment the lines (SQL editor)",
     "grid.commit": "Commit pending changes (table tabs)",
-    "grid.rowDetails": "Show or hide the row details (table tabs; Space in the grid too)",
+    "grid.rowDetails": "Show or hide the row details (table tabs, SQL results; Space in the grid too)",
     "grid.viewData": "Show the rows (table tabs)",
     "grid.viewStructure": "Show the structure (table tabs)",
     "grid.viewIndex": "Show the indexes (table tabs)",

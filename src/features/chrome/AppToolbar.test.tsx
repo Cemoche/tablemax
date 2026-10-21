@@ -7,6 +7,7 @@ import type { ConnectionConfig } from "../../lib/types";
 import { useChrome } from "../../stores/chrome";
 import { useConnections } from "../../stores/connections";
 import { usePendingChanges } from "../../stores/pendingChanges";
+import { useQueryRuns } from "../../stores/queryRuns";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { onWindowResized } from "../../lib/windowResize";
@@ -87,6 +88,7 @@ beforeEach(() => {
   vi.mocked(onWindowResized).mockImplementation(async () => () => {});
   usePendingChanges.getState().drop("t1");
   usePendingChanges.setState({ committing: {}, committingIn: {}, confirming: {}, awaitingReload: {} });
+  useQueryRuns.setState({ runs: {} });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -671,10 +673,40 @@ test("with open workspaces the settings are in the connections column, not in th
   expect(within(screen.getByRole("banner")).queryByRole("button", { name: strings.settings.open })).toBeNull();
 });
 
-test("the row details button is one switch for the window, off and disabled outside a table tab", () => {
+test("the row details button is one switch for the window, off and disabled in a SQL tab without results", () => {
   useChrome.setState({ rowDetailsOpen: true });
   setup(ws({ activeTabId: "q1" }));
   const details = screen.getByRole("button", { name: t.rowDetails });
   expect(details).toHaveAttribute("aria-disabled", "true");
   expect(details).toHaveAttribute("aria-pressed", "false");
+});
+
+test("row_details_button_sql_tab (#115): on with result sets (or a run going), soft-disabled with its tooltip without", async () => {
+  const user = userEvent.setup();
+  render(<TooltipLayer />);
+  setup(ws({ activeTabId: "q1" }));
+  const details = () => screen.getByRole("button", { name: t.rowDetails });
+  // No run: off, its tooltip still shown, a press does nothing.
+  await expectSoftDisabled(user, details(), t.rowDetails, () => useChrome.getState().rowDetailsOpen);
+  const run = (over: object) =>
+    act(() =>
+      useQueryRuns.setState({
+        runs: { q1: { id: 1, running: false, total: 1, results: [], error: null, cancelled: false, ...over } },
+      }),
+    );
+  // Statements without rows: still off.
+  run({ results: [{ index: 0, outcome: { result: null, rowsAffected: 2, elapsedMs: 1 } }] });
+  expect(details()).toHaveAttribute("aria-disabled", "true");
+  // Running: on (its sets may come).
+  run({ running: true });
+  expect(details()).not.toHaveAttribute("aria-disabled");
+  // A result set: on, it toggles the window's panel.
+  run({ results: [{ index: 0, outcome: { result: { columns: [], rows: [], truncated: false }, rowsAffected: null, elapsedMs: 1 } }] });
+  expect(details()).not.toHaveAttribute("aria-disabled");
+  expect(details()).toHaveAttribute("aria-pressed", "false");
+  await user.click(details());
+  expect(useChrome.getState().rowDetailsOpen).toBe(true);
+  expect(details()).toHaveAttribute("aria-pressed", "true");
+  await user.click(details());
+  expect(useChrome.getState().rowDetailsOpen).toBe(false);
 });

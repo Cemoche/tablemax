@@ -339,3 +339,83 @@ test("a small content area caps the panel at 60 % of it, keeping the saved width
     rect.mockRestore();
   }
 });
+
+test("sql_result_row_read_only (#115): a SQL result row shows read-only fields, JSON indented, NULL as in the grid, a cut value said so", async () => {
+  // What a SQL tab gives the panel: its result set, no table, no table info.
+  const result: ResultSet = {
+    columns: [
+      { name: "id", typeName: "int4" },
+      { name: "doc", typeName: "jsonb" },
+      { name: "gone", typeName: "text" },
+      { name: "body", typeName: "text" },
+      // A query may return the same name twice.
+      { name: "id", typeName: "int8" },
+    ],
+    rows: [
+      [int(1), { t: "json", v: RAW_JSON }, { t: "null" }, { t: "longText", v: { preview: "the start", len: 90000 } }, int(2)],
+      [int(3), { t: "json", v: "[]" }, { t: "text", v: "x" }, { t: "text", v: "short" }, int(4)],
+    ],
+    truncated: false,
+  };
+  const onEscape = vi.fn();
+  const view = render(
+    <RowDetailPanel
+      workspaceId="w1"
+      object={null}
+      data={result}
+      info={null}
+      model={buildGridModel(result, null, undefined, false)}
+      row={0}
+      onClose={() => {}}
+      onEscape={onEscape}
+    />,
+  );
+  const boxes = screen.getAllByRole("textbox") as HTMLTextAreaElement[];
+  expect(boxes).toHaveLength(5);
+  for (const b of boxes) expect(b).toHaveAttribute("readonly");
+  expect(screen.getAllByLabelText("id").map((b) => (b as HTMLTextAreaElement).value)).toEqual(["1", "2"]);
+  expect(screen.getByText("int8")).toBeInTheDocument();
+  expect(field("doc").value).toBe(PRETTY_JSON);
+  expect(screen.getByText("jsonb")).toBeInTheDocument();
+  // NULL: an empty box with the grid's NULL placeholder.
+  expect(field("gone").value).toBe("");
+  expect(field("gone")).toHaveAttribute("placeholder", strings.grid.nullText);
+  // A cut value: what the result has, and that it is only the start (no key to load it by).
+  expect(field("body").value).toBe("the start…");
+  expect(screen.getByText(strings.grid.quickLook.partial)).toBeInTheDocument();
+  expect(ipc.cellValue).not.toHaveBeenCalled();
+  // No cell action, no foreign key link.
+  expect(screen.queryByRole("button", { name: strings.grid.menu.setNull })).toBeNull();
+  // Typing does nothing: the field stays as it was.
+  await userEvent.type(field("gone"), "abc");
+  expect(field("gone").value).toBe("");
+  // Another row: its fields.
+  view.rerender(
+    <RowDetailPanel
+      workspaceId="w1"
+      object={null}
+      data={result}
+      info={null}
+      model={buildGridModel(result, null, undefined, false)}
+      row={1}
+      onClose={() => {}}
+      onEscape={onEscape}
+    />,
+  );
+  expect(field("gone").value).toBe("x");
+  expect(field("body").value).toBe("short");
+  expect(screen.queryByText(strings.grid.quickLook.partial)).toBeNull();
+  // Escape in a field hands the focus back (to the results grid).
+  field("body").focus();
+  await userEvent.keyboard("{Escape}");
+  expect(onEscape).toHaveBeenCalled();
+});
+
+test("a long text of a table row without a key says it is cut (nothing to load it by)", () => {
+  renderPanel(data({ note: { t: "longText", v: { preview: "the wh", len: 20000 } } }), {
+    info: { ...info, kind: "view", rowKey: null },
+  });
+  expect(field("note").value).toBe("the wh…");
+  expect(screen.getByText(strings.grid.quickLook.partial)).toBeInTheDocument();
+  expect(ipc.cellValue).not.toHaveBeenCalled();
+});

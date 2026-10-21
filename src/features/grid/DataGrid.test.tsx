@@ -411,16 +411,67 @@ test("Enter in a table tab asks the tab for its Quick Look (with the table's col
   expect(onQuickLook).toHaveBeenCalledTimes(2);
 });
 
-test("space_toggles_row_detail: Space in the grid toggles the row details; Ctrl+Space is left to the tab", () => {
+test("space_toggles_row_detail: Space and grid.rowDetails (Ctrl+Space) in the grid toggle the row details once", () => {
   const onToggleDetails = vi.fn();
   render(<DataGrid data={data} editing={editing()} onToggleDetails={onToggleDetails} />);
   const space = press(" ", "Space");
   expect(space.cancel).toHaveBeenCalled();
   expect(onToggleDetails).toHaveBeenCalledOnce();
-  // Ctrl+Space bubbles to the window, where grid.rowDetails is bound (no double toggle).
+  // Ctrl+Space is the grid's too while it has the focus (#115): taken and stopped here, so
+  // the table tab's window binding never sees it (no double toggle).
   const ctrl = press(" ", "Space", { ctrlKey: true });
-  expect(ctrl.cancel).not.toHaveBeenCalled();
-  expect(onToggleDetails).toHaveBeenCalledOnce();
+  expect(ctrl.cancel).toHaveBeenCalled();
+  expect(ctrl.stopPropagation).toHaveBeenCalled();
+  expect(onToggleDetails).toHaveBeenCalledTimes(2);
+});
+
+test("row_details_keys_in_results_grid (#115): a read-only grid toggles the details on Space and the effective grid.rowDetails", () => {
+  const onToggleDetails = vi.fn();
+  const view = render(<DataGrid data={data} sortable={false} onToggleDetails={onToggleDetails} />);
+  expect(press(" ", "Space").cancel).toHaveBeenCalled();
+  expect(press(" ", "Space", { ctrlKey: true }).cancel).toHaveBeenCalled();
+  expect(onToggleDetails).toHaveBeenCalledTimes(2);
+  // A held key acts once.
+  press(" ", "Space", { ctrlKey: true, repeat: true });
+  expect(onToggleDetails).toHaveBeenCalledTimes(2);
+  // A custom binding replaces Ctrl+Space.
+  act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { "grid.rowDetails": "Alt+D" } } }));
+  view.rerender(<DataGrid data={data} sortable={false} onToggleDetails={onToggleDetails} />);
+  expect(press(" ", "Space", { ctrlKey: true }).cancel).not.toHaveBeenCalled();
+  press("d", "KeyD", { altKey: true });
+  expect(onToggleDetails).toHaveBeenCalledTimes(3);
+  // Without onToggleDetails the keys are left alone (Space to Glide, Ctrl+Space to the page).
+  view.rerender(<DataGrid data={data} sortable={false} />);
+  expect(press(" ", "Space").cancel).not.toHaveBeenCalled();
+});
+
+test("results_grid_reports_selected_row (#115): onSelectRow gets the active cell's row; new data starts with no selection", () => {
+  const onSelectRow = vi.fn();
+  const view = render(<DataGrid data={data} sortable={false} onSelectRow={onSelectRow} />);
+  const at = (row: number): GridSelection => ({
+    columns: CompactSelection.empty(),
+    rows: CompactSelection.empty(),
+    current: { cell: [1, row], range: { x: 1, y: row, width: 1, height: 1 }, rangeStack: [] },
+  });
+  act(() => editor!.onGridSelectionChange!(at(2)));
+  expect(onSelectRow).toHaveBeenLastCalledWith(2);
+  // A row number selects the row.
+  act(() => editor!.onCellClicked!([-1, 1], click()));
+  expect(onSelectRow).toHaveBeenLastCalledWith(1);
+  act(() => editor!.onGridSelectionChange!({ columns: CompactSelection.empty(), rows: CompactSelection.empty() }));
+  expect(onSelectRow).toHaveBeenLastCalledWith(null);
+  act(() => editor!.onGridSelectionChange!(at(0)));
+  expect(editor!.gridSelection?.current?.cell).toEqual([1, 0]);
+  // Another result (a new run, another "Result N"): the grid shows no selection.
+  const other: ResultSet = { ...data, rows: data.rows.slice(0, 2) };
+  view.rerender(<DataGrid data={other} sortable={false} onSelectRow={onSelectRow} />);
+  expect(editor!.gridSelection?.current).toBeUndefined();
+  expect(editor!.gridSelection?.rows.length).toBe(0);
+  // Nor does Shift+click on a row number extend from a row of the previous result.
+  act(() => editor!.onCellClicked!([-1, 2], click()));
+  view.rerender(<DataGrid data={data} sortable={false} onSelectRow={onSelectRow} />);
+  act(() => editor!.onCellClicked!([-1, 0], click({ shiftKey: true })));
+  expect(editor!.gridSelection?.rows.toArray()).toEqual([0]);
 });
 
 test("grid keys act on the selected rows: Delete / Ctrl+Backspace delete, Ctrl+D duplicates, Ctrl+Shift+C copies", () => {

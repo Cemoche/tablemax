@@ -14,20 +14,25 @@ import { prettyJson } from "./prettyJson";
 
 interface Props {
   workspaceId: string;
-  object: ObjectRef;
-  /** The loaded page the model is built on; null while the tab loads or after a failed load. */
+  /**
+   * The table the row comes from; null for a SQL tab's result (#115): no key to load a
+   * whole value by, and no table info, so every field is read-only.
+   */
+  object: ObjectRef | null;
+  /** The loaded page (or SQL result) the model is built on; null while the tab loads or after a failed load. */
   data: ResultSet | null;
   info: TableInfo | null;
   /** Null until the page and the table info are there: the panel shows no row then. */
   model: GridModel | null;
   /** Display row of `model`, null when no row is selected. */
   row: number | null;
-  onChange: (row: number, col: number, value: EditValue) => void;
+  /** Absent for a read-only source (a SQL result), as the next three. */
+  onChange?: (row: number, col: number, value: EditValue) => void;
   /** A cell action of the grid's menu (Set NULL, Set empty string, Set DEFAULT, Revert cell). */
-  onAction: (action: MenuAction, row: number, col: number) => void;
+  onAction?: (action: MenuAction, row: number, col: number) => void;
   /** The foreign key links of a cell (each field offers to open them). */
-  linksAt: (row: number, col: number) => FkLink[];
-  onOpenLink: (link: FkLink) => void;
+  linksAt?: (row: number, col: number) => FkLink[];
+  onOpenLink?: (link: FkLink) => void;
   onClose: () => void;
   /**
    * Hands the focus back to the grid: Escape in the panel, or the panel going away while
@@ -51,7 +56,7 @@ type Full = { s: "loading" } | { s: "ready"; value: CellValue } | { s: "failed";
  */
 function useFullValues(
   workspaceId: string,
-  object: ObjectRef,
+  object: ObjectRef | null,
   data: ResultSet,
   model: GridModel,
   row: number | null,
@@ -69,7 +74,7 @@ function useFullValues(
   const key = loaded?.key ?? null;
 
   useEffect(() => {
-    if (!key || keyId === null) return;
+    if (!object || !key || keyId === null) return;
     if (started.current.data !== data) started.current = { data, ids: new Set() };
     const put = (id: string, full: Full) =>
       setState((prev) => {
@@ -113,14 +118,15 @@ function shown(value: CellValue | "default", full: Full | undefined): { text: st
 }
 
 /**
- * The right panel of a table tab: the selected row as a vertical form (column, type,
+ * The right panel of a table tab or a SQL tab: the selected row as a vertical form (column, type,
  * value), narrowed by "Search for field…". Shown whenever the window's switch is on, also
  * while the page loads or after a failed load (no row then). Long text and cut JSON are
  * loaded in full; editable fields follow the grid's rules and go through the same store
  * actions, so an edit here is the same pending change as one in the grid. With several
  * rows selected it shows the active cell's row (else the first selected one), as the
  * grid's selection reports it. Opening it never takes the focus: the grid keeps it and the
- * panel follows the row under the keys.
+ * panel follows the row under the keys. A SQL tab shows the selected row of its results
+ * here too (#115), read-only: `object` and `info` null, no edit callbacks.
  */
 export function RowDetailPanel(p: Props) {
   const [query, setQuery] = useState("");
@@ -228,6 +234,9 @@ function RowFields(
     .filter((c) => q === "" || c.name.toLowerCase().includes(q));
   const rowKeyId = r.kind === "row" ? r.keyId : null;
   const id = r.kind === "insert" ? `insert:${r.tempId}` : rowKeyId !== null ? `key:${rowKeyId}` : `index:${r.index}`;
+  // Whole values load by the row's key: without one (a SQL result, a table without a key)
+  // a cut value shows what was loaded, and says so.
+  const canLoad = p.object !== null && rowKeyId !== null;
 
   return (
     <>
@@ -235,18 +244,20 @@ function RowFields(
       {cols.length === 0 && <p className="pt-6 text-center text-text-2">{strings.grid.rowDetailsNoMatch}</p>}
       {cols.map(({ name, col }) => (
         <Field
-          key={`${page.n}\u0000${id}\u0000${name}`}
+          // By position too: a query may return the same name twice.
+          key={`${page.n}\u0000${id}\u0000${col}\u0000${name}`}
           name={name}
           type={p.info?.columns.find((c) => c.name === name)?.typeName ?? p.data.columns[col]?.typeName ?? ""}
           cell={p.model.cell(p.row, col)}
           full={rowKeyId === null ? undefined : full.values[`${rowKeyId}\u0000${name}`]}
+          partial={!canLoad && p.model.cell(p.row, col).truncated}
           onRetry={full.retry}
           actions={menuActions(p.model, p.row, col).filter((a) => FIELD_ACTIONS.includes(a))}
           showReason={tableEditable && !keyIssue}
-          links={p.linksAt(p.row, col)}
-          onOpenLink={p.onOpenLink}
-          onChange={(v) => p.onChange(p.row, col, v)}
-          onAction={(a) => p.onAction(a, p.row, col)}
+          links={p.linksAt?.(p.row, col) ?? []}
+          onOpenLink={(l) => p.onOpenLink?.(l)}
+          onChange={(v) => p.onChange?.(p.row, col, v)}
+          onAction={(a) => p.onAction?.(a, p.row, col)}
         />
       ))}
     </>
@@ -258,6 +269,8 @@ interface FieldProps {
   type: string;
   cell: EditCell;
   full: Full | undefined;
+  /** The value is cut and cannot be loaded in full: only its start is shown. */
+  partial: boolean;
   actions: MenuAction[];
   /** Say why this column is read-only (not when the whole table or row is). */
   showReason: boolean;
@@ -277,6 +290,7 @@ function Field({
   type,
   cell,
   full,
+  partial,
   actions,
   showReason,
   links,
@@ -354,6 +368,7 @@ function Field({
         } ${editable ? "text-fg" : "text-muted"}`}
       />
       {full?.s === "loading" && <p className="text-xs text-muted">{strings.grid.editorLoading}</p>}
+      {partial && <p className="text-xs text-muted">{strings.grid.quickLook.partial}</p>}
       {full?.s === "failed" && (
         <p className="flex items-baseline gap-2 text-xs text-danger-text">
           <span className="min-w-0 break-words">{strings.grid.editorLoadFailed(full.message)}</span>
