@@ -16,7 +16,7 @@ type Step =
 
 const PILL = "rounded-sm border px-1 text-xs";
 const BUTTON = "rounded-sm border border-border px-3 py-1 disabled:opacity-50";
-const PRIMARY = "rounded-sm bg-accent px-3 py-1 text-accent-contrast disabled:opacity-50";
+const PRIMARY = "rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast disabled:opacity-50";
 
 function Warnings({ warnings }: { warnings: ImportWarning[] }) {
   if (warnings.length === 0) return null;

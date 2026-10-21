@@ -77,3 +77,20 @@ test("headings group items; arrows move between items, Escape closes", async () 
   expect(csv).toHaveBeenCalledOnce();
   expect(onClose).toHaveBeenCalledWith("item");
 });
+
+test("highlighted_row_contrast: hovered / focused rows are --accent-strong, the shortcut hint opaque there (#107)", () => {
+  render(
+    <GridContextMenu
+      x={10}
+      y={20}
+      label="Cell actions"
+      items={[{ label: "Copy", shortcut: "Mod+C", onSelect: vi.fn() }]}
+      onClose={vi.fn()}
+    />,
+  );
+  const item = screen.getByRole("menuitem", { name: "Copy" });
+  expect(item).toHaveClass("group", "hover:bg-accent-strong", "focus-visible:bg-accent-strong", "hover:text-accent-contrast");
+  expect(item.className).not.toMatch(/(^|\s)(hover|focus-visible):bg-accent(\s|$)/);
+  const hint = item.querySelector("[aria-hidden='true']");
+  expect(hint).toHaveClass("opacity-70", "group-hover:opacity-100", "group-focus-visible:opacity-100");
+});

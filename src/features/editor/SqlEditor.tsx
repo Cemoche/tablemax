@@ -174,7 +174,7 @@ export const editorThemeSpec = {
     border: "1px solid var(--border)",
   },
   ".cm-tooltip-autocomplete ul li[aria-selected]": {
-    backgroundColor: "var(--accent)",
+    backgroundColor: "var(--accent-strong)",
     color: "var(--accent-contrast)",
   },
 };

@@ -48,7 +48,7 @@ export function SecretPrompt({ kind, connectionName, error, onSubmit, onCancel }
           <button type="button" onClick={onCancel} className="rounded-sm border border-border px-3 py-1">
             {strings.secretPrompt.cancel}
           </button>
-          <button type="submit" className="rounded-sm bg-accent px-3 py-1 text-accent-contrast">
+          <button type="submit" className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast">
             {strings.secretPrompt.ok}
           </button>
         </div>

@@ -110,7 +110,7 @@ export function TabList({ workspace }: { workspace: Workspace }) {
                   onKeyDown={onKeyDown}
                   onMouseMove={() => setHi(i)}
                   className={`flex cursor-pointer items-center justify-between gap-2 px-3 py-1 ${
-                    i === hi ? "bg-accent text-accent-contrast" : ""
+                    i === hi ? "bg-accent-strong text-accent-contrast" : ""
                   }`}
                 >
                   <span className={`truncate ${t.kind === "table" && t.preview ? "italic" : ""}`}>

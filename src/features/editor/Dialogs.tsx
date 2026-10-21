@@ -104,7 +104,7 @@ export function ConfirmDialog({
         </button>
         <button
           type="submit"
-          className={`rounded-sm px-3 py-1 ${danger ? "border border-danger text-danger hover:bg-surface-2" : "bg-accent text-accent-contrast"}`}
+          className={`rounded-sm px-3 py-1 ${danger ? "border border-danger text-danger hover:bg-surface-2" : "bg-accent-strong text-accent-contrast"}`}
         >
           {confirm}
         </button>
@@ -162,7 +162,7 @@ export function NameDialog({
         <button
           type="submit"
           disabled={busy || !name.trim()}
-          className="rounded-sm bg-accent px-3 py-1 text-accent-contrast disabled:opacity-40"
+          className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast disabled:opacity-40"
         >
           {confirm}
         </button>

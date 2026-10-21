@@ -142,7 +142,7 @@ export function ContextMenu({
               onClose("item");
               item.run();
             }}
-            className={`mx-1 rounded-md py-1 text-left outline-none hover:bg-accent hover:text-accent-contrast focus-visible:bg-accent focus-visible:text-accent-contrast ${item.indent ? "pr-3 pl-6" : "px-3"}`}
+            className={`mx-1 rounded-md py-1 text-left outline-none hover:bg-accent-strong hover:text-accent-contrast focus-visible:bg-accent-strong focus-visible:text-accent-contrast ${item.indent ? "pr-3 pl-6" : "px-3"}`}
           >
             {item.label}
           </button>

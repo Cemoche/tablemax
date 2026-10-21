@@ -75,7 +75,7 @@ export function UrlImportDialog({ onResult, onCancel }: Props) {
           <button
             type="submit"
             disabled={!ok}
-            className="rounded-sm bg-accent px-3 py-1 text-accent-contrast disabled:opacity-50"
+            className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast disabled:opacity-50"
           >
             {strings.url.open}
           </button>
