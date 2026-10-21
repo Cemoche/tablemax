@@ -126,6 +126,28 @@ l'identité (nom, logo, monogrammes des moteurs) est la nôtre.
 > (suite à part). Le panneau s'affiche dès que l'interrupteur est mis, vide (« No row
 > selected ») pendant le chargement de la page ou après un échec.
 
+> Amendement 2026-10-21 (#115) : le panneau montre aussi la ligne sélectionnée des résultats
+> d'un onglet SQL (remplace « pas de panneau sur les résultats d'un onglet SQL » ci-dessus).
+> Même composant, même interrupteur pour la fenêtre (ouvert dans un onglet de table, il l'est
+> dans un onglet SQL et inversement), même largeur, recherche, JSON indenté, NULL comme la
+> grille. Placé à droite de l'éditeur et des résultats (comme à droite de la grille d'un
+> onglet de table, sous la barre de l'onglet). Lecture seule : un résultat de requête n'a ni
+> table ni clé, aucun champ n'est modifiable, pas d'action ni de lien de clé étrangère ; une
+> valeur coupée (texte long) montre ce que le résultat contient, suivi de « Only the start of
+> this value was loaded. », comme Quick Look dans cette grille (pas de clé pour la recharger ;
+> même mention pour une table sans clé). Il suit le « Result N » affiché : chaque jeu de
+> résultats (et chaque exécution) repart sans sélection ; vue Message, exécution en cours sans
+> jeu encore : « No row selected ». Montré tant que l'exécution a un jeu de résultats ou est en
+> cours (pas de clignotement à la relance) ; sans exécution, ou si elle n'a renvoyé aucun jeu
+> (UPDATE…), pas de panneau et le bouton de la barre du haut est désactivé (`softDisabled`,
+> info-bulle gardée), l'interrupteur restant tel quel. Clavier : `grid.rowDetails` garde la
+> portée `tableTab` (aucun nouvel id, rien côté Rust) ; la grille le reconnaît dans son propre
+> keydown, avec Space, pendant qu'elle a le focus — dans un onglet SQL c'est le seul endroit
+> (plus le bouton), et `Ctrl+Space` dans le texte de l'éditeur reste la complétion
+> (`editor.complete`) ; dans un onglet de table la grille l'arrête, la liaison de fenêtre ne le
+> voit donc pas une seconde fois. Échap dans le panneau rend le focus à la grille des résultats
+> (à l'éditeur quand aucune grille n'est affichée, vue Message).
+
 > Amendement 2026-10-20 (#104) : la pastille de statut prend la largeur libre (une marge de
 > chaque côté reste une zone de glisser-déplacer) et se lit « [TAG] Moteur version : SSH :
 > nom de la connexion : base : schéma.objet » : un badge par tag (`LOCAL`, `DEV`, `STAGING`,
