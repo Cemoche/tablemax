@@ -10,8 +10,10 @@ import { usePendingChanges } from "../../stores/pendingChanges";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { type Workspace, useWorkspaces } from "../../stores/workspaces";
 import { onWindowResized } from "../../lib/windowResize";
+import { expectSoftDisabled } from "../../test/softDisabled";
 import { AppToolbar } from "./AppToolbar";
 import { ResizeHandles } from "./ResizeHandles";
+import { TooltipLayer } from "./TooltipLayer";
 
 vi.mock("../../lib/ipc");
 vi.mock("../../lib/windowResize", () => ({ onWindowResized: vi.fn(async () => () => {}) }));
@@ -128,12 +130,12 @@ test("commit_group_follows_pending_changes", async () => {
   usePendingChanges.setState({ commit, discard });
   setup();
   const button = (name: string) => screen.getByRole("button", { name });
-  for (const name of [t.discard, t.preview, t.commit]) expect(button(name)).toBeDisabled();
+  for (const name of [t.discard, t.preview, t.commit]) expect(button(name)).toHaveAttribute("aria-disabled", "true");
 
   act(() => {
     usePendingChanges.getState().addInsert("t1", obj);
   });
-  for (const name of [t.discard, t.preview, t.commit]) expect(button(name)).toBeEnabled();
+  for (const name of [t.discard, t.preview, t.commit]) expect(button(name)).not.toHaveAttribute("aria-disabled");
   await user.click(button(t.commit));
   expect(commit).toHaveBeenCalledWith("t1", "w1", obj);
   await user.click(button(t.discard));
@@ -143,8 +145,43 @@ test("commit_group_follows_pending_changes", async () => {
 
   // A running commit locks Commit; Discard gives way to Cancel the commit (below).
   act(() => usePendingChanges.setState({ committing: { t1: true } }));
-  expect(button(t.commit)).toBeDisabled();
+  expect(button(t.commit)).toHaveAttribute("aria-disabled", "true");
   expect(screen.queryByRole("button", { name: t.discard })).toBeNull();
+});
+
+test("commit_group_soft_disabled: with nothing pending Discard, Preview and Commit keep their tooltip and do nothing (#110)", async () => {
+  const user = userEvent.setup();
+  const commit = vi.fn();
+  const discard = vi.fn();
+  usePendingChanges.setState({ commit, discard });
+  render(<TooltipLayer />);
+  setup();
+  const button = (name: string) => screen.getByRole("button", { name });
+  await expectSoftDisabled(user, button(t.discard), t.discard, () => discard.mock.calls.length > 0);
+  await expectSoftDisabled(user, button(t.preview), t.preview, () => useChrome.getState().previews.t1 !== undefined);
+  await expectSoftDisabled(user, button(t.commit), t.commit, () => commit.mock.calls.length > 0);
+  // The commit's other reasons: its own commit running, the cell editor open.
+  act(() => {
+    usePendingChanges.getState().addInsert("t1", obj);
+  });
+  act(() => usePendingChanges.setState({ editorOpen: { t1: true } }));
+  expect(button(t.commit)).toHaveAttribute("aria-disabled", "true");
+  await user.click(button(t.commit));
+  expect(commit).not.toHaveBeenCalled();
+  act(() => usePendingChanges.setState({ editorOpen: {} }));
+  await user.click(button(t.commit));
+  expect(commit).toHaveBeenCalledTimes(1);
+});
+
+test("toolbar_buttons_soft_disabled: Sidebar, Database and Reload off while disconnected, Row details outside a table tab (#110)", async () => {
+  const user = userEvent.setup();
+  render(<TooltipLayer />);
+  setup(ws({ status: "disconnected" }));
+  const button = (name: string) => screen.getByRole("button", { name });
+  await expectSoftDisabled(user, button(t.sidebar), t.sidebar, () => !useWorkspaces.getState().sidebarVisible);
+  await expectSoftDisabled(user, button(t.database), t.database, () => useChrome.getState().paletteRequest !== null);
+  await expectSoftDisabled(user, button(t.reload), t.reload, () => Object.keys(useChrome.getState().reloads).length > 0);
+  await expectSoftDisabled(user, button(t.rowDetails), t.rowDetails, () => useChrome.getState().rowDetailsOpen);
 });
 
 test("commit_group_replaces_the_edit_strip: pending count, Cancel while committing, another tab committing (#103)", async () => {
@@ -199,7 +236,7 @@ test("commit_group_replaces_the_edit_strip: pending count, Cancel while committi
 test("the commit group is off on a SQL tab and on a disconnected workspace", () => {
   usePendingChanges.getState().addInsert("t1", obj);
   setup(ws({ activeTabId: "q1" }));
-  expect(screen.getByRole("button", { name: t.commit })).toBeDisabled();
+  expect(screen.getByRole("button", { name: t.commit })).toHaveAttribute("aria-disabled", "true");
 });
 
 test("toolbar_is_keyboard_reachable", async () => {
@@ -603,6 +640,6 @@ test("the row details button is one switch for the window, off and disabled outs
   useChrome.setState({ rowDetailsOpen: true });
   setup(ws({ activeTabId: "q1" }));
   const details = screen.getByRole("button", { name: t.rowDetails });
-  expect(details).toBeDisabled();
+  expect(details).toHaveAttribute("aria-disabled", "true");
   expect(details).toHaveAttribute("aria-pressed", "false");
 });

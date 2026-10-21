@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import * as ipc from "../../lib/ipc";
+import { softDisabled } from "../../lib/softDisabled";
 import { strings } from "../../lib/strings";
 import type { CellValue, ForeignKeyInfo, ResultSet, RowKey } from "../../lib/types";
 import { useChrome } from "../../stores/chrome";
@@ -70,10 +71,10 @@ function Toolbar({ tabId = "t1", workspaceId = "w1" }: { tabId?: string; workspa
   const count = usePendingChanges((s) => s.count(tabId));
   return (
     <>
-      <button type="button" disabled={count === 0} onClick={() => void pending().commit(tabId, workspaceId, obj)}>
+      <button type="button" {...softDisabled(count === 0, () => void pending().commit(tabId, workspaceId, obj))}>
         {commitName}
       </button>
-      <button type="button" disabled={count === 0} onClick={() => pending().discard(tabId)}>
+      <button type="button" {...softDisabled(count === 0, () => pending().discard(tabId))}>
         {strings.toolbar.discard}
       </button>
     </>
@@ -1530,7 +1531,7 @@ test("after a successful Run the focus lands on + Row once the reload unlocks th
   expect(screen.getByRole("button", { name: strings.grid.addRow })).not.toHaveFocus();
   await act(async () => reloaded(lines(3)));
   await waitFor(() => expect(screen.getByRole("button", { name: strings.grid.addRow })).toHaveFocus());
-  expect(screen.getByRole("button", { name: commitName })).toBeDisabled();
+  expect(screen.getByRole("button", { name: commitName })).toHaveAttribute("aria-disabled", "true");
 });
 
 test("Cancel of the commit confirmation raised from the structure view focuses the view toggle", async () => {

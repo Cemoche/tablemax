@@ -1,6 +1,7 @@
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import * as ipc from "../../lib/ipc";
 import { useAction } from "../../lib/keymap";
+import { isDisabled } from "../../lib/softDisabled";
 import { strings } from "../../lib/strings";
 import type { Dialect, Filter, FilterCombine, ObjectRef, SortDir } from "../../lib/types";
 import { useChrome, useOnRequest } from "../../stores/chrome";
@@ -343,7 +344,8 @@ function TableDataView({
       opener !== document.body &&
       opener.isConnected &&
       !opener.closest("[hidden]") &&
-      !(opener as HTMLButtonElement).disabled
+      // Off, natively or by aria-disabled (the toolbar's Commit, #110): not a place to land.
+      !isDisabled(opener)
     ) {
       opener.focus();
       return;

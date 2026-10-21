@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import * as ipc from "../../lib/ipc";
 import { type KeymapActionId, useAction, useEffectiveShortcut } from "../../lib/keymap";
 import { formatShortcut } from "../../lib/platform";
+import { softDisabled } from "../../lib/softDisabled";
 import { strings } from "../../lib/strings";
 import { type TipProps, tip } from "../../lib/tooltip";
 import type { ConnectionConfig } from "../../lib/types";
@@ -212,6 +213,9 @@ function WorkspaceTools({
   const detailsHint = useHint(t.rowDetails, "grid.rowDetails");
 
   const canPickDatabase = connected && (caps.databaseSwitch || workspace.schemas.length > 0);
+  // Off buttons stay hovered and focused for their tooltip (aria-disabled, #110): WebKitGTK
+  // may give a native disabled button no hover event. Their shortcuts guard themselves.
+  const commitOff = otherCommitting || count === 0 || busy || outcomeUnknown || editorOpen;
 
   return (
     <>
@@ -221,8 +225,7 @@ function WorkspaceTools({
           aria-label={t.sidebar}
           {...sidebarHint}
           aria-pressed={connected && sidebarVisible}
-          disabled={!connected}
-          onClick={toggleSidebar}
+          {...softDisabled(!connected, toggleSidebar)}
           className={iconButton}
         >
           <PanelLeft aria-hidden {...ICON} />
@@ -271,8 +274,7 @@ function WorkspaceTools({
             type="button"
             aria-label={t.discard}
             {...discardHint}
-            disabled={count === 0 || busy}
-            onClick={() => table && usePendingChanges.getState().discard(table.id)}
+            {...softDisabled(count === 0 || busy, () => table && usePendingChanges.getState().discard(table.id))}
             className={iconButton}
           >
             <CircleX aria-hidden {...ICON} />
@@ -282,8 +284,7 @@ function WorkspaceTools({
           type="button"
           aria-label={t.preview}
           {...previewHint}
-          disabled={count === 0}
-          onClick={() => table && useChrome.getState().requestPreview(table.id)}
+          {...softDisabled(count === 0, () => table && useChrome.getState().requestPreview(table.id))}
           className={iconButton}
         >
           <Eye aria-hidden {...ICON} />
@@ -295,14 +296,11 @@ function WorkspaceTools({
             [count > 0 ? countId : "", otherCommitting ? reasonId : ""].filter(Boolean).join(" ") || undefined
           }
           {...(otherCommitting ? tip(strings.grid.otherTabCommitting) : commitHint)}
-          // Waiting on another tab is a reason to read: focusable, does nothing (review #109).
-          aria-disabled={otherCommitting || undefined}
-          disabled={!otherCommitting && (count === 0 || busy || outcomeUnknown || editorOpen)}
-          onClick={() => {
-            if (otherCommitting || !table) return;
-            void usePendingChanges.getState().commit(table.id, workspace.id, table.object);
-          }}
-          className={`${iconButton} relative aria-disabled:text-icon-dim aria-disabled:hover:bg-transparent`}
+          // Waiting on another tab is a reason to read (review #109): its tooltip says it.
+          {...softDisabled(commitOff, () => {
+            if (table) void usePendingChanges.getState().commit(table.id, workspace.id, table.object);
+          })}
+          className={`${iconButton} relative`}
         >
           <ListChecks aria-hidden {...ICON} />
           {count > 0 && (
@@ -333,8 +331,7 @@ function WorkspaceTools({
           type="button"
           aria-label={t.database}
           {...databaseHint}
-          disabled={!canPickDatabase}
-          onClick={() => useChrome.getState().requestPalette("database")}
+          {...softDisabled(!canPickDatabase, () => useChrome.getState().requestPalette("database"))}
           className={iconButton}
         >
           <Database aria-hidden {...ICON} />
@@ -359,8 +356,7 @@ function WorkspaceTools({
           type="button"
           aria-label={t.reload}
           {...reloadHint}
-          disabled={!connected}
-          onClick={() => reloadWorkspace(workspace)}
+          {...softDisabled(!connected, () => reloadWorkspace(workspace))}
           className={iconButton}
         >
           <RotateCw aria-hidden {...ICON} />
@@ -382,8 +378,7 @@ function WorkspaceTools({
           aria-label={t.rowDetails}
           {...detailsHint}
           aria-pressed={rowDetails}
-          disabled={table === null}
-          onClick={() => table && useChrome.getState().toggleRowDetails()}
+          {...softDisabled(table === null, () => table && useChrome.getState().toggleRowDetails())}
           className={iconButton}
         >
           <PanelRight aria-hidden {...ICON} />
