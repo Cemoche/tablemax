@@ -489,6 +489,23 @@ test("recording names punctuation as the layout types it, Shift included in the 
   expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["editor.comment"]))).toBeInTheDocument();
 });
 
+test("recording on a non-Latin layout names punctuation by US position, after a letter typed (#131)", async () => {
+  await setupKeymap();
+  const key = (init: KeyboardEventInit) =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+  // Russian: a letter typed ("а", refused: no modifier), then Ctrl + the "/" keycap (it types
+  // "."): Ctrl+/, the comment's key, refused.
+  await userEvent.click(changeButton(paletteLabel));
+  await act(async () => key({ code: "KeyF", key: "а" }));
+  await act(async () => key({ code: "Slash", key: ".", ctrlKey: true }));
+  expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["editor.comment"]))).toBeInTheDocument();
+  expect(ipc.settingsSet).not.toHaveBeenCalled();
+  // Hebrew: Ctrl + the Q keycap (it types "/") is Ctrl+Q.
+  await act(async () => key({ code: "KeyA", key: "ש" }));
+  await act(async () => key({ code: "KeyQ", key: "/", ctrlKey: true }));
+  expect(ipc.settingsSet).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, keymap: { "palette.all": "Mod+Q" } });
+});
+
 test("a combination used by another action is refused with its label and saves nothing", async () => {
   await setupKeymap();
   await userEvent.click(changeButton(paletteLabel));

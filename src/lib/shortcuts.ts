@@ -56,6 +56,50 @@ const NAMED_KEYS = new Set([
 /** The spellings `matchCombination` accepts for a named key (lowercase) besides the canonical one. */
 const NAMED_ALIASES = new Map([...NAMED_KEYS].map((k) => [k.toLowerCase(), k] as [string, string]).concat([["esc", "Escape"]]));
 
+/** A letter of any script, and a letter of the Latin script ("ı", "ß" and "é" are Latin). */
+const ANY_LETTER = /^\p{L}$/u;
+const LATIN_SCRIPT = /^\p{Script=Latin}$/u;
+
+/** Is the active layout non-Latin (Russian, Hebrew, Greek…)? Learnt from the letters typed (#131). */
+let nonLatin = false;
+let trackerInstalled = false;
+
+/** True when the last letter typed was not Latin: punctuation shortcuts go by US position (#131). */
+export function nonLatinLayout(): boolean {
+  return nonLatin;
+}
+
+/** Tests only: sets the tracker's state (the test setup resets it to Latin after each test). */
+export function __setNonLatinLayoutForTests(value: boolean): void {
+  nonLatin = value;
+}
+
+/**
+ * Learns the active layout's script from a keydown: a press of a letter position
+ * (`KeyA`–`KeyZ`) with neither Shift (Hebrew's Shift level types Latin capitals) nor Alt,
+ * AltGr or Meta (their levels vary) that types a letter. Ctrl counts: GTK keeps the
+ * layout's letter in `e.key` under Ctrl. Anything else leaves the state as it was.
+ */
+function noteLayoutScript(e: KeyboardEvent): void {
+  if (!LETTER_POSITION.test(e.code ?? "") || e.shiftKey || e.altKey || e.metaKey) return;
+  if (typeof e.getModifierState === "function" && e.getModifierState("AltGraph")) return;
+  const ch = e.key ?? "";
+  if (ANY_LETTER.test(ch)) nonLatin = !LATIN_SCRIPT.test(ch);
+}
+
+/**
+ * Installs (once) the window listener that learns the layout's script, in the capture phase:
+ * it runs before every shortcut listener and the recorder, so they all read the state after
+ * the press (only letter presses change it, and those are named alike in both states). The
+ * webview cannot ask the system which layout is active; right after a layout switch the
+ * state is the previous layout's until a letter is typed.
+ */
+export function installLayoutTracker(): void {
+  if (trackerInstalled || typeof window === "undefined") return;
+  trackerInstalled = true;
+  window.addEventListener("keydown", noteLayoutScript, true);
+}
+
 /**
  * A keydown as a shortcut reads it: its key's name in the grammar (`"W"`, `"1"`, `"/"`,
  * `"Enter"`, `"F5"`; `""` when the grammar has none) and whether Shift counts as a modifier.
@@ -66,25 +110,28 @@ export interface KeyPress {
 }
 
 /**
- * Names a keydown for the shortcuts (spec §5.3, amendments #102 and #105): a key is the
- * character the layout types on it when that character can name a shortcut, else its
- * position. In order:
+ * Names a keydown for the shortcuts (spec §5.3, amendments #102, #105 and #131): on a Latin
+ * layout a key is the character the layout types on it when that character can name a
+ * shortcut, else its position; on a non-Latin layout (`nonLatinLayout`) letters and
+ * punctuation go by US position, as in browsers and GTK apps. In order:
  * 1. Named keys (Enter, Tab, arrows, F1–F12, the keypad's + and −…) by position; the
  *    keypad's Enter is Enter (#122); the keypad's other keys have no name.
  * 2. A Latin letter typed (`e.key`) is that letter, wherever the key sits (AZERTY's Z key is
  *    Z, Dvorak's are Dvorak's).
- * 3. A shortcut punctuation character typed (`, . / ; - = [ ] \ \``) is that character:
- *    AZERTY's "," key is Ctrl+, and Dvorak's "/" key Ctrl+/. When Shift typed it (QWERTZ
- *    Shift+7 = "/"), Shift belongs to the character, not to the shortcut. On the digit row
- *    a character typed without Shift does not count: the row stays digits (AZERTY's "-" key
- *    is Ctrl+6, tab 6, as in browsers).
- * 4. With Shift, a US shifted symbol (`< > ? : _ + { } | ~`) is Shift + its US key's
- *    character ("{" is Shift+[), off the digit row.
+ * 3. Latin layout only: a shortcut punctuation character typed (`, . / ; - = [ ] \ \``) is
+ *    that character: AZERTY's "," key is Ctrl+, and Dvorak's "/" key Ctrl+/. When Shift
+ *    typed it (QWERTZ Shift+7 = "/"), Shift belongs to the character, not to the shortcut.
+ *    On the digit row a character typed without Shift does not count: the row stays digits
+ *    (AZERTY's "-" key is Ctrl+6, tab 6, as in browsers).
+ * 4. Latin layout only: with Shift, a US shifted symbol (`< > ? : _ + { } | ~`) is Shift +
+ *    its US key's character ("{" is Shift+[), off the digit row.
  * 5. Else the position (`e.code`): the digit row's digit, a letter position's letter (a
  *    non-Latin letter, a dead key, or a character no shortcut can name: Hebrew's "'" key is
- *    W), a punctuation position's US character (AZERTY's "!" key is "/", its ")" key "-").
+ *    W; on a non-Latin layout anything: Hebrew's "/" key is Q), a punctuation position's US
+ *    character (AZERTY's "!" key is "/", its ")" key "-"; Russian's "." key is "/").
  * No layout table: `keyCode` says nothing more on Linux (WebKitGTK derives it from the
- * typed character), and the webview cannot tell which layout is active.
+ * typed character), and the webview cannot tell which layout is active; the layout's
+ * script comes from the last letter typed (`installLayoutTracker`).
  */
 export function keyPressOf(e: Pick<KeyboardEvent, "key" | "code" | "shiftKey">): KeyPress {
   const code = e.code ?? "";
@@ -95,9 +142,11 @@ export function keyPressOf(e: Pick<KeyboardEvent, "key" | "code" | "shiftKey">):
   const ch = e.key ?? "";
   if (LATIN_LETTER.test(ch)) return { key: ch.toUpperCase(), shift };
   const digitRow = DIGIT_ROW.test(code);
-  if (PUNCTUATION.has(ch) && (shift || !digitRow)) return { key: ch, shift: false };
-  const base = US_SHIFTED.get(ch);
-  if (shift && !digitRow && base !== undefined) return { key: base, shift };
+  if (!nonLatin) {
+    if (PUNCTUATION.has(ch) && (shift || !digitRow)) return { key: ch, shift: false };
+    const base = US_SHIFTED.get(ch);
+    if (shift && !digitRow && base !== undefined) return { key: base, shift };
+  }
   if (digitRow) return { key: code.slice(5), shift };
   const letter = LETTER_POSITION.exec(code);
   if (letter) return { key: letter[1], shift };
@@ -114,8 +163,8 @@ function specKey(key: string): string {
  * Does `e` match `spec` (`"Mod+K"`, `"Ctrl+Tab"`, `"Mod+Shift+F"`)? `Mod` is Meta on
  * macOS and Ctrl elsewhere; `Ctrl` is always Ctrl. The key is named by `keyPressOf`: the
  * character the layout types when it can name a shortcut, else the position (non-Latin
- * letters, AZERTY's digit row, named keys). The modifiers must match exactly, Shift as
- * `keyPressOf` counts it. Auto-repeat never matches.
+ * letters, AZERTY's digit row, named keys); on a non-Latin layout, the US position. The
+ * modifiers must match exactly, Shift as `keyPressOf` counts it. Auto-repeat never matches.
  */
 export function matchShortcut(e: KeyboardEvent, spec: string): boolean {
   return !e.repeat && matchCombination(e, spec);
@@ -242,6 +291,7 @@ export function useShortcut(
   const key = typeof spec === "string" ? spec : spec.join("\n");
   useEffect(() => {
     if (!enabled) return;
+    installLayoutTracker(); // before this listener, which then reads the state after the press
     const specs = key.split("\n");
     const onKey = (e: KeyboardEvent) => {
       if (!specs.some((s) => matchCombination(e, s))) return;

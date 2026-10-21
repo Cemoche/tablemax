@@ -429,6 +429,11 @@ meaning.
       editor. AltGr+E in the grid types nothing and starts no edit; in an edited cell
       AltGr+E types €.
 - [ ] A non-Latin layout (Russian or Greek): `Ctrl` + the key at QWERTY's W closes the tab.
+- [ ] Russian (#131): type a Russian letter, then `Ctrl` + the "/" keycap comments in the
+      editor and `Ctrl` + the "[" / "]" keycaps go to the previous / next tab. Hebrew: same,
+      after a Hebrew letter (`Ctrl` + the Q keycap does not comment). Switch back to AZERTY,
+      type a letter: `Ctrl+,` (the "," key) opens Settings again, `Ctrl+!` comments.
+- [ ] Hebrew: `Ctrl+W` closes the tab right after switching layout, before typing.
 
 Result / notes:
 

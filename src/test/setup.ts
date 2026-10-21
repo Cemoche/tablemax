@@ -1,8 +1,13 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
+import { __setNonLatinLayoutForTests } from "../lib/shortcuts";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // The layout tracker's state is module-wide: each test starts on a Latin layout (#131).
+  __setNonLatinLayoutForTests(false);
+});
 
 // cmdk measures its list with ResizeObserver and scrolls the selected item into view;
 // jsdom has neither.

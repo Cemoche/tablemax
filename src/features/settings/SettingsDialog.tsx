@@ -26,7 +26,7 @@ import {
   scalePercent,
 } from "./bounds";
 import { formatShortcut, isMac } from "../../lib/platform";
-import { keyPressOf } from "../../lib/shortcuts";
+import { installLayoutTracker, keyPressOf } from "../../lib/shortcuts";
 
 const S = strings.settings;
 const focusRing = "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent";
@@ -195,7 +195,8 @@ const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)$/;
 /**
  * The canonical spec of a keydown ("Mod+Shift+K"), its key named as the shortcuts match it
  * (`keyPressOf`: the character the layout types when it names a shortcut, else the
- * position; Shift that typed a punctuation character is that character's, not a modifier);
+ * position, and US positions on a non-Latin layout; Shift that typed a punctuation
+ * character is that character's, not a modifier);
  * Mod is Ctrl on Linux/Windows and Meta on macOS (Ctrl stays Ctrl there). A key with no
  * name in the grammar yields a spec without a key (the caller reports it as invalid).
  */
@@ -225,6 +226,8 @@ function KeyboardRow({ id, label }: { id: KeymapActionId; label: string }) {
 
   useEffect(() => {
     if (!recording) return;
+    // Installed before this listener: a press is named with the layout script it shows (#131).
+    installLayoutTracker();
     // Capture phase on the document: nothing else (the dialog's Escape, global shortcuts) sees the key.
     const onKey = (e: KeyboardEvent) => {
       if (MODIFIER_CODES.test(e.code) || e.key === "Dead" || e.key === "Process") return;
