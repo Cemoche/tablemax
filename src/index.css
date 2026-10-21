@@ -37,6 +37,7 @@
   --color-inserted: var(--inserted);
   --color-modified: var(--modified);
   --color-deleted: var(--deleted);
+  --color-deleted-text: var(--deleted-text);
   --color-tag-local-bg: var(--tag-local-bg);
   --color-tag-local-text: var(--tag-local-text);
   --color-tag-dev-bg: var(--tag-dev-bg);
