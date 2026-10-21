@@ -290,11 +290,13 @@ export function DataGrid({
     if (moved !== selection) setSelection(moved);
   }
   // A read-only grid shows one result after another (a new run, another "Result N"): each
-  // starts with no selection, so a row selected in one never stands for a row of the next.
+  // starts with no selection, so a row selected in one never stands for a row of the next
+  // (nor does Shift+click on a row number extend from it).
   const [selectionData, setSelectionData] = useState(data);
   if (!editing && selectionData !== data) {
     setSelectionData(data);
     setSelection(EMPTY_SELECTION);
+    anchor.current = null;
   }
   const [headerMenu, setHeaderMenu] = useState<{ col: number; x: number; y: number } | null>(null);
   const [quickLook, setQuickLook] = useState<{ row: number; col: number } | null>(null);

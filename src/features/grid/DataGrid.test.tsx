@@ -467,6 +467,11 @@ test("results_grid_reports_selected_row (#115): onSelectRow gets the active cell
   view.rerender(<DataGrid data={other} sortable={false} onSelectRow={onSelectRow} />);
   expect(editor!.gridSelection?.current).toBeUndefined();
   expect(editor!.gridSelection?.rows.length).toBe(0);
+  // Nor does Shift+click on a row number extend from a row of the previous result.
+  act(() => editor!.onCellClicked!([-1, 2], click()));
+  view.rerender(<DataGrid data={data} sortable={false} onSelectRow={onSelectRow} />);
+  act(() => editor!.onCellClicked!([-1, 0], click({ shiftKey: true })));
+  expect(editor!.gridSelection?.rows.toArray()).toEqual([0]);
 });
 
 test("grid keys act on the selected rows: Delete / Ctrl+Backspace delete, Ctrl+D duplicates, Ctrl+Shift+C copies", () => {
