@@ -166,12 +166,13 @@ test("a read-only table has no + Row; the structure view shows only the view swi
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-test("the focus ring of the selected view stands out on its fill: a white ring inside it (review #103)", () => {
+test("the focus ring of the selected view stands out on its fill: the shared two-tone ring inside it (review #103, #135)", () => {
   render(<TableBottomBar view="data" onView={vi.fn()} panelIds={ids} data={data()} />);
   const tab = screen.getByRole("tab", { name: g.view.data });
-  expect(tab).toHaveClass("aria-selected:bg-accent-strong", "aria-selected:focus-visible:outline-accent-contrast");
-  // Unselected segments keep the accent ring on the button's own background.
-  expect(tab).toHaveClass("focus-visible:outline-accent");
+  // Its inner band reads 3:1 on --accent-strong (tokens.test.ts, focus_ring_contrast): no
+  // ring of its own on the selected segment any more.
+  expect(tab).toHaveClass("aria-selected:bg-accent-strong", "focus-visible:focus-ring-inset");
+  expect(tab.className).not.toContain("outline-accent");
 });
 
 test("the view switch is one Tab stop; arrows, Home and End move between Data, Structure and Index", async () => {

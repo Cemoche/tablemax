@@ -69,7 +69,7 @@ export function TabList({ workspace }: { workspace: Workspace }) {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => (open ? close() : setOpen(true))}
-        className="flex size-7 items-center justify-center rounded-md text-icon outline-none hover:bg-tab focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
+        className="flex size-7 items-center justify-center rounded-md text-icon outline-none hover:bg-tab focus-visible:focus-ring"
       >
         <ChevronDown aria-hidden="true" size={16} />
       </button>

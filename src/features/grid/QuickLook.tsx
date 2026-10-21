@@ -105,7 +105,7 @@ export function QuickLook({ column, value, load, onClose }: Props) {
             ref={closeRef}
             type="button"
             onClick={onClose}
-            className="rounded-md border border-pill-border px-2 py-0.5 hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-accent"
+            className="rounded-md border border-pill-border px-2 py-0.5 outline-none hover:bg-seg-sel focus-visible:focus-ring"
           >
             {strings.grid.quickLook.close}
           </button>
@@ -119,7 +119,7 @@ export function QuickLook({ column, value, load, onClose }: Props) {
           ref={bodyRef}
           tabIndex={0}
           aria-labelledby={titleId}
-          className={`min-h-16 overflow-auto rounded-md border border-pill-border bg-content p-2 font-mono text-sm break-words whitespace-pre-wrap focus-visible:outline-2 focus-visible:outline-accent ${shown.placeholder ? "text-placeholder" : ""}`}
+          className={`min-h-16 overflow-auto rounded-md border border-pill-border bg-content p-2 font-mono text-sm break-words whitespace-pre-wrap outline-none focus-visible:focus-ring ${shown.placeholder ? "text-placeholder" : ""}`}
         >
           {shown.text}
         </pre>

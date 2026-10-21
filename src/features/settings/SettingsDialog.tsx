@@ -29,8 +29,10 @@ import { formatShortcut, isMac } from "../../lib/platform";
 import { installLayoutTracker, keyPressOf } from "../../lib/shortcuts";
 
 const S = strings.settings;
-const focusRing = "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent";
-const input = `h-7 rounded-md border border-pill-border bg-search px-2 text-text placeholder:text-text-2 aria-invalid:border-danger ${focusRing} focus-visible:-outline-offset-1`;
+const focusRing = "outline-none focus-visible:focus-ring";
+/** Fields and the section list: the ring inside them, over the field's border. */
+const focusRingInset = "outline-none focus-visible:focus-ring-inset";
+const input = `h-7 rounded-md border border-pill-border bg-search px-2 text-text placeholder:text-text-2 aria-invalid:border-danger ${focusRingInset}`;
 const button = `h-7 shrink-0 rounded-md border border-pill-border bg-btn px-3 text-text hover:bg-seg-sel ${focusRing}`;
 const smallButton = `h-6 shrink-0 rounded-md border border-pill-border bg-btn px-2 text-sm text-text hover:bg-seg-sel ${focusRing}`;
 const hint = "text-sm text-text-2";
@@ -623,7 +625,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 tabIndex={section === s ? 0 : -1}
                 onClick={() => setSection(s)}
                 onKeyDown={onTabKeyDown}
-                className={`h-8 shrink-0 truncate rounded-md px-3 text-left hover:bg-seg-sel aria-selected:bg-sel aria-selected:font-medium ${focusRing} focus-visible:-outline-offset-2`}
+                className={`h-8 shrink-0 truncate rounded-md px-3 text-left hover:bg-seg-sel aria-selected:bg-sel aria-selected:font-medium ${focusRingInset}`}
               >
                 {S.sections[s]}
               </button>

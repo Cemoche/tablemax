@@ -126,7 +126,7 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
                     const anchor = keyboardMenuAnchor(e);
                     if (anchor) setMenu({ entry: h, anchor, trigger: e.currentTarget });
                   }}
-                  className="block w-full rounded-md px-1.5 py-1 text-left outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
+                  className="block w-full rounded-md px-1.5 py-1 text-left outline-none hover:bg-seg-sel focus-visible:focus-ring-inset"
                 >
                   <span className="line-clamp-2 font-mono text-sm break-all whitespace-pre-wrap text-text">{h.sql}</span>
                   <span className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-text-2">
@@ -146,7 +146,7 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
           type="button"
           onClick={() => setConfirmClear(true)}
           disabled={!entries || entries.length === 0}
-          className="rounded-md border border-pill-border bg-btn px-2 py-0.5 text-sm text-danger-text outline-none hover:bg-seg-sel disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-accent"
+          className="rounded-md border border-pill-border bg-btn px-2 py-0.5 text-sm text-danger-text outline-none hover:bg-seg-sel disabled:opacity-40 focus-visible:focus-ring"
         >
           {H.clear}
         </button>

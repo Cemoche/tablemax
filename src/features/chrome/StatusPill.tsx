@@ -108,7 +108,7 @@ export function StatusPill({ workspace, connectError = null, onEditConnection }:
         aria-expanded={open}
         {...(state === "error" && connectError ? tip(s.errorTitle(text, connectError)) : tipIfCut(text))}
         onClick={() => setOpen((o) => !o)}
-        className={`relative flex h-8.5 w-full min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full px-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent ${look}`}
+        className={`relative flex h-8.5 w-full min-w-0 items-center justify-center gap-2 overflow-hidden rounded-full px-4 font-mono text-sm font-medium whitespace-nowrap outline-none focus-visible:focus-ring ${look}`}
       >
         <span
           data-pill-tag=""

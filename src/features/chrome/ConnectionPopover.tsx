@@ -12,7 +12,7 @@ export function engineLabel(cfg: ConnectionConfig | undefined, dialect: Dialect 
 }
 
 const button =
-  "rounded-md border border-pill-border bg-btn px-3 py-1 text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:text-icon-dim disabled:hover:bg-btn";
+  "rounded-md border border-pill-border bg-btn px-3 py-1 text-text outline-none hover:bg-seg-sel focus-visible:focus-ring disabled:text-icon-dim disabled:hover:bg-btn";
 
 interface Props {
   workspace: Workspace;

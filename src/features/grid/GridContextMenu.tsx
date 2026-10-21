@@ -137,7 +137,7 @@ export function GridContextMenu({ x, y, label, items, onClose }: Props) {
               close("item");
               item.onSelect();
             }}
-            className={`group mx-1 flex items-center gap-4 rounded-md py-1 text-left outline-none hover:bg-accent-strong hover:text-accent-contrast focus-visible:bg-accent-strong focus-visible:text-accent-contrast disabled:text-text-2 disabled:hover:bg-transparent ${item.indent ? "pr-3 pl-6" : "px-3"}`}
+            className={`group mx-1 flex items-center gap-4 rounded-md py-1 text-left outline-none hover:bg-accent-strong hover:text-accent-contrast focus-visible:bg-accent-strong focus-visible:text-accent-contrast focus-visible:focus-ring-inset disabled:text-text-2 disabled:hover:bg-transparent ${item.indent ? "pr-3 pl-6" : "px-3"}`}
           >
             <span className="min-w-0 flex-1 truncate">{item.label}</span>
             {item.shortcut && (

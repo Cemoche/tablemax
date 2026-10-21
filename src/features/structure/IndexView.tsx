@@ -86,7 +86,7 @@ export function IndexView({ workspaceId, object }: { workspaceId: string; object
           type="button"
           aria-busy={pending}
           onClick={() => load(true)}
-          className="rounded-sm border border-border px-2 py-1 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
+          className="rounded-sm border border-border px-2 py-1 outline-none focus-visible:focus-ring"
         >
           {s.refresh}
         </button>

@@ -43,7 +43,7 @@ export function FilterSqlPreview({ state, onClose }: { state: SqlPreviewState; o
   };
 
   const ring =
-    "outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-accent";
+    "outline-none focus-visible:focus-ring";
   return (
     <div
       ref={ref}

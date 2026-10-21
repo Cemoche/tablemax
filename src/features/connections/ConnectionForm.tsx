@@ -424,7 +424,12 @@ export function ConnectionForm({
           <div className="flex min-w-0 items-center gap-2">
             <div role="radiogroup" aria-labelledby="cf-color-label" className="flex items-center gap-1.5">
               {SWATCHES.map((s, i) => (
-                <label key={s} className="relative flex size-6 items-center justify-center" {...tip(strings.form.colorLabel(i + 1))}>
+                <label
+                  key={s}
+                  // The ring goes around the whole swatch, outside its checked ring (a box-shadow too).
+                  className="relative flex size-6 items-center justify-center rounded-full has-[:focus-visible]:focus-ring"
+                  {...tip(strings.form.colorLabel(i + 1))}
+                >
                   <input
                     type="radio"
                     name={colorName}
@@ -436,7 +441,7 @@ export function ConnectionForm({
                   />
                   <span
                     aria-hidden
-                    className={`size-4.5 rounded-full ring-offset-2 ring-offset-content peer-checked:ring-2 peer-checked:ring-text peer-focus-visible:outline-2 peer-focus-visible:outline-offset-4 peer-focus-visible:outline-accent ${dotClass(s)}`}
+                    className={`size-4.5 rounded-full ring-offset-2 ring-offset-content peer-checked:ring-2 peer-checked:ring-text ${dotClass(s)}`}
                   />
                 </label>
               ))}

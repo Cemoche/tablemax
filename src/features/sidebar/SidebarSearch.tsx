@@ -44,7 +44,7 @@ export function SidebarSearch({ label, placeholder, value, onChange, withOptions
 
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 px-2.5 pb-1.5">
-      <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-pill-border bg-search px-2 focus-within:outline-2 focus-within:outline-solid focus-within:-outline-offset-1 focus-within:outline-accent">
+      <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-pill-border bg-search px-2 focus-within:focus-ring-inset">
         <Search aria-hidden size={14} strokeWidth={1.6} className="shrink-0 text-icon-dim" />
         <input
           ref={input}
@@ -113,7 +113,7 @@ function SearchOptions() {
     e.stopPropagation();
   };
 
-  const item = "mx-1 flex items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent-strong hover:text-accent-contrast focus-visible:bg-accent-strong focus-visible:text-accent-contrast";
+  const item = "mx-1 flex items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent-strong hover:text-accent-contrast focus-visible:bg-accent-strong focus-visible:text-accent-contrast focus-visible:focus-ring-inset";
   const tick = (on: boolean) => (
     <Check aria-hidden size={13} strokeWidth={2} className={on ? "" : "invisible"} />
   );
@@ -128,7 +128,7 @@ function SearchOptions() {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex size-7 items-center justify-center rounded-md text-icon outline-none hover:bg-seg-sel aria-expanded:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent"
+        className="flex size-7 items-center justify-center rounded-md text-icon outline-none hover:bg-seg-sel aria-expanded:bg-seg-sel focus-visible:focus-ring"
       >
         <SlidersHorizontal aria-hidden size={14} strokeWidth={1.6} />
       </button>

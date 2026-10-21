@@ -85,14 +85,14 @@ interface Props {
 
 /** 26 px controls of the 42 px bar (spec §5.2), the toolbar's look. */
 const control =
-  "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent disabled:text-icon-dim disabled:hover:bg-btn aria-disabled:text-icon-dim aria-disabled:hover:bg-btn aria-expanded:bg-seg-sel";
+  "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:focus-ring disabled:text-icon-dim disabled:hover:bg-btn aria-disabled:text-icon-dim aria-disabled:hover:bg-btn aria-expanded:bg-seg-sel";
 const ICON = { size: 15, strokeWidth: 1.6, "aria-hidden": true } as const;
 /**
  * Filters: filled with the deeper accent while its bar is open (white reads 4.5:1 on
  * --accent-strong, not on --accent, #103).
  */
 const filtersControl =
-  "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent aria-expanded:border-accent-strong aria-expanded:bg-accent-strong aria-expanded:text-accent-contrast aria-expanded:hover:bg-accent-strong";
+  "flex h-6.5 shrink-0 items-center justify-center gap-1 rounded-md border border-pill-border bg-btn px-2 text-sm text-text outline-none hover:bg-seg-sel focus-visible:focus-ring aria-expanded:border-accent-strong aria-expanded:bg-accent-strong aria-expanded:text-accent-contrast aria-expanded:hover:bg-accent-strong";
 const VIEW_TEXT: Record<TableView, { label: string; hint: string }> = {
   data: { label: strings.grid.view.data, hint: strings.grid.view.dataHint },
   structure: { label: strings.grid.view.structure, hint: strings.grid.view.structureHint },
@@ -164,9 +164,9 @@ export function TableBottomBar({ view, onView, tabsRef, panelIds, data }: Props)
               aria-keyshortcuts={keys(shortcut[k])}
               onClick={() => onView(k)}
               onKeyDown={onTabKey}
-              // The ring sits inside the segment: accent on the button, white inside the selected fill
-              // (accent on --accent-strong would barely show; white reads 5.4:1 or more there).
-              className="rounded-[5px] px-2.5 text-text outline-none aria-selected:bg-accent-strong aria-selected:text-accent-contrast focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent aria-selected:focus-visible:outline-accent-contrast"
+              // The ring sits inside the segment; on the selected fill its inner band reads 3:1
+              // (black 3.62 / white 5.40 on --accent-strong, #135) where the accent barely shows.
+              className="rounded-[5px] px-2.5 text-text outline-none aria-selected:bg-accent-strong aria-selected:text-accent-contrast focus-visible:focus-ring-inset"
             >
               {VIEW_TEXT[k].label}
             </button>

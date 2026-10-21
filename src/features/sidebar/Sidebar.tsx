@@ -90,7 +90,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
               tabIndex={segment === s ? 0 : -1}
               onClick={() => setSegment(workspace.id, s)}
               onKeyDown={onKeyDown}
-              className="h-full min-w-0 flex-1 truncate rounded-[5px] text-sm text-text-2 outline-none hover:text-text aria-selected:bg-seg-sel aria-selected:font-medium aria-selected:text-text focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-accent"
+              className="h-full min-w-0 flex-1 truncate rounded-[5px] text-sm text-text-2 outline-none hover:text-text aria-selected:bg-seg-sel aria-selected:font-medium aria-selected:text-text focus-visible:focus-ring-inset"
             >
               {S.segments[s]}
             </button>
