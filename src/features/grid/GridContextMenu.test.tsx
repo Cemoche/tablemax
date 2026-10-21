@@ -92,5 +92,5 @@ test("highlighted_row_contrast: hovered / focused rows are --accent-strong, the 
   expect(item).toHaveClass("group", "hover:bg-accent-strong", "focus-visible:bg-accent-strong", "hover:text-accent-contrast");
   expect(item.className).not.toMatch(/(^|\s)(hover|focus-visible):bg-accent(\s|$)/);
   const hint = item.querySelector("[aria-hidden='true']");
-  expect(hint).toHaveClass("opacity-70", "group-hover:opacity-100", "group-focus-visible:opacity-100");
+  expect(hint).toHaveClass("opacity-70", "group-enabled:group-hover:opacity-100", "group-focus-visible:opacity-100");
 });

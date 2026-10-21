@@ -42,7 +42,7 @@ interface Props {
 const itemClass =
   "group flex h-10 cursor-pointer items-center justify-between gap-3 rounded-sm px-2 data-[selected=true]:bg-accent-strong data-[selected=true]:text-accent-contrast";
 // A row's secondary label (kind, environment, shortcut) at 70 %, opaque on the selected row:
-// white at 70 % over --accent-strong reads only 3.4:1 (#107).
+// white at 70 % over --accent-strong reads only ≈3.5:1 (#107).
 const hintClass = "text-sm opacity-70 group-data-[selected=true]:opacity-100";
 const headingClass =
   "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-sm [&_[cmdk-group-heading]]:text-muted";

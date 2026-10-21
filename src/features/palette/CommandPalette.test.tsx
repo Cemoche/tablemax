@@ -380,6 +380,6 @@ test("selected_row_contrast: the selected row is --accent-strong with white text
   const option = within(dialog).getByText(strings.palette.action.newQuery).closest("[cmdk-item]") as HTMLElement;
   expect(option).toHaveClass("group", "data-[selected=true]:bg-accent-strong", "data-[selected=true]:text-accent-contrast");
   expect(option.className).not.toMatch(/(^|\s)data-\[selected=true\]:bg-accent(\s|$)/);
-  // White at 70 % over --accent-strong reads 3.4:1: the shortcut is opaque on the selected row.
+  // White at 70 % over --accent-strong reads ≈3.5:1: the shortcut is opaque on the selected row.
   expect(option.querySelector("kbd")).toHaveClass("opacity-70", "group-data-[selected=true]:opacity-100");
 });

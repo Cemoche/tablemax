@@ -141,10 +141,10 @@ export function GridContextMenu({ x, y, label, items, onClose }: Props) {
           >
             <span className="min-w-0 flex-1 truncate">{item.label}</span>
             {item.shortcut && (
-              // 70 % at rest; opaque on the highlighted row (white at 70 % on --accent-strong: 3.4:1, #107).
+              // 70 % at rest; opaque on the highlighted row (white at 70 % on --accent-strong: ≈3.5:1, #107).
               <span
                 aria-hidden="true"
-                className="shrink-0 text-xs opacity-70 group-hover:opacity-100 group-focus-visible:opacity-100"
+                className="shrink-0 text-xs opacity-70 group-enabled:group-hover:opacity-100 group-focus-visible:opacity-100"
               >
                 {formatShortcut(item.shortcut)}
               </span>

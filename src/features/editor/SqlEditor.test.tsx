@@ -42,6 +42,8 @@ test("editor theme takes background and text from the tokens", () => {
     backgroundColor: "var(--accent-strong)",
     color: "var(--accent-contrast)",
   });
+  // Its type icon is opaque there (CodeMirror draws it at 60 %, ≈3:1 on the fill).
+  expect(editorThemeSpec[".cm-tooltip-autocomplete ul li[aria-selected] .cm-completionIcon"]).toEqual({ opacity: 1 });
   expect(buildEditorTheme(true)).toBeDefined();
 });
 
