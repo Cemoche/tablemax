@@ -113,7 +113,7 @@ function SearchOptions() {
     e.stopPropagation();
   };
 
-  const item = "mx-1 flex items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent hover:text-accent-contrast focus-visible:bg-accent focus-visible:text-accent-contrast";
+  const item = "mx-1 flex items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent-strong hover:text-accent-contrast focus-visible:bg-accent-strong focus-visible:text-accent-contrast";
   const tick = (on: boolean) => (
     <Check aria-hidden size={13} strokeWidth={2} className={on ? "" : "invisible"} />
   );

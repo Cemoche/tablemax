@@ -339,6 +339,16 @@ Coloration SQL : celle de TablePlus (mots-clés #529BD8, fonctions #7CB342 / #2E
 > coloré), seulement sans sélection (la sélection s'exécute alors), et plus de bande de ligne
 > active ; rien au-delà de 200 000 caractères (le texte est redécoupé à chaque frappe).
 
+> Amendement 2026-10-21 (#107) : règle — un fond d'accent plein sous un texte (contrôle rempli,
+> ligne surlignée ou sélectionnée) est `--accent-strong` (blanc `--accent-contrast` à 5,8:1
+> clair / 5,4:1 sombre), jamais `--accent` (4,0:1 / 3,9:1). Un libellé secondaire à 70 %
+> (raccourci, type) ou une icône à 60 % y devient opaque (blanc à 70 % : ≈3,5:1 ; à 60 % :
+> ≈3:1). `--accent` reste pour les teintes (`bg-accent/30`), anneaux de focus, bordures et
+> icônes. L'accent comme couleur de texte (liens) est sous 4,5:1 (4,02:1 clair / 4,24:1
+> sombre) : suivi dans #129. Tests : `accent_fill_guard` (`src/styles/accentText.test.ts`,
+> aucun fond `--accent` opaque dans `src/`) et `accent_text_contrast` (`tokens.test.ts`, clair,
+> sombre média, sombre forcé).
+
 ### 5.2 Dimensions (à 100 %)
 Barre du haut 52, pilules 34, boutons 28–32 ; colonne des connexions 80 ; barre latérale 262
 (min 240) ; en-tête de barre latérale 40 ; lignes d'arbre 24 ; onglets 38 (capsules 28) ;

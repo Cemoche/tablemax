@@ -275,3 +275,26 @@ test("sql_editor_contrast: the SQL text colours read 4.5:1 on the editor and on 
   expect(values(LIGHT)["--sql-selection"]).toBe("#FFEA84");
   expect(values(DARK_FORCED)["--sql-selection"]).toBe("#003F84");
 });
+
+/** `fg` at `alpha` over `bg`, as #RRGGBB (what an `opacity-70` label shows). */
+function over(fg: string, bg: string, alpha: number): string {
+  const ch = (hex: string, i: number) => parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16);
+  const mix = [0, 1, 2].map((i) => Math.round(alpha * ch(fg, i) + (1 - alpha) * ch(bg, i)));
+  return `#${mix.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
+test("accent_text_contrast: text on an accent fill (menus, palette, primary buttons, TabList, completions) reads 4.5:1 on --accent-strong (#107)", () => {
+  const onAccent = values(LIGHT)["--accent-contrast"];
+  // The light text of filled controls is white in both themes (not redefined in dark).
+  expect(onAccent).toBe("#FFFFFF");
+  for (const selector of [DARK_MEDIA, DARK_FORCED]) expect(values(selector)["--accent-contrast"], selector).toBeUndefined();
+  for (const selector of [LIGHT, DARK_MEDIA, DARK_FORCED]) {
+    const v = values(selector);
+    // Menu rows, the palette's selected item, primary dialog buttons, TabList, completions.
+    expect(contrastRatio(onAccent, v["--accent-strong"]), `${selector} accent-contrast on accent-strong`).toBeGreaterThanOrEqual(4.5);
+    // Not on the §5.1 accent: the reason for the rule.
+    expect(contrastRatio(onAccent, v["--accent"]), `${selector} accent-contrast on accent`).toBeLessThan(4.5);
+    // A 70 % hint (shortcut, kind) would not read on the fill: highlighted rows show it opaque.
+    expect(contrastRatio(over(onAccent, v["--accent-strong"], 0.7), v["--accent-strong"]), `${selector} 70 % hint`).toBeLessThan(4.5);
+  }
+});

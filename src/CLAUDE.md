@@ -25,6 +25,10 @@ The UI follows the redesign spec `docs/superpowers/specs/2026-10-19-tablemax-ui-
 - A new color = a token in `tokens.css` (dark and light values) + a `--color-*` line in
   `src/index.css`. Text tokens keep ≥ 4.5:1 on their backgrounds in both themes
   (`src/styles/tokens.test.ts` checks the pairs it draws).
+- Accent fills: `bg-accent-strong` + `text-accent-contrast`, never an opaque `bg-accent`
+  (white is 4.0:1 there); `--accent` is for tints (`bg-accent/30`), rings, borders and icons
+  (`src/styles/accentText.test.ts` checks it, #107). Accent as a text colour (links) is
+  below 4.5:1 too (4.02:1 light / 4.24:1 dark), tracked in #129.
 - Canvas code (the grid) reads tokens at runtime: see `src/features/grid/gridTheme.ts`.
 - Focus rings: `outline-none focus-visible:outline-2 focus-visible:outline-solid
   focus-visible:outline-accent` (Tailwind 4 needs `outline-solid` after `outline-none`).

@@ -37,6 +37,13 @@ test("editor theme takes background and text from the tokens", () => {
   });
   expect(editorThemeSpec[".cm-gutters"].backgroundColor).toBe("var(--surface-2)");
   expect(JSON.stringify(editorThemeSpec)).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
+  // The selected completion: white on the deeper accent (4.0:1 on --accent, #107).
+  expect(editorThemeSpec[".cm-tooltip-autocomplete ul li[aria-selected]"]).toEqual({
+    backgroundColor: "var(--accent-strong)",
+    color: "var(--accent-contrast)",
+  });
+  // Its type icon is opaque there (CodeMirror draws it at 60 %, ≈3:1 on the fill).
+  expect(editorThemeSpec[".cm-tooltip-autocomplete ul li[aria-selected] .cm-completionIcon"]).toEqual({ opacity: 1 });
   expect(buildEditorTheme(true)).toBeDefined();
 });
 

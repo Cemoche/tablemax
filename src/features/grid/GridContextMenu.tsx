@@ -137,11 +137,15 @@ export function GridContextMenu({ x, y, label, items, onClose }: Props) {
               close("item");
               item.onSelect();
             }}
-            className={`mx-1 flex items-center gap-4 rounded-md py-1 text-left outline-none hover:bg-accent hover:text-accent-contrast focus-visible:bg-accent focus-visible:text-accent-contrast disabled:text-text-2 disabled:hover:bg-transparent ${item.indent ? "pr-3 pl-6" : "px-3"}`}
+            className={`group mx-1 flex items-center gap-4 rounded-md py-1 text-left outline-none hover:bg-accent-strong hover:text-accent-contrast focus-visible:bg-accent-strong focus-visible:text-accent-contrast disabled:text-text-2 disabled:hover:bg-transparent ${item.indent ? "pr-3 pl-6" : "px-3"}`}
           >
             <span className="min-w-0 flex-1 truncate">{item.label}</span>
             {item.shortcut && (
-              <span aria-hidden="true" className="shrink-0 text-xs opacity-70">
+              // 70 % at rest; opaque on the highlighted row (white at 70 % on --accent-strong: ≈3.5:1, #107).
+              <span
+                aria-hidden="true"
+                className="shrink-0 text-xs opacity-70 group-enabled:group-hover:opacity-100 group-focus-visible:opacity-100"
+              >
                 {formatShortcut(item.shortcut)}
               </span>
             )}

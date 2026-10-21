@@ -40,7 +40,10 @@ interface Props {
 
 // Rows of 40 px (spec §2.3, Open Anything).
 const itemClass =
-  "flex h-10 cursor-pointer items-center justify-between gap-3 rounded-sm px-2 data-[selected=true]:bg-accent data-[selected=true]:text-accent-contrast";
+  "group flex h-10 cursor-pointer items-center justify-between gap-3 rounded-sm px-2 data-[selected=true]:bg-accent-strong data-[selected=true]:text-accent-contrast";
+// A row's secondary label (kind, environment, shortcut) at 70 %, opaque on the selected row:
+// white at 70 % over --accent-strong reads only ≈3.5:1 (#107).
+const hintClass = "text-sm opacity-70 group-data-[selected=true]:opacity-100";
 const headingClass =
   "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-sm [&_[cmdk-group-heading]]:text-muted";
 
@@ -223,7 +226,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnec
           })}
         >
           <span>{t.name}</span>
-          <span className="text-sm opacity-70">
+          <span className={hintClass}>
             {t.kind === "view" ? strings.sidebar.kinds.view : strings.sidebar.kinds.table}
           </span>
         </Command.Item>
@@ -301,7 +304,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnec
                 })}
               >
                 <span>{t.title}</span>
-                <span className="text-sm opacity-70">{tabKindLabel(t)}</span>
+                <span className={hintClass}>{tabKindLabel(t)}</span>
               </Command.Item>
             ))}
           </Command.Group>
@@ -316,7 +319,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnec
                 onSelect={run(() => onOpenConnection(c))}
               >
                 <span>{c.name}</span>
-                <span className="text-sm opacity-70">{strings.env[c.envTag]}</span>
+                <span className={hintClass}>{strings.env[c.envTag]}</span>
               </Command.Item>
             ))}
           </Command.Group>
@@ -348,7 +351,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnec
               >
                 <span>{a.title}</span>
                 {isKeymapActionId(a.id) && (
-                  <kbd className="font-mono text-sm opacity-70">
+                  <kbd className={`font-mono ${hintClass}`}>
                     {formatShortcut(effectiveShortcut(a.id, keymap))}
                   </kbd>
                 )}

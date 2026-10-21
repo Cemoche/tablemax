@@ -45,7 +45,7 @@ export function HostKeyPrompt({ host, fingerprint, onTrust, onCancel }: Props) {
           <button
             type="button"
             onClick={onTrust}
-            className="rounded-sm bg-accent px-3 py-1 text-accent-contrast"
+            className="rounded-sm bg-accent-strong px-3 py-1 text-accent-contrast"
           >
             {strings.ssh.trust}
           </button>

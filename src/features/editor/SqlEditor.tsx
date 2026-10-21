@@ -174,9 +174,11 @@ export const editorThemeSpec = {
     border: "1px solid var(--border)",
   },
   ".cm-tooltip-autocomplete ul li[aria-selected]": {
-    backgroundColor: "var(--accent)",
+    backgroundColor: "var(--accent-strong)",
     color: "var(--accent-contrast)",
   },
+  // CodeMirror draws the type icons at 60 %: white at 60 % on --accent-strong is ≈3:1 (#107).
+  ".cm-tooltip-autocomplete ul li[aria-selected] .cm-completionIcon": { opacity: 1 },
 };
 
 /** `dark` only selects CodeMirror's base theme; every color comes from the tokens. */
