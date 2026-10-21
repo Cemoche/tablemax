@@ -113,7 +113,6 @@ export function ContextMenu({
     };
   }, []); // `trigger` is a ref, read at press time
 
-
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const els = [...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
     if (moveMenuFocus(e.key, els)) e.preventDefault();
