@@ -479,8 +479,7 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 > touche par touche pour us, fr, de, us(dvorak), il, gr, ru (valeurs xkeyboard-config,
 > `src/test/layouts.ts`) : chaque défaut a une touche, une touche ne vaut qu'une combinaison.
 > Les dispositions non latines suivent l'amendement #131 ci-dessous (positions US). QWERTZ
-> reste ainsi (Ctrl+/ = Ctrl+Shift+7) ; sa touche « + » vaut Ctrl+] (onglet suivant) et non
-> le zoom, c'est #132.
+> reste ainsi (Ctrl+/ = Ctrl+Shift+7) ; sa touche « + » : amendement #132 ci-dessous.
 > Ctrl+AltGr sous Linux (Ctrl seul, caractère d'AltGr) : sur la rangée des chiffres la touche
 > reste son chiffre (AZERTY Ctrl+AltGr+5 « [ » = Ctrl+5) ; ailleurs le caractère compte
 > (AZERTY Ctrl+AltGr+« ) » tape « ] » = Ctrl+], onglet suivant, au lieu de Ctrl+- avant).
@@ -511,6 +510,25 @@ en-tête de grille 30, lignes 26, numéros 46 ; barre du bas 42, contrôles 26 ;
 > dispositions : dans les deux états, une touche ne vaut qu'une combinaison et
 > l'enregistreur fait l'aller-retour ; chaque défaut a une touche dans l'état latin du
 > démarrage et dans l'état que la disposition produit.
+
+> Amendement 2026-10-21 (#132) : un « + » tapé sans Shift, hors rangée des chiffres, vaut
+> Shift+= (« + » est Shift+= sur US) : Ctrl + la touche « + » agrandit la police. Nouvelle
+> étape entre les étapes 2 et 3 de #105 (étape 3 de `keyPressOf`, les suivantes décalées),
+> dans les deux états de #131 (QWERTZ juste après le russe garde le zoom ; aucune
+> disposition non latine testée ne tape « + » sans Shift, le serbe cyrillique le tape en
+> position US « = », qui agrandissait déjà). QWERTZ (de, comme l'italien et l'espagnol :
+> « + » en position US « ] ») : Ctrl+« + » = Ctrl+Shift+= (police +) au lieu de Ctrl+]
+> (onglet suivant) ; Ctrl+Shift+« + » (« * ») reste Ctrl+Shift+] par position
+> (connexion suivante) ; Ctrl+] n'a plus de touche (« ] » est AltGr+9), l'onglet suivant
+> reste Ctrl+Tab et Ctrl+PageDown. Nordiques (se, no, dk, fi : « + » en position US « - ») :
+> Ctrl+« + » réduisait la police (Ctrl+- par position), il l'agrandit ; Ctrl+- reste la
+> touche « - ». Portugais (« + » en position US « [ ») : Ctrl+« + » agrandit au lieu de
+> Ctrl+[ (onglet précédent, qui garde Ctrl+Shift+Tab et Ctrl+PageUp). Rangée des chiffres
+> inchangée : le « + » du tchèque (touche 1) reste Ctrl+1 ; le suisse tape « + » avec
+> Shift+1 : Ctrl+Shift+1, sans défaut, pas le zoom (limite). Le balayage « chaque défaut a une touche » vérifie par
+> action (au moins une combinaison accessible), avec une liste explicite par disposition des
+> combinaisons sans touche et leur raison (de : Ctrl+]) ; une combinaison listée doit rester
+> sans touche. us, fr, us(dvorak), il, gr, ru inchangés.
 
 Règle : un raccourci n'existe que dans son contexte (grille, éditeur, barre de filtres) quand
 TablePlus le réutilise (⌘I, ⌘F, ⌘←) ; tous restent réassignables (registre existant) ; un

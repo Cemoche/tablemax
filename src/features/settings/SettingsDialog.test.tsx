@@ -487,6 +487,10 @@ test("recording names punctuation as the layout types it, Shift included in the 
   await userEvent.click(changeButton(paletteLabel));
   await act(async () => key({ code: "Digit7", key: "/", ctrlKey: true, shiftKey: true }));
   expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["editor.comment"]))).toBeInTheDocument();
+  // QWERTZ: Ctrl + the "+" key is Ctrl+Shift+= (font size up, #132), refused.
+  await act(async () => key({ code: "BracketRight", key: "+", ctrlKey: true }));
+  expect(screen.getByText(strings.settings.shortcutConflict(strings.keymap["font.increase"]))).toBeInTheDocument();
+  expect(ipc.settingsSet).toHaveBeenCalledTimes(1);
 });
 
 test("recording on a non-Latin layout names punctuation by US position, after a letter typed (#131)", async () => {
