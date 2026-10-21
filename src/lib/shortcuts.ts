@@ -9,101 +9,123 @@ export function isModalOpen(): boolean {
   return [...document.querySelectorAll('[aria-modal="true"]')].some((el) => el.closest("[hidden]") === null);
 }
 
-const NAMED_CODES: Record<string, string> = {
-  tab: "Tab",
-  enter: "Enter",
-  escape: "Escape",
-  esc: "Escape",
-  space: "Space",
-  "/": "Slash",
-  ".": "Period",
-  ",": "Comma",
-  ";": "Semicolon",
-  "-": "Minus",
-  "=": "Equal",
-  "[": "BracketLeft",
-  "]": "BracketRight",
-  "\\": "Backslash",
-  "`": "Backquote",
-  arrowup: "ArrowUp",
-  arrowdown: "ArrowDown",
-  arrowleft: "ArrowLeft",
-  arrowright: "ArrowRight",
-  pageup: "PageUp",
-  pagedown: "PageDown",
-};
-
-function codeFor(key: string): string {
-  const k = key.toLowerCase();
-  if (NAMED_CODES[k]) return NAMED_CODES[k];
-  if (/^[0-9]$/.test(k)) return `Digit${k}`;
-  return key; // e.g. "F5", "Backspace": already a KeyboardEvent.code
-}
-
 const LATIN_LETTER = /^[a-z]$/i;
 /** One printable ASCII character (a letter, digit, space or punctuation). */
 const ASCII_PRINTABLE = /^[\x20-\x7e]$/;
+const FUNCTION_KEY = /^F([1-9]|1[0-2])$/;
+const DIGIT_ROW = /^Digit[0-9]$/;
+const LETTER_POSITION = /^Key([A-Z])$/;
 
-/**
- * The letter a keydown stands for in a shortcut, uppercase, or null when it is no letter.
- * Letters follow the layout: `e.key` when it is a Latin letter (AZERTY's Z key is "Z",
- * whatever its position), else the physical key (`e.code`) when `e.key` is not ASCII
- * (Cyrillic, Greek, an Option character on macOS, a dead key), so letter shortcuts still
- * work on non-Latin layouts. A letter position that types ASCII punctuation (AZERTY's M
- * position types ",") is no letter.
- */
-function eventLetter(e: Pick<KeyboardEvent, "key" | "code">): string | null {
-  const key = e.key ?? "";
-  if (LATIN_LETTER.test(key)) return key.toUpperCase();
-  const m = /^Key([A-Z])$/.exec(e.code ?? "");
-  return m && !ASCII_PRINTABLE.test(key) ? m[1] : null;
-}
+/** The shortcut characters besides letters and digits (the grammar's, `isValidShortcut`). */
+const PUNCTUATION = new Set([",", ".", "/", ";", "-", "=", "[", "]", "\\", "`"]);
 
-/** Does the key of `e` (modifiers aside) match the key part of a spec? */
-function keyMatches(e: KeyboardEvent, key: string): boolean {
-  if (LATIN_LETTER.test(key)) return eventLetter(e) === key.toUpperCase();
-  // Digits, punctuation and named keys by position (AZERTY digits need Shift), but never a
-  // key that types a letter: that key is its letter's.
-  return e.code === codeFor(key) && !LATIN_LETTER.test(e.key ?? "");
-}
+/** The punctuation positions: the character a US layout types there. */
+const POSITION_CHARS = new Map([
+  ["Comma", ","],
+  ["Period", "."],
+  ["Slash", "/"],
+  ["Semicolon", ";"],
+  ["Minus", "-"],
+  ["Equal", "="],
+  ["BracketLeft", "["],
+  ["BracketRight", "]"],
+  ["Backslash", "\\"],
+  ["Backquote", "`"],
+]);
 
-const CODE_KEYS: Record<string, string> = {
-  Period: ".",
-  Comma: ",",
-  Slash: "/",
-  Semicolon: ";",
-  Minus: "-",
-  Equal: "=",
-  BracketLeft: "[",
-  BracketRight: "]",
-  Backslash: "\\",
-  Backquote: "`",
-};
+/** The US layout's Shift level: the shifted symbol of each punctuation character ("{" is Shift+[). */
+const US_SHIFTED = new Map([
+  ["<", ","],
+  [">", "."],
+  ["?", "/"],
+  [":", ";"],
+  ["_", "-"],
+  ["+", "="],
+  ["{", "["],
+  ["}", "]"],
+  ["|", "\\"],
+  ["~", "`"],
+]);
+
+/** Keys named by their position (`e.code`), whatever they type. */
 const NAMED_KEYS = new Set([
   "Enter", "Tab", "Escape", "Space", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
   "PageUp", "PageDown", "NumpadAdd", "NumpadSubtract",
 ]);
 
+/** The spellings `matchCombination` accepts for a named key (lowercase) besides the canonical one. */
+const NAMED_ALIASES = new Map([...NAMED_KEYS].map((k) => [k.toLowerCase(), k] as [string, string]).concat([["esc", "Escape"]]));
+
+/**
+ * A keydown as a shortcut reads it: its key's name in the grammar (`"W"`, `"1"`, `"/"`,
+ * `"Enter"`, `"F5"`; `""` when the grammar has none) and whether Shift counts as a modifier.
+ */
+export interface KeyPress {
+  key: string;
+  shift: boolean;
+}
+
+/**
+ * Names a keydown for the shortcuts (spec §5.3, amendments #102 and #105): a key is the
+ * character the layout types on it when that character can name a shortcut, else its
+ * position. In order:
+ * 1. Named keys (Enter, Tab, arrows, F1–F12, the keypad's + and −…) by position; the
+ *    keypad's Enter is Enter (#122); the keypad's other keys have no name.
+ * 2. A Latin letter typed (`e.key`) is that letter, wherever the key sits (AZERTY's Z key is
+ *    Z, Dvorak's are Dvorak's).
+ * 3. A shortcut punctuation character typed (`, . / ; - = [ ] \ \``) is that character:
+ *    AZERTY's "," key is Ctrl+, and Dvorak's "/" key Ctrl+/. When Shift typed it (QWERTZ
+ *    Shift+7 = "/"), Shift belongs to the character, not to the shortcut. On the digit row
+ *    a character typed without Shift does not count: the row stays digits (AZERTY's "-" key
+ *    is Ctrl+6, tab 6, as in browsers).
+ * 4. With Shift, a US shifted symbol (`< > ? : _ + { } | ~`) is Shift + its US key's
+ *    character ("{" is Shift+[), off the digit row.
+ * 5. Else the position (`e.code`): the digit row's digit, a letter position's letter (a
+ *    non-Latin letter, a dead key, or a character no shortcut can name: Hebrew's "'" key is
+ *    W), a punctuation position's US character (AZERTY's "!" key is "/", its ")" key "-").
+ * No layout table: `keyCode` says nothing more on Linux (WebKitGTK derives it from the
+ * typed character), and the webview cannot tell which layout is active.
+ */
+export function keyPressOf(e: Pick<KeyboardEvent, "key" | "code" | "shiftKey">): KeyPress {
+  const code = e.code ?? "";
+  const shift = e.shiftKey === true;
+  if (code === "NumpadEnter") return { key: "Enter", shift };
+  if (NAMED_KEYS.has(code) || FUNCTION_KEY.test(code)) return { key: code, shift };
+  if (code.startsWith("Numpad")) return { key: "", shift };
+  const ch = e.key ?? "";
+  if (LATIN_LETTER.test(ch)) return { key: ch.toUpperCase(), shift };
+  const digitRow = DIGIT_ROW.test(code);
+  if (PUNCTUATION.has(ch) && (shift || !digitRow)) return { key: ch, shift: false };
+  const base = US_SHIFTED.get(ch);
+  if (shift && !digitRow && base !== undefined) return { key: base, shift };
+  if (digitRow) return { key: code.slice(5), shift };
+  const letter = LETTER_POSITION.exec(code);
+  if (letter) return { key: letter[1], shift };
+  return { key: POSITION_CHARS.get(code) ?? "", shift };
+}
+
 /**
  * The key part of the canonical spec for a keydown (`"W"`, `"1"`, `"/"`, `"Enter"`, `"F5"`),
- * by the same rules as the matching: whatever it returns, `matchCombination` matches. Empty
- * when the grammar has no name for the key (the Settings recorder reports it as invalid).
+ * by the rules of `keyPressOf`: whatever it returns, `matchCombination` matches (with Shift
+ * as `keyPressOf` counts it). Empty when the grammar has no name for the key (the Settings
+ * recorder reports it as invalid).
  */
-export function shortcutKeyOf(e: Pick<KeyboardEvent, "key" | "code">): string {
-  const letter = eventLetter(e);
-  if (letter) return letter;
-  const code = e.code ?? "";
-  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
-  if (/^F([1-9]|1[0-2])$/.test(code) || NAMED_KEYS.has(code)) return code;
-  return Object.prototype.hasOwnProperty.call(CODE_KEYS, code) ? CODE_KEYS[code] : "";
+export function shortcutKeyOf(e: Pick<KeyboardEvent, "key" | "code"> & { shiftKey?: boolean }): string {
+  return keyPressOf({ key: e.key, code: e.code, shiftKey: e.shiftKey ?? false }).key;
+}
+
+/** The key part of a spec in canonical form (a letter uppercase, "esc" → "Escape"). */
+function specKey(key: string): string {
+  if (key.length === 1) return key.toUpperCase();
+  return NAMED_ALIASES.get(key.toLowerCase()) ?? key;
 }
 
 /**
  * Does `e` match `spec` (`"Mod+K"`, `"Ctrl+Tab"`, `"Mod+Shift+F"`)? `Mod` is Meta on
- * macOS and Ctrl elsewhere; `Ctrl` is always Ctrl. A letter follows the layout (`e.key`,
- * with `e.code` for non-Latin layouts: see `eventLetter`); digits, punctuation and named
- * keys are compared with `e.code` (layout independent). The modifiers must match exactly.
- * Auto-repeat never matches.
+ * macOS and Ctrl elsewhere; `Ctrl` is always Ctrl. The key is named by `keyPressOf`: the
+ * character the layout types when it can name a shortcut, else the position (non-Latin
+ * letters, AZERTY's digit row, named keys). The modifiers must match exactly, Shift as
+ * `keyPressOf` counts it. Auto-repeat never matches.
  */
 export function matchShortcut(e: KeyboardEvent, spec: string): boolean {
   return !e.repeat && matchCombination(e, spec);
@@ -141,11 +163,13 @@ export function matchCombination(e: KeyboardEvent, spec: string): boolean {
         break;
     }
   }
+  const press = keyPressOf(e);
   return (
-    keyMatches(e, key) &&
+    press.key !== "" &&
+    press.key === specKey(key) &&
     e.ctrlKey === ctrl &&
     e.metaKey === meta &&
-    e.shiftKey === shift &&
+    press.shift === shift &&
     e.altKey === alt
   );
 }
