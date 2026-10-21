@@ -44,7 +44,7 @@ export function CellEditorOverlay({ value, load, onChange, onMount }: Props) {
     return <div className="px-2 py-1 text-muted">{strings.grid.editorLoading}</div>;
   }
   if (state.s === "failed") {
-    return <div className="px-2 py-1 text-danger">{strings.grid.editorLoadFailed(state.message)}</div>;
+    return <div className="px-2 py-1 text-danger-text">{strings.grid.editorLoadFailed(state.message)}</div>;
   }
   return (
     <textarea

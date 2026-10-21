@@ -107,7 +107,7 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
     <section aria-label={H.label} className="flex min-h-0 flex-1 flex-col">
       <SidebarSearch label={H.search} placeholder={H.searchPlaceholder} value={search} onChange={setSearch} />
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5">
-        {error && <p className="px-1.5 py-1 text-danger">{error}</p>}
+        {error && <p className="px-1.5 py-1 text-danger-text">{error}</p>}
         {entries === null && !error && <p className="px-1.5 py-1 text-text-2">{H.loading}</p>}
         {entries?.length === 0 && <p className="px-1.5 py-1 text-text-2">{query ? H.noMatch : H.empty}</p>}
         {entries && entries.length > 0 && (
@@ -134,7 +134,7 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
                     {h.elapsedMs !== null && <span>{H.duration(h.elapsedMs)}</span>}
                     {h.rows !== null && <span>{H.rows(h.rows)}</span>}
                   </span>
-                  {h.error && <span className="mt-0.5 block text-xs break-words text-danger">{h.error}</span>}
+                  {h.error && <span className="mt-0.5 block text-xs break-words text-danger-text">{h.error}</span>}
                 </button>
               </li>
             ))}
@@ -146,7 +146,7 @@ export function HistoryPanel({ workspace }: { workspace: Workspace }) {
           type="button"
           onClick={() => setConfirmClear(true)}
           disabled={!entries || entries.length === 0}
-          className="rounded-md border border-pill-border bg-btn px-2 py-0.5 text-sm text-danger outline-none hover:bg-seg-sel disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-accent"
+          className="rounded-md border border-pill-border bg-btn px-2 py-0.5 text-sm text-danger-text outline-none hover:bg-seg-sel disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-accent"
         >
           {H.clear}
         </button>

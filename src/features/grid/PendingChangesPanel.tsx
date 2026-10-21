@@ -193,7 +193,7 @@ export function PendingChangesPanel({ workspaceId, tabId, object }: Props) {
       {open && (
         <>
           {preview.error && allFresh && (
-            <p className="border-t border-border px-3 py-1 text-danger">{s.previewFailed(preview.error)}</p>
+            <p className="border-t border-border px-3 py-1 text-danger-text">{s.previewFailed(preview.error)}</p>
           )}
           <ol aria-label={s.label} className="min-h-0 overflow-auto">
             {list.map((c, i) => {
@@ -223,8 +223,8 @@ export function PendingChangesPanel({ workspaceId, tabId, object }: Props) {
                   {sql && (
                     <pre className="whitespace-pre-wrap break-all font-mono text-xs text-muted">{sql}</pre>
                   )}
-                  {invalid && <p className="break-words text-danger">{invalid}</p>}
-                  {failed && <p className="break-words text-danger">{failed}</p>}
+                  {invalid && <p className="break-words text-danger-text">{invalid}</p>}
+                  {failed && <p className="break-words text-danger-text">{failed}</p>}
                 </li>
               );
             })}

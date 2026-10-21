@@ -42,7 +42,7 @@ export function IndexView({ workspaceId, object }: { workspaceId: string; object
   }, [load]);
 
   const body = () => {
-    if (state.error) return <p role="alert" className="p-3 text-danger">{s.loadFailed(state.error.message)}</p>;
+    if (state.error) return <p role="alert" className="p-3 text-danger-text">{s.loadFailed(state.error.message)}</p>;
     if (!state.info) return <Empty text={s.loading} />;
     if (state.info.indexes.length === 0) return <Empty text={s.noIndexes} />;
     return (

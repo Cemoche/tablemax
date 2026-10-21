@@ -128,7 +128,7 @@ export function PagePopover({ offset, limit, onGo, onClose }: Props) {
         />,
       )}
       {error && (
-        <p id={errorId} role="alert" className="text-danger">
+        <p id={errorId} role="alert" className="text-danger-text">
           {error.text}
         </p>
       )}

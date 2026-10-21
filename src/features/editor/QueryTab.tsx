@@ -414,7 +414,7 @@ export function QueryTab({ workspace, tab }: Props) {
           {strings.savedQueries.save}
         </button>
         {running && (
-          <button type="button" className={`${btn} text-danger`} onClick={cancel}>
+          <button type="button" className={`${btn} text-danger-text`} onClick={cancel}>
             <CircleStop aria-hidden size={14} strokeWidth={1.6} />
             {strings.query.cancel}
           </button>

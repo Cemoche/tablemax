@@ -43,7 +43,7 @@ export function Breadcrumb({ workspaceId, tabId, object, filters, combine = "and
           <button
             type="button"
             onClick={() => backTo(workspaceId, tabId, i)}
-            className="max-w-64 shrink-0 truncate rounded-sm px-1 text-accent hover:bg-surface-2"
+            className="max-w-64 shrink-0 truncate rounded-sm px-1 text-accent-text hover:bg-surface-2"
           >
             {crumb(entry.object, entry.view.filters, entry.view.combine)}
           </button>

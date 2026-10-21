@@ -87,7 +87,7 @@ export function ConfirmRunDialog({ connectionName, envTag, safeMode, statements,
           <button ref={cancelRef} type="button" className={btn} onClick={onCancel}>
             {strings.safety.confirmCancel}
           </button>
-          <button ref={runRef} type="button" className={`${btn} text-danger`} onClick={onRun}>
+          <button ref={runRef} type="button" className={`${btn} text-danger-text`} onClick={onRun}>
             {strings.safety.confirmRun}
           </button>
         </div>

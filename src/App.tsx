@@ -223,7 +223,7 @@ function App() {
           <>
             <WelcomePane onCreate={() => showForm(null)} onImport={() => setImportDialog(true)} />
             <main className="flex min-w-0 flex-1 flex-col">
-              {loadError && <p className="bg-content px-4 py-2 text-danger">{loadError}</p>}
+              {loadError && <p className="bg-content px-4 py-2 text-danger-text">{loadError}</p>}
               <ConnectionList
                 items={items}
                 selectedId={selectedId}
@@ -239,7 +239,7 @@ function App() {
         {/* The form stays mounted (hidden) behind a workspace: its unsaved edits wait there. */}
         {form && (
           <main hidden={showWorkspace} className="min-w-0 flex-1 overflow-y-auto bg-content">
-            {loadError && <p className="mx-auto w-[620px] max-w-full px-5 pt-3 text-danger">{loadError}</p>}
+            {loadError && <p className="mx-auto w-[620px] max-w-full px-5 pt-3 text-danger-text">{loadError}</p>}
             <ConnectionForm
               key={form.seq}
               connection={form.connection}

@@ -99,7 +99,7 @@ function ForeignKeysTable({ info, workspaceId }: { info: TableInfo; workspaceId:
                   type="button"
                   aria-label={s.openReferenced(refName(fk))}
                   onClick={() => openTableTab(workspaceId, target)}
-                  className="text-accent underline"
+                  className="text-accent-text underline"
                 >
                   {refName(fk)}
                 </button>
@@ -224,11 +224,11 @@ export function StructureTab({
   const infoLoading = !info.data && !info.error;
   const panel = () => {
     if (section === "ddl") {
-      if (ddl.error) return <p role="alert" className="p-3 text-danger">{s.ddlFailed(ddl.error.message)}</p>;
+      if (ddl.error) return <p role="alert" className="p-3 text-danger-text">{s.ddlFailed(ddl.error.message)}</p>;
       if (ddl.data === null) return <Empty text={s.ddlLoading} />;
       return <DdlView ddl={ddl.data} dialect={dialect} />;
     }
-    if (info.error) return <p role="alert" className="p-3 text-danger">{s.loadFailed(info.error.message)}</p>;
+    if (info.error) return <p role="alert" className="p-3 text-danger-text">{s.loadFailed(info.error.message)}</p>;
     if (!info.data) return null;
     if (section === "columns") return <ColumnsTable info={info.data} />;
     return <ForeignKeysTable info={info.data} workspaceId={workspaceId} />;

@@ -329,7 +329,7 @@ function Field({
                 aria-label={strings.grid.openReferencedIn(l.object.name)}
                 {...tip(strings.grid.openReferencedIn(l.object.name))}
                 onClick={() => onOpenLink(l)}
-                className="max-w-40 truncate rounded-sm px-1 text-xs text-accent hover:bg-surface-2"
+                className="max-w-40 truncate rounded-sm px-1 text-xs text-accent-text hover:bg-surface-2"
               >
                 {strings.grid.fkLinkButton(l.object.name)}
               </button>
@@ -355,7 +355,7 @@ function Field({
       />
       {full?.s === "loading" && <p className="text-xs text-muted">{strings.grid.editorLoading}</p>}
       {full?.s === "failed" && (
-        <p className="flex items-baseline gap-2 text-xs text-danger">
+        <p className="flex items-baseline gap-2 text-xs text-danger-text">
           <span className="min-w-0 break-words">{strings.grid.editorLoadFailed(full.message)}</span>
           <button
             type="button"

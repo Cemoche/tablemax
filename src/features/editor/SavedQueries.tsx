@@ -108,9 +108,9 @@ export function SavedQueries({ workspace }: { workspace: Workspace }) {
     <section aria-label={S.label} className="flex min-h-0 flex-1 flex-col">
       <SidebarSearch label={S.search} placeholder={S.searchPlaceholder} value={search} onChange={setSearch} />
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1">
-        {loadError && <p className="px-1.5 py-1 text-danger">{S.loadFailed}</p>}
+        {loadError && <p className="px-1.5 py-1 text-danger-text">{S.loadFailed}</p>}
         {notice && (
-          <p role="alert" className="px-1.5 py-1 text-danger">
+          <p role="alert" className="px-1.5 py-1 text-danger-text">
             {notice}
           </p>
         )}

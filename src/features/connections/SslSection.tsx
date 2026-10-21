@@ -28,7 +28,7 @@ function BrowseButton({ file, ssl, onChange }: { file: (typeof FILES)[number]; s
   return (
     <button
       type="button"
-      className={`${buttonClass} px-2 ${ssl[file.key] !== null ? "font-medium" : ""} ${error ? "text-danger" : ""}`}
+      className={`${buttonClass} px-2 ${ssl[file.key] !== null ? "font-medium" : ""} ${error ? "text-danger-text" : ""}`}
       aria-label={strings.ssl.browseFor(file.label)}
       {...tip(error ?? ssl[file.key] ?? file.label)}
       onClick={browse}
