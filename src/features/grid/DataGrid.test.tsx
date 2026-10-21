@@ -85,6 +85,7 @@ const TOKENS: Record<string, string> = {
   "--inserted": "#558c3a",
   "--deleted": "#8f2f31",
   "--text-2": "#afafaf",
+  "--deleted-text": "#cccccc",
 };
 beforeAll(() => {
   for (const [k, v] of Object.entries(TOKENS)) document.documentElement.style.setProperty(k, v);
@@ -596,7 +597,13 @@ test("an edited cell on a selected row keeps its edit colour with readable text 
   const edited = { ...model, cell: (r: number, c: number) => ({ ...model.cell(r, c), edited: c === 2 }) };
   render(<Selecting ed={{ ...ed, model: edited }} />);
   // Not selected: the edit colour, and the FK indicator in the text that reads on it (#129).
-  expect(editor!.getCellContent([2, 1]).themeOverride).toEqual({ bgCell: "#ffe18e", linkColor: "#262626" });
+  expect(editor!.getCellContent([2, 1]).themeOverride).toEqual({
+    bgCell: "#ffe18e",
+    textDark: "#262626",
+    textMedium: "#262626",
+    textLight: "#262626",
+    linkColor: "#262626",
+  });
   act(() => editor!.onCellClicked!([-1, 1], click()));
   // Selected (white text on the accent row): the edit keeps --modified, with the text that
   // reads best on it (here --cell-text: white on #ffe18e is 1.3:1).
@@ -629,9 +636,8 @@ test("a failed row reads in --danger-text; on a change fill (inserted, deleted, 
   // …but the edited cell keeps --modified under the text that reads on it.
   expect(editor!.getCellContent([2, 2]).themeOverride).toMatchObject({ bgCell: "#ffe18e", textDark: "#262626" });
   // An inserted or deleted row keeps its fill's text: red is under 4.5:1 on those fills.
-  expect(editor!.getRowThemeOverride!(0)).toMatchObject({ bgCell: "#558c3a" });
-  expect(editor!.getRowThemeOverride!(0)?.textDark).toBeUndefined();
-  expect(editor!.getRowThemeOverride!(1)).toMatchObject({ bgCell: "#8f2f31", textDark: "#afafaf", linkColor: "#afafaf" });
+  expect(editor!.getRowThemeOverride!(0)).toMatchObject({ bgCell: "#558c3a", textDark: "#262626" });
+  expect(editor!.getRowThemeOverride!(1)).toMatchObject({ bgCell: "#8f2f31", textDark: "#cccccc", linkColor: "#cccccc" });
   // The cue every failed row keeps: its number in --danger-text.
   const marker = editor!.renderers!.find((r) => r.kind === InnerGridCellKind.Marker)!;
   for (const row of [0, 1, 2]) {
@@ -655,6 +661,40 @@ test("a failed row reads in --danger-text; on a change fill (inserted, deleted, 
     );
     expect(texts, `row ${row}`).toEqual(["#ff9999"]);
   }
+});
+
+test("a placeholder on a change fill (inserted, deleted, edited) takes the fill's text, not the dim --placeholder (#136)", () => {
+  const ed = editing();
+  const model = ed.model;
+  // Row 0 inserted (its cells DEFAULT), row 1 deleted, row 2 updated: its "note" cell set to NULL.
+  const rows = [
+    { kind: "insert" as const, tempId: "t", values: {} },
+    { ...(model.rows[1] as Extract<(typeof model.rows)[number], { kind: "row" }>), deleted: true },
+    model.rows[2],
+  ];
+  const changed = {
+    ...model,
+    rows,
+    cell: (r: number, c: number) =>
+      r === 0
+        ? { ...model.cell(r, c), value: "default" as const }
+        : r === 1 || (r === 2 && c === 2)
+          ? { ...model.cell(r, c), value: { t: "null" as const }, edited: r === 2 }
+          : model.cell(r, c),
+  };
+  render(<Selecting ed={{ ...ed, model: changed }} />);
+  // DEFAULT on an inserted row and NULL on a deleted row: smaller, in the row's text.
+  for (const row of [0, 1]) {
+    const cell = editor!.getCellContent([2, row]);
+    expect(cell.themeOverride, `row ${row}`).toEqual({ baseFontStyle: "11.5px" });
+  }
+  expect(editor!.getCellContent([2, 0])).toMatchObject({ displayData: strings.grid.defaultText });
+  // NULL in an edited cell: the text that reads on --modified.
+  expect(editor!.getCellContent([2, 2]).themeOverride).toMatchObject({
+    bgCell: "#ffe18e",
+    textDark: "#262626",
+    baseFontStyle: "11.5px",
+  });
 });
 
 test("a whole-row selection marks its block, so a hidden column does not shrink it to one row (fix 2)", () => {
