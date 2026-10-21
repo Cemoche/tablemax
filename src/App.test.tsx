@@ -546,3 +546,105 @@ describe("unsaved edits in the connection form are never dropped silently", () =
     expect(nameField()).toHaveValue("Prod PG");
   });
 });
+
+describe("Open SQLite file… (#117)", () => {
+  const sqliteInfo = { ...info, connectionId: "s1", dialect: "sqlite" as const, database: null };
+  const stored = cfg({
+    id: "s1",
+    name: "app",
+    envTag: "local",
+    kind: "sqlite",
+    host: "localhost",
+    user: "",
+    database: null,
+    sqlitePath: "/data/app.db",
+    passwordMode: "none",
+  });
+  const openSqlite = () => screen.getByRole("button", { name: strings.connections.openSqlite });
+  const newForm = () => screen.queryByRole("heading", { name: strings.form.newTitle });
+
+  beforeEach(() => {
+    vi.mocked(ipc.sessionLoad).mockResolvedValue(null);
+  });
+
+  test("the welcome pane's action picks a SQLite file and fills a new connection's form; Connect opens it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.filePick).mockResolvedValue("/data/app.db");
+    vi.mocked(ipc.connectionSave).mockResolvedValue(stored);
+    vi.mocked(ipc.workspaceOpen).mockResolvedValue(sqliteInfo);
+    render(<App />);
+    await screen.findByRole("option", { name: "Prod PG" });
+    await user.click(openSqlite());
+    expect(ipc.filePick).toHaveBeenCalledWith("sqlite");
+    expect(await screen.findByRole("heading", { name: strings.form.newTitle })).toBeInTheDocument();
+    expect(screen.getByLabelText(strings.form.driver)).toHaveValue("sqlite");
+    expect(screen.getByLabelText(strings.form.name)).toHaveValue("app");
+    expect(screen.getByLabelText(strings.form.sqlitePath)).toHaveValue("/data/app.db");
+    // Nothing is written before the user's Connect (or Save).
+    expect(ipc.connectionSave).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: strings.form.connect }));
+    await waitFor(() => expect(ipc.workspaceOpen).toHaveBeenCalledWith("s1", null, null, null));
+    expect(vi.mocked(ipc.connectionSave).mock.calls[0][0]).toMatchObject({
+      id: "",
+      kind: "sqlite",
+      sqlitePath: "/data/app.db",
+    });
+    await waitFor(() => expect(newForm()).toBeNull());
+    expect(useWorkspaces.getState().activeWorkspaceId).toBe("w1");
+  });
+
+  test("cancelling the picker does nothing", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.filePick).mockResolvedValue(null);
+    render(<App />);
+    await screen.findByRole("option", { name: "Prod PG" });
+    await user.click(openSqlite());
+    expect(ipc.filePick).toHaveBeenCalledWith("sqlite");
+    await act(async () => {});
+    expect(newForm()).toBeNull();
+    expect(screen.getByRole("option", { name: "Prod PG" })).toBeInTheDocument();
+    expect(ipc.connectionSave).not.toHaveBeenCalled();
+    expect(ipc.workspaceOpen).not.toHaveBeenCalled();
+  });
+
+  test("a picker failure is shown on the connections screen", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.filePick).mockRejectedValue({ kind: "io", message: "no file dialog" });
+    render(<App />);
+    await screen.findByRole("option", { name: "Prod PG" });
+    await user.click(openSqlite());
+    expect(await screen.findByText("no file dialog")).toBeInTheDocument();
+    expect(newForm()).toBeNull();
+  });
+
+  test("a file that does not open shows the connect error over the form, which stays", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.filePick).mockResolvedValue("/data/app.db");
+    vi.mocked(ipc.connectionSave).mockResolvedValue(stored);
+    vi.mocked(ipc.workspaceOpen).mockRejectedValue({ kind: "connection", message: "file is not a database" });
+    render(<App />);
+    await screen.findByRole("option", { name: "Prod PG" });
+    await user.click(openSqlite());
+    await user.click(await screen.findByRole("button", { name: strings.form.connect }));
+    expect(await screen.findByText("file is not a database")).toBeInTheDocument();
+    expect(screen.getByLabelText(strings.form.sqlitePath)).toHaveValue("/data/app.db");
+    expect(useWorkspaces.getState().workspaces).toEqual([]);
+  });
+
+  test("the palette's Open SQLite file… asks before dropping a form's edits, then picks", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.filePick).mockResolvedValue("/data/app.db");
+    render(<App />);
+    await screen.findByRole("option", { name: "Prod PG" });
+    await user.keyboard("{Control>}n{/Control}");
+    await user.type(screen.getByLabelText(strings.form.name), "draft");
+    await user.keyboard("{Control>}p{/Control}");
+    await user.type(within(await screen.findByRole("dialog", { name: strings.palette.label })).getByRole("combobox"), ">");
+    await user.click(await screen.findByText(strings.palette.action.openSqliteFile));
+    const ask = await screen.findByRole("dialog", { name: strings.connections.discardTitle });
+    expect(ipc.filePick).not.toHaveBeenCalled();
+    await user.click(within(ask).getByRole("button", { name: strings.connections.discardOk }));
+    await waitFor(() => expect(screen.getByLabelText(strings.form.name)).toHaveValue("app"));
+    expect(ipc.filePick).toHaveBeenCalledWith("sqlite");
+  });
+});

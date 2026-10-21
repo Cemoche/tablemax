@@ -8,7 +8,9 @@ import { ImportDialog } from "./features/connections/ImportDialog";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { WelcomePane } from "./features/connections/WelcomePane";
 import { flowTarget, useConnectFlow } from "./features/connections/useConnectFlow";
+import { sqliteFileDraft } from "./features/connections/connectionDraft";
 import { toAppError } from "./lib/errors";
+import * as ipc from "./lib/ipc";
 import { AppToolbar } from "./features/chrome/AppToolbar";
 import { ResizeHandles } from "./features/chrome/ResizeHandles";
 import { TooltipLayer } from "./features/chrome/TooltipLayer";
@@ -35,10 +37,15 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /**
    * The form shown on the connections screen in place of the list: a saved connection,
-   * or null for a new one; no form shows the list. `seq` remounts the form for each new
-   * opening (fresh state, focus on its first field), not after a save.
+   * or null for a new one (`draft`: its starting values, Open SQLite file…); no form shows
+   * the list. `seq` remounts the form for each new opening (fresh state, focus on its
+   * first field), not after a save.
    */
-  const [form, setForm] = useState<{ connection: ConnectionConfig | null; seq: number } | null>(null);
+  const [form, setForm] = useState<{
+    connection: ConnectionConfig | null;
+    draft?: ConnectionConfig;
+    seq: number;
+  } | null>(null);
   const formSeq = useRef(0);
   /** The open form holds unsaved edits (ConnectionForm's onDirtyChange). */
   const formDirty = useRef(false);
@@ -75,6 +82,28 @@ function App() {
       setView("connections");
     });
   };
+  /**
+   * Open SQLite file… (welcome pane, palette; #117): the SQLite file picker, then a new
+   * connection's form on the chosen file, unsaved — Connect saves and opens it, like any
+   * new connection; nothing is written before. Cancelling the picker changes nothing; a
+   * picker failure shows on the connections screen. A form with edits is asked about first.
+   */
+  const openSqliteFile = () =>
+    unlessDirty(async () => {
+      let path: string | null;
+      try {
+        path = await ipc.filePick("sqlite");
+      } catch (e) {
+        setLoadError(toAppError(e).message);
+        return;
+      }
+      if (path === null) return;
+      setLoadError(null);
+      formDirty.current = false;
+      formSeq.current += 1;
+      setForm({ connection: null, draft: sqliteFileDraft(path), seq: formSeq.current });
+      setView("connections");
+    });
   /** The form's back button: the list, the focus on the selected row (else the search). */
   const closeForm = () =>
     unlessDirty(() => {
@@ -221,7 +250,11 @@ function App() {
           </main>
         ) : form ? null : (
           <>
-            <WelcomePane onCreate={() => showForm(null)} onImport={() => setImportDialog(true)} />
+            <WelcomePane
+              onCreate={() => showForm(null)}
+              onImport={() => setImportDialog(true)}
+              onOpenSqlite={openSqliteFile}
+            />
             <main className="flex min-w-0 flex-1 flex-col">
               {loadError && <p className="bg-content px-4 py-2 text-danger-text">{loadError}</p>}
               <ConnectionList
@@ -243,6 +276,7 @@ function App() {
             <ConnectionForm
               key={form.seq}
               connection={form.connection}
+              draft={form.draft}
               active={!showWorkspace}
               onDirtyChange={(dirty) => {
                 formDirty.current = dirty;
@@ -287,6 +321,7 @@ function App() {
         onOpenConnection={(cfg) => void open(cfg)}
         onNewConnection={() => showForm(null)}
         onShowConnections={showConnections}
+        onOpenSqliteFile={openSqliteFile}
         onShowWorkspace={() => setView("workspace")}
       />
       <ConnectPrompt flow={openFlow} connectionName={openFlow.context?.name ?? ""} />

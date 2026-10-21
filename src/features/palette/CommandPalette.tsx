@@ -34,6 +34,8 @@ interface Props {
   onNewConnection: () => void;
   /** Shows the connection list (as Ctrl+Shift+K). */
   onShowConnections: () => void;
+  /** Open SQLite file…: the picker, then a new connection's form on the file (#117). */
+  onOpenSqliteFile: () => void;
   /** Called after the palette activates something of the workspace, so App shows it. */
   onShowWorkspace: () => void;
 }
@@ -47,7 +49,13 @@ const hintClass = "text-sm opacity-70 group-data-[selected=true]:opacity-100";
 const headingClass =
   "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-sm [&_[cmdk-group-heading]]:text-muted";
 
-export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnections, onShowWorkspace }: Props) {
+export function CommandPalette({
+  onOpenConnection,
+  onNewConnection,
+  onShowConnections,
+  onOpenSqliteFile,
+  onShowWorkspace,
+}: Props) {
   const [mode, setMode] = useState<Mode | null>(null);
   const [query, setQuery] = useState("");
   const [sub, setSub] = useState<Sub>(null);
@@ -169,6 +177,7 @@ export function CommandPalette({ onOpenConnection, onNewConnection, onShowConnec
     tab: workspace?.tabs.find((t) => t.id === workspace.activeTabId) ?? null,
     newConnection: onNewConnection,
     showConnections: onShowConnections,
+    openSqliteFile: onOpenSqliteFile,
     pickSchema: () => enterSub("schema"),
     pickDatabase: () => enterSub("database"),
   };
