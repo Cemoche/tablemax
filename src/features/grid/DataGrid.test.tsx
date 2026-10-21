@@ -11,11 +11,14 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type ReactNode, useState } from "react";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { KEYMAP_ACTIONS, actionsAlsoIn } from "../../lib/keymap";
 import { strings } from "../../lib/strings";
 import type { ResultSet } from "../../lib/types";
 import { useGridViews } from "../../stores/gridViews";
+import type { QueryRun } from "../../stores/queryRuns";
 import { DEFAULT_SETTINGS, useSettings } from "../../stores/settings";
 import { tableInfo } from "../../test/tableInfo";
+import { ResultsPanel } from "../editor/ResultsPanel";
 import { COL_MAX, COL_MIN } from "./columnLayout";
 import { DataGrid, type DataGridProps, type GridEditing } from "./DataGrid";
 import { buildGridModel } from "./editModel";
@@ -474,6 +477,36 @@ test("results_grid_reports_selected_row (#115): onSelectRow gets the active cell
   view.rerender(<DataGrid data={data} sortable={false} onSelectRow={onSelectRow} />);
   act(() => editor!.onCellClicked!([-1, 0], click({ shiftKey: true })));
   expect(editor!.gridSelection?.rows.toArray()).toEqual([0]);
+});
+
+test("results_grid_actions_parity (#141): the actions the SQL results grid takes are the registry's actionsAlsoIn('queryTab')", () => {
+  // The SQL tab's grid, with the props ResultsPanel gives it.
+  const run: QueryRun = {
+    id: 1,
+    running: false,
+    total: 1,
+    results: [{ index: 0, outcome: { result: data, rowsAffected: null, elapsedMs: 1 } }],
+    error: null,
+    cancelled: false,
+  };
+  render(<ResultsPanel run={run} onShownRow={vi.fn()} onToggleDetails={vi.fn()} />);
+  // A selected cell: Copy cells and Glide's keys act on it.
+  const cell: GridSelection = {
+    columns: CompactSelection.empty(),
+    rows: CompactSelection.empty(),
+    current: { cell: [1, 0], range: { x: 1, y: 0, width: 1, height: 1 }, rangeStack: [] },
+  };
+  act(() => editor!.onGridSelectionChange!(cell));
+  const glideKeys = JSON.stringify(editor!.keybindings);
+  // Each action in turn on a combination no other action uses: the grid takes it in its
+  // keydown (stopped there, so the SQL tab's window shortcuts never see it), or hands it to
+  // Glide's keybindings (which stop the keys they match).
+  const taken = KEYMAP_ACTIONS.filter((a) => {
+    act(() => useSettings.setState({ settings: { ...DEFAULT_SETTINGS, keymap: { [a.id]: "Ctrl+Alt+Shift+F9" } } }));
+    const press9 = press("F9", "F9", { ctrlKey: true, altKey: true, shiftKey: true });
+    return vi.mocked(press9.stopPropagation).mock.calls.length > 0 || JSON.stringify(editor!.keybindings) !== glideKeys;
+  }).map((a) => a.id);
+  expect(taken).toEqual(actionsAlsoIn("queryTab"));
 });
 
 test("grid keys act on the selected rows: Delete / Ctrl+Backspace delete, Ctrl+D duplicates, Ctrl+Shift+C copies", () => {

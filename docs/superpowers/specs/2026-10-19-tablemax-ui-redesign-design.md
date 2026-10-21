@@ -704,6 +704,18 @@ conflit avec un raccourci courant du bureau GNOME (Ctrl+Alt+flèches) est évit�
   jamais (le texte de la pastille est tronqué avant lui) ; `[PROD]` reste dans le titre de la
   fenêtre.
 
+> Amendement 2026-10-21 (#141) : la grille de résultats d'un onglet SQL lit aussi des actions
+> `tableTab` : `grid.rowDetails` et `grid.copyCells` dans son keydown, `grid.setValue` par
+> l'`activateCell` de Glide (qui arrête la touche même en lecture seule). Le registre le
+> déclare (`alsoIn: ["queryTab"]`, `actionsAlsoIn("queryTab")`) et la vérification des
+> conflits en tient compte : Settings refuse (enregistreur) et signale (raccourci enregistré,
+> jamais réécrit) une de ces actions sur la touche d'une action `queryTab` (Ctrl+S,
+> `query.save`), et inversement. Seulement avec les actions propres à `queryTab` : celles de
+> l'éditeur n'atteignent jamais la grille (Ctrl+Space reste la complétion et le détail de
+> ligne). Les autres actions de grille (onglet de table seul) partagent toujours leurs
+> touches avec l'onglet SQL. `DataGrid.test.tsx` compare la liste aux touches que la grille
+> de résultats prend.
+
 ## 6. Laissé au constructeur
 - Le jeu d'icônes libre (style traits fins, licence compatible GPL, livré dans le bundle) et le
   dessin de nos icônes d'objets.
